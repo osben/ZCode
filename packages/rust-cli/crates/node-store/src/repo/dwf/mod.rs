@@ -348,9 +348,6 @@ pub fn list_runs(conn: &Connection, query: &RunListQuery) -> Result<Vec<RunListR
         .map_err(Into::into)
 }
 
-/// The failure code that marks an interrupted run (Node `INTERRUPTED_FAILURE_CODE`).
-const INTERRUPTED_CODE: &str = "Interrupted";
-
 /// Node `encodeRunStatusPredicate`: a logical status is a physical one, and `stopped` and `errored` share the
 /// physical `cancelled` and `failed` with the failure code deciding. Pushes the bound values in order.
 fn status_predicate(statuses: &[RunStatus], values: &mut Vec<Box<dyn rusqlite::ToSql>>) -> String {
@@ -358,12 +355,12 @@ fn status_predicate(statuses: &[RunStatus], values: &mut Vec<Box<dyn rusqlite::T
     for status in statuses {
         clauses.push(match status {
             RunStatus::Stopped => {
-                values.push(Box::new(INTERRUPTED_CODE));
+                values.push(Box::new(codecs::INTERRUPTED_CODE));
                 "(status = 'cancelled' or (status = 'failed' and json_extract(failure_json, '$.code') = ?))"
                     .to_owned()
             }
             RunStatus::Errored => {
-                values.push(Box::new(INTERRUPTED_CODE));
+                values.push(Box::new(codecs::INTERRUPTED_CODE));
                 "(status = 'failed' and coalesce(json_extract(failure_json, '$.code'), '') <> ?)"
                     .to_owned()
             }

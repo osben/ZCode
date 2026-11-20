@@ -10,8 +10,8 @@
 use rust_cli_base::sync::LockUnpoisoned;
 use rust_cli_workflow::model::RunStatus;
 
-use super::WorkflowRunService;
 use super::list::is_terminal;
+use super::{Reservation, WorkflowRunService};
 
 /// What a sweep did. A sweep that did not run says why; a failed query or write is reported and does not stop the
 /// others (Node logs and continues, and never fails the open).
@@ -28,16 +28,16 @@ pub struct ReconcileReport {
 }
 
 impl WorkflowRunService {
-    /// Settles the session's orphaned runs. Holds the run map's lock for the sweep, so a launch of the same id
-    /// cannot start between the check and the write.
+    /// Settles the session's orphaned runs. The journal query and each write run without the run map's lock: the
+    /// lock is taken only for an orphan's liveness check, and the orphan's id is reserved in `starting` across its
+    /// write, so a launch of that id is refused as a duplicate while it settles.
     pub fn reconcile_session(&self, parent_session_id: &str) -> ReconcileReport {
         let mut report = ReconcileReport::default();
         let Some(store) = self.inner.store.get() else {
             report.skipped = Some("journal_missing_list_non_terminal_runs");
             return report;
         };
-        let state = self.inner.state.lock_unpoisoned();
-        if state.closed {
+        if self.inner.state.lock_unpoisoned().closed {
             report.skipped = Some("closed");
             return report;
         }
@@ -60,11 +60,27 @@ impl WorkflowRunService {
             if is_terminal(previous) {
                 continue;
             }
-            // A run this process holds is live, and its row is the engine's own write.
-            if state.runs.contains_key(&row.run_id) || state.starting.contains(&row.run_id) {
-                continue;
-            }
-            match store.interrupt_run(&row.run_id) {
+            // A run this process holds is live, and its row is the engine's own write. Otherwise the id is reserved
+            // for the write (the reservation frees it on drop, however the write ends).
+            let reservation = {
+                let mut state = self.inner.state.lock_unpoisoned();
+                if state.closed {
+                    report.skipped = Some("closed");
+                    break;
+                }
+                if state.runs.contains_key(&row.run_id)
+                    || !state.starting.insert(row.run_id.clone())
+                {
+                    continue;
+                }
+                Reservation {
+                    inner: self.inner.clone(),
+                    run_id: row.run_id.clone(),
+                }
+            };
+            let written = store.interrupt_run(&row.run_id);
+            drop(reservation);
+            match written {
                 Ok(()) => {
                     tracing::warn!(
                         event = "workflow.run.reconciled_interrupted",

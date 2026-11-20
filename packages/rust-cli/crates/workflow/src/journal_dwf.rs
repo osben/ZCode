@@ -54,7 +54,7 @@ fn ordinal_from_column(ordinal: i64) -> Result<u64> {
     Ok(u64::try_from(ordinal)?)
 }
 
-fn status_to_dwf(status: RunStatus) -> DwfStatus {
+pub(crate) fn status_to_dwf(status: RunStatus) -> DwfStatus {
     match status {
         RunStatus::Pending => DwfStatus::Pending,
         RunStatus::Running => DwfStatus::Running,

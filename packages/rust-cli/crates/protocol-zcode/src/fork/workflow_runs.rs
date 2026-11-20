@@ -3,9 +3,10 @@
 //!
 //! Node answers the read from the journal (`listRunsForSession`), with the live roster taking precedence for the runs it
 //! holds. The Rust run service does the same through its per-session port, so this module only validates the params and
-//! hands the session over. The params follow Node's strict schema: `workspace` and `sessionId` are required, `limit` is
-//! an optional integer from 1 to 64 (default 16), and an unknown key is refused.
+//! hands the session over. The params follow Node's strict schema: `sessionId` is required, `workspace` is an optional
+//! strict workspace reference, `limit` is an optional integer from 1 to 64 (default 16), and an unknown key is refused.
 
+use rust_cli_base::js::string::trim;
 use rust_cli_kernel_api::ids::SessionId;
 use rust_cli_protocol_core::rpc::RpcError;
 use serde_json::{Value, json};
@@ -30,6 +31,35 @@ fn invalid(detail: impl std::fmt::Display) -> RpcError {
     RpcError::invalid_params(format!("Invalid params — {detail}"))
 }
 
+/// Node `zcodeWorkspaceRefSchema` (`zcode-protocol-legacy-types.ts`), strict: `workspacePath` and `workspaceKey` are
+/// required, `workspaceIdentity` and `remoteSessionId` are optional, every string is non-empty after JS trim, and no
+/// other key is allowed.
+fn workspace_ref_is_valid(value: &Value) -> bool {
+    const KEYS: [&str; 4] = [
+        "workspacePath",
+        "workspaceIdentity",
+        "remoteSessionId",
+        "workspaceKey",
+    ];
+    let Some(object) = value.as_object() else {
+        return false;
+    };
+    if object.keys().any(|key| !KEYS.contains(&key.as_str())) {
+        return false;
+    }
+    let non_empty = |key: &str| {
+        object
+            .get(key)
+            .and_then(Value::as_str)
+            .is_some_and(|text| !trim(text).is_empty())
+    };
+    let optional_non_empty = |key: &str| object.get(key).is_none_or(|_| non_empty(key));
+    non_empty("workspacePath")
+        && non_empty("workspaceKey")
+        && optional_non_empty("workspaceIdentity")
+        && optional_non_empty("remoteSessionId")
+}
+
 /// Validates the params as Node's strict schema does (`v4ConversationWorkflowRunsParamsSchema`).
 pub(crate) fn parse(params: &Value) -> Result<SessionRunsParams, RpcError> {
     let object = params
@@ -38,8 +68,11 @@ pub(crate) fn parse(params: &Value) -> Result<SessionRunsParams, RpcError> {
     if let Some(key) = object.keys().find(|key| !KEYS.contains(&key.as_str())) {
         return Err(invalid(format!("unrecognized key {key}")));
     }
-    if !object.contains_key("workspace") {
-        return Err(invalid("workspace is required"));
+    // Node's `v4ColdResumeWorkspaceSchema` is optional; when present it is the strict workspace reference.
+    if let Some(workspace) = object.get("workspace")
+        && !workspace_ref_is_valid(workspace)
+    {
+        return Err(invalid("workspace must be a workspace reference"));
     }
     let session_id = match object.get("sessionId").and_then(Value::as_str) {
         Some(id) if !id.is_empty() => id.to_owned(),

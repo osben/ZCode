@@ -177,7 +177,7 @@ struct RunEntry {
     stop: ChildStop,
     serve: Option<JoinHandle<Vec<(String, String)>>>,
     /// What the run's reads need before its row exists (W7-5a-4).
-    meta: list::RunMeta,
+    meta: Arc<list::RunMeta>,
 }
 
 /// Frees a run id's reservation when its launch ends, however it ends.
@@ -263,7 +263,7 @@ impl WorkflowRunService {
             .clock
             .get()
             .map_or(0, |clock| i64::try_from(clock.now_ms()).unwrap_or(i64::MAX));
-        let meta = list::RunMeta::at_launch(&input, &config, started_at_ms);
+        let meta = Arc::new(list::RunMeta::at_launch(&input, &config, started_at_ms));
 
         // The compile and the child's start come first, as Node's launch does: a rejected script creates no engine and
         // no run row. The mailbox is held here, so the child's early requests wait in it until the owner serves.

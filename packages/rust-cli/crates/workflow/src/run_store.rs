@@ -16,11 +16,9 @@ use rust_cli_node_store::dwf::{
 };
 use serde_json::json;
 
-use crate::journal_dwf::row_from_dwf;
+use crate::journal_dwf::{row_from_dwf, status_to_dwf};
 use crate::model::{RunRow, RunStatus};
-
-/// The failure code an orphan settlement writes (Node `INTERRUPTED_FAILURE_CODE`).
-pub const INTERRUPTED_CODE: &str = "Interrupted";
+use rust_cli_node_store::dwf::codecs::INTERRUPTED_CODE;
 
 /// The message an orphan settlement writes (Node `interruptedRunFailure`, copied byte for byte).
 pub fn interrupted_message(run_id: &str) -> String {
@@ -37,8 +35,10 @@ pub struct RunListRow {
     pub time_updated: i64,
 }
 
-/// Node `listRuns` input: `cwd` filters by literal equality, `statuses` by logical status.
-#[derive(Debug, Clone, PartialEq, Default)]
+/// Node `listRuns` input. `cwd` filters by literal equality when set. `limit` is the row count, with no ceiling
+/// (the caller probes `limit + 1`); `0` returns no rows. `statuses` filters by logical status when set, and
+/// `Some(empty)` matches no run. There is no `Default`: an empty query would be an empty page by accident.
+#[derive(Debug, Clone, PartialEq)]
 pub struct RunListQuery {
     pub cwd: Option<String>,
     pub limit: usize,
@@ -91,16 +91,6 @@ fn list_row(record: dwf::RunListRecord) -> RunListRow {
     }
 }
 
-fn to_dwf_status(status: RunStatus) -> DwfStatus {
-    match status {
-        RunStatus::Pending => DwfStatus::Pending,
-        RunStatus::Running => DwfStatus::Running,
-        RunStatus::Completed => DwfStatus::Completed,
-        RunStatus::Errored => DwfStatus::Errored,
-        RunStatus::Stopped => DwfStatus::Stopped,
-    }
-}
-
 impl RunStore for SqliteRunStore {
     fn non_terminal_runs(&self, parent_session_id: &str) -> Result<Vec<RunRow>> {
         let conn = self.conn.lock_unpoisoned();
@@ -148,7 +138,7 @@ impl RunStore for SqliteRunStore {
             statuses: query
                 .statuses
                 .as_ref()
-                .map(|statuses| statuses.iter().copied().map(to_dwf_status).collect()),
+                .map(|statuses| statuses.iter().copied().map(status_to_dwf).collect()),
         };
         Ok(dwf::list_runs(&conn, &dwf_query)?
             .into_iter()

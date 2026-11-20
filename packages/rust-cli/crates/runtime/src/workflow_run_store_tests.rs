@@ -2,7 +2,7 @@
 //! is a real session database (`SqliteRunStore`); the child is `FakeChildRunner`, as in `workflow_run_tests`.
 
 use std::path::Path;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use anyhow::Result;
@@ -18,9 +18,10 @@ use rust_cli_workflow::actor_mailbox::ActorMailbox;
 use rust_cli_workflow::driver_owner::ActorDriverOwner;
 use rust_cli_workflow::engine::{AskSpec, EngineConfig};
 use rust_cli_workflow::journal::MemoryJournal;
+use rust_cli_workflow::model::RunRow;
 use rust_cli_workflow::residency::SessionResidency;
 use rust_cli_workflow::run_concurrency::{ConcurrencyListener, RunConcurrency};
-use rust_cli_workflow::run_store::{RunStore, SqliteRunStore};
+use rust_cli_workflow::run_store::{RunListQuery, RunListRow, RunStore, SqliteRunStore};
 use serde_json::{Map, Value, json};
 
 use super::{Hosted, HostedOwner, OwnerFactory, WorkflowRunService};
@@ -179,9 +180,13 @@ fn input(run_id: &str) -> LaunchInput {
 }
 
 fn config(run_id: &str) -> EngineConfig {
+    config_in(run_id, PARENT)
+}
+
+fn config_in(run_id: &str, parent: &str) -> EngineConfig {
     let mut config = EngineConfig {
         run_id: run_id.to_owned(),
-        parent_session_id: Some(PARENT.to_owned()),
+        parent_session_id: Some(parent.to_owned()),
         cwd: Some("project".to_owned()),
         ..Default::default()
     };
@@ -860,6 +865,200 @@ async fn a_closed_service_still_lists_its_rows_and_its_sweep_is_skipped() {
         "running",
         "a closed service does not write"
     );
+}
+
+// ---- Review round (ocr on #588): per-session registry, the orphan sweep's lock, the blocking reads, the gap order.
+
+#[tokio::test]
+async fn a_sibling_sessions_live_run_is_neither_listed_nor_owned_here() {
+    // Node's registry is per parent session: a sibling's just-launched run is not this session's gap item, and a
+    // sibling's unsettled row is not owned here (so it is possibly interrupted here).
+    let fx = fixture(|conn| {
+        seed(
+            conn,
+            Some("ses_other"),
+            "wf_sib_row",
+            DwfStatus::Running,
+            None,
+            "return 9",
+            5,
+        );
+    });
+    fx.service
+        .launch(input("wf_sib_gap"), config_in("wf_sib_gap", "ses_other"))
+        .await
+        .expect("launched");
+
+    let list = list_cwd(&fx.service, PARENT, 10).await;
+    let ids: Vec<&str> = list["runs"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|run| run["runId"].as_str().unwrap())
+        .collect();
+    assert_eq!(
+        ids,
+        ["wf_sib_row"],
+        "the sibling's launch is not listed here"
+    );
+    let row = run_named(&list, "wf_sib_row");
+    assert_eq!(row["ownedByThisSession"], false);
+    assert_eq!(row["possiblyInterrupted"], true);
+
+    let session = session_list(&fx.service).await;
+    assert_eq!(
+        session["runs"],
+        json!([]),
+        "the session list is this session's rows only"
+    );
+    fx.service.close().await;
+}
+
+/// A store that records the thread each read runs on, and that can probe the service's lock during a settlement.
+struct Probe {
+    inner: SqliteRunStore,
+    service: std::sync::OnceLock<WorkflowRunService>,
+    probe_during_interrupt: bool,
+    read_threads: Mutex<Vec<std::thread::ThreadId>>,
+}
+
+impl Probe {
+    fn note_read(&self) {
+        self.read_threads
+            .lock()
+            .expect("read threads")
+            .push(std::thread::current().id());
+    }
+}
+
+impl RunStore for Probe {
+    fn non_terminal_runs(&self, parent_session_id: &str) -> Result<Vec<RunRow>> {
+        self.note_read();
+        self.inner.non_terminal_runs(parent_session_id)
+    }
+    fn interrupt_run(&self, run_id: &str) -> Result<()> {
+        if self.probe_during_interrupt {
+            // A call into the service from another thread: it needs the run map's lock, which a settlement must not hold.
+            let service = self.service.get().expect("the service is set").clone();
+            let (sender, receiver) = std::sync::mpsc::channel();
+            std::thread::spawn(move || {
+                let _ = sender.send(service.run_count());
+            });
+            receiver
+                .recv_timeout(Duration::from_secs(2))
+                .expect("the run map is not locked during the orphan write");
+        }
+        self.inner.interrupt_run(run_id)
+    }
+    fn runs_of_session(&self, parent_session_id: &str, limit: usize) -> Result<Vec<RunListRow>> {
+        self.note_read();
+        self.inner.runs_of_session(parent_session_id, limit)
+    }
+    fn list_runs(&self, query: &RunListQuery) -> Result<Vec<RunListRow>> {
+        self.note_read();
+        self.inner.list_runs(query)
+    }
+    fn get_run(&self, run_id: &str) -> Result<Option<RunRow>> {
+        self.note_read();
+        self.inner.get_run(run_id)
+    }
+}
+
+fn probed(
+    seed_rows: impl FnOnce(&rusqlite::Connection),
+    probe_during_interrupt: bool,
+) -> (WorkflowRunService, Arc<Probe>) {
+    let conn = database();
+    add_session(&conn, PARENT);
+    add_session(&conn, "ses_other");
+    seed_rows(&conn);
+    let probe = Arc::new(Probe {
+        inner: SqliteRunStore::new(conn, || 500),
+        service: std::sync::OnceLock::new(),
+        probe_during_interrupt,
+        read_threads: Mutex::new(Vec::new()),
+    });
+    let service = WorkflowRunService::new(
+        Arc::new(SessionResidency::new()),
+        Arc::new(NoConcurrency),
+        Arc::new(FakeChildRunner::new()),
+        factory(),
+    );
+    probe.service.set(service.clone()).ok();
+    service.set_store(probe.clone());
+    service.set_clock(Arc::new(FixedClock));
+    (service, probe)
+}
+
+#[tokio::test]
+async fn the_orphan_sweep_does_not_hold_the_run_map_during_its_writes() {
+    let (service, _probe) = probed(
+        |conn| {
+            seed(
+                conn,
+                Some(PARENT),
+                "dwfrun-lock",
+                DwfStatus::Running,
+                None,
+                "return 1",
+                1,
+            )
+        },
+        true,
+    );
+    let report = service.reconcile_session(PARENT);
+    assert_eq!(report.reconciled.len(), 1, "{report:?}");
+}
+
+#[tokio::test]
+async fn the_journal_reads_run_off_the_async_worker() {
+    // A blocking SQLite read must not occupy the runtime's worker (Node's reads are synchronous, but this port is
+    // async): the read runs on the blocking pool.
+    let (service, probe) = probed(
+        |conn| {
+            seed(
+                conn,
+                Some(PARENT),
+                "run_1",
+                DwfStatus::Completed,
+                None,
+                "return 1",
+                1,
+            )
+        },
+        false,
+    );
+    let me = std::thread::current().id();
+    session_list(&service).await;
+    list_cwd(&service, PARENT, 5).await;
+    let threads = probe.read_threads.lock().expect("read threads").clone();
+    assert!(!threads.is_empty(), "the store was read");
+    assert!(
+        threads.iter().all(|thread| *thread != me),
+        "a read ran on the async worker"
+    );
+}
+
+#[tokio::test]
+async fn gap_items_with_the_same_start_keep_their_submit_order() {
+    // Node sorts the gap by createdAt with a stable sort over its registry, which is in submit order.
+    let fx = fixture(|_| {});
+    let names: Vec<String> = (0..8).map(|i| format!("wf_tie_{i}")).collect();
+    for name in &names {
+        fx.service
+            .launch(input(name), config(name))
+            .await
+            .expect("launched");
+    }
+    let list = list_cwd(&fx.service, PARENT, 20).await;
+    let ids: Vec<String> = list["runs"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|run| run["runId"].as_str().unwrap().to_owned())
+        .collect();
+    assert_eq!(ids, names, "ties keep the order the runs were launched in");
+    fx.service.close().await;
 }
 
 // ---- Labels (Node resolveDynamicWorkflowRunLabel): JS trim, the 80-unit cut, and the fallbacks.
