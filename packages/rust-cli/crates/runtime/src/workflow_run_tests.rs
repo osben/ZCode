@@ -1330,6 +1330,8 @@ async fn resolve_question_is_refused_as_unknown_when_no_live_run_of_the_session_
 #[derive(Default)]
 struct DetailStore {
     rows: Vec<(rust_cli_workflow::model::RunRow, i64, i64)>,
+    /// The projected state of each run, as the journal's replay gives it.
+    states: Vec<(String, serde_json::Map<String, serde_json::Value>)>,
 }
 
 impl rust_cli_workflow::run_store::RunStore for DetailStore {
@@ -1369,6 +1371,17 @@ impl rust_cli_workflow::run_store::RunStore for DetailStore {
             .find(|(row, _, _)| row.run_id == run_id)
             .map(|(_, created, updated)| (*created, *updated)))
     }
+    fn run_state(
+        &self,
+        run_id: &str,
+        _default_concurrency: f64,
+    ) -> anyhow::Result<Option<serde_json::Map<String, serde_json::Value>>> {
+        Ok(self
+            .states
+            .iter()
+            .find(|(id, _)| id == run_id)
+            .map(|(_, state)| state.clone()))
+    }
 }
 
 fn settled_row(
@@ -1405,7 +1418,22 @@ async fn get_run_detail_reads_the_journal_row_for_the_owner_and_another_session(
     use rust_cli_kernel_api::workflow_run::DynamicWorkflowRunSessions;
     use rust_cli_workflow::model::RunStatus;
     let h = harness();
+    let done_state = json!({
+        "runId": "wf_done",
+        "subagentModel": "m-1",
+        "pendingQuestions": [{
+            "qid": "dwfq-wf_done-0", "actorSiteId": "agent#1", "actorOrdinal": 1,
+            "actorName": "poet", "question": "which branch?", "askedAt": 1_500
+        }],
+        "holes": [{"siteId": "hole#1", "ordinal": 1, "name": "gate", "type": "string",
+                   "state": "waiting", "since": 1_600}],
+        "nodes": [{"kind": "ask", "status": "completed"}, {"kind": "ask", "status": "running"}]
+    });
     let store = DetailStore {
+        states: vec![(
+            "wf_done".to_owned(),
+            done_state.as_object().expect("a state object").clone(),
+        )],
         rows: vec![
             (
                 settled_row("wf_done", "ses_p", RunStatus::Completed),
@@ -1435,6 +1463,20 @@ async fn get_run_detail_reads_the_journal_row_for_the_owner_and_another_session(
     assert_eq!(detail["ownedByThisSession"], true);
     assert_eq!(detail["usage"]["spentTokens"], 42);
     assert_eq!(detail["result"], "done");
+    // 9.42: the journal's projected state gives the pending questions with their ids, the holes, the node counts and the
+    // launch settings.
+    assert_eq!(detail["pendingQuestions"][0]["qid"], "dwfq-wf_done-0");
+    assert_eq!(detail["pendingQuestions"][0]["actor"], "agent#1@1");
+    assert_eq!(detail["pendingQuestions"][0]["actorName"], "poet");
+    assert_eq!(detail["pendingQuestions"][0]["question"], "which branch?");
+    assert_eq!(detail["pendingQuestions"][0]["askedAt"], 1_500);
+    assert_eq!(detail["holes"][0]["name"], "gate");
+    assert_eq!(detail["holes"][0]["state"], "waiting");
+    assert_eq!(detail["usage"]["nodesObserved"], 2);
+    assert_eq!(detail["usage"]["nodesRunning"], 1);
+    assert_eq!(detail["usage"]["nodesCompleted"], 1);
+    assert_eq!(detail["usage"]["nodesFailed"], 0);
+    assert_eq!(detail["subagentModel"], "m-1");
     assert!(detail.get("possiblyInterrupted").is_none());
 
     let other = h.service.for_session(&SessionId::new("ses_q"));

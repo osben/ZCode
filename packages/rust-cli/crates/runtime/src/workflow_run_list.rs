@@ -287,6 +287,105 @@ fn session_item(row: &RunListRow, live: bool) -> Value {
     Value::Object(item)
 }
 
+/// Node's detail fields from the run's projected state (9.42): the pending questions with their ids, the holes, the artifacts
+/// (as the reducer keeps them), the node counts, and the launch settings the journal carries. `maxConcurrency` is written only
+/// when the run's limit differs from the default (Node `runConcurrencyField`); without a configured default it is not written.
+fn merge_run_state(
+    item: &mut Value,
+    state: &Map<String, Value>,
+    max_concurrency: f64,
+    default: Option<f64>,
+) {
+    let questions: Vec<Value> = state
+        .get("pendingQuestions")
+        .and_then(Value::as_array)
+        .map(|list| list.iter().map(pending_question).collect())
+        .unwrap_or_default();
+    if !questions.is_empty() {
+        item["pendingQuestions"] = Value::Array(questions);
+    }
+    for (key, keys) in [
+        (
+            "holes",
+            &[
+                "siteId", "ordinal", "name", "type", "state", "since", "filledAt", "filledBy",
+            ][..],
+        ),
+        (
+            "artifacts",
+            &[
+                "id",
+                "kind",
+                "title",
+                "contentType",
+                "sourcePath",
+                "itemCount",
+                "primary",
+            ][..],
+        ),
+    ] {
+        let copied: Vec<Value> = state
+            .get(key)
+            .and_then(Value::as_array)
+            .map(|list| list.iter().map(|entry| copy_keys(entry, keys)).collect())
+            .unwrap_or_default();
+        if !copied.is_empty() {
+            item[key] = Value::Array(copied);
+        }
+    }
+    // Node's `nodesObserved` is the persisted node rows; they are counted by status.
+    let nodes: Vec<&Value> = state
+        .get("nodes")
+        .and_then(Value::as_array)
+        .map(|list| list.iter().collect())
+        .unwrap_or_default();
+    let count = |status: &str| {
+        nodes
+            .iter()
+            .filter(|node| node.get("status").and_then(Value::as_str) == Some(status))
+            .count()
+    };
+    let (running, completed, failed) = (count("running"), count("completed"), count("failed"));
+    item["usage"]["nodesObserved"] = json!(running + completed + failed);
+    item["usage"]["nodesRunning"] = json!(running);
+    item["usage"]["nodesCompleted"] = json!(completed);
+    item["usage"]["nodesFailed"] = json!(failed);
+    if let Some(model) = state.get("subagentModel").and_then(Value::as_str) {
+        item["subagentModel"] = json!(model);
+    }
+    if let Some(default) = default
+        && max_concurrency != default
+    {
+        item["maxConcurrency"] = json!(max_concurrency);
+    }
+}
+
+/// The keys of one entry that the detail carries (a reducer entry has more, which Node's detail does not show).
+fn copy_keys(entry: &Value, keys: &[&str]) -> Value {
+    let mut copied = Map::new();
+    for key in keys {
+        if let Some(value) = entry.get(*key) {
+            copied.insert((*key).to_owned(), value.clone());
+        }
+    }
+    Value::Object(copied)
+}
+
+/// A reducer pending question as Node's detail shows it: `actor` is the actor's reference (site and ordinal), with its name.
+fn pending_question(question: &Value) -> Value {
+    let mut out = copy_keys(
+        question,
+        &["qid", "actorName", "question", "context", "askedAt"],
+    );
+    if let (Some(site), Some(ordinal)) = (
+        question.get("actorSiteId").and_then(Value::as_str),
+        question.get("actorOrdinal").and_then(Value::as_i64),
+    ) {
+        out["actor"] = json!(format!("{site}@{ordinal}"));
+    }
+    out
+}
+
 /// The gap form's detail: the list item plus the usage object (the registry has the spent tokens, and no node counts).
 fn detail_with_usage(mut item: Value) -> Value {
     let spent = item["spentTokens"].clone();
@@ -514,6 +613,7 @@ impl WorkflowRunService {
         let spent = js_number(row.spent_tokens);
         let failure = row.failure.clone();
         let result = row.result.clone();
+        let max_concurrency = row.caps.max_concurrency;
         let listed = RunListRow {
             run: row,
             time_created,
@@ -535,6 +635,20 @@ impl WorkflowRunService {
             if !error.is_empty() {
                 item["error"] = Value::Object(error);
             }
+        }
+        // The journal's projected state (9.42): pending questions, holes, node counts, the launch settings.
+        let default = self
+            .inner
+            .setup
+            .lock_unpoisoned()
+            .progress
+            .as_ref()
+            .map(|progress| progress.default_concurrency);
+        let state = store
+            .run_state(run_id, default.unwrap_or(1.0))
+            .map_err(store_error)?;
+        if let Some(state) = state {
+            merge_run_state(&mut item, &state, max_concurrency, default);
         }
         Ok(Some(item))
     }

@@ -147,6 +147,14 @@ impl RunStore for LazyRunStore {
     fn run_times(&self, run_id: &str) -> Result<Option<(i64, i64)>> {
         self.get()?.run_times(run_id)
     }
+
+    fn run_state(
+        &self,
+        run_id: &str,
+        default_concurrency: f64,
+    ) -> Result<Option<serde_json::Map<String, serde_json::Value>>> {
+        self.get()?.run_state(run_id, default_concurrency)
+    }
 }
 
 /// The row timestamp, in milliseconds, from the process's one business clock.

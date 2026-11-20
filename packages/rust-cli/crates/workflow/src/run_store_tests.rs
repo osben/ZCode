@@ -127,6 +127,34 @@ fn list_rows_carry_the_journal_timestamps_and_the_failure_of_an_interrupted_run(
     assert!(rows[0].run.failure.is_some());
 }
 
+/// 9.42: the run's projected state is the journal's replay, so an escalation the journal has raised and not resolved is
+/// a pending question of the run. An unknown run has no state.
+#[test]
+fn run_state_replays_the_open_escalations_of_the_journal() {
+    let conn = database();
+    add_session(&conn, "ses_p");
+    dwf::create_run(&conn, &run("run_1", "ses_p", "/w", DwfStatus::Running), 7).unwrap();
+    dwf::append_event(
+        &conn,
+        "run_1",
+        &json!({"type": "escalation-raised", "qid": "dwfq-run_1-0", "question": "which branch?",
+                "actor": {"siteId": "agent#1", "ordinal": 1}, "actorName": "poet", "askedAt": 9}),
+        9,
+    )
+    .unwrap();
+    let store = store(conn);
+    let state = store
+        .run_state("run_1", 4.0)
+        .unwrap()
+        .expect("the run replays");
+    let pending = state["pendingQuestions"].as_array().expect("pending list");
+    assert_eq!(pending.len(), 1, "{state:?}");
+    assert_eq!(pending[0]["qid"], "dwfq-run_1-0");
+    assert_eq!(pending[0]["question"], "which branch?");
+    assert_eq!(pending[0]["actorName"], "poet");
+    assert!(store.run_state("run_9", 4.0).unwrap().is_none());
+}
+
 /// 9.42: the run row's own timestamps (the detail read needs them; the row read leaves them out).
 #[test]
 fn run_times_read_the_row_timestamps_and_none_for_an_unknown_run() {

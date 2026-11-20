@@ -67,6 +67,17 @@ pub trait RunStore: Send + Sync {
         let _ = run_id;
         Err(anyhow::anyhow!("this run store does not read run times"))
     }
+    /// The run's projected state (9.42): the run-panel fields of the journal's replay (pending questions, holes, artifacts,
+    /// usage, phases, actors, the launch settings), as Node's `workflowRuns` snapshot carries them. `None` for a run the
+    /// journal does not hold. A store that does not replay fails the read.
+    fn run_state(
+        &self,
+        run_id: &str,
+        default_concurrency: f64,
+    ) -> Result<Option<serde_json::Map<String, serde_json::Value>>> {
+        let _ = (run_id, default_concurrency);
+        Err(anyhow::anyhow!("this run store does not replay run state"))
+    }
 }
 
 /// The `RunStore` over one session database. `clock` stamps the rows a settlement writes.
@@ -156,5 +167,29 @@ impl RunStore for SqliteRunStore {
     fn run_times(&self, run_id: &str) -> Result<Option<(i64, i64)>> {
         let conn = self.conn.lock_unpoisoned();
         dwf::run_times(&conn, run_id)
+    }
+
+    fn run_state(
+        &self,
+        run_id: &str,
+        default_concurrency: f64,
+    ) -> Result<Option<serde_json::Map<String, serde_json::Value>>> {
+        let conn = self.conn.lock_unpoisoned();
+        let Some(record) = dwf::get_run(&conn, run_id)? else {
+            return Ok(None);
+        };
+        let events = dwf::list_events(&conn, run_id)?;
+        let state = rust_cli_node_store::replay_run_state(
+            &record,
+            &events,
+            default_concurrency,
+            &rust_cli_node_store::WORKFLOW_RUN_LIMITS,
+        );
+        Ok(state.and_then(|state| {
+            state
+                .runs
+                .into_iter()
+                .find(|run| run.get("runId") == Some(&serde_json::Value::String(run_id.to_owned())))
+        }))
     }
 }

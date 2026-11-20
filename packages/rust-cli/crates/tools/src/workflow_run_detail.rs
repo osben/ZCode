@@ -15,8 +15,152 @@ const MS_PER_MINUTE: i64 = 60_000;
 const MS_PER_HOUR: i64 = 3_600_000;
 const MS_PER_DAY: i64 = 86_400_000;
 
-/// What this build says about pending questions. Node names the ids here; this build has not read them yet (433).
-const PENDING_QUESTIONS_DEFERRED: &str = "Unknown: this build of GetWorkflowRun does not read pending questions yet, so this read cannot list the ids of the questions a subagent is waiting on. A question's ID comes from its escalation notification; the run keeps waiting until it is answered.";
+const PENDING_QUESTIONS_INSTRUCTION: &str = "Each of these subagents is parked waiting for an answer and nothing times out on its behalf. Answer one with ResolveWorkflowQuestion using the ID in brackets. The rest of the run keeps running meanwhile.";
+
+const HOLES_INSTRUCTION_WAITING: &str = "Each waiting hole parks one branch of the script until you supply its body, and nothing times out on its behalf. Read the run's draft for context, write only the statements of the hole's function returning its type, and call FillWorkflowHole with run_id=\"{run}\" and the hole id in brackets as hole_id. The rest of the run keeps running meanwhile.";
+
+const HOLES_INSTRUCTION_FILLED: &str = "Every hole above has been filled; its body is part of the run's script now (see <amendable> to change it).";
+
+/// The waiting questions and holes of a run, as the journal's projected state gives them (9.42).
+fn entries<'a>(detail: &'a Value, key: &str) -> &'a [Value] {
+    detail
+        .get(key)
+        .and_then(Value::as_array)
+        .map_or(&[], Vec::as_slice)
+}
+
+/// Node's pending-question block: each question with its id, asker, age, text and context.
+fn pending_block(detail: &Value, now: i64) -> Option<String> {
+    let questions = entries(detail, "pendingQuestions");
+    if questions.is_empty() {
+        return None;
+    }
+    let rendered: Vec<String> = questions
+        .iter()
+        .map(|question| {
+            let who = text_of(question, "actorName")
+                .or_else(|| text_of(question, "actor"))
+                .unwrap_or_default();
+            let asked = match question.get("askedAt").and_then(Value::as_i64) {
+                Some(at) => format!("asked {}", age(now, at)),
+                None => "asked at an unknown time".to_owned(),
+            };
+            let qid = text_of(question, "qid").unwrap_or_default();
+            let mut lines = vec![
+                format!("[{}] {} {asked}", escape_xml(qid), escape_xml(who)),
+                escape_xml(text_of(question, "question").unwrap_or_default()),
+            ];
+            if let Some(context) = text_of(question, "context") {
+                lines.push(format!("context: {}", escape_xml(context)));
+            }
+            lines.join("\n")
+        })
+        .collect();
+    Some(format!(
+        "<pending_questions>\n{}\n\n{PENDING_QUESTIONS_INSTRUCTION}\n</pending_questions>",
+        rendered.join("\n\n")
+    ))
+}
+
+/// Node's hole block: each hole with its state and age, then the instruction for the waiting ones.
+fn holes_block(detail: &Value, now: i64) -> Option<String> {
+    let holes = entries(detail, "holes");
+    if holes.is_empty() {
+        return None;
+    }
+    let rendered: Vec<String> = holes
+        .iter()
+        .map(|hole| {
+            let head = format!(
+                "[{}] \"{}\": {}",
+                escape_xml(text_of(hole, "siteId").unwrap_or_default()),
+                escape_xml(text_of(hole, "name").unwrap_or_default()),
+                escape_xml(text_of(hole, "type").unwrap_or_default())
+            );
+            if text_of(hole, "state") == Some("waiting") {
+                let since = hole.get("since").and_then(Value::as_i64);
+                let when = since.map_or_else(String::new, |at| {
+                    format!(" {}", age(now, at).replace(" ago", ""))
+                });
+                format!("{head} — waiting{when}")
+            } else {
+                let filled = hole.get("filledAt").and_then(Value::as_i64);
+                let when = filled.map_or_else(String::new, |at| format!(" {}", age(now, at)));
+                let by = text_of(hole, "filledBy")
+                    .map_or_else(String::new, |who| format!(" by {}", escape_xml(who)));
+                format!("{head} — filled{when}{by}")
+            }
+        })
+        .collect();
+    let waiting = holes
+        .iter()
+        .filter(|hole| text_of(hole, "state") == Some("waiting"))
+        .count();
+    let instruction = if waiting == 0 {
+        HOLES_INSTRUCTION_FILLED.to_owned()
+    } else {
+        HOLES_INSTRUCTION_WAITING.replace(
+            "{run}",
+            &escape_xml(text_of(detail, "runId").unwrap_or_default()),
+        )
+    };
+    Some(format!(
+        "<holes>\n{}\n\n{instruction}\n</holes>",
+        rendered.join("\n")
+    ))
+}
+
+/// Node's artifact list. The line is this build's: the kind, the title (or the id) and whether it is the primary one.
+fn artifacts_block(detail: &Value) -> Option<String> {
+    let artifacts = entries(detail, "artifacts");
+    if artifacts.is_empty() {
+        return None;
+    }
+    let lines: Vec<String> = artifacts
+        .iter()
+        .map(|artifact| {
+            let id = text_of(artifact, "id").unwrap_or_default();
+            let title = text_of(artifact, "title").unwrap_or(id);
+            let primary = if artifact.get("primary") == Some(&Value::Bool(true)) {
+                " (primary)"
+            } else {
+                ""
+            };
+            format!(
+                "[{}] {}: {}{primary}",
+                escape_xml(id),
+                escape_xml(text_of(artifact, "kind").unwrap_or_default()),
+                escape_xml(title)
+            )
+        })
+        .collect();
+    Some(format!(
+        "<artifacts count=\"{}\">\n{}\n</artifacts>",
+        artifacts.len(),
+        lines.join("\n")
+    ))
+}
+
+/// Node's usage block: the spent tokens and the four node counts.
+fn usage_block(detail: &Value) -> String {
+    // A count the read did not carry is left out, not shown as zero.
+    let usage = detail.get("usage");
+    let parts: Vec<String> = [
+        ("spentTokens", "spent_tokens"),
+        ("nodesObserved", "nodes_observed"),
+        ("nodesRunning", "nodes_running"),
+        ("nodesCompleted", "nodes_completed"),
+        ("nodesFailed", "nodes_failed"),
+    ]
+    .into_iter()
+    .filter_map(|(key, name)| {
+        usage
+            .and_then(|usage| usage.get(key))
+            .map(|value| format!("{name}={}", field_text(value)))
+    })
+    .collect();
+    format!("<usage>{}</usage>", parts.join(" "))
+}
 
 /// Node `formatWorkflowRunDuration`: `40s`, `5m 10s`, `2h 15m` or `3d 2h`. Two units only, minutes and seconds padded.
 fn duration(ms: i64) -> String {
@@ -67,7 +211,6 @@ fn error_code(detail: &Value) -> Option<&str> {
 /// and are not here (433).
 fn summary(detail: &Value, now: i64) -> String {
     let status = text_of(detail, "status").unwrap_or_default();
-    let terminal = matches!(status, "completed" | "errored" | "stopped");
     let created = int_of(detail, "createdAt");
     let updated = int_of(detail, "updatedAt");
     let elapsed = duration(updated - created);
@@ -81,13 +224,36 @@ fn summary(detail: &Value, now: i64) -> String {
         }
         _ => format!("Running for {}.", duration(now - created)),
     }];
-    if !terminal {
-        clauses.push("Pending questions are unknown from this session.".to_owned());
-    }
     if let Some(code) = error_code(detail)
         && (status == "errored" || text_of(detail, "stopReason") == Some("provider"))
     {
         clauses.push(format!("Failure: {code}."));
+    }
+    let questions = entries(detail, "pendingQuestions").len();
+    if questions > 0 {
+        let plural = if questions == 1 { "" } else { "s" };
+        clauses.push(format!(
+            "{questions} question{plural} awaiting your answer."
+        ));
+    }
+    let waiting_holes = entries(detail, "holes")
+        .iter()
+        .filter(|hole| text_of(hole, "state") == Some("waiting"))
+        .count();
+    if waiting_holes > 0 {
+        let plural = if waiting_holes == 1 { "" } else { "s" };
+        clauses.push(format!("{waiting_holes} hole{plural} awaiting your code."));
+    }
+    if status == "completed"
+        && let Some(primary) = entries(detail, "artifacts")
+            .iter()
+            .find(|artifact| artifact.get("primary") == Some(&Value::Bool(true)))
+    {
+        let title = text_of(primary, "title")
+            .or_else(|| text_of(primary, "id"))
+            .unwrap_or_default();
+        let kind = text_of(primary, "kind").unwrap_or_default();
+        clauses.push(format!("Deliverable: {title} ({kind}, primary)."));
     }
     if detail.get("ownedByThisSession") == Some(&Value::Bool(false)) {
         clauses.push("Owned by another session.".to_owned());
@@ -117,7 +283,6 @@ fn resumable(detail: &Value) -> String {
 /// The model's text for one run. `now` is the one clock reading of the call.
 pub fn format_detail(detail: &Value, now: i64) -> String {
     let status = text_of(detail, "status").unwrap_or_default();
-    let terminal = matches!(status, "completed" | "errored" | "stopped");
     let mut blocks = vec![format!(
         "<summary>{}</summary>",
         escape_xml(&summary(detail, now))
@@ -158,18 +323,9 @@ pub fn format_detail(detail: &Value, now: i64) -> String {
         "<updated_at>{}</updated_at>",
         instant(now, int_of(detail, "updatedAt"))
     ));
-    if !terminal {
-        blocks.push(format!(
-            "<pending_questions>{PENDING_QUESTIONS_DEFERRED}</pending_questions>"
-        ));
-    }
-
-    let spent = detail
-        .get("usage")
-        .and_then(|usage| usage.get("spentTokens"))
-        .map(field_text)
-        .unwrap_or_else(|| "0".to_owned());
-    blocks.push(format!("<usage>spent_tokens={spent}</usage>"));
+    blocks.extend(pending_block(detail, now));
+    blocks.extend(holes_block(detail, now));
+    blocks.push(usage_block(detail));
 
     if let Some(result) = detail.get("result") {
         // Verbatim, as Node's `<result>`: a string is the text itself, anything else its JSON.
@@ -195,6 +351,8 @@ pub fn format_detail(detail: &Value, now: i64) -> String {
         ));
     }
 
+    blocks.extend(artifacts_block(detail));
+
     // Routing. A superseded run points only at its successor; a stopped run says how it may continue.
     if text_of(detail, "stopReason") == Some("superseded") {
         let successor = text_of(detail, "supersededBy").map_or_else(
@@ -209,3 +367,7 @@ pub fn format_detail(detail: &Value, now: i64) -> String {
     }
     blocks.join("\n\n")
 }
+
+#[cfg(test)]
+#[path = "workflow_run_detail_tests.rs"]
+mod tests;

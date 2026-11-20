@@ -611,10 +611,8 @@ async fn get_of_a_run_another_session_owns_says_so_and_flags_a_live_run_as_uncon
         "{text}"
     );
     assert!(text.contains("<possibly_interrupted>true"), "{text}");
-    assert!(
-        text.contains("Pending questions are unknown from this session."),
-        "{text}"
-    );
+    // 9.42: the journal answers the pending questions for any run, so no "unknown" is written for this one.
+    assert!(!text.contains("unknown"), "{text}");
 }
 
 #[tokio::test]

@@ -3375,6 +3375,55 @@ error). `cli`: the gating lists now name four run tools.
 Green: `cargo fmt --all --check`; `cargo clippy --workspace --all-targets --locked -- -D warnings`; lib tests of `rust-cli-kernel-api`
 (440), `rust-cli-runtime` (311), `rust-cli-tools` (605), `rust-cli-workflow` (435); the cli binary tests (559).
 
+#### 9.42, round 2: the projected state (ocr-style request on #600, before review)
+
+The detail now reads the run's projected state as well as its row. This supersedes 431 (partly), 432, 434, 435 and 436 below,
+which describe the first round.
+
+- **Source.** `RunStore::run_state(run_id, default_concurrency)` (`workflow/src/run_store.rs`, `SqliteRunStore` over
+  `dwf::get_run` and `dwf::list_events` through node-store's `replay_run_state`, the journal's replay with the production
+  limits). It returns the run's entry of the projected state, or `None` for a run the journal does not hold. A store that does
+  not replay fails the read. The same reducer builds the run panel the Host shows, so the detail and the panel agree.
+- **Pending questions (434, superseded).** Each `escalation-raised` the journal has and no `escalation-resolved` has closed is a
+  pending question, with its qid, its actor (`siteId@ordinal`), its name, its question, its context and its ask time. The
+  detail gives them for every run, live or stopped; the pending-question block is written with Node's wording for the instruction,
+  and the summary gives the count (`N question(s) awaiting your answer.`).
+  **Deviation from the request:** the live owner's parked table is not queried. The journal writes the raise before a question
+  is parked and the resolution when it is answered, so the two agree except in the window between the raise and the park, and for
+  a question withdrawn without an event. Node also answers "unknown" for another session's live run; this build answers from the
+  journal for any run (a second deviation, recorded here).
+- **Holes and artifacts (435, superseded).** Holes come from the projection (`siteId`, `ordinal`, `name`, `type`, `state`,
+  `since`, `filledAt`, `filledBy`) and are written with Node's hole block and instruction. Artifacts come from the projection
+  (`id`, `kind`, `title`, `contentType`, `sourcePath`, `itemCount`, `primary`). The artifact line is this build's:
+  `[id] kind: title (primary)`; Node's `formatPublishedArtifactLine` is not ported (deviation, recorded). The summary's
+  deliverable clause is Node's (`Deliverable: title (kind, primary).`) for a completed run with a primary artifact.
+- **Node counts (432, superseded).** `nodesObserved`, `nodesRunning`, `nodesCompleted`, `nodesFailed` are counted by status from the
+  projection's node entries (`running`, `completed`, `failed`). Node counts persisted node rows of any kind; the projection's
+  kinds may differ, so this is a deviation to check. A count the read does not carry is left out of the usage line, not shown as
+  zero.
+- **Launch settings (436, partly superseded).** `subagentModel` comes from the projection. `maxConcurrency` is written only when
+  the run's limit differs from the configured default (Node's `runConcurrencyField`), and only when a default is configured.
+  `modelBindings` and `scriptPath` are not in the projection (the reducer reads the launch's model bindings for the progress
+  fields, not into the run entry), so they are not written. Recorded as a gap.
+- **Roster family (433, still deferred).** Phases, subagents, health (stall, last progress, leftover steps), the log tail and the
+  actors are not written. The projection carries the nodes and the actors, so the roster can be built from it; Node's roster
+  builder (`buildWorkflowRunRoster`, about 300 lines of TypeScript) is the port that remains. Not built in this round.
+- **Summary (431, partly superseded).** Now: status, failure, questions, holes, deliverable, ownership. Still missing: the step,
+  phase, progress and stall clauses (they need the roster).
+- **Provider stop (438, still deferred).** The error body is still the escaped message. Node's `formatWorkflowProviderStopError`
+  (cause, action, facts) is not ported.
+- **Amendable pointer (439, kept on purpose).** The `<resumable>` text and the holes' "see <amendable>" text keep Node's wording.
+  AmendWorkflow lands in W7-10, so the `<amendable>` block is not in the output yet. Until then the pointers name a block that the
+  output does not contain.
+
+**Round-2 red steps.** `run_state_replays_the_open_escalations_of_the_journal` (workflow) was red on the default member, then green.
+`get_run_detail_reads_the_journal_row_for_the_owner_and_another_session` (runtime) was red on the missing pending list and green
+after the merge. The formatter goldens in `tools/src/workflow_run_detail_tests.rs` (eight) were red on the missing blocks and green
+after the formatter change. Node's golden text is the wording of `get-workflow-run-format.ts` for the instruction and block
+frames; the counts and the ages in the goldens are exact, from one fixed clock. Node's own handler test file
+(`core/tests/get-workflow-run-tool.test.ts`, 1768 lines) was not ported in this round: its cases are the next step, and the goldens
+here are checked against the formatter's source wording, not against that file.
+
 ## 10. Open questions
 
 Each has a recommendation. The user decides. Until decided, the recommendation is the default.
