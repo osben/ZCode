@@ -85,6 +85,8 @@ mod import_golden_tests;
 #[cfg(test)]
 mod lifecycle_golden_tests;
 #[cfg(test)]
+mod quota_busy_tests;
+#[cfg(test)]
 mod quota_resume_tests;
 #[cfg(test)]
 mod residency_tests;

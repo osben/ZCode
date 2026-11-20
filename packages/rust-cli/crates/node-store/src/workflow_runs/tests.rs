@@ -467,7 +467,21 @@ fn replay_mints_the_derived_fields_the_live_path_sends() {
 fn the_live_envelope_of_a_journal_row_is_the_replayed_one() {
     use super::replay::{RunProgressFields, progress_envelope};
     let conn = database();
-    let events = stored_events(&conn, &journal());
+    // Re-review 8: the local journal also carries the two events whose minted fields the shared fixture lacks
+    // (`run-caps-changed` takes the concurrency ceiling, `run-settled` the resumable flag).
+    let mut rows = journal();
+    rows.push(json!({
+        "type": "run-caps-changed",
+        "runId": "dwfrun-1",
+        "caps": { "maxConcurrency": 2 },
+        "previous": { "maxConcurrency": 8 },
+    }));
+    rows.push(json!({
+        "type": "run-settled",
+        "status": "stopped",
+        "stopReason": "provider",
+    }));
+    let events = stored_events(&conn, &rows);
     let run = run_row(RunStatus::Running);
     let replayed = replay_envelopes(&run, &events, 8.0);
     let launched = events

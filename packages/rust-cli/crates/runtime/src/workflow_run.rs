@@ -6,7 +6,7 @@
 
 use std::collections::{BTreeSet, HashMap, HashSet};
 use std::fmt;
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, Weak};
 use std::thread::JoinHandle;
 
 use anyhow::Result;
@@ -24,7 +24,7 @@ use rust_cli_workflow::engine::EngineConfig;
 use rust_cli_workflow::error::{ErrorCode, WorkflowError};
 use rust_cli_workflow::journal::JournalPort;
 use rust_cli_workflow::model_failure::RedriveClock;
-use rust_cli_workflow::quota_resume::QuotaAutoResume;
+use rust_cli_workflow::quota_resume::{InUse, QuotaAutoResume};
 use rust_cli_workflow::residency::SessionResidency;
 use rust_cli_workflow::run_concurrency::RunConcurrency;
 use rust_cli_workflow::run_progress::{
@@ -40,7 +40,8 @@ pub trait HostedOwner: Send {
     /// The launch's registrations (9.15 item 2, 9.12 item 3). Runs in the launch's synchronous step.
     fn attach(&mut self, registrations: RunRegistrations<'_>) -> Result<()>;
 
-    /// The run's progress sink (9.31), set before attach so the run's first event reaches it. Default: none.
+    /// The run's progress sink (9.31). The service calls it on the owner's thread, after attach and before the first
+    /// `serve`: the rows already journaled (the backlog) are delivered first, so no row is missed. Default: none.
     fn set_progress(&mut self, progress: Box<dyn RunProgress>) {
         let _ = progress;
     }
@@ -157,6 +158,8 @@ pub struct WorkflowRunService {
 }
 
 struct Inner {
+    /// The service's own weak handle, for the idle callbacks of the quota modules.
+    me: Weak<Inner>,
     residency: Arc<SessionResidency>,
     concurrency: Arc<dyn RunConcurrency>,
     runner: Arc<dyn WorkflowChildRunner>,
@@ -275,12 +278,17 @@ type LaunchHooks = (Option<Box<dyn RunProgress>>, Option<Arc<QuotaAutoResume>>);
 /// Lock order everywhere: `state`, then `setup`, then `sessions`. The sink's projection is the parent's, and the quota
 /// module is the parent's, so every run of one session shares both.
 fn session_hooks(
+    me: &Weak<Inner>,
     sessions: &mut HashMap<String, SessionHooks>,
     parent: &str,
     progress: Option<(Arc<dyn WorkflowRunProgressPort>, f64)>,
     facts: LaunchFacts,
     quota: Option<QuotaSetup>,
 ) -> LaunchHooks {
+    // Nothing to install, so no entry (re-review 3).
+    if progress.is_none() && quota.is_none() {
+        return (None, None);
+    }
     let hooks = sessions.entry(parent.to_owned()).or_default();
     let sink = progress.map(|(port, default_concurrency)| {
         LaunchProgress {
@@ -305,7 +313,20 @@ fn session_hooks(
             .quota
             .get_or_insert_with(|| {
                 let port = SessionQuotaPort::new(parent.to_owned(), quota.reads, quota.resumer);
-                Arc::new(QuotaAutoResume::new(Arc::new(port), quota.clock))
+                // When the module goes idle the parent is re-checked for eviction (re-review 2). A weak handle: the
+                // module lives inside the service, so a strong one would be a cycle.
+                let me = me.clone();
+                let owned = parent.to_owned();
+                let on_idle = Box::new(move || {
+                    if let Some(inner) = me.upgrade() {
+                        inner.evict_if_idle(&owned);
+                    }
+                });
+                Arc::new(QuotaAutoResume::with_idle_callback(
+                    Arc::new(port),
+                    quota.clock,
+                    on_idle,
+                ))
             })
             .clone()
     });
@@ -316,7 +337,7 @@ impl Inner {
     /// The parent's quota module, created on first use when quota is configured. Refused after close (finding 1): the
     /// closed check and the insert share one critical section, so close either sees the module and disposes it, or the
     /// module is never created.
-    fn quota_module(&self, parent: &str) -> Option<Arc<QuotaAutoResume>> {
+    fn quota_module(&self, parent: &str) -> Option<(Arc<QuotaAutoResume>, InUse)> {
         #[cfg(test)]
         {
             let hook = self.before_quota_module.lock_unpoisoned().take();
@@ -331,13 +352,17 @@ impl Inner {
         let quota = self.quota_clones()?;
         let mut sessions = self.sessions.lock_unpoisoned();
         let (_, module) = session_hooks(
+            &self.me,
             &mut sessions,
             parent,
             None,
             LaunchFacts::none(),
             Some(quota),
         );
-        module
+        // The guard is taken under the same locks that hand the module out: an eviction that runs next sees the call.
+        let module = module?;
+        let in_use = module.in_use();
+        Some((module, in_use))
     }
 
     /// The quota setup, cloned so no lock is held across the module's creation.
@@ -406,7 +431,8 @@ impl WorkflowRunService {
         owners: OwnerFactory,
     ) -> Self {
         Self {
-            inner: Arc::new(Inner {
+            inner: Arc::new_cyclic(|me| Inner {
+                me: me.clone(),
                 residency,
                 concurrency,
                 runner,
@@ -464,8 +490,10 @@ impl WorkflowRunService {
     /// quota whose reset has passed resumes now and the others are armed. Reads the journal, so call it off the
     /// runtime's workers. A no-op without `configure_quota`, and after close.
     pub fn open_session(&self, parent_session_id: &str) {
-        if let Some(module) = self.inner.quota_module(parent_session_id) {
+        if let Some((module, in_use)) = self.inner.quota_module(parent_session_id) {
             module.scan();
+            // Dropping the guard re-checks the parent: a scan that armed nothing leaves no hooks behind (re-review 2).
+            drop(in_use);
         }
     }
 
@@ -557,7 +585,14 @@ impl WorkflowRunService {
         }
         let (progress, quota) = {
             let mut sessions = inner.sessions.lock_unpoisoned();
-            session_hooks(&mut sessions, &parent, progress_setup, facts, quota_setup)
+            session_hooks(
+                &inner.me,
+                &mut sessions,
+                &parent,
+                progress_setup,
+                facts,
+                quota_setup,
+            )
         };
         let token = state.next_token;
         state.next_token += 1;
@@ -582,13 +617,16 @@ impl WorkflowRunService {
                         format!("the owner panicked: {}", panic_text(payload.as_ref())),
                     )],
                 };
+                // The module is in use from before the run leaves the run map until its row is read (re-review 1): an
+                // eviction by another run of the parent cannot dispose it in between.
+                let in_use = quota.as_ref().map(|quota| quota.in_use());
                 let failures =
                     settle_run(&settle_inner, &settle_run_id, token, &settle_stop, failures);
-                // After the settlement, with no lock held: the quota module reads the run's row (9.31, spec 9.14), and
-                // an idle parent's hooks are dropped.
-                if let Some(quota) = quota {
+                // After the settlement, with no lock held: the quota module reads the run's row (9.31, spec 9.14).
+                if let Some(quota) = &quota {
                     quota.on_run_settled(&settle_run_id);
                 }
+                drop(in_use);
                 settle_inner.evict_if_idle(&settle_parent);
                 failures
             }) {

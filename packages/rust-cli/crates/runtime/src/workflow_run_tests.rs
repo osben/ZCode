@@ -1052,6 +1052,68 @@ fn the_session_port_reads_and_lists_only_its_own_session() {
     assert_eq!(*resumer.calls.lock_unpoisoned(), ["run_a"]);
 }
 
+/// Re-review 2: a parent whose scan found nothing to resume keeps no hooks once the scan is done.
+#[tokio::test]
+async fn open_session_holds_no_hooks_for_a_parent_with_nothing_to_resume() {
+    let h = harness();
+    h.service.configure_quota(
+        Arc::new(FakeReads::default()),
+        Arc::new(FakeResumer::default()),
+        FakeClock::new(),
+    );
+    h.service.open_session("ses_n");
+    assert_eq!(
+        h.service.session_entries(),
+        0,
+        "an idle parent after its scan holds no hooks"
+    );
+}
+
+/// Re-review 2: a session whose timer fired and left the module idle is dropped, without any later settlement.
+#[tokio::test]
+async fn a_session_whose_timer_has_fired_is_dropped_when_it_goes_idle() {
+    let reads = Arc::new(FakeReads {
+        rows: vec![(
+            "ses_t".into(),
+            quota_stopped_row("due", "ses_t", NOW - HOUR),
+        )],
+        ..Default::default()
+    });
+    let clock = FakeClock::new();
+    let h = harness();
+    h.service
+        .configure_quota(reads, Arc::new(FakeResumer::default()), clock.clone());
+    h.service.open_session("ses_t");
+    assert_eq!(
+        h.service.session_entries(),
+        1,
+        "the armed timer keeps the session's hooks"
+    );
+    clock.run_next().expect("the due timer");
+    assert_eq!(
+        h.service.session_entries(),
+        0,
+        "the timer fired and the module went idle, so the session is dropped"
+    );
+}
+
+/// Re-review 3: a launch with neither progress nor quota configured builds no session hooks.
+#[tokio::test]
+async fn a_launch_with_no_hooks_configured_holds_no_session_entry() {
+    let h = harness();
+    h.service
+        .launch(input("wf_n"), config("wf_n", Some("ses_n")))
+        .await
+        .expect("launched");
+    assert_eq!(
+        h.service.session_entries(),
+        0,
+        "nothing to install, so no entry"
+    );
+    h.runner.finish(0, completed(json!("done")));
+    wait_until("the run to settle", || h.service.run_count() == 0).await;
+}
+
 /// Finding 1: a close that lands between the caller's check and the module's creation leaves no module behind, so a
 /// scan after close arms nothing. The hook closes the service on another thread at the racing point.
 #[tokio::test]

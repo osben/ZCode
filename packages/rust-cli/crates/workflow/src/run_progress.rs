@@ -112,16 +112,15 @@ impl ProgressSink {
     }
 
     /// Applies the envelope to the projection, then hands the progress and its deltas to the port.
-    fn append(&self, stored: &StoredEvent) -> Result<(), String> {
-        let envelope = envelope_of(&self.fields, stored)?;
+    fn append(&self, sequence: u64, envelope: &WorkflowRunEnvelope) -> Result<(), String> {
         let deltas = {
             let mut projection = self
                 .projection
                 .lock()
                 .unwrap_or_else(PoisonError::into_inner);
-            projection.apply(&envelope).unwrap_or_default()
+            projection.apply(envelope).unwrap_or_default()
         };
-        let progress = progress_payload(&envelope, stored.sequence);
+        let progress = progress_payload(envelope, sequence);
         self.port
             .record(self.recording_session(), &progress, &deltas)
     }
@@ -145,7 +144,21 @@ impl RunProgress for ProgressSink {
         }
         // A sink error never fails the run (Node: every degradation path is a logged no-op). A panic inside the port is
         // caught for the same reason: the journal is the record, and the run goes on.
-        match catch_unwind(AssertUnwindSafe(|| self.append(stored))) {
+        // An unreadable row is its own reason (re-review 7): it is not the port's refusal.
+        let envelope = match envelope_of(&self.fields, stored) {
+            Ok(envelope) => envelope,
+            Err(error) => {
+                tracing::warn!(
+                    event = "dynamic_workflow.run_progress.append_failed",
+                    run_id = %self.fields.run_id,
+                    reason = "unreadable_payload",
+                    error = %error,
+                    "Dynamic workflow run progress append failed"
+                );
+                return;
+            }
+        };
+        match catch_unwind(AssertUnwindSafe(|| self.append(stored.sequence, &envelope))) {
             Ok(Ok(())) => {}
             Ok(Err(error)) => tracing::warn!(
                 event = "dynamic_workflow.run_progress.append_failed",

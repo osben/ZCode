@@ -4,7 +4,10 @@
 //! book and the active-ask table. Turns (the async side, on each actor's child session) reach it through
 //! `submit_result`, `turn_ended`, `escalate`, and `answer`, one message at a time. The engine reaches the turn side
 //! through `ActorPort`, the engine's `WorkflowDriver`, which only queues work and records verdicts: it never touches
-//! the book, and it never blocks.
+//! the book, and it never blocks on the run's own work.
+//!
+//! The one exception is the progress sink (9.31). `emit_stored` runs it inline on the owner's thread, so the sink's port
+//! call (the parent session's record) is blocking I/O on that thread. It is the only port-side call that is not queued.
 //!
 //! Event order for each engine call: the engine runs, `pump` applies what the port queued (book start, turn start,
 //! failed asks), then `reconcile` ends every active ask the engine no longer has live. `pump` reconciles on every
@@ -840,7 +843,7 @@ impl<J: JournalPort, S: ActorSessions> ActorDriverOwner<J, S> {
             Err(error) => tracing::warn!(
                 event = "dynamic_workflow.run_progress.backlog_failed",
                 error = %error,
-                "the run's journaled events could not be read for progress; the sink starts at the next event"
+                "the run's journaled events could not be read for progress; the sink is installed with an empty projection, so its deltas are diffs against nothing until the projection is reseeded (9.31)"
             ),
         }
         self.engine.driver.progress = Some(progress);
