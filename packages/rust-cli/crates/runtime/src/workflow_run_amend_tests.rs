@@ -124,6 +124,26 @@ struct Fixture {
 
 /// A service over a temp session database that `seed` has filled, with the default concurrency and the parent's mode.
 fn fixture(seed: impl FnOnce(&rusqlite::Connection)) -> Fixture {
+    fixture_with_bindings(seed, Arc::new(Mode))
+}
+
+/// A parent whose permission mode cannot be read: the start fails after the predecessor is stopped.
+struct FailingMode;
+
+impl ActorBindingsPort for FailingMode {
+    fn parent_bindings(&self, _parent: &str) -> Result<Option<ParentBindings>, String> {
+        Ok(None)
+    }
+
+    fn parent_permission_mode(&self, _parent: &str) -> Result<Option<PermissionMode>, String> {
+        Err("the store is busy".to_owned())
+    }
+}
+
+fn fixture_with_bindings(
+    seed: impl FnOnce(&rusqlite::Connection),
+    bindings: Arc<dyn ActorBindingsPort>,
+) -> Fixture {
     let dir = tempfile::tempdir().expect("temp dir");
     let path = dir.path().join("session.db");
     let conn = open(&path);
@@ -151,7 +171,7 @@ fn fixture(seed: impl FnOnce(&rusqlite::Connection)) -> Fixture {
     );
     service.set_store(store);
     service.configure_concurrency(DEFAULT as f64);
-    service.configure_bindings(Arc::new(Mode));
+    service.configure_bindings(bindings);
     Fixture {
         _dir: dir,
         path,
@@ -369,4 +389,101 @@ async fn an_amend_names_another_parent_than_its_port_is_refused_before_anything_
         .expect_err("a wiring fault is an error");
     assert!(error.message.contains("belongs to"), "{}", error.message);
     assert!(fx.fake.launches().is_empty());
+}
+
+#[tokio::test]
+async fn a_non_finite_limit_is_refused_before_anything_is_stopped() {
+    let fx = fixture(|conn| interrupted(conn, "dwfrun-inf", PARENT, "return 1\n"));
+    for bad in [f64::INFINITY, f64::NAN] {
+        let mut request = amend_request("dwfrun-inf", "return 2\n");
+        request.max_concurrency = Some(bad);
+        let error = fx
+            .service
+            .for_session(&SessionId::new(PARENT))
+            .amend(request)
+            .await
+            .expect_err("a non-finite limit is a wiring fault");
+        assert!(error.message.contains("finite"), "{}", error.message);
+    }
+    assert!(fx.fake.launches().is_empty(), "no successor is started");
+    assert_eq!(
+        row(&fx, "dwfrun-inf").stop_reason,
+        Some(DwfStop::Interrupted)
+    );
+}
+
+#[tokio::test]
+async fn phase_routing_and_inherited_arguments_are_refused_not_dropped() {
+    let fx = fixture(|conn| interrupted(conn, "dwfrun-phase", PARENT, "return 1\n"));
+    let mut phases = amend_request("dwfrun-phase", "return 2\n");
+    phases.phase_names = Some(vec!["main".to_owned()]);
+    let mut args = amend_request("dwfrun-phase", "return 2\n");
+    args.inherit_args = true;
+    for request in [phases, args] {
+        let error = fx
+            .service
+            .for_session(&SessionId::new(PARENT))
+            .amend(request)
+            .await
+            .expect_err("an option this host cannot carry is refused");
+        assert!(error.message.contains("cannot"), "{}", error.message);
+    }
+    assert!(fx.fake.launches().is_empty());
+}
+
+#[tokio::test]
+async fn a_failure_after_the_stop_names_the_superseded_predecessor() {
+    let fx = fixture_with_bindings(
+        |conn| interrupted(conn, "dwfrun-after", PARENT, "return 1\n"),
+        Arc::new(FailingMode),
+    );
+    let resumed = fx
+        .service
+        .for_session(&SessionId::new(PARENT))
+        .resume(&WorkflowRunId::new("dwfrun-after"))
+        .await
+        .expect("the resume answers");
+    assert_eq!(resumed, json!({ "ok": true, "runId": "dwfrun-after" }));
+
+    let error = fx
+        .service
+        .for_session(&SessionId::new(PARENT))
+        .amend(amend_request("dwfrun-after", "return 2\n"))
+        .await
+        .expect_err("the parent mode cannot be read");
+    assert!(
+        error.message.contains("dwfrun-after") && error.message.contains("superseded"),
+        "the caller learns the predecessor was already stopped: {}",
+        error.message
+    );
+    assert_eq!(
+        row(&fx, "dwfrun-after").stop_reason,
+        Some(DwfStop::Superseded)
+    );
+}
+
+#[tokio::test]
+async fn the_successor_inherits_the_predecessor_limit_unless_one_is_given() {
+    let fx = fixture(|conn| interrupted(conn, "dwfrun-limit", PARENT, "return 1\n"));
+    let answer = amend(&fx.service, amend_request("dwfrun-limit", "return 2\n")).await;
+    let AmendResult::Started { run_id, .. } = answer else {
+        panic!("the amend starts a successor: {answer:?}");
+    };
+    assert_eq!(
+        row(&fx, run_id.as_str()).max_concurrency,
+        4,
+        "the predecessor's limit"
+    );
+
+    let mut given = amend_request("dwfrun-limit", "return 3\n");
+    given.max_concurrency = Some(2.0);
+    let answer = amend(&fx.service, given).await;
+    let AmendResult::Started { run_id, .. } = answer else {
+        panic!("the amend starts a successor: {answer:?}");
+    };
+    assert_eq!(
+        row(&fx, run_id.as_str()).max_concurrency,
+        2,
+        "the limit the call gave"
+    );
 }

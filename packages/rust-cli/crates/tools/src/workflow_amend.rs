@@ -26,14 +26,18 @@ use serde::Deserialize;
 use serde_json::{Value, json};
 use tokio::sync::mpsc;
 
+use rust_cli_fs::read_text;
+
+use crate::saved_workflow::{parse as parse_saved, starts_with_sentinel};
 use crate::workflow_create::{
-    CREATE_MODEL_BYTES, CreateInput, DIAGNOSTICS_NOT_EXECUTED_NOTE, DRAFTS_DIR, Location, Origin,
-    Resolved, concurrency_sentence, describe_script_path, diagnostic_lines, diagnostics_note,
-    output_for, resolve_path, write_draft_file,
+    CREATE_MODEL_BYTES, DIAGNOSTICS_NOT_EXECUTED_NOTE, DRAFTS_DIR, EXECUTION_UNAVAILABLE_NOTE,
+    Location, Origin, Resolved, concurrency_sentence, describe_script_path, diagnostic_lines,
+    diagnostics_note, output_for, write_draft_file,
 };
 use crate::workflow_tools::{
     Contract, DYNAMIC_WORKFLOW_SKILL, contract, skill_loaded, workspace_dir,
 };
+use crate::workspace_path::{Refusal, contain};
 
 /// Node `CREATE_WORKFLOW_FAILURE_CODE`-style business refusal of the input.
 const FAILURE_CODE: i32 = 400;
@@ -80,10 +84,16 @@ impl AmendInput {
         match &self.max_concurrency {
             None => Ok(None),
             Some(Value::Null) => Ok(Some(None)),
-            Some(value) => match value.as_u64() {
-                Some(number) if number >= 1 => Ok(Some(Some(number))),
-                _ => Err("max_concurrency: Number must be greater than 0".to_owned()),
+            Some(Value::Number(number)) => match number.as_u64() {
+                Some(whole) if whole >= 1 => Ok(Some(Some(whole))),
+                Some(_) => Err("max_concurrency: Number must be greater than 0".to_owned()),
+                // A negative whole number is a range error; a fraction or a huge number is a type error.
+                None if number.as_i64().is_some_and(|whole| whole < 1) => {
+                    Err("max_concurrency: Number must be greater than 0".to_owned())
+                }
+                None => Err("max_concurrency: Expected an integer".to_owned()),
             },
+            Some(_) => Err("max_concurrency: Expected an integer, null, or omitted".to_owned()),
         }
     }
 
@@ -181,19 +191,11 @@ impl AmendWorkflowTool {
         port: Option<&Arc<dyn DynamicWorkflowRunPort>>,
     ) -> Result<(Resolved, bool), String> {
         if let Some(path) = &input.path {
-            let file_input = CreateInput {
-                name: input.name.clone(),
-                script: None,
-                saved: None,
-                path: Some(path.clone()),
-                args: None,
-                max_concurrency: None,
-                subagent_model: None,
-            };
             let cwd_owned = cwd.to_path_buf();
             let path_owned = path.clone();
+            let name = input.name.clone();
             let resolved = tokio::task::spawn_blocking(move || {
-                resolve_path(&file_input, &path_owned, &cwd_owned)
+                read_revision_file(&cwd_owned, &path_owned, name)
             })
             .await
             .unwrap_or_else(|error| {
@@ -204,24 +206,76 @@ impl AmendWorkflowTool {
         if let Some(script) = &input.script {
             return Ok((inline(script.clone(), input.name.clone()), false));
         }
-        let stored = match port {
-            Some(port) => port
-                .get_script(&rust_cli_kernel_api::ids::WorkflowRunId::new(
-                    input.run_id.clone(),
-                ))
-                .await
-                .ok()
-                .flatten(),
-            None => None,
+        let host_cannot_read = format!(
+            "workflow_amend_script_unavailable: this host cannot read run {}'s stored script, so the script cannot be omitted here — pass the whole script as `script`, or its file as `path`. Nothing was stopped or created.",
+            input.run_id
+        );
+        let Some(port) = port else {
+            return Err(host_cannot_read);
         };
-        match stored {
-            Some(script) => Ok((inline(script, input.name.clone()), true)),
-            None => Err(format!(
+        let run = rust_cli_kernel_api::ids::WorkflowRunId::new(input.run_id.clone());
+        match port.get_script(&run).await {
+            // A failed read is a failure of this call (retry, or the cause shown), not a run without a script.
+            Err(error) if error.is_unsupported() => Err(host_cannot_read),
+            Err(error) => Err(format!(
+                "AmendWorkflow could not read run {}'s stored script: {}. Nothing was stopped or created.",
+                input.run_id, error.message
+            )),
+            Ok(Some(script)) => Ok((inline(script, input.name.clone()), true)),
+            Ok(None) => Err(format!(
                 "workflow_amend_script_unavailable: run {} has no stored script to keep, so the script cannot be omitted here — pass the whole script as `script`, or its file as `path`. Nothing was stopped or created.",
                 input.run_id
             )),
         }
     }
+}
+
+/// The file of a revision (Node `resolveAmendScript`, `path`): the containment and reads are CreateWorkflow's, and the
+/// metadata block is stripped with its declarations ignored. A revision carries no arguments (they are facts of the
+/// predecessor run), so a file that declares some is amended as it stands, not refused for missing ones.
+fn read_revision_file(cwd: &Path, path: &str, name: Option<String>) -> Result<Resolved, String> {
+    let contained = match contain(cwd, path) {
+        Ok(contained) => contained,
+        Err(Refusal::Outside) => {
+            return Err(format!(
+                "The workflow script file {path} is outside the workspace. Pass a `path` inside it, or submit the script inline."
+            ));
+        }
+        Err(Refusal::Unresolved(error)) => {
+            return Err(format!(
+                "The workflow script file {} could not be read: {error}. Pass `path` for a file that exists, or submit the script inline.",
+                describe_script_path(&cwd.join(path), cwd)
+            ));
+        }
+    };
+    let absolute = contained.named;
+    let described = describe_script_path(&absolute, cwd);
+    let source = read_text(&contained.real).map_err(|error| {
+        format!(
+            "The workflow script file {described} could not be read: {error}. Pass `path` for a file that exists, or submit the script inline."
+        )
+    })?;
+    let (script, body_offset) = if starts_with_sentinel(&source) {
+        match parse_saved(&source) {
+            Ok(parsed) => (parsed.script, parsed.body_line_offset),
+            Err(error) => {
+                return Err(format!(
+                    "The workflow script file {described} starts with a `/* zcode-workflow` metadata block that could not be read ({}): {}. Fix the block in that file, or remove it and pass the script alone.",
+                    error.reason(),
+                    error.detail()
+                ));
+            }
+        }
+    } else {
+        (source, 0)
+    };
+    Ok(Resolved {
+        script,
+        name,
+        args: None,
+        origin: Origin::Path { absolute },
+        body_offset,
+    })
 }
 
 /// An inline script: a draft is written for it (Origin::Inline), named after the revision.
@@ -430,7 +484,8 @@ impl Tool for AmendWorkflowTool {
                     .analyze(&resolved.script)
                     .await
                     .map_err(|error| failed(error.message))?;
-                if analysis.ok && input.carries_script() {
+                // The same rule as CreateWorkflow: a script that checks needs its approval, inherited or not.
+                if analysis.ok {
                     return Err(failed(
                         "AmendWorkflow has no confirmation for this script, so nothing was stopped. Call it again.".to_owned(),
                     ));
@@ -492,7 +547,9 @@ impl Tool for AmendWorkflowTool {
         }
         let Some(port) = port else {
             return Ok(output_for(
-                "The revised workflow script compiled cleanly.\n\nNOTE: The workflow was NOT executed — workflow execution is not available in this session, so the script was only typechecked.".to_owned(),
+                format!(
+                    "The revised workflow script compiled cleanly.\n\n{EXECUTION_UNAVAILABLE_NOTE}"
+                ),
                 json!({"diagnostics": [], "ok": true}),
             ));
         };

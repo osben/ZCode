@@ -10,6 +10,7 @@
 
 use std::path::PathBuf;
 
+use rust_cli_base::sync::LockUnpoisoned;
 use rust_cli_kernel_api::ids::WorkflowRunId;
 use rust_cli_kernel_api::workflow_child::LaunchInput;
 use rust_cli_kernel_api::workflow_run::{
@@ -21,12 +22,13 @@ use rust_cli_workflow::event::LaunchFields;
 use rust_cli_workflow::import_build::{BuildOutcome, ImportRefusal};
 use rust_cli_workflow::model::Caps;
 
-use rust_cli_base::sync::LockUnpoisoned;
-
+use super::list::on_blocking_pool;
 use super::submit::{
     compile_check, mint_run_id, record_parent_mode_on_blocking_pool, start_failure,
 };
 use super::{WorkflowRunService, buffer_failures, join_owner};
+use crate::workflow_owner::ActorBindingsPort;
+use std::sync::Arc;
 
 /// The refusal a preflight names, in the port's vocabulary.
 fn refusal_of(reason: ImportRefusal) -> AmendRefusalReason {
@@ -40,16 +42,9 @@ fn refusal_of(reason: ImportRefusal) -> AmendRefusalReason {
     }
 }
 
-/// A journal read on the blocking pool. A failed read is a failure the caller reports; a refusal is an `Ok` value.
-async fn on_pool<T: Send + 'static>(
-    work: impl FnOnce() -> anyhow::Result<T> + Send + 'static,
-) -> Result<T, DynamicWorkflowRunError> {
-    tokio::task::spawn_blocking(work)
-        .await
-        .map_err(|error| {
-            DynamicWorkflowRunError::new(format!("the amend did not finish: {error}"))
-        })?
-        .map_err(|error| DynamicWorkflowRunError::new(format!("{error:#}")))
+/// A journal error as the port's error.
+fn store_failure(error: anyhow::Error) -> DynamicWorkflowRunError {
+    DynamicWorkflowRunError::new(format!("{error:#}"))
 }
 
 impl WorkflowRunService {
@@ -62,9 +57,7 @@ impl WorkflowRunService {
         let Some(store) = self.inner.store.get().cloned() else {
             return Err(DynamicWorkflowRunError::unsupported("getScript"));
         };
-        let row = store
-            .get_run(run_id)
-            .map_err(|error| DynamicWorkflowRunError::new(format!("{error:#}")))?;
+        let row = store.get_run(run_id).map_err(store_failure)?;
         Ok(row
             .filter(|row| row.parent_session_id.as_deref() == Some(parent))
             .and_then(|row| row.script_text))
@@ -77,9 +70,26 @@ impl WorkflowRunService {
         parent: &str,
         request: AmendRequest,
     ) -> Result<AmendResult, DynamicWorkflowRunError> {
+        // Options this host does not carry are refused up front. Dropping them would start a successor that differs
+        // from what the caller asked for, after the predecessor is already stopped.
         if request.subagent_model.is_some() || request.model_bindings.is_some() {
             return Err(DynamicWorkflowRunError::new(
                 "this host cannot amend a run's subagent model or script-named models yet, so the run is not amended",
+            ));
+        }
+        if request.phase_names.is_some()
+            || request.phase_alongside.is_some()
+            || request.inherit_args
+        {
+            return Err(DynamicWorkflowRunError::new(
+                "this host cannot amend a run with phase routing or inherited arguments yet, so the run is not amended",
+            ));
+        }
+        if let Some(limit) = request.max_concurrency
+            && !limit.is_finite()
+        {
+            return Err(DynamicWorkflowRunError::new(
+                "the concurrency limit must be a finite number, so the run is not amended",
             ));
         }
         let Some(default) = self.default_concurrency_value() else {
@@ -107,7 +117,13 @@ impl WorkflowRunService {
         // 1. Preflight: a refusal has no side effects.
         let preflight_store = store.clone();
         let preflight_id = predecessor.clone();
-        let row = match on_pool(move || preflight_store.amend_preflight(&preflight_id)).await? {
+        let row = match on_blocking_pool(move || {
+            preflight_store
+                .amend_preflight(&preflight_id)
+                .map_err(store_failure)
+        })
+        .await?
+        {
             Ok(row) => row,
             Err(reason) => return Ok(AmendResult::Refused(refusal_of(reason))),
         };
@@ -117,15 +133,18 @@ impl WorkflowRunService {
 
         // 2. The successor's id, then 3. the stop of a live predecessor, awaited through its own settlement.
         let successor = mint_run_id();
-        let superseded = self
-            .stop_superseded_if_live(&predecessor, &successor)
+        self.stop_superseded_if_live(&predecessor, &successor)
             .await?;
 
         // 4. The import cache, built from the settled predecessor. The preflight passed, so a refusal here means the
         // predecessor is not terminal (owned by another process): a host fault, not an answer.
         let import_store = store.clone();
         let import_id = predecessor.clone();
-        let cache = match on_pool(move || import_store.amend_import(&import_id)).await? {
+        let cache = match on_blocking_pool(move || {
+            import_store.amend_import(&import_id).map_err(store_failure)
+        })
+        .await?
+        {
             BuildOutcome::Built { cache, .. } => cache,
             BuildOutcome::Refused(reason) => {
                 return Err(DynamicWorkflowRunError::new(format!(
@@ -135,17 +154,26 @@ impl WorkflowRunService {
             }
         };
 
-        // 5. The settled row: the inherited tokens and the name are read after the stop (Node reads them again there).
+        // 5. The settled row, re-read after the stop: the tokens, the limit and the name are its final values. Whether
+        // this amend stopped the predecessor is read from the row too: a run that settled on its own before the stop
+        // reached it keeps its own stop reason and has no successor.
         let settled_store = store.clone();
         let settled_id = predecessor.clone();
-        let settled = on_pool(move || settled_store.get_run(&settled_id))
-            .await?
-            .unwrap_or(row);
+        let settled = on_blocking_pool(move || {
+            settled_store.get_run(&settled_id).map_err(store_failure)
+        })
+        .await?
+        .ok_or_else(|| {
+            DynamicWorkflowRunError::new(format!(
+                "run {predecessor} has no row after its settlement, so the amend cannot read it"
+            ))
+        })?;
+        let superseded = settled.superseded_by.as_deref() == Some(successor.as_str());
 
         // Node: an omitted limit keeps the predecessor's, which the snapshot reports only when it differs from the default.
         let max_concurrency = match request.max_concurrency {
             Some(value) => value.floor().max(1.0),
-            None if (settled.caps.max_concurrency - default).abs() < f64::EPSILON => default,
+            None if settled.caps.max_concurrency == default => default,
             None => settled.caps.max_concurrency,
         };
 
@@ -177,24 +205,42 @@ impl WorkflowRunService {
             imported_cache: Some(cache),
             ..EngineConfig::default()
         };
-        let config = record_parent_mode_on_blocking_pool(config, bindings).await?;
-        match self.start(input, config, Some(compile_check())).await {
+        match self.launch_successor(input, config, bindings).await {
             Ok(()) => Ok(AmendResult::Started {
                 run_id: WorkflowRunId::new(successor),
                 superseded_run_id: superseded.then(|| WorkflowRunId::new(predecessor)),
             }),
-            Err(error) => Err(start_failure(error)),
+            // The predecessor is already stopped when the start fails. Say so, so the caller does not assume nothing changed:
+            // its finished work stays importable by a new amend.
+            Err(error) if superseded => Err(DynamicWorkflowRunError::new(format!(
+                "{} Run {predecessor} was already stopped as superseded before this start failed, so its finished work stays importable: amend it again to retry.",
+                error.message
+            ))),
+            Err(error) => Err(error),
         }
     }
 
+    /// The start of the successor: the parent's mode is recorded, then the child, the compile and the owner start.
+    async fn launch_successor(
+        &self,
+        input: LaunchInput,
+        config: EngineConfig,
+        bindings: Arc<dyn ActorBindingsPort>,
+    ) -> Result<(), DynamicWorkflowRunError> {
+        let config = record_parent_mode_on_blocking_pool(config, bindings).await?;
+        self.start(input, config, Some(compile_check()))
+            .await
+            .map_err(start_failure)
+    }
+
     /// Stops the predecessor as superseded by `successor` if it is live in this process, and waits for its settlement.
-    /// Returns whether it was live. A predecessor that is still starting cannot be stopped yet, and a second stop of
-    /// one that is already being stopped is refused, both as host faults.
+    /// A predecessor that is not live (settled, or unknown here) is left alone. A predecessor that is still starting
+    /// cannot be stopped yet, and a second stop of one that is already being stopped is refused, both as host faults.
     async fn stop_superseded_if_live(
         &self,
         run_id: &str,
         successor: &str,
-    ) -> Result<bool, DynamicWorkflowRunError> {
+    ) -> Result<(), DynamicWorkflowRunError> {
         let serve = {
             let mut state = self.inner.state.lock_unpoisoned();
             if state.starting.contains(run_id) {
@@ -203,14 +249,15 @@ impl WorkflowRunService {
                 )));
             }
             let Some(entry) = state.runs.get_mut(run_id) else {
-                return Ok(false);
+                return Ok(());
             };
             let Some(serve) = entry.serve.take() else {
                 return Err(DynamicWorkflowRunError::new(format!(
                     "run {run_id} is already being stopped, so it cannot be superseded again"
                 )));
             };
-            // The stop is posted under the lock: the owner's thread settles the run, and `serve` ends with the settlement.
+            // The stop is posted under the lock. If the owner already settled the run on its own, the post is not
+            // delivered and the join below ends at once; the caller reads the settled row and so sees no successor.
             entry.handle.stop_superseded(successor);
             serve
         };
@@ -218,6 +265,6 @@ impl WorkflowRunService {
         if !failures.is_empty() {
             buffer_failures(&mut self.inner.state.lock_unpoisoned().failures, failures);
         }
-        Ok(true)
+        Ok(())
     }
 }

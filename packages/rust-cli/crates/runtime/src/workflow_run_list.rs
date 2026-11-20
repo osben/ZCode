@@ -309,7 +309,7 @@ pub(crate) struct SessionRuns {
     parent: String,
 }
 
-async fn on_blocking_pool<T: Send + 'static>(
+pub(super) async fn on_blocking_pool<T: Send + 'static>(
     work: impl FnOnce() -> Result<T, DynamicWorkflowRunError> + Send + 'static,
 ) -> Result<T, DynamicWorkflowRunError> {
     tokio::task::spawn_blocking(work).await.map_err(|error| {

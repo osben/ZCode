@@ -67,6 +67,8 @@ struct FakeRun {
     answer: Answer,
     stored: Option<String>,
     default_concurrency: Option<usize>,
+    /// The stored-script read fails (a wiring or journal fault, not "no stored script").
+    read_fails: bool,
 }
 
 impl FakeRun {
@@ -76,6 +78,17 @@ impl FakeRun {
             answer,
             stored: stored.map(str::to_owned),
             default_concurrency: Some(4),
+            read_fails: false,
+        })
+    }
+
+    fn with_failing_read(answer: Answer) -> Arc<Self> {
+        Arc::new(Self {
+            amends: Mutex::new(Vec::new()),
+            answer,
+            stored: None,
+            default_concurrency: Some(4),
+            read_fails: true,
         })
     }
 
@@ -105,6 +118,9 @@ impl DynamicWorkflowRunPort for FakeRun {
         &self,
         _run_id: &WorkflowRunId,
     ) -> Result<Option<String>, DynamicWorkflowRunError> {
+        if self.read_fails {
+            return Err(DynamicWorkflowRunError::new("the journal is busy"));
+        }
         Ok(self.stored.clone())
     }
 }
@@ -429,6 +445,80 @@ async fn both_a_script_and_a_path_are_refused_and_a_subagent_model_is_refused() 
         message.contains("cannot choose a subagent model"),
         "{message}"
     );
+}
+
+#[tokio::test]
+async fn an_inherited_script_still_needs_a_confirmation_before_the_call() {
+    // The approval is missing (evicted, or the call came without its decision): nothing may stop the live run.
+    let port = FakeRun::new(
+        Answer::Started {
+            superseded: Some("run-1"),
+        },
+        Some(CLEAN),
+    );
+    let (tool, ctx, _guard) = harness(port.clone());
+    let (tx, _rx) = mpsc::channel(4);
+    let error = tool
+        .call(json!({"run_id": "run-1"}), ctx, tx)
+        .await
+        .expect_err("an approval-less inherited revision is refused");
+    assert!(
+        format!("{error:?}").contains("no confirmation"),
+        "{error:?}"
+    );
+    assert!(port.amends().is_empty(), "nothing is stopped");
+}
+
+#[tokio::test]
+async fn a_limit_that_is_not_a_whole_number_is_described_as_such() {
+    let port = FakeRun::new(Answer::Started { superseded: None }, Some(CLEAN));
+    let (tool, ctx, _guard) = harness(port);
+    for bad in [json!(2.5), json!("3")] {
+        let validation = tool
+            .validate_input(&json!({"run_id": "run-1", "max_concurrency": bad}), &ctx)
+            .await;
+        let Validation::Invalid { message, .. } = validation else {
+            panic!("a limit that is not a whole number is refused");
+        };
+        assert!(message.contains("integer"), "{message}");
+        assert!(!message.contains("greater than 0"), "{message}");
+    }
+}
+
+#[tokio::test]
+async fn a_read_failure_of_the_stored_script_is_reported_as_the_failure_it_is() {
+    let port = FakeRun::with_failing_read(Answer::Started { superseded: None });
+    let (tool, ctx, _guard) = harness(port.clone());
+    let error = run(&tool, json!({"run_id": "run-1"}), ctx)
+        .await
+        .expect_err("the read failed");
+    let message = format!("{error:?}");
+    assert!(message.contains("the journal is busy"), "{message}");
+    assert!(!message.contains("has no stored script"), "{message}");
+    assert!(port.amends().is_empty());
+}
+
+#[tokio::test]
+async fn a_script_file_that_declares_arguments_is_amended_without_validating_them() {
+    // Node strips the block and ignores its declarations on the amend path: revisions carry no arguments.
+    let port = FakeRun::new(
+        Answer::Started {
+            superseded: Some("run-1"),
+        },
+        None,
+    );
+    let (tool, ctx, guard) = harness(port.clone());
+    let file = guard.path().join("project").join("flow.ts");
+    rust_cli_fs::write_text(
+        &file,
+        "/* zcode-workflow\ndescription: a\nargs:\n  n:\n    type: number\n*/\nreturn 1;",
+    )
+    .expect("the script file");
+    run(&tool, json!({"run_id": "run-1", "path": "flow.ts"}), ctx)
+        .await
+        .expect("the required argument is not the amend's to validate");
+    let amends = port.amends();
+    assert_eq!(amends[0].script_text, "return 1;", "the block is stripped");
 }
 
 #[tokio::test]

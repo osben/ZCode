@@ -65,17 +65,11 @@ pub trait RunStore: Send + Sync {
     /// Node `getRun(runId)`.
     fn get_run(&self, run_id: &str) -> Result<Option<RunRow>>;
     /// Node `preflightAmendImport` over this store's journal (9.43): the predecessor exists and its completed asks
-    /// have boundaries. Read-only. A store with no journal cannot answer, which is a host fault.
-    fn amend_preflight(&self, predecessor_run_id: &str) -> Result<Result<RunRow, ImportRefusal>> {
-        let _ = predecessor_run_id;
-        anyhow::bail!("this run store has no journal to preflight an amendment from")
-    }
+    /// have boundaries. Read-only. Required, not defaulted: a wrapper that forgot to forward it would fail every amend.
+    fn amend_preflight(&self, predecessor_run_id: &str) -> Result<Result<RunRow, ImportRefusal>>;
     /// Node `buildImportedCache` over this store's journal (9.43), without a transcript count: completed asks import,
     /// and an in-flight continuation is not built (the transcript surface is not composed yet).
-    fn amend_import(&self, predecessor_run_id: &str) -> Result<BuildOutcome> {
-        let _ = predecessor_run_id;
-        anyhow::bail!("this run store has no journal to import an amended run from")
-    }
+    fn amend_import(&self, predecessor_run_id: &str) -> Result<BuildOutcome>;
 }
 
 /// The `RunStore` over one session database. `clock` stamps the rows a settlement writes.

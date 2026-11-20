@@ -3557,6 +3557,24 @@ disk filled (ENOSPC) during the build and the run stopped. Not pushed; the PR is
 465. Result shape. A port refusal is a failure with its text and no error code (CreateWorkflow's shape). Node's failure carries `errorCode`.
 466. Tests not covering the import-cache hit at the composed level. The builder and engine import are golden-covered (W5b). The composed amend has
      no test that a successor's ask answers from the cache.
+467. A `path` file that declares arguments is amended without validating them, and its declarations are ignored, as Node's `resolveAmendScript`
+     does (`amend-workflow-source.ts`). The file's containment and reads are CreateWorkflow's. An earlier draft reused CreateWorkflow's
+     resolver and refused such files as missing arguments the amend cannot supply (PR #601 review, high).
+468. A script that checks needs its approval whether it is inherited or carried, as CreateWorkflow does. Before the PR #601 review, an inherited
+     script was exempt from the no-approval guard. That was a defect, not a divergence from Node (Node asks for both).
+469. A failure after the predecessor was stopped names it: "already stopped as superseded ... amend it again to retry". Node's error does not
+     name it. The stop and the successor are unchanged.
+470. A non-finite `max_concurrency` (infinity or NaN) is refused before anything is stopped. Node's port never receives one (its caller is a
+     whole number), so this is a host guard for the `f64` port type.
+471. `phase_names`, `phase_alongside` and `inherit_args` are refused, not dropped. Node's port carries phase routing and `args`; this host does not
+     yet, so dropping them would start a successor that differs from the call. The in-tree tool never sends them.
+472. A store read failure of the predecessor's script is reported as the failure it is. A run that has no stored script still answers
+     `workflow_amend_script_unavailable`. Node's `.ok().flatten()`-equivalent does not distinguish the two.
+473. `amend_run` takes the "superseded" answer from the settled row, not from the pre-join liveness check: a run that settled on its own before
+     the stop reached it reports no successor. The post of the stop to a dropped receiver is ignored, as the row decides.
+474. A `max_concurrency` that is a fraction or a non-number is refused with a type message, not the range message.
+475. The `RunStore` amend methods are required, not defaulted. Production wraps the store (`LazyRunStore`); a missing forward fails every amend.
+     The wrapper and both test doubles forward them.
 
 ## 10. Open questions
 
