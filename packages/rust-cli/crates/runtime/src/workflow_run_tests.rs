@@ -130,7 +130,7 @@ fn input(run_id: &str) -> LaunchInput {
 }
 
 fn plain_factory() -> OwnerFactory {
-    Arc::new(|config, mailbox: ActorMailbox| {
+    Arc::new(|config, mailbox: ActorMailbox, _handle| {
         let owner = ActorDriverOwner::new(config, MemoryJournal::new(), FakeSessions)?;
         Ok(Box::new(Hosted::new(owner, mailbox)) as Box<dyn HostedOwner>)
     })
@@ -325,8 +325,8 @@ async fn close_reports_a_run_whose_residency_does_not_close_in_time_as_stuck() {
     let (_hold, release) = std::sync::mpsc::channel::<()>();
     let slot = Arc::new(Mutex::new(Some(release)));
     let base = plain_factory();
-    let held: OwnerFactory = Arc::new(move |config, mailbox| {
-        let inner = base(config, mailbox)?;
+    let held: OwnerFactory = Arc::new(move |config, mailbox, handle| {
+        let inner = base(config, mailbox, handle)?;
         let release = slot.lock_unpoisoned().take().expect("one launch");
         Ok(Box::new(HeldOwner { inner, release }) as Box<dyn HostedOwner>)
     });
@@ -510,11 +510,11 @@ fn the_owner_factory_may_read_the_service_without_deadlock() {
         let slot: Arc<Mutex<Option<WorkflowRunService>>> = Arc::new(Mutex::new(None));
         let read = slot.clone();
         let base = plain_factory();
-        let factory: OwnerFactory = Arc::new(move |config, mailbox| {
+        let factory: OwnerFactory = Arc::new(move |config, mailbox, handle| {
             if let Some(service) = read.lock_unpoisoned().clone() {
                 let _ = service.run_count();
             }
-            base(config, mailbox)
+            base(config, mailbox, handle)
         });
         let runner = Arc::new(FakeChildRunner::new());
         let service = WorkflowRunService::new(
@@ -643,8 +643,8 @@ impl HostedOwner for PanickingOwner {
 async fn an_owner_that_panics_stops_its_child_frees_its_id_and_is_reported_at_close() {
     let panic_once = Arc::new(std::sync::atomic::AtomicBool::new(true));
     let base = plain_factory();
-    let factory: OwnerFactory = Arc::new(move |config, mailbox| {
-        let inner = base(config, mailbox)?;
+    let factory: OwnerFactory = Arc::new(move |config, mailbox, handle| {
+        let inner = base(config, mailbox, handle)?;
         if panic_once.swap(false, std::sync::atomic::Ordering::SeqCst) {
             Ok(Box::new(PanickingOwner { inner }) as Box<dyn HostedOwner>)
         } else {
@@ -724,6 +724,8 @@ async fn a_declare_artifact_fails_the_run_before_a_later_complete_can_settle_it(
 #[derive(Default)]
 struct RecordingProgress {
     calls: Mutex<Vec<(String, serde_json::Value, Vec<serde_json::Value>)>>,
+    /// The thread each record arrived on (finding 8: the backlog is not delivered on the launch task).
+    threads: Mutex<Vec<std::thread::ThreadId>>,
 }
 
 impl rust_cli_kernel_api::workflow_run_progress::WorkflowRunProgressPort for RecordingProgress {
@@ -733,6 +735,9 @@ impl rust_cli_kernel_api::workflow_run_progress::WorkflowRunProgressPort for Rec
         progress: &serde_json::Value,
         deltas: &[serde_json::Value],
     ) -> Result<(), String> {
+        self.threads
+            .lock_unpoisoned()
+            .push(std::thread::current().id());
         self.calls.lock_unpoisoned().push((
             parent_session_id.to_owned(),
             progress.clone(),
@@ -975,11 +980,10 @@ async fn a_settled_run_reads_its_row_through_its_session_quota_module() {
         .await
         .expect("launched");
     h.runner.finish(0, completed(json!("done")));
-    wait_until("the run to settle", || h.service.run_count() == 0).await;
-    assert!(
-        reads.reads.lock_unpoisoned().iter().any(|id| id == "wf_q"),
-        "the settlement asks the module about the run"
-    );
+    wait_until("the settlement to read its row", || {
+        reads.reads.lock_unpoisoned().iter().any(|id| id == "wf_q")
+    })
+    .await;
 }
 
 #[tokio::test]
@@ -1006,7 +1010,7 @@ async fn the_unwired_resume_is_refused_once_and_never_retried() {
 
 #[test]
 fn the_session_port_reads_and_lists_only_its_own_session() {
-    use crate::workflow_quota::{SessionQuotaPort, UnwiredResume};
+    use crate::workflow_quota::SessionQuotaPort;
     use rust_cli_workflow::quota_resume::{QuotaResumePort, Refusal, ResumeAnswer};
     let reads = Arc::new(FakeReads {
         rows: vec![
@@ -1015,7 +1019,8 @@ fn the_session_port_reads_and_lists_only_its_own_session() {
         ],
         ..Default::default()
     });
-    let port = SessionQuotaPort::new("ses_a".into(), reads, Arc::new(UnwiredResume));
+    let resumer = Arc::new(FakeResumer::default());
+    let port = SessionQuotaPort::new("ses_a".into(), reads, resumer.clone());
     let listed = port.list_session_runs(64).expect("listed");
     assert_eq!(
         listed
@@ -1027,11 +1032,190 @@ fn the_session_port_reads_and_lists_only_its_own_session() {
     );
     assert_eq!(
         port.get_run("run_b").expect("read").map(|row| row.run_id),
-        Some("run_b".to_owned()),
-        "a row read is by id, through the same reads"
+        None,
+        "a row of another session is not read through this port"
+    );
+    assert_eq!(
+        port.get_run("run_a").expect("read").map(|row| row.run_id),
+        Some("run_a".to_owned()),
+        "the session's own row is read"
     );
     assert_eq!(
         port.resume("run_a").expect("answered"),
-        ResumeAnswer::Refused(Refusal::Other("resume_not_wired".to_owned()))
+        ResumeAnswer::Resumed
+    );
+    assert_eq!(
+        port.resume("run_b").expect("answered"),
+        ResumeAnswer::Refused(Refusal::Other("run_not_in_session".to_owned())),
+        "a resume for another session's run is refused without reaching the resumer"
+    );
+    assert_eq!(*resumer.calls.lock_unpoisoned(), ["run_a"]);
+}
+
+/// Finding 1: a close that lands between the caller's check and the module's creation leaves no module behind, so a
+/// scan after close arms nothing. The hook closes the service on another thread at the racing point.
+#[tokio::test]
+async fn a_session_open_racing_close_creates_no_quota_module() {
+    let reads = Arc::new(FakeReads {
+        rows: vec![(
+            "ses_r".into(),
+            quota_stopped_row("due", "ses_r", NOW - HOUR),
+        )],
+        ..Default::default()
+    });
+    let clock = FakeClock::new();
+    let h = harness();
+    h.service
+        .configure_quota(reads, Arc::new(FakeResumer::default()), clock.clone());
+    let service = h.service.clone();
+    h.service.set_hook_before_quota_module(Box::new(move || {
+        std::thread::spawn(move || {
+            tokio::runtime::Builder::new_current_thread()
+                .build()
+                .expect("runtime")
+                .block_on(service.close());
+        })
+        .join()
+        .expect("close finished");
+    }));
+    h.service.open_session("ses_r");
+    assert!(
+        clock.delays().is_empty(),
+        "a module created after close would arm the due stop"
+    );
+}
+
+/// Finding 2: a launch refused after its child started keeps no session hooks.
+#[tokio::test]
+async fn a_refused_launch_leaves_no_session_hooks_behind() {
+    let owners: OwnerFactory = Arc::new(|_, _, _| Err(anyhow::anyhow!("the owner refused")));
+    let h = harness_with(owners, SessionResidency::new());
+    h.service
+        .configure_progress(Arc::new(RecordingProgress::default()), 4.0);
+    let launched = h
+        .service
+        .launch(input("wf_x"), config("wf_x", Some("ses_x")))
+        .await;
+    assert!(launched.is_err(), "the factory's refusal fails the launch");
+    assert_eq!(
+        h.service.session_entries(),
+        0,
+        "a refused launch builds no session hooks"
+    );
+}
+
+/// Finding 2: a session whose last run settled, with no armed quota timer, is dropped; a later launch rebuilds it.
+#[tokio::test]
+async fn an_idle_session_is_dropped_when_its_last_run_settles() {
+    let h = harness();
+    h.service
+        .configure_progress(Arc::new(RecordingProgress::default()), 4.0);
+    h.service
+        .launch(input("wf_e"), config("wf_e", Some("ses_e")))
+        .await
+        .expect("launched");
+    assert_eq!(
+        h.service.session_entries(),
+        1,
+        "the session holds its hooks while its run is live"
+    );
+    h.runner.finish(0, completed(json!("done")));
+    wait_until("the run to settle", || h.service.run_count() == 0).await;
+    wait_until("the idle session to be dropped", || {
+        h.service.session_entries() == 0
+    })
+    .await;
+}
+
+/// Finding 8: the progress backlog reaches the sink on the owner's thread, not on the launch task.
+#[tokio::test]
+async fn the_progress_backlog_is_delivered_on_the_owner_thread_not_the_launch_task() {
+    let h = harness();
+    let progress = Arc::new(RecordingProgress::default());
+    h.service.configure_progress(progress.clone(), 4.0);
+    let launcher = std::thread::current().id();
+    h.service
+        .launch(input("wf_t"), config("wf_t", Some("ses_t")))
+        .await
+        .expect("launched");
+    wait_until("the backlog to be delivered", || {
+        !progress.threads.lock_unpoisoned().is_empty()
+    })
+    .await;
+    assert!(
+        progress
+            .threads
+            .lock_unpoisoned()
+            .iter()
+            .all(|thread| *thread != launcher),
+        "no progress is delivered on the launching task"
+    );
+    h.runner.finish(0, completed(json!("done")));
+    wait_until("the run to settle", || h.service.run_count() == 0).await;
+}
+
+/// Finding 5: a second sink on one owner does not replay the backlog (the first sink has it already).
+#[test]
+fn a_second_progress_sink_does_not_replay_the_backlog() {
+    use rust_cli_workflow::model::StoredEvent;
+    use rust_cli_workflow::run_progress::RunProgress;
+    struct Collect(Arc<Mutex<Vec<u64>>>);
+    impl RunProgress for Collect {
+        fn progress(&mut self, stored: &StoredEvent) {
+            self.0.lock_unpoisoned().push(stored.sequence);
+        }
+    }
+    let mut owner =
+        ActorDriverOwner::new(config("wf_once", None), MemoryJournal::new(), FakeSessions)
+            .expect("owner");
+    let first = Arc::new(Mutex::new(Vec::new()));
+    owner.set_progress(Box::new(Collect(first.clone())));
+    assert!(
+        !first.lock_unpoisoned().is_empty(),
+        "the backlog reaches the first sink"
+    );
+    let second = Arc::new(Mutex::new(Vec::new()));
+    owner.set_progress(Box::new(Collect(second.clone())));
+    assert!(
+        second.lock_unpoisoned().is_empty(),
+        "a second sink gets no replay"
+    );
+}
+
+/// Review of #586 (ocr, finding 1): the owner factory runs on the blocking pool. A slow factory (a migration check that
+/// waits on a busy database) must not hold the executor: a task ticking on the same current-thread runtime keeps running
+/// while the factory blocks.
+#[tokio::test]
+async fn a_slow_owner_factory_does_not_stall_the_executor() {
+    use std::sync::atomic::{AtomicU64, Ordering};
+    let ticks = Arc::new(AtomicU64::new(0));
+    let observed = Arc::new(AtomicU64::new(0));
+    let factory_ticks = ticks.clone();
+    let factory_observed = observed.clone();
+    let base = plain_factory();
+    let factory: OwnerFactory = Arc::new(move |config, mailbox, handle| {
+        let before = factory_ticks.load(Ordering::SeqCst);
+        std::thread::sleep(Duration::from_millis(300));
+        let after = factory_ticks.load(Ordering::SeqCst);
+        factory_observed.store(after - before, Ordering::SeqCst);
+        base(config, mailbox, handle)
+    });
+    let h = harness_with(factory, SessionResidency::new());
+    let ticker_ticks = ticks.clone();
+    let ticker = tokio::spawn(async move {
+        loop {
+            ticker_ticks.fetch_add(1, Ordering::SeqCst);
+            tokio::time::sleep(Duration::from_millis(5)).await;
+        }
+    });
+    h.service
+        .launch(input("wf_slow"), config("wf_slow", Some("ses_p")))
+        .await
+        .expect("launched");
+    ticker.abort();
+    let during = observed.load(Ordering::SeqCst);
+    assert!(
+        during >= 5,
+        "the executor ticked {during} times while the factory blocked; it must keep running"
     );
 }

@@ -822,6 +822,15 @@ impl<J: JournalPort, S: ActorSessions> ActorDriverOwner<J, S> {
     /// can be attached, so the rows already journaled are delivered to the sink first, in sequence order. They go
     /// through the same builder as later rows, so a late attach loses nothing.
     pub fn set_progress(&mut self, mut progress: Box<dyn RunProgress>) {
+        // Once per owner (finding 5): a sink already installed has the backlog, so a second one would apply every row
+        // twice to a shared projection. The second sink is dropped.
+        if self.engine.driver.progress.is_some() {
+            tracing::warn!(
+                event = "dynamic_workflow.run_progress.sink_already_set",
+                "a progress sink is already installed on this run; the new one is not attached"
+            );
+            return;
+        }
         match self.events() {
             Ok(backlog) => {
                 for stored in &backlog {

@@ -53,8 +53,9 @@ pub struct ContextConfig {
     /// `--add-dir`（cli-args.md §6）：主 env 上解析过的附加工作目录，环境段与嵌套规则文件的范围。它是会话的选择，
     /// 不是执行环境的事实，所以由会话配置持有（deployment.md §21）；权限规则另外持有同一份。
     pub additional_directories: Vec<EnvPath>,
-    /// Fork: the `<total_tokens>` budget (the system prompt's "Token budget" section and the per-step reminder). The
-    /// app-server turns it off: the Node desktop agent sends neither (specs/fork-rust-agent-parity.md).
+    /// Fork: the `<total_tokens>` budget (the system prompt's "Token budget" section and the per-step reminder). Node
+    /// sends both on every surface, the desktop included (`context/builder.ts` `buildTotalTokensSection`,
+    /// `runtime/methods/turn-loop.ts` `appendTotalTokensReminder`); no surface turns it off.
     pub token_budget: bool,
     /// Fork: Node's "ZCode Desktop Context" system section. Some only for the app-server started with
     /// `--surface desktop` (the Host's rollout decision, specs/fork-rust-agent-parity.md); None everywhere else.

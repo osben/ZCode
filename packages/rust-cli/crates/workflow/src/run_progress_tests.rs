@@ -17,6 +17,8 @@ use crate::model::{Caps, StoredEvent};
 enum Behaviour {
     Accept,
     Reject,
+    /// The port answers with an error: the runtime is not constructed yet (Node's `getRuntime` throws).
+    Unbuilt,
     Panic,
 }
 
@@ -62,6 +64,7 @@ impl WorkflowRunProgressPort for RecordingPort {
                 Ok(())
             }
             Behaviour::Reject => Err("the session is closed".to_owned()),
+            Behaviour::Unbuilt => Err("the runtime is not constructed".to_owned()),
             Behaviour::Panic => panic!("the runtime is not constructed"),
         }
     }
@@ -160,7 +163,7 @@ fn drops_an_event_whose_parent_is_not_this_app_and_records_nothing() {
 
 #[test]
 fn a_port_that_is_not_constructed_yet_is_a_no_op_and_the_run_is_not_failed() {
-    let port = RecordingPort::scripted(&[Behaviour::Panic]);
+    let port = RecordingPort::scripted(&[Behaviour::Unbuilt]);
     let mut sink = sink(
         port.clone(),
         SESSION,
@@ -254,6 +257,37 @@ fn two_runs_of_one_session_share_one_projection() {
     second.progress(&started(2, "run_b"));
     let runs = projection.lock().unwrap().snapshot();
     assert_eq!(runs["runs"].as_array().map(Vec::len), Some(2));
+}
+
+/// Finding 7: `LaunchProgress::into_sink` threads the launch facts (tool call, subagent model, default concurrency)
+/// into the envelopes it records, under the owned session.
+#[test]
+fn a_launch_progress_records_under_its_session_with_the_launched_fields() {
+    use super::LaunchProgress;
+    let port = RecordingPort::scripted(&[]);
+    let mut sink = LaunchProgress {
+        owned_session: SESSION.into(),
+        parent_session_id: Some(SESSION.into()),
+        run_id: RUN.into(),
+        tool_call_id: Some("call-9".into()),
+        resumed_from: None,
+        subagent_model: Some("claude-sonnet".into()),
+        model_bindings: None,
+        default_concurrency: 6.0,
+        projection: fresh_projection(),
+        port: port.clone(),
+    }
+    .into_sink();
+    sink.progress(&started(1, RUN));
+    let calls = port.calls();
+    assert_eq!(calls.len(), 1);
+    assert_eq!(calls[0].0, SESSION);
+    assert_eq!(calls[0].1["toolCallId"], json!("call-9"));
+    assert_eq!(
+        calls[0].1["payload"]["subagentModel"],
+        json!("claude-sonnet")
+    );
+    assert_eq!(calls[0].1["payload"]["concurrencyCeiling"], json!(6));
 }
 
 #[test]

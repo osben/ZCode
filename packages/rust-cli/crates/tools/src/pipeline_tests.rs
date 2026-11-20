@@ -939,3 +939,55 @@ async fn a_missing_view_refuses_every_automation_tool_an_ordinary_turn_only_paus
         assert!(!output.is_error, "case {case}");
     }
 }
+
+/// A checker that always passes: the call only needs the tool to get as far as its ask.
+struct PassingChecker;
+
+#[async_trait]
+impl rust_cli_kernel_api::workflow_analysis::WorkflowAnalyzer for PassingChecker {
+    async fn analyze(
+        &self,
+        _script: &str,
+    ) -> Result<
+        rust_cli_kernel_api::workflow_analysis::WorkflowAnalysis,
+        rust_cli_kernel_api::workflow_analysis::WorkflowAnalysisError,
+    > {
+        Ok(rust_cli_kernel_api::workflow_analysis::WorkflowAnalysis {
+            ok: true,
+            diagnostics: Vec::new(),
+        })
+    }
+}
+
+/// Review: a CreateWorkflow ask reaches the user with "Always allow in this session" offered (Node
+/// `askOptions.allowAlways: "session"`), so the session actor can grant it.
+#[tokio::test]
+async fn a_create_workflow_ask_offers_the_session_option() {
+    let gate = Arc::new(FixedGate(PermissionDecision::ask("Run it?", Vec::new())));
+    let pipeline = Pipeline::new(gate, Arc::new(RecordingHooks::default()));
+    let asked = Arc::new(ScriptedInteractions::allowing());
+    let mut context = context(PermissionAnswer::Unavailable);
+    context.interactions = asked.clone();
+    let (progress, _updates) = mpsc::channel(4);
+    let tool = Arc::new(crate::workflow_create::CreateWorkflowTool::new(
+        Arc::new(PassingChecker),
+        None,
+        std::path::PathBuf::from("/home"),
+    ));
+    // A saved run passes the input checks without the Skill; the call itself then finds no such saved workflow.
+    let _ = pipeline
+        .execute(
+            tool,
+            json!({"saved": {"name": "missing"}}),
+            context,
+            progress,
+            no_tool_start(),
+        )
+        .await;
+    let requests = asked.asked();
+    assert_eq!(requests.len(), 1, "{requests:?}");
+    let InteractionRequest::Permission { session_allow, .. } = &requests[0] else {
+        panic!("expected a permission ask: {requests:?}");
+    };
+    assert!(*session_allow, "the session option is offered");
+}

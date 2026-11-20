@@ -230,8 +230,8 @@ async fn the_tokens_left_do_not_reset_at_a_compaction() {
     );
 }
 
-/// Fork: without the token budget (the app-server, like the Node desktop agent) neither the system prompt section
-/// nor the per-step reminder mentions `<total_tokens>`.
+/// Fork: without the token budget neither the system prompt section nor the per-step reminder mentions
+/// `<total_tokens>`.
 #[tokio::test]
 async fn without_the_token_budget_nothing_mentions_total_tokens() {
     let mut config = ContextConfig::new(Surface::Interactive);

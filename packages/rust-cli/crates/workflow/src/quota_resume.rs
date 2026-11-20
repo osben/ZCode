@@ -173,6 +173,11 @@ impl QuotaAutoResume {
         }
     }
 
+    /// Whether no timer is armed for any run of the session. An idle module can be dropped without losing a resume.
+    pub fn is_idle(&self) -> bool {
+        self.inner.lock().timers.is_empty()
+    }
+
     /// Node's `dispose`: cancels every timer; nothing resumes afterwards.
     pub fn dispose(&self) {
         let mut state = self.inner.lock();

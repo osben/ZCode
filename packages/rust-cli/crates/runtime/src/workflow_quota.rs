@@ -64,15 +64,26 @@ impl SessionQuotaPort {
 }
 
 impl QuotaResumePort for SessionQuotaPort {
+    /// Only this session's rows are read through the port (finding 9): another session's run is absent here.
     fn get_run(&self, run_id: &str) -> Result<Option<RunRow>, String> {
-        self.reads.get_run(run_id)
+        Ok(self
+            .reads
+            .get_run(run_id)?
+            .filter(|row| row.parent_session_id.as_deref() == Some(self.session.as_str())))
     }
 
     fn list_session_runs(&self, limit: usize) -> Result<Vec<RunRow>, String> {
         self.reads.list_session_runs(&self.session, limit)
     }
 
+    /// A resume is forwarded only for this session's run (finding 9). Any other run is refused without reaching the
+    /// resumer, with the reason Node gives for a run that cannot be resumed.
     fn resume(&self, run_id: &str) -> Result<ResumeAnswer, String> {
+        if self.get_run(run_id)?.is_none() {
+            return Ok(ResumeAnswer::Refused(Refusal::Other(
+                "run_not_in_session".to_owned(),
+            )));
+        }
         self.resumer.resume(run_id)
     }
 }

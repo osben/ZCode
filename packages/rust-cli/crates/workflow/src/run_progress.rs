@@ -18,6 +18,10 @@ use serde_json::{Map, Value, json};
 use crate::model::StoredEvent;
 
 /// What the owner calls for each journal event of a run (the live half of Node's `onRunEvent`).
+///
+/// Implementations must not panic. The owner calls this inline on the run's thread, and the caller does not guard it
+/// (finding 3): a panic here would end the run. [`ProgressSink`] catches its own port's panics, so it is safe; any other
+/// implementation has to keep that promise itself.
 pub trait RunProgress: Send {
     fn progress(&mut self, stored: &StoredEvent);
 }
@@ -68,6 +72,11 @@ impl LaunchProgress {
 }
 
 /// The progress sink of one run. Built by the run service at launch; one projection is shared by the runs of a session.
+///
+/// Ordering (finding 10): the events of one run reach the port in journal order, because one owner thread calls them in
+/// order. Across the runs of one session the projection update and the port call are not one step, so two runs'
+/// deltas can reach the port out of the order they were applied. Node is single-threaded and has no such gap; the
+/// divergence is recorded in 9.31 (235).
 pub struct ProgressSink {
     /// The session this app owns (Node `deps.sessionId`): the only parent whose progress it records.
     owned_session: String,
@@ -121,7 +130,8 @@ impl ProgressSink {
 impl RunProgress for ProgressSink {
     fn progress(&mut self, stored: &StoredEvent) {
         // The identity gate: an explicit parent that is not this app's session is never appended (Node's
-        // `session_mismatch`). An absent parent is this session by construction.
+        // `session_mismatch`). An absent parent is this session by construction. The warning is logged for each such
+        // event, as Node logs it for each call (finding 4: no latch).
         if let Some(parent) = self.parent_session_id.as_deref()
             && parent != self.owned_session
         {
