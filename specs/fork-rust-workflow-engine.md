@@ -2773,6 +2773,35 @@ first prompt, since the ask text is hashed on replay. Divergence 281: the predec
 reaches the session, which the import cache does for an actor with a carried in-flight ask or consumed entries (Node
 `ImportedActorState.seed`); the scheduler builds it the same way.
 
+### 9.34 W7-5e: production run progress port (as built, gate off)
+
+**Scope built.** The progress path has a production port, and the composition gives it to the run service. The port's only effect is live delivery: each run's projection deltas go to the parent session's open stream. Nothing is persisted, as Node does not persist this event (290). Nothing user-visible changes: nothing launches a run while the gate is off.
+
+- **Port** (`protocol-zcode/src/fork/workflow_progress.rs`, `WorkflowProgressHost`). `record` hands the deltas to a `ProgressDelivery` when there are any, and returns `Ok`. It holds no database connection.
+- **Delivery** (`BridgeDelivery`). The deltas go to the parent session's open stream, through the session bridge the server shares with the context. The context holds the bridge weakly (`Context::set_live_bridge` stores a `Weak`, `live_bridge()` upgrades it), so the server owns the bridge and dropping the server drops it (ocr review 2). The delivery is `Live::workflow_runs_changed`, which follows the helper's `plugin_ui` path: recorded in the stream's log, not in the session projection. A session with no open stream drops the deltas.
+- **Composition** (`cli/src/frontends/workflow_service.rs`). `build` takes the progress port and calls `configure_progress(port, default_concurrency)` with `max(4, min(16, cores − 2))` from `available_parallelism`, the governor's `default_concurrency` formula. `app_server` passes `WorkflowProgressHost` over `BridgeDelivery`, which holds the context weakly (`Arc::downgrade`), so the run service's port does not keep the context alive (ocr review 3).
+
+**Tests.**
+
+- `protocol-zcode` `workflow_progress_tests.rs`. The write test asserted no `session_entry` row after `record`. Run on the pre-change code (which wrote one row), it failed: left 1, right 0. Green after the rework. The delivery and no-deltas tests are green before and after.
+- `protocol-zcode` `a_live_delta_reaches_the_open_stream_and_an_unopened_session_drops_it`: new coverage of `BridgeDelivery`. A delta reaches the open stream's log as a `deltas` frame on the subscription, the projection is unchanged, and a session with no open stream drops its delta. It passes on the new code. It is not a behaviour change, so there was no red step for it.
+- `cli` `workflow_service_tests.rs`, `a_run_launched_in_the_composed_service_records_its_progress_to_its_parent`: red before `configure_progress` was called in `build`; green after. The other three composition tests stayed green.
+- Drop tests (ocr review 2 and 3): `dropping_the_server_drops_its_session_bridge` and `a_delivery_does_not_keep_the_context_alive`. On the strong-reference code both failed (the bridge outlived its server; the delivery kept the context alive). Green after the `Weak` change.
+
+**Node divergences (new in W7-5e, numbered from 290).**
+
+290. Node appends `dynamic_workflow_run_progress` to its in-memory session event store only. The durable record is the `dwf_event` journal, and cold reads replay it (`replayDynamicWorkflowRunEvents`). Rust writes no session row for it. An earlier draft of this PR wrote one per event; that was removed in review because no reader would ever read it, it would grow without bound, and it would keep an empty session alive in `deleteEmptySession`.
+291. Live deltas are recorded in the open stream's log only, not in the session projection. A snapshot or rebuild does not show them, and a session that opens later sees its runs through the journal replay. Node's sequence-0 live-only events have the same shape.
+292. A session with no open stream drops the deltas. Node drops a live-only event nobody subscribes to, so the behaviour matches.
+293. The default concurrency is computed once, when the service is built. Node resolves it per launch from `availableParallelism()` (`dynamic-workflow-run-launch.ts`), and notes the CPU count does not change mid-run. The values are equal. The formula is the governor's `default_concurrency` (floor 4, cap 16, two cores reserved), as `resolveWorkflowDefaultConcurrency`.
+294. The delivery runs as a job on the parent session's pump, after `record` returns. Node's sink notifies through the runtime after its append. The order is the same; the pump is Rust's per-session task.
+295. **Not implemented (W7-7 follow-up).** After the append, Node's `recordDynamicWorkflowRunProgress` also calls four functions that produce model-visible effects: `noteWorkflowReminderRunEvent` (the blocked-run reminder clock), `notifyEscalationRaised`, `notifyRunStalled`, and `notifyHoleReached` (background-task notifications to the parent's model). Rust has none of them on the progress path. The engine emits escalation and stall events, but nothing enqueues a notification from them, and holes are refused until W7-8. The port records only the deltas, so none of these four effects happens.
+296. The port cannot fail, so its `Err` arm and the sink's `append_rejected` log reason are not reached through it. The sink still logs panics and unreadable rows as 9.31 (227) records.
+297. The `workflowRuns` snapshot is not served from the projection in this PR. It is still the empty answer on the gate-off path (divergence 234), which this PR does not change.
+298. Rust's cold read of a parent session does not replay the dwf journal into progress events. Node's `v4-bridge` `replayDynamicWorkflowRunEvents` does, at cold materialization. Verified in Rust: `progress_envelope`, the replay builder, is called only by node-store's own tests and the run progress path, and no hydration path calls it. A follow-up, tied to 234 and 297.
+
+**Not done here.** The four notifications (295). The `workflowRuns` snapshot from the projection (297). The cold replay of progress events from the journal (298). The gate. Live-run coverage through the production owner with a real child process (the composition test uses the fake child runner, as the other composition tests do). The desktop check of the live deltas.
+
 ## 10. Open questions
 
 Each has a recommendation. The user decides. Until decided, the recommendation is the default.

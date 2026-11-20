@@ -5,6 +5,9 @@
 //! reach the sink in journal order with no spawn. The envelope comes from the same builder cold replay uses
 //! (`rust_cli_node_store::progress_envelope`), and the session's projection (`LiveProjection`) is updated under its
 //! lock, so the deltas are in the order the events were journaled. Nothing here fails the run: a sink error is logged.
+//!
+//! The port is delivery-only (9.34): it hands the deltas to the parent's open stream and persists nothing. The sink's
+//! "append" names follow Node's sink; they mean "hand to the port". Cold reads do not replay through this sink.
 
 use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::sync::{Arc, Mutex, PoisonError};
