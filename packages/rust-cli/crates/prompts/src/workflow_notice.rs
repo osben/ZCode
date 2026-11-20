@@ -272,6 +272,82 @@ pub fn blocked(input: &Blocked<'_>) -> String {
     truncate_task_notification(&lines.join("\n"))
 }
 
+/// A hole the run reached and waits at (Node `WorkflowHoleNotificationInput`): the branch is parked until the main agent
+/// writes its body (9.49, W8b).
+pub struct Hole<'a> {
+    pub run_label: &'a str,
+    pub run_id: &'a str,
+    pub hole_id: &'a str,
+    pub name: &'a str,
+    pub type_name: &'a str,
+    pub prompt: Option<&'a str>,
+    pub draft_path: Option<&'a str>,
+    pub line: Option<u64>,
+    pub before: Option<&'a str>,
+    pub after: Option<&'a str>,
+}
+
+/// The hole notice (Node `formatWorkflowHoleNotification`).
+pub fn hole(input: &Hole<'_>) -> String {
+    let mut lines = banner();
+    lines.push("<workflow-hole>".into());
+    lines.push(format!("  <run-id>{}</run-id>", escape_xml(input.run_id)));
+    lines.push(format!("  <run>{}</run>", escape_xml(input.run_label)));
+    lines.push(format!(
+        "  <hole-id>{}</hole-id>",
+        escape_xml(input.hole_id)
+    ));
+    lines.push(format!("  <name>{}</name>", escape_xml(input.name)));
+    lines.push(format!("  <type>{}</type>", escape_xml(input.type_name)));
+    if let Some(prompt) = input.prompt.filter(|prompt| !prompt.is_empty()) {
+        lines.push(format!("  <prompt>{}</prompt>", escape_xml(prompt)));
+    }
+    if let Some(draft) = input.draft_path {
+        lines.push(format!("  <draft>{}</draft>", escape_xml(draft)));
+    }
+    if let Some(line) = input.line {
+        lines.push(format!("  <line>{line}</line>"));
+    }
+    if let Some(before) = input.before {
+        lines.push(format!("  <before>{}</before>", escape_xml(before)));
+    }
+    if let Some(after) = input.after {
+        lines.push(format!("  <after>{}</after>", escape_xml(after)));
+    }
+    let place = match (input.before, input.after) {
+        (Some(before), Some(after)) => format!(" between phases \"{before}\" and \"{after}\""),
+        (Some(before), None) => format!(" after phase \"{before}\""),
+        (None, Some(after)) => format!(" before phase \"{after}\""),
+        (None, None) => String::new(),
+    };
+    let draft = match input.draft_path {
+        None => "Read the run's script with GetWorkflowRun for the context".to_owned(),
+        Some(draft) => match input.line {
+            None => format!("Read the draft at {draft} for the context"),
+            Some(line) => {
+                format!("Read the draft at {draft} (the hole is on line {line}) for the context")
+            }
+        },
+    };
+    lines.push("</workflow-hole>".into());
+    lines.push(String::new());
+    lines.push(format!(
+        "Workflow run {} ({}) reached the hole \"{}\" ({}){place} and is waiting for you to write its body.",
+        input.run_label, input.run_id, input.name, input.hole_id
+    ));
+    lines.push(format!(
+        "Next step: {draft}, write the statements of the hole's function, and call FillWorkflowHole with run_id=\"{}\" and hole_id=\"{}\" and the body as `script`.",
+        input.run_id, input.hole_id
+    ));
+    lines.push(format!(
+        "The body is compiled where the hole stands and sees every binding declared before it; it must return a value of type `{}` — or, when the next step is not known yet, do one step and end with a new tail hole of the same type named for the next step (`return await hole<{}>(\"…\", …)`); the last fill returns. Write only the statements — not the hole call, not an arrow, not the script around it.",
+        input.type_name, input.type_name
+    ));
+    lines.push("Only this branch of the script is parked — every other subagent and the rest of the control flow keep going. So do not drop what you are doing, but do not leave it unfilled either: nothing times out on its behalf.".into());
+    lines.push("If this notification is ever lost, GetWorkflowRun lists the holes this run is still waiting at.".into());
+    truncate_task_notification(&lines.join("\n"))
+}
+
 fn banner() -> Vec<String> {
     BANNER.iter().map(|line| (*line).to_owned()).collect()
 }
@@ -343,3 +419,7 @@ mod tests;
 #[cfg(test)]
 #[path = "workflow_notice_edge_tests.rs"]
 mod edge_tests;
+
+#[cfg(test)]
+#[path = "workflow_notice_hole_tests.rs"]
+mod hole_tests;

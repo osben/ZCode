@@ -270,6 +270,17 @@ impl WorkflowReminders {
         self.source.set(source).is_ok()
     }
 
+    /// W8b (9.49): the hole `site_id` of a run of `session`, as the run source reads it (its type, its line). `None` when no
+    /// source is set, the read fails, or the run owes no such hole.
+    pub fn open_hole(&self, session: &str, run_id: &str, site_id: &str) -> Option<OpenHole> {
+        let source = self.source.get()?;
+        let decisions = source.open(session, run_id).ok()??;
+        decisions
+            .holes
+            .into_iter()
+            .find(|hole| hole.site_id == site_id)
+    }
+
     /// A turn started in `session`: the session is busy.
     pub fn turn_started(&self, session: &str) {
         if let Some(reminders) = self.session(session) {

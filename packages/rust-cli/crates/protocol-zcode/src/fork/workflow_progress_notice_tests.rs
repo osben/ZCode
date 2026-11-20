@@ -3,10 +3,14 @@
 
 use std::sync::{Arc, Mutex};
 
+use rust_cli_kernel_api::dynamic_workflow::{DynamicWorkflowGate, DynamicWorkflowGates};
+use rust_cli_kernel_api::ids::SessionId;
 use rust_cli_kernel_api::workflow_run_progress::WorkflowRunProgressPort;
 use serde_json::{Value, json};
 
 use super::{ProgressDelivery, WorkflowNotices, WorkflowProgressHost};
+use crate::fork::workflow_reminder::{OpenDecisions, OpenHole};
+use crate::fork::workflow_reminder_host::{ReminderTimers, RunDecisionsSource, WorkflowReminders};
 
 #[derive(Default)]
 struct Posted(Mutex<Vec<(String, String)>>);
@@ -203,4 +207,147 @@ fn a_host_without_a_notice_sink_still_records_the_deltas() {
     let host = WorkflowProgressHost::new(Arc::new(Quiet));
     host.record("ses_parent", &raised(), &[json!({"op": "x"})])
         .expect("recorded");
+}
+
+/// W8b (9.49, closes 353 and 518): a hole the run reaches posts one hole notice (Node `notifyHoleReached`).
+fn reached(prompt: &str) -> Value {
+    event(
+        "hole-reached",
+        json!({
+            "instance": {"siteId": "scout", "ordinal": 2},
+            "name": "Plan",
+            "prompt": prompt,
+            "phaseName": "write"
+        }),
+    )
+}
+
+#[test]
+fn a_hole_reached_posts_one_hole_notice_to_the_parent() {
+    let posted = Arc::new(Posted::default());
+    host(&posted)
+        .record("ses_parent", &reached("Draft the plan"), &[])
+        .expect("recorded");
+
+    let posted = posted.0.lock().expect("posted");
+    assert_eq!(posted.len(), 1, "one notice per reached hole");
+    assert_eq!(posted[0].0, "ses_parent");
+    let text = &posted[0].1;
+    assert!(text.contains("<workflow-hole>"), "{text}");
+    assert!(text.contains("<hole-id>scout</hole-id>"), "{text}");
+    assert!(text.contains("<name>Plan</name>"), "{text}");
+    assert!(text.contains("<prompt>Draft the plan</prompt>"), "{text}");
+    assert!(
+        text.contains(
+            "reached the hole \"Plan\" (scout) and is waiting for you to write its body."
+        ),
+        "{text}"
+    );
+    assert!(
+        text.contains("call FillWorkflowHole with run_id=\"dwfrun-7\" and hole_id=\"scout\""),
+        "{text}"
+    );
+}
+
+#[test]
+fn a_hole_filled_and_a_hole_with_no_instance_post_nothing() {
+    let posted = Arc::new(Posted::default());
+    let host = host(&posted);
+    host.record(
+        "ses_parent",
+        &event("hole-filled", json!({"siteId": "scout"})),
+        &[],
+    )
+    .expect("recorded");
+    host.record(
+        "ses_parent",
+        &event("hole-reached", json!({"name": "Plan"})),
+        &[],
+    )
+    .expect("recorded");
+    assert!(posted.0.lock().expect("posted").is_empty());
+}
+
+#[test]
+fn a_hole_prompt_over_four_thousand_units_is_cut_with_an_ellipsis() {
+    let posted = Arc::new(Posted::default());
+    let long = "a".repeat(5_000);
+    host(&posted)
+        .record("ses_parent", &reached(&long), &[])
+        .expect("recorded");
+    let posted = posted.0.lock().expect("posted");
+    let cut = format!("<prompt>{}…</prompt>", "a".repeat(3_999));
+    assert!(posted[0].1.contains(&cut), "{}", posted[0].1);
+}
+
+/// The run source the parent's reminders read (9.44): the hole waits in the run's projection with its type.
+struct WaitingHole;
+
+impl RunDecisionsSource for WaitingHole {
+    fn live_run_ids(&self, _session: &str) -> Vec<String> {
+        vec!["dwfrun-7".to_owned()]
+    }
+
+    fn open(&self, _session: &str, _run_id: &str) -> Result<Option<OpenDecisions>, String> {
+        Ok(Some(OpenDecisions {
+            questions: Vec::new(),
+            holes: vec![OpenHole {
+                site_id: "scout".to_owned(),
+                name: "Plan".to_owned(),
+                type_name: "Plan".to_owned(),
+                line: None,
+                since: Some(1_700_000_000_000),
+            }],
+            draft_path: None,
+        }))
+    }
+}
+
+struct NoGates;
+
+impl DynamicWorkflowGates for NoGates {
+    fn gate(&self, _session: &SessionId) -> Option<DynamicWorkflowGate> {
+        None
+    }
+}
+
+struct NoTimers;
+
+impl ReminderTimers for NoTimers {
+    fn now_ms(&self) -> u64 {
+        0
+    }
+
+    fn schedule(
+        &self,
+        _delay_ms: u64,
+        _fire: Box<dyn FnOnce() + Send>,
+    ) -> Box<dyn FnOnce() + Send> {
+        Box::new(|| {})
+    }
+}
+
+#[test]
+fn a_hole_notice_takes_its_type_from_the_run_the_parent_reads() {
+    let posted = Arc::new(Posted::default());
+    let notices: Arc<dyn WorkflowNotices> = posted.clone();
+    let reminders = Arc::new(WorkflowReminders::new(
+        Arc::new(NoGates),
+        Arc::new(NoTimers),
+        notices,
+    ));
+    assert!(reminders.set_runs(Arc::new(WaitingHole)));
+    WorkflowProgressHost::new(Arc::new(Quiet))
+        .with_notices(posted.clone())
+        .with_reminders(reminders)
+        .record("ses_parent", &reached("Draft the plan"), &[])
+        .expect("recorded");
+    let posted = posted.0.lock().expect("posted");
+    assert_eq!(posted.len(), 1);
+    assert!(posted[0].1.contains("<type>Plan</type>"), "{}", posted[0].1);
+    assert!(
+        !posted[0].1.contains("<type>unknown</type>"),
+        "{}",
+        posted[0].1
+    );
 }

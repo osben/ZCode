@@ -10,7 +10,7 @@ use std::sync::{Arc, Weak};
 use rust_cli_kernel_api::agents::AgentSignals;
 use rust_cli_kernel_api::ids::SessionId;
 use rust_cli_kernel_api::workflow_run_progress::WorkflowRunProgressPort;
-use rust_cli_prompts::workflow_notice::{Escalation, Stall};
+use rust_cli_prompts::workflow_notice::{Escalation, Hole, Stall};
 use serde_json::Value;
 
 use super::workflow_reminder::BlockedReminderClock;
@@ -118,6 +118,12 @@ impl WorkflowRunProgressPort for WorkflowProgressHost {
             let text = match event_type {
                 Some(ESCALATION_RAISED) => escalation_text(run_id, payload),
                 Some(RUN_STALLED) => stall_text(run_id, payload),
+                Some(HOLE_REACHED) => hole_text(
+                    run_id,
+                    parent_session_id,
+                    payload,
+                    self.reminders.as_deref(),
+                ),
                 _ => None,
             };
             if let Some(text) = text {
@@ -137,6 +143,78 @@ const OPEN_SET_EVENT_TYPES: [&str; 4] = [
 ];
 const ESCALATION_RAISED: &str = "escalation-raised";
 const RUN_STALLED: &str = "run-stalled";
+const HOLE_REACHED: &str = "hole-reached";
+
+/// Node `WORKFLOW_HOLE_PROMPT_MAX_CHARS` (`dynamic-workflow-run-hole-notification.ts`): the prompt is cut at 4000 UTF-16
+/// units, the last one an ellipsis.
+const HOLE_PROMPT_MAX_UNITS: usize = 4_000;
+
+/// `hole-reached` → the parked hole's notice (9.49, W8b; Node `notifyHoleReached`). The payload carries the site and the
+/// name; the type and the line come from the run the parent reads (the projection's hole), so the main agent sees the
+/// type it must return. Without that read the type is `unknown`, as Node's fallback. A malformed payload is skipped.
+fn hole_text(
+    run_id: &str,
+    parent_session_id: &str,
+    payload: &Value,
+    reminders: Option<&WorkflowReminders>,
+) -> Option<String> {
+    let instance = payload.get("instance");
+    let site_id = instance.and_then(|instance| str_field(instance, "siteId"));
+    let ordinal = instance.and_then(|instance| instance.get("ordinal").and_then(Value::as_u64));
+    let (Some(site_id), Some(_ordinal), Some(name)) =
+        (site_id, ordinal, str_field(payload, "name"))
+    else {
+        tracing::warn!(
+            event = "dynamic_workflow.hole.notification_skipped",
+            run_id,
+            "Dynamic workflow hole notification skipped: malformed payload"
+        );
+        return None;
+    };
+    let hole =
+        reminders.and_then(|reminders| reminders.open_hole(parent_session_id, run_id, site_id));
+    let type_name = hole
+        .as_ref()
+        .map(|hole| hole.type_name.as_str())
+        .filter(|type_name| !type_name.is_empty())
+        .or_else(|| str_field(payload, "type"))
+        .unwrap_or("unknown");
+    let prompt = str_field(payload, "prompt").map(bound_hole_prompt);
+    Some(rust_cli_prompts::workflow_notice::hole(&Hole {
+        run_label: run_id,
+        run_id,
+        hole_id: site_id,
+        name,
+        type_name,
+        prompt: prompt.as_deref(),
+        // The draft path is not in the projection yet (divergence 488), and the payload does not name the phases (9.49).
+        draft_path: None,
+        line: hole.as_ref().and_then(|hole| hole.line),
+        before: None,
+        after: None,
+    }))
+}
+
+/// Node `boundPrompt`: a prompt over the limit keeps its first 3999 UTF-16 units and ends in `…`. A cut never splits a
+/// character (a lone surrogate cannot be held by a Rust string; divergence 365).
+fn bound_hole_prompt(prompt: &str) -> String {
+    let units: usize = prompt.chars().map(char::len_utf16).sum();
+    if units <= HOLE_PROMPT_MAX_UNITS {
+        return prompt.to_owned();
+    }
+    let mut kept = 0;
+    let mut out = String::new();
+    for character in prompt.chars() {
+        let width = character.len_utf16();
+        if kept + width > HOLE_PROMPT_MAX_UNITS - 1 {
+            break;
+        }
+        kept += width;
+        out.push(character);
+    }
+    out.push('…');
+    out
+}
 
 /// `escalation-raised` → the parked question's notice. A payload without a question id or text is skipped, and never
 /// panics: the notice is an observation, and the run's truth is in the journal.
