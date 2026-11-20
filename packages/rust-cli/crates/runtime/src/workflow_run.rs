@@ -37,6 +37,8 @@ use crate::workflow_assembly::{RunRegistrations, attach_run};
 use crate::workflow_owner::ActorBindingsPort;
 use crate::workflow_quota::{QuotaRunReads, QuotaRunResumer, SessionQuotaPort};
 
+#[path = "workflow_run_amend.rs"]
+mod amend;
 #[path = "workflow_run_list.rs"]
 mod list;
 #[path = "workflow_run_orphans.rs"]
@@ -1207,3 +1209,7 @@ mod resume_tests;
 #[cfg(test)]
 #[path = "workflow_run_submit_tests.rs"]
 mod submit_tests;
+
+#[cfg(test)]
+#[path = "workflow_run_amend_tests.rs"]
+mod amend_tests;

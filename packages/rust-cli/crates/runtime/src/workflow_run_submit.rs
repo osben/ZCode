@@ -36,8 +36,42 @@ pub(crate) fn normalized_limit(requested: Option<u64>, default: f64) -> f64 {
 
 /// Node `mintRunId`: `dwfrun-<uuid>`, with only `[A-Za-z0-9-]` (the id appears in session ids, URLs and file paths). The
 /// uuid comes from the platform's CSPRNG, as Node's `randomUUID()` does (divergence 373).
-fn mint_run_id() -> String {
+pub(super) fn mint_run_id() -> String {
     format!("dwfrun-{}", uuid_v4())
+}
+
+/// The port's error for a start that failed (shared by submit and amend, 9.43): a compile that rejects the script keeps
+/// its diagnostics, as Node's submit reports them.
+pub(super) fn start_failure(error: LaunchFailure) -> DynamicWorkflowRunError {
+    match error {
+        LaunchFailure::Refused { reason, message } => {
+            DynamicWorkflowRunError::new(message.unwrap_or_else(|| reason.to_owned()))
+        }
+        LaunchFailure::Child(error) => match *error {
+            LaunchError::Rejected {
+                diagnostics,
+                message,
+            } => DynamicWorkflowRunError::new(rejected_text(&diagnostics, message.as_deref())),
+            other => DynamicWorkflowRunError::new(format!(
+                "the workflow run could not be started: {other}"
+            )),
+        },
+        other => {
+            DynamicWorkflowRunError::new(format!("the workflow run could not be started: {other}"))
+        }
+    }
+}
+
+/// The check the start runs after the compile: the ask and phase tables and the script hash come from it (9.39).
+pub(super) fn compile_check() -> CompileCheck {
+    Box::new(move |running: &RunningChild, config: &mut EngineConfig| {
+        let (ask_specs, site_phases) =
+            tables_of(&running.compiled).map_err(LaunchFailure::Attach)?;
+        config.script_hash = Some(running.script_hash.clone());
+        config.ask_specs = ask_specs;
+        config.site_phases = site_phases;
+        Ok(())
+    })
 }
 
 /// The text of a compile that rejected the script: its diagnostics in Node's `L{line}:C{column}` form.
@@ -63,7 +97,7 @@ fn rejected_text(
 
 /// Records the parent's permission mode on the config (9.35), on the blocking pool: the port blocks on the store. A read
 /// error refuses the submit, so nothing starts with its mode unrecorded (fail closed).
-async fn record_parent_mode_on_blocking_pool(
+pub(super) async fn record_parent_mode_on_blocking_pool(
     mut config: EngineConfig,
     bindings: Arc<dyn ActorBindingsPort>,
 ) -> Result<EngineConfig, DynamicWorkflowRunError> {
@@ -142,33 +176,9 @@ impl WorkflowRunService {
             ..EngineConfig::default()
         };
         let config = record_parent_mode_on_blocking_pool(config, bindings).await?;
-
-        let check: CompileCheck =
-            Box::new(move |running: &RunningChild, config: &mut EngineConfig| {
-                let (ask_specs, site_phases) =
-                    tables_of(&running.compiled).map_err(LaunchFailure::Attach)?;
-                config.script_hash = Some(running.script_hash.clone());
-                config.ask_specs = ask_specs;
-                config.site_phases = site_phases;
-                Ok(())
-            });
-        match self.start(input, config, Some(check)).await {
+        match self.start(input, config, Some(compile_check())).await {
             Ok(()) => Ok(WorkflowRunId::new(run_id)),
-            Err(LaunchFailure::Refused { reason, message }) => Err(DynamicWorkflowRunError::new(
-                message.unwrap_or_else(|| reason.to_owned()),
-            )),
-            Err(LaunchFailure::Child(error)) => Err(match *error {
-                LaunchError::Rejected {
-                    diagnostics,
-                    message,
-                } => DynamicWorkflowRunError::new(rejected_text(&diagnostics, message.as_deref())),
-                other => DynamicWorkflowRunError::new(format!(
-                    "the workflow run could not be started: {other}"
-                )),
-            }),
-            Err(other) => Err(DynamicWorkflowRunError::new(format!(
-                "the workflow run could not be started: {other}"
-            ))),
+            Err(error) => Err(start_failure(error)),
         }
     }
 }

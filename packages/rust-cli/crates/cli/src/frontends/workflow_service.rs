@@ -4,7 +4,7 @@
 //! off), so building the service opens no database and starts no child.
 
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, Weak};
 
 use anyhow::Result;
 use rust_cli_base::clock::SystemClock;
@@ -20,6 +20,7 @@ use rust_cli_runtime::workflow_assembly::ActorSessionRelease;
 use rust_cli_runtime::workflow_owner::{ActorBindingsPort, OwnerStores, bound_owner_factory};
 use rust_cli_runtime::workflow_quota::StoreQuotaReads;
 use rust_cli_runtime::workflow_run::WorkflowRunService;
+use rust_cli_workflow::import_build::{BuildOutcome, ImportRefusal};
 use rust_cli_workflow::model::RunRow;
 use rust_cli_workflow::model_failure::ThreadClock;
 use rust_cli_workflow::residency::SessionResidency;
@@ -148,6 +149,14 @@ impl RunStore for LazyRunStore {
         self.get()?.get_run(run_id)
     }
 
+    fn amend_preflight(&self, predecessor_run_id: &str) -> Result<Result<RunRow, ImportRefusal>> {
+        self.get()?.amend_preflight(predecessor_run_id)
+    }
+
+    fn amend_import(&self, predecessor_run_id: &str) -> Result<BuildOutcome> {
+        self.get()?.amend_import(predecessor_run_id)
+    }
+
     fn run_detail(
         &self,
         run_id: &str,
@@ -160,17 +169,24 @@ impl RunStore for LazyRunStore {
 /// Fork (W7-11, 9.44, closes 414): the reminder clocks' run source over the service. The live runs and each run's open
 /// decisions are read from the service's memory (its run table and its parent's projection), so the synchronous reminder
 /// never waits on the owner thread.
-pub(crate) struct ServiceRunDecisions(pub(crate) Arc<WorkflowRunService>);
+///
+/// The service is held weakly. The service reaches the reminders through its progress port, so a strong hold here closes a
+/// cycle that nothing breaks. When the service is gone, no run is live (the same answer as an unset source).
+pub(crate) struct ServiceRunDecisions(pub(crate) Weak<WorkflowRunService>);
 
 impl RunDecisionsSource for ServiceRunDecisions {
     fn live_run_ids(&self, session: &str) -> Vec<String> {
-        self.0.live_run_ids_of(session)
+        self.0
+            .upgrade()
+            .map(|service| service.live_run_ids_of(session))
+            .unwrap_or_default()
     }
 
     fn open(&self, session: &str, run_id: &str) -> Result<Option<OpenDecisions>, String> {
         Ok(self
             .0
-            .run_snapshot_of(session, run_id)
+            .upgrade()
+            .and_then(|service| service.run_snapshot_of(session, run_id))
             .map(|run| open_decisions_of(&run)))
     }
 }

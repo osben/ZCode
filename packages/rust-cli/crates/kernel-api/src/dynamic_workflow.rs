@@ -79,9 +79,15 @@ impl SessionGates {
         self.state().records.insert(session.clone(), gate);
     }
 
-    /// Activates a session's workflow tools. `true` when this call activated it; a session already active is `false`.
+    /// Activates a session's workflow tools. `true` when this call activated it. A session already active is `false`, and so
+    /// is a session with no record (never recorded, or forgotten at delete): the record check and the insert are one step
+    /// under the lock, so a forget cannot land between them and leave an activation behind.
     pub fn activate(&self, session: &crate::ids::SessionId) -> bool {
-        self.state().activated.insert(session.clone())
+        let mut state = self.state();
+        if !state.records.contains_key(session) {
+            return false;
+        }
+        state.activated.insert(session.clone())
     }
 
     /// Drops the record and the activation of a deleted session, under one lock.

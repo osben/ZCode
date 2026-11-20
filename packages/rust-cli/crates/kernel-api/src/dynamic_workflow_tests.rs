@@ -196,6 +196,17 @@ fn activation_is_add_only_per_session_and_leaves_the_record_alone() {
         "the record is unchanged"
     );
     assert!(
+        !table.activate(&SessionId::new("ses_unrecorded")),
+        "a session with no record cannot activate"
+    );
+    assert!(!table.activated(&SessionId::new("ses_unrecorded")));
+    table.forget(&session);
+    assert!(
+        !table.activate(&session),
+        "a forgotten session cannot activate, so no activation outlives it"
+    );
+    assert!(!table.activated(&session));
+    assert!(
         !table.activated(&SessionId::new("ses_b")),
         "another session is not activated"
     );

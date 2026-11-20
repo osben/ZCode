@@ -20,6 +20,7 @@ use rust_cli_kernel_api::workflow_snippet::WorkflowSnippetPort;
 use serde::Deserialize;
 use serde_json::Value;
 
+use crate::workflow_amend::AmendWorkflowTool;
 use crate::workflow_create::CreateWorkflowTool;
 use crate::workflow_eval_snippet::EvalWorkflowSnippetTool;
 use crate::workflow_list::ListSavedWorkflowsTool;
@@ -117,9 +118,11 @@ pub fn workflow_tools(
     if let Some(analyzer) = analyzer {
         tools.push(Arc::new(CreateWorkflowTool::new(
             analyzer.clone(),
-            runs,
+            runs.clone(),
             home.clone(),
         )));
+        // Node's order: CreateWorkflow, AmendWorkflow, SaveWorkflow (9.43).
+        tools.push(Arc::new(AmendWorkflowTool::new(analyzer.clone(), runs)));
         tools.push(Arc::new(SaveWorkflowTool::new(analyzer, home.clone())));
     }
     if let Some(snippets) = snippets {

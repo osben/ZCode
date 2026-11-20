@@ -357,7 +357,7 @@ async fn serve(
     // Fork (9.44): the reminder clocks read each session's runs from the service's memory.
     if let Some(service) = &workflow_service
         && !reminders.set_runs(Arc::new(workflow_service::ServiceRunDecisions(
-            service.clone(),
+            Arc::downgrade(service),
         )))
     {
         tracing::warn!(

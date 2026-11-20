@@ -170,8 +170,8 @@ pub(crate) async fn on_resume(server: &Server, session: &SessionId) {
     let Some((source, write)) = restore_plan(on_demand, activated, has_entry, &messages) else {
         return;
     };
-    server.activate_dynamic_workflow(session);
-    if write {
+    // A session forgotten while the restore read the store is not activated (no record), so no entry is written for it.
+    if server.activate_dynamic_workflow(session) && write {
         write_entry(server, session, source).await;
     }
 }

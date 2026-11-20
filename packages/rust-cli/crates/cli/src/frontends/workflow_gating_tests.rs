@@ -55,13 +55,14 @@ fn without_an_analyzer_the_run_tools_and_list_saved_are_wired() {
 }
 
 #[test]
-fn with_an_analyzer_create_and_save_are_wired_before_the_run_tools_and_list_saved() {
+fn with_an_analyzer_create_amend_and_save_are_wired_before_the_run_tools_and_list_saved() {
     let analyzer: Arc<dyn WorkflowAnalyzer> = Arc::new(NoAnalyzer);
     let tools = wired_workflow_tools(Some(analyzer), &PathBuf::from("/home"), no_runs(), None);
     assert_eq!(
         names(&tools),
         [
             "CreateWorkflow",
+            "AmendWorkflow",
             "SaveWorkflow",
             "ListWorkflowRuns",
             "GetWorkflowRun",
@@ -158,6 +159,7 @@ fn with_a_snippet_port_eval_is_wired_between_save_and_the_run_tools() {
         names(&tools),
         [
             "CreateWorkflow",
+            "AmendWorkflow",
             "SaveWorkflow",
             "EvalWorkflowSnippet",
             "ListWorkflowRuns",
