@@ -1638,3 +1638,80 @@ async fn get_run_detail_reports_a_launched_run_before_its_row_and_refuses_withou
     h.runner.finish(0, completed(json!("done")));
     wait_until("the run to settle", || h.residency.live_runs("ses_p") == 0).await;
 }
+
+/// Node `stopDynamicWorkflowBackgroundTask` (W8a, 9.48): a session cancels its own live run; another session's run, or an
+/// unknown id, is not found and nothing stops. The run settles and its child is stopped.
+#[tokio::test]
+async fn a_cancel_stops_a_live_run_of_its_own_session_only() {
+    use rust_cli_kernel_api::ids::{SessionId, WorkflowRunId};
+    use rust_cli_kernel_api::workflow_run::{CancelInitiator, DynamicWorkflowRunSessions};
+    let h = harness();
+    h.service
+        .launch(input("wf_1"), config("wf_1", Some("ses_p")))
+        .await
+        .expect("launched");
+    let other = h.service.for_session(&SessionId::new("ses_other"));
+    let own = h.service.for_session(&SessionId::new("ses_p"));
+    let run = WorkflowRunId::new("wf_1");
+    assert!(
+        !other
+            .cancel(&run, CancelInitiator::User)
+            .await
+            .expect("cancel"),
+        "another session does not hold the run"
+    );
+    assert!(
+        !own.cancel(&WorkflowRunId::new("nope"), CancelInitiator::User)
+            .await
+            .expect("cancel"),
+        "an unknown run is not found"
+    );
+    assert_eq!(h.service.run_count(), 1, "nothing was stopped");
+    assert!(
+        own.cancel(&run, CancelInitiator::Model)
+            .await
+            .expect("cancel"),
+        "the session's live run is stopped"
+    );
+    wait_until("the stopped run to settle", || h.service.run_count() == 0).await;
+    assert!(h.runner.stop_requested(0), "the child was stopped");
+    assert_eq!(h.residency.live_runs("ses_p"), 0, "the guard is released");
+}
+
+/// Node's retired-question table (W8a, 9.48, divergence 391): a question withdrawn with its run is `run_not_in_flight`, an
+/// answered one is `already_resolved`, and an id it never held is `unknown_question`.
+#[tokio::test]
+async fn a_later_answer_is_refused_by_how_its_question_left() {
+    use super::cancel::Retired;
+    use rust_cli_kernel_api::ids::{QuestionId, SessionId};
+    use rust_cli_kernel_api::workflow_run::{
+        DynamicWorkflowRunSessions, ResolveQuestionRefusalReason, ResolveQuestionResult,
+    };
+    let h = harness();
+    h.service
+        .retire_questions(&["q_withdrawn".to_owned()], Retired::Withdrawn);
+    h.service
+        .retire_questions(&["q_done".to_owned()], Retired::Resolved);
+    let port = h.service.for_session(&SessionId::new("ses_p"));
+    let refusal = |qid: &str| {
+        let port = port.clone();
+        let qid = QuestionId::new(qid);
+        async move { port.resolve_question(&qid, "late").await.expect("resolve") }
+    };
+    let reason = |result: ResolveQuestionResult| match result {
+        ResolveQuestionResult::Refused { reason, .. } => reason,
+        other => panic!("expected a refusal, got {other:?}"),
+    };
+    assert_eq!(
+        reason(refusal("q_withdrawn").await),
+        ResolveQuestionRefusalReason::RunNotInFlight
+    );
+    assert_eq!(
+        reason(refusal("q_done").await),
+        ResolveQuestionRefusalReason::AlreadyResolved
+    );
+    assert_eq!(
+        reason(refusal("q_never").await),
+        ResolveQuestionRefusalReason::UnknownQuestion
+    );
+}

@@ -15,7 +15,7 @@ use crate::error::ErrorCode;
 use crate::escalation::{EscalateOutcome, EscalationRequest, RefusalReason};
 use crate::imported_cache::ImportedRunCache;
 use crate::journal::{JournalPort, MemoryJournal};
-use crate::model::{Ref, Violation};
+use crate::model::{Ref, RunStatus, StopReason, Violation};
 use anyhow::{Result, bail};
 use serde_json::{Value, json};
 use std::cell::RefCell;
@@ -710,6 +710,38 @@ fn completing_the_run_cancels_the_in_flight_turn_and_withdraws_its_questions() {
     let log = sessions.0.borrow();
     assert_eq!(log.cancelled, vec![(session.clone(), instance)]);
     assert_eq!(log.rejected, vec![(session.clone(), qid)]);
+}
+
+#[test]
+fn a_user_stop_while_parked_withdraws_the_question_and_a_later_answer_finds_nothing() {
+    // Pin row 69 (9.48): stopping the run while parked interrupts the actor's escalate, and a later answer finds no
+    // question. The run settles as stopped(user), the stop reason the GUI cancel and TaskStop record.
+    let (mut owner, sessions, _actor, session) = running_ask();
+    let qid = match owner
+        .escalate(&session, request("which?"))
+        .expect("escalate")
+    {
+        EscalateOutcome::Parked { qid } => qid,
+        other => panic!("expected a park, got {other:?}"),
+    };
+    owner.stop_run(StopReason::User).expect("stop");
+    let instance = first_turn_instance(&sessions);
+    {
+        let log = sessions.0.borrow();
+        assert_eq!(log.cancelled, vec![(session.clone(), instance)]);
+        assert_eq!(log.rejected, vec![(session.clone(), qid.clone())]);
+    }
+    let row = owner
+        .journal()
+        .get_run("run_1")
+        .expect("the run row")
+        .expect("the run has a row");
+    assert_eq!(row.status, RunStatus::Stopped);
+    assert_eq!(row.stop_reason, Some(StopReason::User));
+    assert!(
+        owner.answer(&qid, "too late").expect("answer").is_none(),
+        "a withdrawn question takes no answer"
+    );
 }
 
 #[test]

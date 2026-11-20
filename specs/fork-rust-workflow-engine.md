@@ -1261,7 +1261,7 @@ Translation of Node's model-level assertions. Node counts model requests and rea
 | 66  | run-service escalation | three structured rejections: unknown id, answered, not in flight                                   | W7              | Three structured rejections (unknown, answered, not in flight). The codes are the `ResolveWorkflowQuestion` results (W7); see row 60.                                                                                                                                            |
 | 67  | run-service escalation | one table, several in-flight runs: qids and pendingQuestions isolated                              | W7              | One table, several runs: qids and `pendingQuestions` isolated. Service registry through the W7 tools.                                                                                                                                                                            |
 | 68  | run-service escalation | the actor's model asks, the main model answers, the answer reaches the actor and the ask settles   | W7              | End to end: the actor asks, the main model answers via `ResolveWorkflowQuestion`, the ask settles. Owner W7; the owner's delivery path is row 44.                                                                                                                                |
-| 69  | run-service escalation | stopping the run while parked interrupts the actor's escalate; a later answer is run_not_in_flight | W8              | Stopping a run while parked: the actor's escalate is interrupted, and a later answer finds no run. Owner W8 (cancel for runs in the background registry); the owner side is row 53.                                                                                              |
+| 69  | run-service escalation | stopping the run while parked interrupts the actor's escalate; a later answer is run_not_in_flight | covered         | Stopping a run while parked: the actor's escalate is interrupted, and a later answer finds no run. Owner W8 (cancel for runs in the background registry); the owner side is row 53.                                                                                              |
 
 Parity gap, fixed in a separate commit (4e5bfec98).
 
@@ -4117,6 +4117,43 @@ a restart simulated as a new server over the same store (empty gate table, no op
      directory (`Levels`), so the restart matches a real one. Sharing the builder with the first server removes the drift.
      Not changed: `session/tree` delete (`session_tree.rs`) closes bridges without stopping the clock. It is a deletion path
      with no forget of its gate either (divergence 501 for deletes, not closed here).
+
+### 9.48 W8a: run cancel through the background registry (as built, gate off)
+
+Scope: the run's cancel from the three entry points of section 3.5 (GUI `cancelBackgroundWork`, the Stop button, the model's TaskStop). Notifications (W8b), the settings turn and the W7 debts (W8c) are not in this part.
+
+As built:
+
+- **One path.** A workflow run is stopped inside `agents` `TaskStopTool::stop`, before the subagents and the commands are looked up (`crates/agents/src/task_stop.rs`). The GUI `cancelBackgroundWork` and the Stop button both reach it as `Command::StopTask` → `Agents::stop_task`; the model's TaskStop reaches it as the tool. `Caller.user` names the initiator: `stop_task` is the user's (`user`), the tool is the model's (`model`). `by_user`, the desktop flag, is unchanged. `protocol-zcode` `background_work::cancel` needs no change.
+- **The port.** `SessionRuns::cancel` (`crates/runtime/src/workflow_run_list.rs`) calls `WorkflowRunService::cancel_run_of` (`crates/runtime/src/workflow_run_cancel.rs`). It finds the live run of that parent session, reads its parked question ids from the projection, posts `ActorRequest::StopRun { reason }` to the owner (reason `user` or `model`) and retires those questions as withdrawn. The owner's `stop_run` is `stop_with(reason, None)`: the engine cancels the in-flight asks, the parked escalates are withdrawn and the row settles as `stopped` with `stop_reason` user or model.
+- **Wiring.** `Agents::set_run_sessions` takes the same `LateRunSessions` the run tools hold. `app_server` sets it right after the kernel is assembled. With no run service, `NoRunPort::cancel` is unsupported, the id falls through, and TaskStop answers `No task found` as before.
+- **Validation.** TaskStop's `validate_input` accepts an id that the session owns as a run (the run detail's `ownedByThisSession`), so the tool is not refused before its stop.
+- **Settled runs.** A TaskStop of a run that already ended answers `Task <id> is not running (status: <journal status>)`. The protocol maps that text to `not_running`, as it does for a settled command.
+- **Retired questions (divergence 391, closed for the stop path).** `runtime/src/workflow_run_cancel.rs` keeps Node's retired table: a question id answered or withdrawn, 256 entries, the oldest forgotten. `resolve_question_of` refuses a question no live run holds by how it left: `run_not_in_flight` (withdrawn with its run), `already_resolved` (answered), else `unknown_question`. The messages are Node's (`workflow-escalation-registry.ts`).
+
+Pin row 69 (section 8 table) is covered by two tests:
+
+- `workflow` `driver_owner_tests::a_user_stop_while_parked_withdraws_the_question_and_a_later_answer_finds_nothing`: an escalate parked, the owner stopped with `User`, the escalate's withdrawal recorded, the row `stopped` with `stop_reason` user, and a later answer takes nothing.
+- `runtime` `workflow_run_tests::a_later_answer_is_refused_by_how_its_question_left`: the refusal for a withdrawn question is `run_not_in_flight`.
+
+The service-level end-to-end (a parked escalate through the run service, then a later answer) is not in a test: the runtime tests have no harness that parks a question from a child run.
+
+Tests: the agents `task_stop_run_tests` (four: a live run stopped by the model with `Model`; the user's `stop_task` with `User`; a settled run is not running; an unknown id is still `No task found`) were written before the agents code, went red on the missing `set_run_sessions`, and then failed twice on test faults (the fake's detail, the error wrapper) before they passed. The owner test was written before `stop_run` (compile red) and passed on its first run, so the withdrawal and the row come from the existing stop path. The runtime tests (`a_cancel_stops_a_live_run_of_its_own_session_only`, `a_later_answer_is_refused_by_how_its_question_left`) were written after `cancel_run_of`, so they were not run red.
+
+Divergences:
+
+600. Node's `local_dynamic_workflow` target is a registry entry. Rust has none: a run is found by asking the run port (`cancel`, then `get_run_detail` with `ownedByThisSession`). The lookup is keyed on the caller's own session, not its root: a subagent's TaskStop does not reach its parent's run.
+601. The brief named a new background kind in `protocol-zcode/src/fork/background_work.rs`. It is built in `agents`' TaskStop instead, because the GUI, `/tasks`, the Stop button and TaskStop all end there. The protocol's refusal text fits its existing reason mapping.
+602. The `command` of a run's stop result is `workflow run`. Node's text comes from the registry entry, which carries no command for a run. Not checked against a live Node run.
+603. A stop through `stop_task` is `user` even outside the desktop build (the TUI's `/tasks` and ^X). The TUI has no Node twin, so the human who stopped the run is the user.
+604. Node's GUI cancel of a settled run returns `background_task_not_running` (`cancelBackgroundTask` turns `alreadyTerminal` into a reason). Here GUI and TaskStop both refuse a settled run with the same text, from the journal row.
+605. Settlement is asynchronous. `cancel` returns true once the stop is posted; the run settles on its owner's thread. Node awaits only the abort, so a TaskStop result can come before the row's `stopped` write.
+606. Parked questions are read from the projection before the stop. A question parked just before the stop, whose projection has not caught up, is not withdrawn. A later answer to it is `unknown_question`, not `run_not_in_flight`. Node reads its registry directly.
+607. Withdrawals happen only through the stop path. Node also withdraws a question when its ask is cancelled or its turn fails (`withdraw` in the escalation registry). That needs the ask driver's failure path and is not built.
+608. The `superseded` initiator is refused as unsupported by `cancel`. The amend path stops its predecessor itself (9.43).
+609. Listing runs in the background registry is not built: runs are not in the `backgroundWorks` projection or in `/tasks`, so the GUI shows no card for a run. A run is cancelled only by its id (`cancelBackgroundWork` or TaskStop). It needs the run's lifecycle events in the projection, which fall with the W8b notifications.
+
+Not done in this part: 609 (listing), 607 (ask-failure withdrawals), and the service-level row 69 test.
 
 ## 10. Open questions
 

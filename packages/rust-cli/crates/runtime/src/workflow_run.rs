@@ -39,6 +39,8 @@ use crate::workflow_quota::{QuotaRunReads, QuotaRunResumer, SessionQuotaPort};
 
 #[path = "workflow_run_amend.rs"]
 mod amend;
+#[path = "workflow_run_cancel.rs"]
+mod cancel;
 #[path = "workflow_run_fill.rs"]
 mod fill;
 #[path = "workflow_run_list.rs"]
@@ -254,6 +256,8 @@ struct State {
     runs: HashMap<String, RunEntry>,
     /// Close failures of runs that settled on their own, for the next close (bounded, L2).
     failures: Vec<(String, String)>,
+    /// Questions that were answered or withdrawn, for a later resolve's refusal (W8a, 9.48; Node's retired table).
+    retired: cancel::RetiredQuestions,
     /// Gives each launch a token, so a settled run removes only its own entry (a run id may be launched again).
     next_token: u64,
 }

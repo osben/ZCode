@@ -8,12 +8,15 @@ use std::sync::Arc;
 use async_trait::async_trait;
 use rust_cli_kernel_api::env::OperationContext;
 use rust_cli_kernel_api::env_shell::{BackgroundStatus, BackgroundStop, BackgroundTask};
-use rust_cli_kernel_api::ids::{AgentId, MachineName, OperationId, SessionId, ShellTaskId};
+use rust_cli_kernel_api::ids::{
+    AgentId, MachineName, OperationId, SessionId, ShellTaskId, WorkflowRunId,
+};
 use rust_cli_kernel_api::machine::MachineEnv;
 use rust_cli_kernel_api::permission::PermissionDecision;
 use rust_cli_kernel_api::tool::{
     PromptContext, Tool, ToolError, ToolOutput, ToolProgress, ToolUseContext, Validation, invalid,
 };
+use rust_cli_kernel_api::workflow_run::{CancelInitiator, DynamicWorkflowRunPort};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use tokio::sync::mpsc;
@@ -89,6 +92,9 @@ pub(crate) struct Caller<'a> {
     pub(crate) operation: &'a OperationContext,
     /// Fork: the user stops it from the desktop (the notification reads `was stopped by user`).
     pub(crate) by_user: bool,
+    /// Fork (W8a, 9.48): the stop is the user's (the GUI cancel, `/tasks`), not the model's TaskStop. It names a run's
+    /// initiator, which `by_user` does not (the desktop flag is set for every user stop of a desktop build).
+    pub(crate) user: bool,
 }
 
 /// 后台命令所在的会话与机器（R3：TaskStop 按任务所在的机器停，remote-exec.md §20.7.2）。
@@ -105,8 +111,19 @@ impl<'a> Caller<'a> {
             machine: &context.machine,
             operation: &context.operation,
             by_user: false,
+            user: false,
         }
     }
+}
+
+/// Fork (W8a, 9.48): the command text a run's stop reports (Node's run has no command line of its own).
+const RUN_COMMAND: &str = "workflow run";
+
+/// Fork (W8a, 9.48): a run's journal detail, when the run belongs to the session asking. The port reads any journal row
+/// (as Node's `getRunDetail` does), so the ownership flag decides.
+async fn owned_run_detail(port: &dyn DynamicWorkflowRunPort, run: &WorkflowRunId) -> Option<Value> {
+    let detail = port.get_run_detail(run).await.ok().flatten()?;
+    (detail.get("ownedByThisSession") == Some(&Value::Bool(true))).then_some(detail)
 }
 
 /// 成功停止：（任务 ID、`local_agent` / `local_bash`、描述或命令、远端的机器）。
@@ -314,6 +331,49 @@ impl TaskStopTool {
         true
     }
 
+    /// Fork (W8a, 9.48): the journal detail of a workflow run this session owns, under `id`. None when no run port is
+    /// wired or the session has no such run, so the id is not a run.
+    async fn session_run(&self, id: &str, context: &Caller<'_>) -> Option<Value> {
+        let sessions = self.core.run_sessions.get()?;
+        let port = sessions.for_session(context.session);
+        owned_run_detail(port.as_ref(), &WorkflowRunId::new(id)).await
+    }
+
+    /// Fork (W8a, 9.48): stops a workflow run of this session through the run port, as Node's `stopBackgroundTask` does for
+    /// a `local_dynamic_workflow`: the user's stop is `user`, the model's TaskStop is `model`. A run that already ended is
+    /// not running (strict, as Node's TaskStop). None when the session holds no such run, so the id goes on to the
+    /// subagents and the commands.
+    async fn stop_run(
+        &self,
+        id: &str,
+        context: &Caller<'_>,
+    ) -> Option<Result<StoppedTask, ToolError>> {
+        let sessions = self.core.run_sessions.get()?;
+        let port = sessions.for_session(context.session);
+        let run = WorkflowRunId::new(id);
+        let initiator = if context.user {
+            CancelInitiator::User
+        } else {
+            CancelInitiator::Model
+        };
+        match port.cancel(&run, initiator).await {
+            Ok(true) => Some(Ok(StoppedTask {
+                id: id.to_owned(),
+                task_type: "local_dynamic_workflow",
+                command: RUN_COMMAND.to_owned(),
+                machine: MachineName::primary(),
+            })),
+            Ok(false) => {
+                let detail = owned_run_detail(port.as_ref(), &run).await?;
+                let status = detail.get("status").and_then(Value::as_str)?.to_owned();
+                Some(Err(ToolError::Failed {
+                    message: format!("Task {id} is not running (status: {status})"),
+                }))
+            }
+            Err(_) => None,
+        }
+    }
+
     /// 停止一个任务（TaskStop 的 `call` 与用户的 `/tasks` 共用）。校验之后状态可能变了（命令刚好自己结束）：
     /// 按执行时的结果报错（StopTaskError）。
     pub(crate) async fn stop(
@@ -321,6 +381,10 @@ impl TaskStopTool {
         id: &str,
         context: &Caller<'_>,
     ) -> Result<StoppedTask, ToolError> {
+        // Fork (W8a, 9.48): a workflow run is stopped the same way for the user and the model (one path, the run port).
+        if let Some(stopped) = self.stop_run(id, context).await {
+            return stopped;
+        }
         match self.find(id, context).await {
             Ok(Target::Agent(agent, description)) => {
                 if let Some(execution) = self.core.live.stop(&agent, context.by_user) {
@@ -462,7 +526,11 @@ impl Tool for TaskStopTool {
         };
         match self.find(&id, &Caller::of(context)).await {
             Ok(_) => Validation::Ok,
-            Err(message) => invalid(message),
+            // Fork (W8a, 9.48): a workflow run of this session is a valid target; its stop answers for it.
+            Err(message) => match self.session_run(&id, &Caller::of(context)).await {
+                Some(_) => Validation::Ok,
+                None => invalid(message),
+            },
         }
     }
 
@@ -496,3 +564,7 @@ impl Tool for TaskStopTool {
 #[cfg(test)]
 #[path = "task_stop_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "task_stop_run_tests.rs"]
+mod run_tests;

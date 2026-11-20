@@ -722,6 +722,12 @@ impl<J: JournalPort, S: ActorSessions> ActorDriverOwner<J, S> {
         self.stop_with(StopReason::Interrupted, None)
     }
 
+    /// The run's stop by a user or the model (W8a, 9.48; Node `stop(initiator)` through the cancel path): the run settles as
+    /// `stopped(user | model)`, its in-flight asks are cancelled, and a parked question is withdrawn (row 69).
+    pub fn stop_run(&mut self, reason: StopReason) -> Result<()> {
+        self.stop_with(reason, None)
+    }
+
     /// The run's stop by an amendment (9.43, Node `controller.abort({ superseded: newRunId })`): the run settles as
     /// `stopped(superseded)` and names the successor, as the journal's `superseded_by` column does.
     pub fn stop_superseded(&mut self, successor_run_id: &str) -> Result<()> {
