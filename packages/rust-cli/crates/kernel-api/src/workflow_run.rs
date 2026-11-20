@@ -191,6 +191,9 @@ pub struct DynamicWorkflowRunError {
     pub message: String,
 }
 
+/// The text of an optional-member fallback. The tools tell a missing capability from a failed call by it.
+const UNSUPPORTED_PREFIX: &str = "dynamic workflow port does not support ";
+
 impl DynamicWorkflowRunError {
     pub fn new(message: impl Into<String>) -> Self {
         Self {
@@ -200,9 +203,45 @@ impl DynamicWorkflowRunError {
 
     /// The optional-member fallback: this session does not provide the capability.
     pub fn unsupported(method: &str) -> Self {
-        Self::new(format!("dynamic workflow port does not support {method}"))
+        Self::new(format!("{UNSUPPORTED_PREFIX}{method}"))
+    }
+
+    /// Whether this is the optional-member fallback (the capability is absent), not a failed call.
+    pub fn is_unsupported(&self) -> bool {
+        self.message.starts_with(UNSUPPORTED_PREFIX)
     }
 }
+
+/// Fork (W7-9, specs/fork-rust-workflow-engine.md 9.40): the run sessions the workflow tools reach. The gate is built
+/// before the kernel and the run service (9.36), so the tools hold this slot, and the composition root sets it once the
+/// service exists. Until then, and in a build with no run service, every session's port answers each member with the
+/// optional-member fallback, which the tools report as "this session cannot ...".
+#[derive(Default)]
+pub struct LateRunSessions {
+    sessions: std::sync::OnceLock<Arc<dyn DynamicWorkflowRunSessions>>,
+}
+
+impl LateRunSessions {
+    /// Sets the run sessions. A second set is refused and keeps the first.
+    pub fn set(&self, sessions: Arc<dyn DynamicWorkflowRunSessions>) -> bool {
+        self.sessions.set(sessions).is_ok()
+    }
+}
+
+impl DynamicWorkflowRunSessions for LateRunSessions {
+    fn for_session(&self, session: &SessionId) -> Arc<dyn DynamicWorkflowRunPort> {
+        match self.sessions.get() {
+            Some(sessions) => sessions.for_session(session),
+            None => Arc::new(NoRunPort),
+        }
+    }
+}
+
+/// The port of a build with no run service: every member is the optional-member fallback.
+struct NoRunPort;
+
+#[async_trait]
+impl DynamicWorkflowRunPort for NoRunPort {}
 
 /// Node `DynamicWorkflowRunPort`. `submit` (W7-8a) is the start; the run service (W7-5) implements it.
 #[async_trait]

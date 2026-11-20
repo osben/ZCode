@@ -11,16 +11,19 @@ use std::sync::Arc;
 
 use rust_cli_kernel_api::dynamic_workflow::{DynamicWorkflowGates, SessionGates};
 use rust_cli_kernel_api::workflow_analysis::WorkflowAnalyzer;
+use rust_cli_kernel_api::workflow_run::DynamicWorkflowRunSessions;
 use rust_cli_protocol_zcode::NodeHelper;
 use rust_cli_protocol_zcode::workflow_compile::HelperWorkflowAnalyzer;
 use rust_cli_runtime::{DynamicWorkflowGating, wired_workflow_tools};
 
 /// The gate source the kernel's extensions hold: the shared table, and the workflow tools behind it. The helper is the
-/// analyzer's transport; without one, SaveWorkflow is not registered.
+/// analyzer's transport; without one, SaveWorkflow is not registered. `runs` is the run sessions the run tools reach
+/// (9.40); the composition sets it once the run service exists.
 pub(crate) fn gating(
     gates: Arc<SessionGates>,
     helper: Option<&Arc<NodeHelper>>,
     home: &Path,
+    runs: Arc<dyn DynamicWorkflowRunSessions>,
 ) -> DynamicWorkflowGating {
     let analyzer = helper.map(|helper| {
         Arc::new(HelperWorkflowAnalyzer::new(helper.clone())) as Arc<dyn WorkflowAnalyzer>
@@ -28,7 +31,7 @@ pub(crate) fn gating(
     let gates: Arc<dyn DynamicWorkflowGates> = gates;
     DynamicWorkflowGating {
         gates,
-        tools: wired_workflow_tools(analyzer, home),
+        tools: wired_workflow_tools(analyzer, home, runs),
     }
 }
 
