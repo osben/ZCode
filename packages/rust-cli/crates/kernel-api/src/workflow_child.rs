@@ -62,8 +62,13 @@ pub trait ChildLauncher: Send + Sync {
     async fn launch(&self, entry: &Path) -> io::Result<LaunchedChild>;
 }
 
-/// The engine side of Boundary A. Methods are synchronous except the request's future, which runs while the host
-/// keeps reading lines, so asks in flight do not hold up the child's next message.
+/// The engine side of Boundary A. Two methods return futures, and the host treats them differently:
+/// - `request` runs concurrently: its future runs while the host keeps reading lines, so asks in flight do not hold up
+///   the child's next message.
+/// - `create_actor` is awaited inline, before the host reads the next line, because the child's later requests name the
+///   engine id it returns. Its future runs on the blocking pool, so the runtime's threads are not held meanwhile.
+///
+/// `event` is synchronous and handled in line order.
 pub trait ChildHandler: Send + Sync {
     /// Creates the actor in the engine and returns its engine id. An `Err` refuses the actor and carries the reason,
     /// which ends the run. The host awaits it before it reads the next line, so the child's later requests can name the

@@ -14,7 +14,7 @@ use rust_cli_kernel_api::workflow_child::{
 use rust_cli_workflow::actor_mailbox::ActorMailbox;
 use rust_cli_workflow::actor_turns::TurnInput;
 use rust_cli_workflow::driver_owner::{ActorDriverOwner, ActorSessionRequest, ActorSessions};
-use rust_cli_workflow::engine::{AskMessage, AskSpec, EngineConfig};
+use rust_cli_workflow::engine::{AskMessage, AskSpec, EngineConfig, RunSettlement};
 use rust_cli_workflow::journal::MemoryJournal;
 use rust_cli_workflow::model::Ref;
 use rust_cli_workflow::residency::SessionResidency;
@@ -623,4 +623,97 @@ fn the_failure_buffer_is_bounded_and_keeps_the_first_failures() {
     buffer_failures(&mut buffer, failures);
     assert_eq!(buffer.len(), FAILURE_BUFFER_LIMIT);
     assert_eq!(buffer[0].0, "wf_0");
+}
+
+/// An owner whose serve panics once attached, so it holds the run's guard the way a real owner does.
+struct PanickingOwner {
+    inner: Box<dyn HostedOwner>,
+}
+
+impl HostedOwner for PanickingOwner {
+    fn attach(&mut self, registrations: RunRegistrations<'_>) -> Result<()> {
+        self.inner.attach(registrations)
+    }
+    fn serve(self: Box<Self>) -> Vec<(String, String)> {
+        panic!("the owner exploded")
+    }
+}
+
+#[tokio::test]
+async fn an_owner_that_panics_stops_its_child_frees_its_id_and_is_reported_at_close() {
+    let panic_once = Arc::new(std::sync::atomic::AtomicBool::new(true));
+    let base = plain_factory();
+    let factory: OwnerFactory = Arc::new(move |config, mailbox| {
+        let inner = base(config, mailbox)?;
+        if panic_once.swap(false, std::sync::atomic::Ordering::SeqCst) {
+            Ok(Box::new(PanickingOwner { inner }) as Box<dyn HostedOwner>)
+        } else {
+            Ok(inner)
+        }
+    });
+    let h = harness_with(factory, SessionResidency::new());
+    h.service
+        .launch(input("wf_1"), config("wf_1", Some("ses_p")))
+        .await
+        .expect("launched");
+    wait_until("the panicked run's child to be stopped", || {
+        h.runner.stop_requested(0)
+    })
+    .await;
+    wait_until("the panicked run's entry to be collected", || {
+        h.service.run_count() == 0
+    })
+    .await;
+    assert_eq!(
+        h.residency.live_runs("ses_p"),
+        0,
+        "the panicked owner's guard is released"
+    );
+    h.service
+        .launch(input("wf_1"), config("wf_1", Some("ses_p")))
+        .await
+        .expect("the id is free again");
+    let report = h.service.close().await;
+    assert!(
+        report
+            .close_failures
+            .iter()
+            .any(|(_, text)| text.contains("panic")),
+        "the panic is reported at close: {report:?}"
+    );
+}
+
+#[tokio::test]
+async fn a_declare_artifact_fails_the_run_before_a_later_complete_can_settle_it() {
+    // Each round sends the event, then a complete from another thread. The event is sent before that thread starts, so
+    // the owner must see the failure first. The settlement is read after both requests are served.
+    for round in 0..200 {
+        let (mailbox, handle) = ActorMailbox::new();
+        let mut owner = ActorDriverOwner::new(
+            config(&format!("wf_{round}"), Some("ses_p")),
+            MemoryJournal::new(),
+            FakeSessions,
+        )
+        .expect("owner");
+        let bridge = WireBridge::new(handle.clone());
+        bridge.event(ChildEvent::DeclareArtifact {
+            site_id: "plain".to_owned(),
+            op: "publish".to_owned(),
+            args: Vec::new(),
+        });
+        let completer = handle.clone();
+        let complete = std::thread::spawn(move || completer.complete(json!("done")));
+        mailbox
+            .serve_next(&mut owner)
+            .expect("the first request is served");
+        mailbox
+            .serve_next(&mut owner)
+            .expect("the second request is served");
+        let _ = complete.join();
+        assert!(
+            matches!(owner.settlement(), Some(RunSettlement::Errored { .. })),
+            "round {round}: the run must fail, not complete: {:?}",
+            owner.settlement()
+        );
+    }
 }

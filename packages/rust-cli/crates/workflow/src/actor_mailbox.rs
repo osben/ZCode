@@ -596,6 +596,13 @@ impl ActorHandle {
         self.call(|reply| ActorRequest::Fail { error, reply })
     }
 
+    /// Posts a failure without waiting for the owner (W7-5a-3, review round 2). The request keeps its place in the
+    /// owner's queue, so a request sent after it is served after it. False when the owner is gone.
+    pub fn fail_posted(&self, error: WorkflowError) -> bool {
+        let (reply, _) = channel();
+        self.post(ActorRequest::Fail { error, reply })
+    }
+
     /// Sends one ticketed child call without waiting for its settlement (W7-5a-3). The caller drains the owner after
     /// the send, which starts the turns the call queued, and then waits on the returned receiver with
     /// [`ActorHandle::await_ticketed`]. The send is ordered before any later request from this handle.

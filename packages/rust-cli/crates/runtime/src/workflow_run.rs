@@ -111,7 +111,10 @@ impl fmt::Display for LaunchFailure {
             Self::NoParentSession => {
                 f.write_str("a workflow run needs its parent session, which keeps it resident")
             }
-            Self::Duplicate(run) => write!(f, "a live workflow run already has the id {run}"),
+            Self::Duplicate(run) => write!(
+                f,
+                "a live workflow run, or a launch still starting, already has the id {run}"
+            ),
             Self::Attach(text) => write!(f, "the workflow run could not be registered: {text}"),
             Self::Child(error) => write!(f, "{error}"),
         }
@@ -273,7 +276,16 @@ impl WorkflowRunService {
         let serve = match std::thread::Builder::new()
             .name(format!("workflow-owner-{run_id}"))
             .spawn(move || {
-                let failures = hosted.serve();
+                // A panic in serve still settles the run (finding 1): the panic is a failure, and settle_run runs.
+                let failures =
+                    match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| hosted.serve()))
+                    {
+                        Ok(failures) => failures,
+                        Err(payload) => vec![(
+                            "owner".to_owned(),
+                            format!("the owner panicked: {}", panic_text(payload.as_ref())),
+                        )],
+                    };
                 settle_run(&settle_inner, &settle_run_id, token, &settle_stop, failures)
             }) {
             Ok(serve) => serve,
@@ -291,12 +303,12 @@ impl WorkflowRunService {
                 token,
                 parent,
                 handle: handle.clone(),
-                stop,
+                stop: stop.clone(),
                 serve: Some(serve),
             },
         );
         drop(state);
-        tokio::spawn(drive_outcome(run_id, handle, outcome));
+        tokio::spawn(drive_outcome(run_id, handle, outcome, stop));
         Ok(())
     }
 
@@ -379,6 +391,15 @@ fn settle_run(
     failures
 }
 
+/// The text of a panic payload, for the close failure that reports it.
+fn panic_text(payload: &(dyn std::any::Any + Send)) -> &str {
+    payload
+        .downcast_ref::<&str>()
+        .copied()
+        .or_else(|| payload.downcast_ref::<String>().map(String::as_str))
+        .unwrap_or("a panic without a message")
+}
+
 /// Logs each close failure at the point it is collected, so a failure that is not returned to a caller is still recorded.
 fn log_failures(run_id: &str, failures: &[(String, String)]) {
     for (session, message) in failures {
@@ -459,18 +480,13 @@ impl ChildHandler for WireBridge {
             ChildEvent::PhaseEntered { name } => {
                 let _ = self.handle.enter_phase(&name);
             }
-            // The mailbox has no declare-artifact request yet (9.23 defers it), so the run fails rather than drop it.
-            // The call waits for the owner, so it runs on the blocking pool while the host keeps reading (M2).
+            // The mailbox has no declare-artifact request yet (9.23 defers it), so the run fails rather than drop it. The
+            // failure is posted inline, not on the blocking pool: a later `complete` from this child must queue after it.
             ChildEvent::DeclareArtifact { .. } => {
-                let handle = self.handle.clone();
-                tokio::task::spawn_blocking(move || {
-                    if let Err(error) = handle.fail(WorkflowError::new(
-                        ErrorCode::DriverError,
-                        "declare-artifact is not wired yet",
-                    )) {
-                        tracing::warn!(%error, "the owner refused the run's failure");
-                    }
-                });
+                let _ = self.handle.fail_posted(WorkflowError::new(
+                    ErrorCode::DriverError,
+                    "declare-artifact is not wired yet",
+                ));
             }
         }
     }
@@ -547,8 +563,15 @@ fn wire(name: &str, message: impl Into<String>) -> WireError {
 
 /// The child's outcome settles the run. A stream that stops before `complete` settles the run as interrupted, and its
 /// reason and cause are logged, since the stop carries no error text (L6).
-async fn drive_outcome(run_id: String, handle: ActorHandle, outcome: BoxFuture<'static, Outcome>) {
+async fn drive_outcome(
+    run_id: String,
+    handle: ActorHandle,
+    outcome: BoxFuture<'static, Outcome>,
+    stop: ChildStop,
+) {
     let outcome = outcome.await;
+    // Read after the outcome: a stop the service requested is visible here, since the request came before the outcome.
+    let requested = stop.is_stopped();
     let _ = tokio::task::spawn_blocking(move || match outcome {
         Outcome::Completed(Completion {
             ok: true, value, ..
@@ -564,13 +587,19 @@ async fn drive_outcome(run_id: String, handle: ActorHandle, outcome: BoxFuture<'
             let _ = handle.fail(WorkflowError::new(ErrorCode::DriverError, message));
         }
         Outcome::Stopped { reason, cause } => {
-            tracing::warn!(
-                event = "workflow.run.host_stopped",
-                run = %run_id,
-                reason = ?reason,
-                cause = %cause,
-                "the child's stream ended before it completed; the run is stopped as interrupted"
-            );
+            // A stop the service asked for (close, or the run settling) is expected; only a child that stopped by itself
+            // is logged as a warning (finding 4).
+            if requested {
+                tracing::debug!(run = %run_id, reason = ?reason, "the service stopped the child");
+            } else {
+                tracing::warn!(
+                    event = "workflow.run.host_stopped",
+                    run = %run_id,
+                    reason = ?reason,
+                    cause = %cause,
+                    "the child's stream ended before it completed; the run is stopped as interrupted"
+                );
+            }
             let _ = handle.stop_interrupted();
         }
     })
