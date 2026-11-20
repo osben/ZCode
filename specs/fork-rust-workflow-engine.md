@@ -2172,6 +2172,113 @@ Divergence 103 (recorded in 9.24, from PR #580) is closed here. Its numbering st
 - Tests: `policy/src/lib_tests_always_ask.rs`, through `PolicyGate::decide` and `check_rules`. Red before the chain change: an always-ask tool was an ordinary ask (Default) and an Allow under guarded, bypass, and a user, project, local or CLI allow rule. Green after.
 - SaveWorkflow (#580, merged as 49687cfd8) is the first user: its `check_permissions` returns `PermissionDecision::always_ask(…, independent: true)` (`tools/src/workflow_save.rs`, the `always_ask(..., true)` call). This is the Node check: `apps/zcode-cli/packages/core/src/tool/handlers/save-workflow.ts:289,292` sets `alwaysAsk` true and `allowAlways` false, so the prompt is asked in every mode with no always-allow offered. Its test `save_workflow_asks_through_the_policy_chain_and_only_a_session_rule_skips_it` (`tools/src/workflow_save_tests.rs`) runs through `PolicyGate::decide`. A PreToolUse allow is covered by `a_hook_allow_does_not_skip_an_always_ask_in_the_pipeline` (`tools/src/pipeline_hook_tests.rs`), which runs the real policy gate and asks again.
 
+### 9.30 W7-5a-5: production owner assembly and run service composition (as built, part)
+
+**Scope built.** The production owner assembly (`runtime/src/workflow_owner.rs`), the composition of the run service in the
+cli composition root (`cli/src/frontends/workflow_service.rs`), and its lifecycle on the protocol context and at shutdown.
+Tests: `workflow_owner_tests.rs` (2, one of them the integration test: a launch through the production assembly, a fake
+child, a real temp SQLite journal, and one completion read back from `dwf_run`), `workflow_service_tests.rs` (2, the gate-off
+proof). Not in this part: orphan reconciliation and the run list (another agent), progress fan-out and quota auto-resume
+(another agent), and the tools.
+
+**Where it lives.**
+
+- `workflow/src/journal_dwf.rs` `DwfJournal<C>` and `workflow/src/actor_sessions.rs` `NodeActorSessions<C, T>` take their
+  connection as `C: Borrow<Connection>`. A borrow (`&Connection`, as the tests use) and an owned `Connection` both work, so an
+  owner that lives on its own thread holds its own connection (item 200). No behaviour changes for the borrowed case.
+- `runtime/src/workflow_owner.rs`: `production_owner_factory(OwnerStores, Arc<dyn TurnRunner>, Arc<R: ActorSessionRelease>)`
+  builds the `OwnerFactory`. Each launch opens two connections to the session database (the journal's and the actor
+  sessions'), builds `actor_turns` (the production closer, 9.15 item 3), `NodeActorSessions` and `DwfJournal`, and returns a
+  `Hosted` owner over the run's mailbox. `UnwiredTurns` and `UnwiredRelease` are the turn side and the release until the
+  agents' bindings exist (item 202, 203).
+- `OwnerFactory` takes the mailbox's `ActorHandle` as a third argument: the turn side posts its results through the handle,
+  and a mailbox does not give its handle back.
+- `kernel-api/src/workflow_run.rs` `WorkflowRunHost`: the run service's lifecycle as the composition root holds it (held run
+  count, and the close as text lines). The tools keep to `DynamicWorkflowRunPort`. `protocol-zcode` `Context` holds it
+  (`set_workflow_runs` / `workflow_runs`), since `protocol-zcode` does not depend on `runtime`.
+- `runtime/src/lib.rs` `LocalKernel::workflow_residency()`: the process's one residency ledger, shared with the run service
+  (9.21), so a run keeps its parent resident and a session close waits for the run.
+- `cli/src/frontends/workflow_service.rs` `build(runner, residency, database, directory)`: returns the service when a child
+  runner is configured (the node helper's, 9.22), and none otherwise. The ports: `GovernorRunConcurrency` over the process
+  governor (`rust_cli_model::governor::process()`, the same singleton the model admission uses), the kernel's residency, the
+  child runner, and the production owner factory.
+- `cli/src/frontends/app_server.rs`: after the kernel is built, `build` runs and the service is set on the context. At
+  shutdown `WorkflowRunHost::close` runs after the reader ends and before `Kernel::drain_live_runs` (W7-6), and each line is
+  logged as `app.shutdown.run_close_failed`.
+
+**The gate.** Nothing calls `launch` yet, and no session's workflow tools are registered (9.18). Building the service is
+inert: it starts no thread, opens no database and starts no child (the owner factory opens the database only when a run is
+launched). The cli test proves it: a built service holds no run, the database file is not created, the child runner has no
+launch, and the close is clean. Without a child runner (no helper command) no service is built at all.
+
+**Not done (for the follow-ups).**
+
+- The agents' bindings for an actor's turn: the parent's model selection, the workspace, the permission mode, the persona and
+  the submit, escalation and browser ports. The launch does not carry them (9.22 "Session and model bindings are not in
+  it"), so the turn side refuses (item 202). This is the main gap between the assembly and a run that does real work.
+- The progress sink, the draft writer, the task-link store, the artifact store, the execution and file-system ports, and the
+  launch input-id resolver (Node's `createDynamicWorkflowRunService` deps). They are not in the service yet (item 213).
+- Orphan reconciliation at construction (5a-4), and the close of a session that is not the app's shutdown (item 215).
+
+**Node composition, and the differences (numbered from 200).** Node's `create-app.ts` builds the run service once per app,
+over the process governor, the session store, the artifact store and the app's session id, and it is the port the
+`CreateWorkflow` tool reaches. The Rust composition follows that shape where the ports exist.
+
+200. The journal and the actor sessions each hold an owned connection to the session database, opened per launch. Node shares
+     the app's one store. An owner runs on its own thread (9.25 item 130), so it cannot borrow the app's connection, and
+     SQLite serialises the writes of the two connections.
+201. Each launch opens its connections with `open_session_database` (the migration check and the lock wait). An open that
+     fails is the launch's failure: the child is stopped and no entry is kept, as an attach failure is (9.25 "Launch").
+202. The turn side refuses every turn: a child's ask fails with "not wired in this build". Node runs each actor's turn through
+     `createScriptWorkflowAgentRuntime` with its model, persona, tools, permission mode, submit, escalation and browser ports.
+     Refused until the agents' bindings exist (the "not done" list above).
+203. The actor session release refuses. Node closes the actor's browser session when the run is disposed
+     (`create-app.ts`, the comment on `browserControlPort`). A refused release is a close failure for the owner, not a silent
+     leak.
+204. The factory takes one `TurnRunner` for every run, not one per launch. Node builds a runtime per actor from the launch's
+     bindings. A per-run runner needs those bindings first (item 202).
+205. Node leaves the run port undefined when the session store does not carry the `dwf_*` tables (`resolveDynamicWorkflowJournalStore`,
+     "a visible degradation", `create-app.ts`). Rust has no such store: the app checks the session database at startup
+     (`app.storage.failed`), so the owner's connections always open the same database.
+206. Node's per-session `dynamicWorkflowEnabled` gate applies where the tools are registered (`GatedRegistry`, 9.18). The
+     Rust service is built when a child runner exists, which is when the Host configures the helper command, and it is
+     inert until a launch. The gate is not read at construction, so the gate-off path changes nothing at runtime.
+207. The governor is the process singleton `rust_cli_model::governor::process()`, as Node's `getWorkflowConcurrencyGovernor()`
+     is a process singleton. No difference in effect.
+208. The residency ledger is the kernel's one `SessionResidency` (9.21). Node's `registerResidencyBlockingWork` pins the parent
+     session through the runtime's blocking-work list; the Rust guard does the same job, so no difference in effect.
+209. The version written on the actor session rows is the crate's `CARGO_PKG_VERSION`. Node writes its own `appVersion`.
+     The row's version string differs; no code reads it for a decision.
+210. The actor session row's directory is the app's workspace root. Node's child runtime writes its own workspace directory
+     (`ensureSessionPersistedForExternalActivity`), which this part does not compare. Unverified for runs whose workspace is
+     not the app's root; check with the tools PR.
+211. The actor session's title is `workflow subagent <site>@<ordinal>`, and its link is a `workflow_actor` row with path
+     `dwf/<run>/<site>@<ordinal>` and status `running`, as Node's `persistActorSession` writes them (the session id, title and
+     link path are Node's, in `workflow/src/actor_sessions.rs`).
+212. Node reconciles the parent session's non-terminal runs when the service is constructed (`parentSessionId: sessionId` in
+     `create-app.ts`). Rust builds the service without reconciling. Deferred to 5a-4, which owns it.
+213. Node passes the progress sink (`onRunEvent`), the draft writer (`writeWorkflowDraft`), the permission mode getter
+     (`permissionMode`), the launch input-id resolver (`resolveLaunchInputId`), the task-link store, the artifact store and
+     the execution and file-system ports to the run service. The Rust service has none of them yet. The progress sink is
+     5b; the draft writer and the input-id resolver come with the tools; the permission mode with item 202.
+214. Node's close awaits every run's settlement with no timeout (9.25 item 121). Rust's shutdown close is bounded by the
+     residency's close wait (60 seconds, 9.25 item 121), then the drain (W7-6) runs on the sessions that remain. A stuck run
+     is logged, and the process exits.
+215. A session's close does not close the run service. Node has no per-session run service either: the run service serves the
+     app, and a session close is the residency's close (9.21). The run service closes once, at app shutdown.
+216. A close failure at shutdown is logged as `app.shutdown.run_close_failed` at error level. Node returns the failures to the
+     caller that closes the App (9.25 item 132); there is no caller to return them to here, so the log is the record.
+217. The shutdown's run close runs after the protocol reader ends, and before the session drain, so the runs settle before their
+     parent sessions are drained. The order of Node's own disposal was not compared in this part.
+218. The composition builds the run service and its governor adapter in the same process as the protocol server, and removes
+     the `dead_code` allowance of `workflow_governor.rs`, now that a constructor reaches the adapter.
+219. The integration test runs the real owner over a real SQLite journal with a fake child runner. It covers one launch and one
+     completion. The asks, the escalations, the redrive and the stall clocks through the real assembly are not covered; they
+     need the turn side (item 202).
+
+**Tests seen red first.** `workflow_owner_tests.rs` ran against the stubs: 2 failed (a `todo!` in the factory and in the
+refusals). `workflow_service_tests.rs` ran against the stub `build`: 2 failed (`todo!`). Both then passed.
+
 ### 9.27 W7-8a CreateWorkflow (as built)
 
 **Scope.** The CreateWorkflow tool: its input rules, the three sources (inline, `saved`, `path`), the draft file, the
