@@ -39,6 +39,8 @@ use crate::workflow_quota::{QuotaRunReads, QuotaRunResumer, SessionQuotaPort};
 
 #[path = "workflow_run_amend.rs"]
 mod amend;
+#[path = "workflow_run_fill.rs"]
+mod fill;
 #[path = "workflow_run_list.rs"]
 mod list;
 #[path = "workflow_run_orphans.rs"]
@@ -214,6 +216,10 @@ struct Inner {
     bindings: OnceLock<Arc<dyn ActorBindingsPort>>,
     /// Node `defaultConcurrency()` (9.39): the caps default of a submit. Set once by the composition.
     default_concurrency: OnceLock<f64>,
+    /// Serializes FillWorkflowHole calls (9.45): a fill reads the run's script, and the next fill must read the one the
+    /// previous fill wrote. One permit, held across the helper's call (a semaphore, since a tokio guard may not be held
+    /// across an await).
+    fills: tokio::sync::Semaphore,
 }
 
 /// What the composition configures. Each hook is off until its setter runs, so a service without them behaves as 9.25.
@@ -488,6 +494,7 @@ impl WorkflowRunService {
                 before_quota_module: Mutex::new(None),
                 bindings: OnceLock::new(),
                 default_concurrency: OnceLock::new(),
+                fills: tokio::sync::Semaphore::new(1),
             }),
         }
     }
@@ -1073,7 +1080,7 @@ fn ticketed(handle: &ActorHandle, call: TicketedCall) -> Result<TicketSettlement
     ActorHandle::await_ticketed(answer)
 }
 
-/// Maps one child request to its owner call. A hole is refused here until W7-8.
+/// Maps one child request to its owner call. A hole parks its branch until the run service fills it (9.45).
 fn ticketed_call(
     request: ChildRequest,
     actor_id: Option<String>,
@@ -1100,10 +1107,11 @@ fn ticketed_call(
             op: request.artifact_op.unwrap_or_default(),
             args: request.args.unwrap_or_default(),
         }),
-        RequestType::Hole => Err(Box::new(wire(
-            "DriverError",
-            "a hole request is not wired yet (W7-8)",
-        ))),
+        RequestType::Hole => Ok(TicketedCall::Hole {
+            site_id,
+            name: request.name.unwrap_or_default(),
+            prompt: request.prompt,
+        }),
     }
 }
 

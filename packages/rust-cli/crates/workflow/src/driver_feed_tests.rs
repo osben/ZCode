@@ -15,7 +15,7 @@ use std::sync::Arc;
 
 type Owner = ActorDriverOwner<MemoryJournal, Recording>;
 
-fn new_owner() -> (Owner, Recording) {
+pub(crate) fn new_owner() -> (Owner, Recording) {
     let sessions = Recording::default();
     let owner =
         ActorDriverOwner::new(config(), MemoryJournal::new(), sessions.clone()).expect("owner");
@@ -23,7 +23,7 @@ fn new_owner() -> (Owner, Recording) {
 }
 
 /// Creates an actor, asks it once and leaves its turn running. Returns the session and the ask's instance.
-fn start_ask(owner: &mut Owner, sessions: &Recording) -> (String, Ref) {
+pub(crate) fn start_ask(owner: &mut Owner, sessions: &Recording) -> (String, Ref) {
     let actor = owner
         .create_actor("plain", Some("worker"), None)
         .expect("actor");
@@ -52,7 +52,7 @@ fn payloads(owner: &Owner) -> Vec<String> {
         .collect()
 }
 
-fn count_of(owner: &Owner, kind: &str) -> usize {
+pub(crate) fn count_of(owner: &Owner, kind: &str) -> usize {
     payloads(owner)
         .iter()
         .filter(|payload| payload.contains(&format!("\"{kind}\"")))

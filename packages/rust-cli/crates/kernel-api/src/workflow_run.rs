@@ -112,6 +112,51 @@ pub enum CancelInitiator {
     Superseded(WorkflowRunId),
 }
 
+/// Node `fillHole`'s refusal reasons (`DynamicWorkflowRunFillHoleRefusalReason`), as the tool reports them (W7-12, 9.45).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FillRefusalReason {
+    RunNotFound,
+    HoleNotWaiting,
+    CompileFailed,
+    FillIdsUnstable,
+}
+
+impl FillRefusalReason {
+    /// Node's wire literal.
+    pub fn code(self) -> &'static str {
+        match self {
+            Self::RunNotFound => "run_not_found",
+            Self::HoleNotWaiting => "hole_not_waiting",
+            Self::CompileFailed => "compile_failed",
+            Self::FillIdsUnstable => "fill_ids_unstable",
+        }
+    }
+}
+
+/// Node `DynamicWorkflowRunFillHoleRequest`: the waiting run, the hole's site id, and the body's statements.
+#[derive(Debug, Clone, PartialEq)]
+pub struct FillHoleRequest {
+    pub run_id: WorkflowRunId,
+    pub hole_id: String,
+    pub body: String,
+    pub parent_session_id: Option<SessionId>,
+}
+
+/// Node `FillWorkflowHoleResult`, the port's part: a fill (with the phases it added and the effective script) or a
+/// refusal with its text and diagnostics. A refusal has no side effects.
+#[derive(Debug, Clone, PartialEq)]
+pub enum FillHoleOutcome {
+    Filled {
+        phases_added: Vec<String>,
+        script_text: String,
+    },
+    Refused {
+        reason: FillRefusalReason,
+        message: String,
+        diagnostics: Option<Value>,
+    },
+}
+
 /// Node `DynamicWorkflowRunAmendRequest`. Model selections and script-named bindings stay JSON until W7-8a types them.
 #[derive(Debug, Clone, PartialEq)]
 pub struct AmendRequest {
@@ -255,6 +300,15 @@ pub trait DynamicWorkflowRunPort: Send + Sync {
     async fn amend(&self, request: AmendRequest) -> Result<AmendResult, DynamicWorkflowRunError> {
         let _ = request;
         Err(DynamicWorkflowRunError::unsupported("amend"))
+    }
+
+    /// Node `fillHole` (W7-12, 9.45): fills one waiting hole of a run in flight. A refusal is a result, not an error.
+    async fn fill_hole(
+        &self,
+        request: FillHoleRequest,
+    ) -> Result<FillHoleOutcome, DynamicWorkflowRunError> {
+        let _ = request;
+        Err(DynamicWorkflowRunError::unsupported("fillHole"))
     }
 
     /// Node `submit`: starts a new run in the background and returns its run id (also its background task id). A

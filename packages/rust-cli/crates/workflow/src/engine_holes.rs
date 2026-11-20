@@ -22,6 +22,13 @@ use rust_cli_base::js::string::{utf16_len, utf16_prefix};
 use serde_json::{Value, json};
 use std::collections::HashMap;
 
+/// The wall clock in milliseconds since the Unix epoch, read by the owner for `hole` and `fill_hole` (Node's `Date.now()`
+/// through `EngineConfig.now`). The engine itself reads no clock.
+pub fn wall_clock_ms() -> f64 {
+    use crate::model_failure::RedriveClock;
+    crate::model_failure::ThreadClock.now_ms() as f64
+}
+
 /// `hole-reached` and the notification prompt: the cap in UTF-16 units (Node `HOLE_PROMPT_MAX_CHARS`).
 pub const HOLE_PROMPT_MAX_CHARS: usize = 4000;
 

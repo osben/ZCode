@@ -12,7 +12,8 @@ use async_trait::async_trait;
 use futures_util::future::BoxFuture;
 use rust_cli_base::{Spawner, Task};
 use rust_cli_kernel_api::workflow_child::{
-    ChildStop, LaunchError, LaunchInput, RunningChild, WorkflowChildRunner,
+    ChildStop, FillPrepareInput, FillPrepareOutcome, LaunchError, LaunchInput, RunningChild,
+    WorkflowChildRunner,
 };
 use tokio_util::sync::CancellationToken;
 
@@ -77,6 +78,17 @@ impl WorkflowChildRunner for ProtocolChildRunner {
             &self.fallback_dir,
         )
         .await
+    }
+
+    async fn prepare_fill(
+        &self,
+        input: FillPrepareInput,
+    ) -> Result<FillPrepareOutcome, LaunchError> {
+        workflow_compile::fill_prepare(&self.helper, &input)
+            .await
+            .map_err(|error| {
+                LaunchError::Failed(format!("the fill helper failed: {}", error.message))
+            })
     }
 }
 

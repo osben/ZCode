@@ -63,6 +63,7 @@ fn with_an_analyzer_create_amend_and_save_are_wired_before_the_run_tools_and_lis
         [
             "CreateWorkflow",
             "AmendWorkflow",
+            "FillWorkflowHole",
             "SaveWorkflow",
             "ListWorkflowRuns",
             "GetWorkflowRun",
@@ -160,6 +161,7 @@ fn with_a_snippet_port_eval_is_wired_between_save_and_the_run_tools() {
         [
             "CreateWorkflow",
             "AmendWorkflow",
+            "FillWorkflowHole",
             "SaveWorkflow",
             "EvalWorkflowSnippet",
             "ListWorkflowRuns",

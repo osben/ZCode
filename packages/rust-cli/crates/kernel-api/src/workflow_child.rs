@@ -283,6 +283,41 @@ pub trait WorkflowChildRunner: Send + Sync {
         input: LaunchInput,
         handler: Arc<dyn ChildHandler>,
     ) -> Result<RunningChild, LaunchError>;
+
+    /// Prepares one hole's fill on the compile helper (W7-12, 9.45): the effective script, the body's code and the tables.
+    /// Nothing is written and nothing starts. The default has no helper to ask.
+    async fn prepare_fill(
+        &self,
+        input: FillPrepareInput,
+    ) -> Result<FillPrepareOutcome, LaunchError> {
+        let _ = input;
+        Err(LaunchError::Failed(
+            "the fill helper is not wired".to_owned(),
+        ))
+    }
+}
+
+/// The inputs of one hole fill's preparation (W7-12, 9.45): the run's stored script, the hole, the body's statements and
+/// the run's model bindings (`None` when the run named none).
+#[derive(Debug, Clone, PartialEq)]
+pub struct FillPrepareInput {
+    pub script_text: String,
+    pub run_id: String,
+    pub hole_id: String,
+    pub body: String,
+    pub model_bindings: Option<Value>,
+}
+
+/// The helper's answer to a fill. `Ready` carries the helper's reply (`effectiveText`, `scriptHash`, `code`, `askSpecs`,
+/// `sitePhases`, `phaseNames`, `holes`, `phasesAdded`); `Refused` carries Node's refusal reason, text and diagnostics.
+#[derive(Debug, Clone, PartialEq)]
+pub enum FillPrepareOutcome {
+    Ready(Value),
+    Refused {
+        reason: String,
+        message: String,
+        diagnostics: Option<Value>,
+    },
 }
 
 #[cfg(test)]

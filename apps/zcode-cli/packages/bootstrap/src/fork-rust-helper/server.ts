@@ -92,6 +92,7 @@ import {
   evalSnippetForRust,
   formatWorkflowForRust,
 } from "./workflow-compile.js";
+import { fillPrepareForRust } from "./workflow-fill.js";
 import { FORK_RUST_HELPER_WORKFLOW } from "./workflow-protocol.js";
 
 type Handler = (params: unknown) => Promise<unknown> | unknown;
@@ -193,6 +194,7 @@ export class ForkRustHelperServer {
       [FORK_RUST_HELPER_WORKFLOW.compile]: (params) => compileWorkflowForRust(params),
       [FORK_RUST_HELPER_WORKFLOW.format]: (params) => formatWorkflowForRust(params),
       [FORK_RUST_HELPER_WORKFLOW.evalSnippet]: (params) => evalSnippetForRust(params),
+      [FORK_RUST_HELPER_WORKFLOW.fillPrepare]: (params) => fillPrepareForRust(params),
       // F3: the same handlers as Node's protocol server, on the helper's session records.
       [zcodeProtocolMethods.pluginsMentionItems]: (params) =>
         getPluginMentionItems(context, params),

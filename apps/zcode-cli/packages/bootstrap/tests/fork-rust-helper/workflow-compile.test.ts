@@ -450,6 +450,68 @@ describe("fork: helper/workflow/format run list, run detail and window display (
 
 // W7-8c (specs/fork-rust-workflow-engine.md, 9.28): EvalWorkflowSnippet's compile. The snippet facade declares no agent() and
 // its world.run commands must be literals, as in Node's `dynamic-workflow-snippet-service.ts`. Nothing runs here.
+// specs/fork-rust-workflow-engine.md, 9.45 (W7-12): one hole's fill, prepared on the helper. Nothing is written.
+describe("fork: helper/workflow/fillPrepare (W7-12)", () => {
+  const HOLE_SCRIPT = [
+    'const reviewer = agent("reviewer");',
+    'const verdict = await hole<string>("verdict", "decide on the answer");',
+    "return verdict;",
+  ].join("\n");
+
+  it("advertises fillPrepare in helper/initialize", async () => {
+    const helper = await startHelper();
+    const reply = await helper.request("helper/initialize", {
+      protocolVersion: FORK_RUST_HELPER_PROTOCOL_VERSION,
+    });
+    expect(reply.result?.methods).toContain("helper/workflow/fillPrepare");
+    expect(FORK_RUST_HELPER_METHODS).toContain("helper/workflow/fillPrepare");
+    helper.close();
+    await helper.done;
+  });
+
+  it("splices the body into the hole and returns its code and the effective script", async () => {
+    const helper = await startHelper();
+    const reply = await helper.request("helper/workflow/fillPrepare", {
+      scriptText: HOLE_SCRIPT,
+      runId: "dwfrun-w712-1",
+      holeId: "hole#1",
+      body: "return 'approved';",
+    });
+    expect(reply.error).toBeUndefined();
+    const result = reply.result as {
+      ok: boolean;
+      code: string;
+      effectiveText: string;
+      scriptHash: string;
+    };
+    expect(result.ok).toBe(true);
+    expect(result.code).toContain("approved");
+    expect(result.effectiveText).toContain("approved");
+    expect(result.effectiveText).not.toBe(HOLE_SCRIPT);
+    expect(result.scriptHash.length).toBeGreaterThan(0);
+    helper.close();
+    await helper.done;
+  });
+
+  it("refuses a hole id that the script does not have, with Node's text and no effective script", async () => {
+    const helper = await startHelper();
+    const reply = await helper.request("helper/workflow/fillPrepare", {
+      scriptText: HOLE_SCRIPT,
+      runId: "dwfrun-w712-2",
+      holeId: "hole#9",
+      body: "return 'x';",
+    });
+    expect(reply.error).toBeUndefined();
+    expect(reply.result).toEqual({
+      ok: false,
+      reason: "hole_not_waiting",
+      message: expect.stringContaining("hole#9 is not a hole of run dwfrun-w712-2"),
+    });
+    helper.close();
+    await helper.done;
+  });
+});
+
 describe("fork: helper/workflow/evalSnippet (W7-8c)", () => {
   it("advertises evalSnippet in helper/initialize", async () => {
     const helper = await startHelper();

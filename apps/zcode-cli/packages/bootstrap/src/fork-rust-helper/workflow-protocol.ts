@@ -8,7 +8,22 @@ export const FORK_RUST_HELPER_WORKFLOW = {
   compile: "helper/workflow/compile",
   format: "helper/workflow/format",
   evalSnippet: "helper/workflow/evalSnippet",
+  fillPrepare: "helper/workflow/fillPrepare",
 } as const;
+
+/**
+ * `helper/workflow/fillPrepare` (W7-12, 9.45): the fill of one hole, prepared without touching the run. `modelBindings` is
+ * the run's name-to-canonical table, empty when the run named none.
+ */
+export const workflowFillPrepareParamsSchema = z
+  .object({
+    scriptText: z.string(),
+    runId: z.string().trim().min(1),
+    holeId: z.string().trim().min(1),
+    body: z.string(),
+    modelBindings: z.record(z.string(), z.string()).optional(),
+  })
+  .strict();
 
 /**
  * `helper/workflow/evalSnippet` (W7-8c, specs/fork-rust-workflow-engine.md, 9.28): the snippet compile of EvalWorkflowSnippet.

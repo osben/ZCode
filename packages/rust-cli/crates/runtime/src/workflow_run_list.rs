@@ -20,8 +20,8 @@ use rust_cli_kernel_api::ids::{SessionId, WorkflowRunId};
 use rust_cli_kernel_api::workflow_child::LaunchInput;
 use rust_cli_kernel_api::workflow_run::{
     AmendRequest, AmendResult, DynamicWorkflowRunError, DynamicWorkflowRunPort,
-    DynamicWorkflowRunSessions, LifecycleStatus, ListQuery, ResolveQuestionRefusalReason,
-    ResolveQuestionResult, SubmitRequest,
+    DynamicWorkflowRunSessions, FillHoleOutcome, FillHoleRequest, LifecycleStatus, ListQuery,
+    ResolveQuestionRefusalReason, ResolveQuestionResult, SubmitRequest,
 };
 use rust_cli_workflow::actor_mailbox::{ActorHandle, MailboxError};
 use rust_cli_workflow::engine::EngineConfig;
@@ -493,6 +493,14 @@ impl DynamicWorkflowRunPort for SessionRuns {
     /// Node `amend` (9.43): a successor of a run of this session; the predecessor is stopped if it is live.
     async fn amend(&self, request: AmendRequest) -> Result<AmendResult, DynamicWorkflowRunError> {
         self.service.amend_run(&self.parent, request).await
+    }
+
+    /// Node `fillHole` (9.45): fills one waiting hole of a run in flight of this session.
+    async fn fill_hole(
+        &self,
+        request: FillHoleRequest,
+    ) -> Result<FillHoleOutcome, DynamicWorkflowRunError> {
+        self.service.fill_hole_run(&self.parent, request).await
     }
 
     /// Node `submit` (9.39): a new run under this session, the parent Node names (`parentSessionId`).

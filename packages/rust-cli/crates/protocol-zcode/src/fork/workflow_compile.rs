@@ -10,6 +10,7 @@ use async_trait::async_trait;
 use rust_cli_kernel_api::workflow_analysis::{
     WorkflowAnalysis, WorkflowAnalysisError, WorkflowAnalyzer, WorkflowDiagnostic,
 };
+use rust_cli_kernel_api::workflow_child::{FillPrepareInput, FillPrepareOutcome};
 use rust_cli_protocol_core::rpc::RpcError;
 use serde_json::{Map, Value, json};
 
@@ -291,6 +292,53 @@ pub enum SnippetCompiled {
 }
 
 /// Compiles a snippet on the helper. `run_id` is the identity the entry file carries.
+/// `helper/workflow/fillPrepare` (W7-12, 9.45): the fill of one hole, prepared on the helper. Nothing is written.
+pub const FILL_PREPARE: &str = "helper/workflow/fillPrepare";
+
+/// Prepares one hole's fill on the helper. A `ok: false` reply is a refusal (Node's reason, text and diagnostics); a
+/// reply with no `ok` flag is a wiring fault.
+pub async fn fill_prepare(
+    helper: &NodeHelper,
+    input: &FillPrepareInput,
+) -> Result<FillPrepareOutcome, RpcError> {
+    let reply = forward(helper, FILL_PREPARE, &fill_prepare_params(input)).await?;
+    parse_fill_prepare(&reply)
+}
+
+pub(crate) fn fill_prepare_params(input: &FillPrepareInput) -> Value {
+    let mut params = json!({
+        "scriptText": input.script_text,
+        "runId": input.run_id,
+        "holeId": input.hole_id,
+        "body": input.body,
+    });
+    if let (Some(bindings), Some(map)) = (&input.model_bindings, params.as_object_mut()) {
+        map.insert("modelBindings".to_owned(), bindings.clone());
+    }
+    params
+}
+
+pub(crate) fn parse_fill_prepare(reply: &Value) -> Result<FillPrepareOutcome, RpcError> {
+    match reply.get("ok").and_then(Value::as_bool) {
+        Some(true) => Ok(FillPrepareOutcome::Ready(reply.clone())),
+        Some(false) => {
+            let reason = reply.get("reason").and_then(Value::as_str);
+            let message = reply.get("message").and_then(Value::as_str);
+            match (reason, message) {
+                (Some(reason), Some(message)) => Ok(FillPrepareOutcome::Refused {
+                    reason: reason.to_owned(),
+                    message: message.to_owned(),
+                    diagnostics: reply.get("diagnostics").cloned(),
+                }),
+                _ => Err(RpcError::internal(
+                    "the fill helper refused without a reason or a message",
+                )),
+            }
+        }
+        None => Err(RpcError::internal("the fill helper's reply has no ok flag")),
+    }
+}
+
 pub async fn eval_snippet(
     helper: &NodeHelper,
     code: &str,

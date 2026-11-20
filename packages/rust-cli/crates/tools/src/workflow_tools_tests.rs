@@ -72,6 +72,7 @@ fn with_an_analyzer_create_amend_and_save_workflow_are_registered_before_list_sa
         [
             "CreateWorkflow",
             "AmendWorkflow",
+            "FillWorkflowHole",
             "SaveWorkflow",
             "ListSavedWorkflows"
         ]
@@ -104,6 +105,7 @@ fn with_a_snippet_port_eval_workflow_snippet_is_registered_after_save_and_before
         [
             "CreateWorkflow",
             "AmendWorkflow",
+            "FillWorkflowHole",
             "SaveWorkflow",
             "EvalWorkflowSnippet",
             "ListSavedWorkflows"

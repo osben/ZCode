@@ -14,7 +14,8 @@ use rust_cli_kernel_api::workflow_child::{
     ChildHandler, LaunchError, LaunchInput, RunningChild, WorkflowChildRunner,
 };
 use rust_cli_kernel_api::workflow_run::{
-    AmendRefusalReason, AmendRequest, AmendResult, DynamicWorkflowRunSessions,
+    AmendRefusalReason, AmendRequest, AmendResult, DynamicWorkflowRunSessions, FillHoleOutcome,
+    FillHoleRequest, FillRefusalReason,
 };
 use rust_cli_node_store::dwf::{
     self, NodeKind, NodeRecord, NodeStatus, RunRecord, RunStatus as DwfStatus,
@@ -445,6 +446,72 @@ async fn phase_routing_and_inherited_arguments_are_refused_not_dropped() {
         assert!(error.message.contains("cannot"), "{}", error.message);
     }
     assert!(fx.fake.launches().is_empty());
+}
+
+/// A fill request for `run_id`'s hole `hole#1` (9.45).
+fn fill_request(run_id: &str) -> FillHoleRequest {
+    FillHoleRequest {
+        run_id: WorkflowRunId::new(run_id),
+        hole_id: "hole#1".to_owned(),
+        body: "return 1;".to_owned(),
+        parent_session_id: None,
+    }
+}
+
+async fn fill(service: &WorkflowRunService, request: FillHoleRequest) -> FillHoleOutcome {
+    service
+        .for_session(&SessionId::new(PARENT))
+        .fill_hole(request)
+        .await
+        .expect("the fill answers")
+}
+
+/// W7-12 (9.45): a fill of a run that is not in the journal is refused as `run_not_found`, and nothing starts.
+#[tokio::test]
+async fn a_fill_of_an_unknown_run_is_refused_as_run_not_found() {
+    let fx = fixture(|_| {});
+    let answer = fill(&fx.service, fill_request("dwfrun-none")).await;
+    assert!(matches!(
+        answer,
+        FillHoleOutcome::Refused {
+            reason: FillRefusalReason::RunNotFound,
+            ..
+        }
+    ));
+    assert!(fx.fake.launches().is_empty(), "no child is started");
+}
+
+/// W7-12 (9.45): a run of another session is unknown to this session's fill, as it is to amend.
+#[tokio::test]
+async fn a_fill_of_another_sessions_run_is_refused_as_run_not_found() {
+    let fx = fixture(|conn| interrupted(conn, "dwfrun-other", OTHER, "return 1\n"));
+    let answer = fill(&fx.service, fill_request("dwfrun-other")).await;
+    assert!(matches!(
+        answer,
+        FillHoleOutcome::Refused {
+            reason: FillRefusalReason::RunNotFound,
+            ..
+        }
+    ));
+}
+
+/// W7-12 (9.45): a stopped run is not in flight, so its hole is not waiting; the text says to resume it first (Node's hint).
+#[tokio::test]
+async fn a_fill_of_a_stopped_run_is_refused_with_the_resume_hint() {
+    let fx = fixture(|conn| interrupted(conn, "dwfrun-stopped", PARENT, "return 1\n"));
+    let answer = fill(&fx.service, fill_request("dwfrun-stopped")).await;
+    assert!(
+        matches!(
+            &answer,
+            FillHoleOutcome::Refused {
+                reason: FillRefusalReason::HoleNotWaiting,
+                message,
+                ..
+            } if message.contains("ResumeWorkflowRun it first")
+        ),
+        "the stopped run's fill names the resume: {answer:?}"
+    );
+    assert!(fx.fake.launches().is_empty(), "no child is started");
 }
 
 #[tokio::test]
