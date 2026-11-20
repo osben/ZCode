@@ -153,6 +153,8 @@ pub mod user_command;
 pub mod user_input;
 pub mod workflow_child;
 pub mod workflow_run;
+// Fork: the typecheck of a workflow script for SaveWorkflow (W7-8b).
+pub mod workflow_analysis;
 pub mod workspace_key;
 pub mod workspace_trust;
 
