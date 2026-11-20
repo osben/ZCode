@@ -49,7 +49,14 @@ mod usage_v4;
 mod workflow_runs;
 // The actor session id (`mintActorSessionId`) and its segment sanitiser: one implementation, shared by the
 // replay envelope and the workflow driver (W6a), so the detail page opens the session the driver created.
-pub use workflow_runs::replay::{mint_actor_session_id, sanitize_id_segment};
+pub use workflow_runs::replay::{
+    RunProgressFields, mint_actor_session_id, progress_envelope, sanitize_id_segment,
+};
+// The live progress path (9.31): the same projection and envelope the replay folds, so a live run and a cold one agree.
+pub use workflow_runs::projection::LiveProjection;
+pub use workflow_runs::{
+    Envelope as WorkflowRunEnvelope, Limits as WorkflowRunLimits, PRODUCTION as WORKFLOW_RUN_LIMITS,
+};
 mod workspace_trust;
 
 // 记录格式的纯函数在 node-records（F128）：这里按 `crate::records` 这样的路径照常引用。

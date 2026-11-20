@@ -4,7 +4,10 @@
 //! book and the active-ask table. Turns (the async side, on each actor's child session) reach it through
 //! `submit_result`, `turn_ended`, `escalate`, and `answer`, one message at a time. The engine reaches the turn side
 //! through `ActorPort`, the engine's `WorkflowDriver`, which only queues work and records verdicts: it never touches
-//! the book, and it never blocks.
+//! the book, and it never blocks on the run's own work.
+//!
+//! The one exception is the progress sink (9.31). `emit_stored` runs it inline on the owner's thread, so the sink's port
+//! call (the parent session's record) is blocking I/O on that thread. It is the only port-side call that is not queued.
 //!
 //! Event order for each engine call: the engine runs, `pump` applies what the port queued (book start, turn start,
 //! failed asks), then `reconcile` ends every active ask the engine no longer has live. `pump` reconciles on every
@@ -47,6 +50,7 @@ use crate::model_failure::{provider_stop_error, quota_reset_at, retry_after_of};
 use crate::persona::persona_name;
 use crate::residency::{LiveRun, LiveRunGuard, SessionResidency};
 use crate::run_concurrency::RunConcurrency;
+use crate::run_progress::RunProgress;
 use crate::stall_clock::RunStallClock;
 use crate::world_host::{WORLD_JOB_LIMIT, WorldJob, WorldWiring, spawn_world_job};
 use anyhow::{Result, anyhow};
@@ -210,6 +214,8 @@ pub struct ActorPort<S: ActorSessions> {
     disposed: bool,
     /// Close failures, as (session, message). Recorded for the owner's caller; the settlement does not fail on them.
     pub(crate) close_failures: Vec<(String, String)>,
+    /// The run's progress sink (9.31), set by the run service. Absent, progress is not published.
+    progress: Option<Box<dyn RunProgress>>,
 }
 
 impl<S: ActorSessions> WorkflowDriver for ActorPort<S> {
@@ -371,8 +377,15 @@ impl<S: ActorSessions> WorkflowDriver for ActorPort<S> {
     }
 
     fn emit(&mut self, _event: &RunEvent) {
-        // The journal is the record (the engine appends before it emits). The fan-out to the Host is W7; until
-        // then nothing reads events here, so the port keeps none.
+        // The journal is the record (the engine appends before it emits). Without a stored row there is no sequence
+        // to publish, so this path publishes nothing; the engine always calls `emit_stored`.
+    }
+
+    /// The progress fan-out (9.31): the sink sees the event with its row, on this thread, right after the append.
+    fn emit_stored(&mut self, _event: &RunEvent, stored: &StoredEvent) {
+        if let Some(progress) = self.progress.as_mut() {
+            progress.progress(stored);
+        }
     }
 
     fn start_world_read(&mut self, instance: &Ref, op: &str, args: &Value) {
@@ -504,6 +517,7 @@ impl<J: JournalPort, S: ActorSessions> ActorDriverOwner<J, S> {
             world_running: 0,
             disposed: false,
             close_failures: Vec::new(),
+            progress: None,
         };
         let book = EscalationBook::new(config.run_id.clone());
         let engine = WorkflowEngine::new(config, journal, port)?;
@@ -805,6 +819,34 @@ impl<J: JournalPort, S: ActorSessions> ActorDriverOwner<J, S> {
     pub fn with_world(mut self, wiring: WorldWiring) -> Self {
         self.engine.driver.world = Some(wiring);
         self
+    }
+
+    /// Set the run's progress sink (9.31). The engine journals `run-started` while the owner is built, before any sink
+    /// can be attached, so the rows already journaled are delivered to the sink first, in sequence order. They go
+    /// through the same builder as later rows, so a late attach loses nothing.
+    pub fn set_progress(&mut self, mut progress: Box<dyn RunProgress>) {
+        // Once per owner (finding 5): a sink already installed has the backlog, so a second one would apply every row
+        // twice to a shared projection. The second sink is dropped.
+        if self.engine.driver.progress.is_some() {
+            tracing::warn!(
+                event = "dynamic_workflow.run_progress.sink_already_set",
+                "a progress sink is already installed on this run; the new one is not attached"
+            );
+            return;
+        }
+        match self.events() {
+            Ok(backlog) => {
+                for stored in &backlog {
+                    progress.progress(stored);
+                }
+            }
+            Err(error) => tracing::warn!(
+                event = "dynamic_workflow.run_progress.backlog_failed",
+                error = %error,
+                "the run's journaled events could not be read for progress; the sink starts at the next event, and this run's earlier rows are missing from the session projection (they are never re-applied) (9.31)"
+            ),
+        }
+        self.engine.driver.progress = Some(progress);
     }
 
     /// Node `worldRead`: one world read or run at the next ordinal of `site_id`. The outcome comes back through

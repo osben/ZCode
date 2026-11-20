@@ -153,6 +153,7 @@ pub mod user_command;
 pub mod user_input;
 pub mod workflow_child;
 pub mod workflow_run;
+pub mod workflow_run_progress;
 // Fork: the typecheck of a workflow script for SaveWorkflow (W7-8b).
 pub mod workflow_analysis;
 // Fork: EvalWorkflowSnippet's ports (W7-8c, specs/fork-rust-workflow-engine.md, 9.28).

@@ -175,6 +175,11 @@ pub trait WorkflowDriver {
     /// `WorkflowEngine::artifact_publish_settled` with the same instance; it is never delivered inline.
     fn start_artifact_publish(&mut self, _instance: &Ref, _request: &ArtifactPublishRequest) {}
     fn emit(&mut self, event: &RunEvent);
+    /// The event with its journal row, right after the append (9.31). A progress envelope names the row's sequence, so
+    /// a driver that publishes progress overrides this; every other driver keeps `emit` and needs no change.
+    fn emit_stored(&mut self, event: &RunEvent, _stored: &StoredEvent) {
+        self.emit(event);
+    }
     fn dispose(&mut self) {}
     /// The session id this driver's minting rule gives an actor (Node `mintActorSessionId`). The engine checks the
     /// journal's recorded id against it before it calls `create_actor_session` (Node `createActorSession`'s
@@ -228,6 +233,10 @@ impl<T: WorkflowDriver + ?Sized> WorkflowDriver for &mut T {
 
     fn emit(&mut self, event: &RunEvent) {
         (**self).emit(event);
+    }
+
+    fn emit_stored(&mut self, event: &RunEvent, stored: &StoredEvent) {
+        (**self).emit_stored(event, stored);
     }
 
     fn dispose(&mut self) {
@@ -898,8 +907,8 @@ impl<J: JournalPort, D: WorkflowDriver> WorkflowEngine<J, D> {
     /// Node `record`: stamp the birth phase, persist, then fan out. Both routes get the same event.
     pub(crate) fn record(&mut self, mut event: RunEvent) -> Result<()> {
         self.identity.stamp(&mut event);
-        self.journal.append_event(&self.run_id, &event)?;
-        self.driver.emit(&event);
+        let stored = self.journal.append_event(&self.run_id, &event)?;
+        self.driver.emit_stored(&event, &stored);
         Ok(())
     }
 

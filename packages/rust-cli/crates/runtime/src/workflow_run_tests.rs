@@ -718,6 +718,532 @@ async fn a_declare_artifact_fails_the_run_before_a_later_complete_can_settle_it(
     }
 }
 
+// 9.31 (W7-5b): progress fan-out and quota auto-resume through the service's hooks.
+
+/// Records each progress call: the parent session, the progress payload and the projection deltas.
+#[derive(Default)]
+struct RecordingProgress {
+    calls: Mutex<Vec<(String, serde_json::Value, Vec<serde_json::Value>)>>,
+    /// The thread each record arrived on (finding 8: the backlog is not delivered on the launch task).
+    threads: Mutex<Vec<std::thread::ThreadId>>,
+}
+
+impl rust_cli_kernel_api::workflow_run_progress::WorkflowRunProgressPort for RecordingProgress {
+    fn record(
+        &self,
+        parent_session_id: &str,
+        progress: &serde_json::Value,
+        deltas: &[serde_json::Value],
+    ) -> Result<(), String> {
+        self.threads
+            .lock_unpoisoned()
+            .push(std::thread::current().id());
+        self.calls.lock_unpoisoned().push((
+            parent_session_id.to_owned(),
+            progress.clone(),
+            deltas.to_vec(),
+        ));
+        Ok(())
+    }
+}
+
+/// The reference instant of the quota tests (2026-10-15T08:00:00Z, the workflow module's clock).
+const NOW: u64 = 1_792_051_200_000;
+const MINUTE: u64 = 60_000;
+const HOUR: u64 = 60 * MINUTE;
+
+/// A stopped run whose failure names a quota stop with `reset_at`, owned by `parent`.
+fn quota_stopped_row(run: &str, parent: &str, reset_at: u64) -> rust_cli_workflow::model::RunRow {
+    use rust_cli_workflow::model::{Caps, RunRow, RunStatus, StopReason};
+    RunRow {
+        run_id: run.to_owned(),
+        parent_session_id: Some(parent.to_owned()),
+        cwd: None,
+        name: None,
+        tool_call_id: None,
+        script_text: None,
+        script_hash: None,
+        args: None,
+        resumed_from: None,
+        caps: Caps::default(),
+        spent_tokens: 0.0,
+        status: RunStatus::Stopped,
+        stop_reason: Some(StopReason::Provider),
+        superseded_by: None,
+        failure: Some(json!({
+            "code": "ProviderStop",
+            "providerStop": { "kind": "quota", "reason": "rate_limited", "resetAt": reset_at },
+        })),
+        result: None,
+    }
+}
+
+/// The run rows, the reads made, and each read's session. Lists are answered per parent, in row order.
+#[derive(Default)]
+struct FakeReads {
+    rows: Vec<(String, rust_cli_workflow::model::RunRow)>,
+    reads: Mutex<Vec<String>>,
+}
+
+impl crate::workflow_quota::QuotaRunReads for FakeReads {
+    fn get_run(&self, run_id: &str) -> Result<Option<rust_cli_workflow::model::RunRow>, String> {
+        self.reads.lock_unpoisoned().push(run_id.to_owned());
+        Ok(self
+            .rows
+            .iter()
+            .find(|(_, row)| row.run_id == run_id)
+            .map(|(_, row)| row.clone()))
+    }
+
+    fn list_session_runs(
+        &self,
+        parent_session_id: &str,
+        limit: usize,
+    ) -> Result<Vec<rust_cli_workflow::model::RunRow>, String> {
+        Ok(self
+            .rows
+            .iter()
+            .filter(|(parent, _)| parent == parent_session_id)
+            .take(limit)
+            .map(|(_, row)| row.clone())
+            .collect())
+    }
+}
+
+/// Answers every resume `Resumed`, and records the run ids asked for.
+#[derive(Default)]
+struct FakeResumer {
+    calls: Mutex<Vec<String>>,
+}
+
+impl crate::workflow_quota::QuotaRunResumer for FakeResumer {
+    fn resume(
+        &self,
+        run_id: &str,
+    ) -> Result<rust_cli_workflow::quota_resume::ResumeAnswer, String> {
+        self.calls.lock_unpoisoned().push(run_id.to_owned());
+        Ok(rust_cli_workflow::quota_resume::ResumeAnswer::Resumed)
+    }
+}
+
+/// One armed timer: its delay, and the job the module gave the clock.
+type ArmedJob = (u64, Box<dyn FnOnce() + Send>);
+
+/// A clock whose timers wait until the test runs them: `run_next` pops the first armed timer and runs it.
+struct FakeClock {
+    jobs: Mutex<std::collections::VecDeque<ArmedJob>>,
+}
+
+impl FakeClock {
+    fn new() -> Arc<Self> {
+        Arc::new(Self {
+            jobs: Mutex::new(std::collections::VecDeque::new()),
+        })
+    }
+
+    /// The delays of the timers armed and not yet run, in arming order.
+    fn delays(&self) -> Vec<u64> {
+        self.jobs
+            .lock_unpoisoned()
+            .iter()
+            .map(|(delay, _)| *delay)
+            .collect()
+    }
+
+    /// Runs the first armed timer, and returns its delay. The lock is released before the job runs: a job may arm.
+    fn run_next(&self) -> Option<u64> {
+        let next = self.jobs.lock_unpoisoned().pop_front();
+        next.map(|(delay, job)| {
+            job();
+            delay
+        })
+    }
+}
+
+impl rust_cli_workflow::model_failure::RedriveClock for FakeClock {
+    fn after(&self, delay_ms: u64, job: Box<dyn FnOnce() + Send>) -> bool {
+        self.jobs.lock_unpoisoned().push_back((delay_ms, job));
+        true
+    }
+
+    fn random(&self) -> f64 {
+        0.5
+    }
+
+    fn now_ms(&self) -> u64 {
+        NOW
+    }
+}
+
+#[tokio::test]
+async fn a_launched_run_publishes_its_progress_to_its_parent_in_journal_order() {
+    let h = harness();
+    let progress = Arc::new(RecordingProgress::default());
+    h.service.configure_progress(progress.clone(), 4.0);
+    h.service
+        .launch(input("wf_p"), config("wf_p", Some("ses_p")))
+        .await
+        .expect("launched");
+    h.runner.finish(0, completed(json!("done")));
+    wait_until("the run to settle", || h.service.run_count() == 0).await;
+
+    let calls = progress.calls.lock_unpoisoned();
+    assert!(!calls.is_empty(), "the run's events reach the sink");
+    assert!(calls.iter().all(|(parent, _, _)| parent == "ses_p"));
+    // run-started was journaled before the sink attached: the backlog is delivered first, in order.
+    assert_eq!(calls[0].1["eventType"], json!("run-started"));
+    let sequences: Vec<u64> = calls
+        .iter()
+        .map(|(_, progress, _)| progress["sequence"].as_u64().unwrap())
+        .collect();
+    assert!(
+        sequences.windows(2).all(|pair| pair[0] < pair[1]),
+        "sequences rise: {sequences:?}"
+    );
+    assert!(
+        calls
+            .iter()
+            .all(|(_, progress, _)| progress["runId"] == json!("wf_p"))
+    );
+    assert!(calls.iter().any(|(_, _, deltas)| !deltas.is_empty()));
+}
+
+#[tokio::test]
+async fn open_session_resumes_a_due_quota_stop_and_arms_the_rest() {
+    let reads = Arc::new(FakeReads {
+        rows: vec![
+            (
+                "ses_q".into(),
+                quota_stopped_row("due", "ses_q", NOW - HOUR),
+            ),
+            (
+                "ses_q".into(),
+                quota_stopped_row("later", "ses_q", NOW + 2 * HOUR),
+            ),
+        ],
+        ..Default::default()
+    });
+    let resumer = Arc::new(FakeResumer::default());
+    let clock = FakeClock::new();
+    let h = harness();
+    h.service
+        .configure_quota(reads, resumer.clone(), clock.clone());
+
+    h.service.open_session("ses_q");
+
+    assert_eq!(
+        clock.delays(),
+        [0, 2 * HOUR + MINUTE],
+        "the due stop is armed now, the later one at its reset plus a minute"
+    );
+    clock.run_next().expect("the due timer");
+    assert_eq!(*resumer.calls.lock_unpoisoned(), ["due"]);
+}
+
+#[tokio::test]
+async fn close_disposes_the_quota_modules_so_no_armed_timer_resumes_a_run() {
+    let reads = Arc::new(FakeReads {
+        rows: vec![(
+            "ses_q".into(),
+            quota_stopped_row("due", "ses_q", NOW - HOUR),
+        )],
+        ..Default::default()
+    });
+    let resumer = Arc::new(FakeResumer::default());
+    let clock = FakeClock::new();
+    let h = harness();
+    h.service
+        .configure_quota(reads, resumer.clone(), clock.clone());
+    h.service.open_session("ses_q");
+    assert_eq!(clock.delays().len(), 1, "the due stop is armed");
+
+    let report = h.service.close().await;
+    assert_eq!(report.stopped, 0);
+    clock.run_next();
+    assert!(
+        resumer.calls.lock_unpoisoned().is_empty(),
+        "a timer that fires after close resumes nothing"
+    );
+}
+
+#[tokio::test]
+async fn a_settled_run_reads_its_row_through_its_session_quota_module() {
+    let reads = Arc::new(FakeReads::default());
+    let h = harness();
+    h.service.configure_quota(
+        reads.clone(),
+        Arc::new(FakeResumer::default()),
+        FakeClock::new(),
+    );
+    h.service
+        .launch(input("wf_q"), config("wf_q", Some("ses_q")))
+        .await
+        .expect("launched");
+    h.runner.finish(0, completed(json!("done")));
+    wait_until("the settlement to read its row", || {
+        reads.reads.lock_unpoisoned().iter().any(|id| id == "wf_q")
+    })
+    .await;
+}
+
+#[tokio::test]
+async fn the_unwired_resume_is_refused_once_and_never_retried() {
+    use crate::workflow_quota::UnwiredResume;
+    let reads = Arc::new(FakeReads {
+        rows: vec![(
+            "ses_q".into(),
+            quota_stopped_row("due", "ses_q", NOW - HOUR),
+        )],
+        ..Default::default()
+    });
+    let clock = FakeClock::new();
+    let h = harness();
+    h.service
+        .configure_quota(reads, Arc::new(UnwiredResume), clock.clone());
+    h.service.open_session("ses_q");
+    clock.run_next().expect("the due timer");
+    assert!(
+        clock.delays().is_empty(),
+        "a refusal that says the run cannot be resumed arms no retry"
+    );
+}
+
+#[test]
+fn the_session_port_reads_and_lists_only_its_own_session() {
+    use crate::workflow_quota::SessionQuotaPort;
+    use rust_cli_workflow::quota_resume::{QuotaResumePort, Refusal, ResumeAnswer};
+    let reads = Arc::new(FakeReads {
+        rows: vec![
+            ("ses_a".into(), quota_stopped_row("run_a", "ses_a", NOW)),
+            ("ses_b".into(), quota_stopped_row("run_b", "ses_b", NOW)),
+        ],
+        ..Default::default()
+    });
+    let resumer = Arc::new(FakeResumer::default());
+    let port = SessionQuotaPort::new("ses_a".into(), reads, resumer.clone());
+    let listed = port.list_session_runs(64).expect("listed");
+    assert_eq!(
+        listed
+            .iter()
+            .map(|row| row.run_id.as_str())
+            .collect::<Vec<_>>(),
+        ["run_a"],
+        "the scan sees the session's runs only"
+    );
+    assert_eq!(
+        port.get_run("run_b").expect("read").map(|row| row.run_id),
+        None,
+        "a row of another session is not read through this port"
+    );
+    assert_eq!(
+        port.get_run("run_a").expect("read").map(|row| row.run_id),
+        Some("run_a".to_owned()),
+        "the session's own row is read"
+    );
+    assert_eq!(
+        port.resume("run_a").expect("answered"),
+        ResumeAnswer::Resumed
+    );
+    assert_eq!(
+        port.resume("run_b").expect("answered"),
+        ResumeAnswer::Refused(Refusal::Other("run_not_in_session".to_owned())),
+        "a resume for another session's run is refused without reaching the resumer"
+    );
+    assert_eq!(*resumer.calls.lock_unpoisoned(), ["run_a"]);
+}
+
+/// Re-review 2: a parent whose scan found nothing to resume keeps no hooks once the scan is done.
+#[tokio::test]
+async fn open_session_holds_no_hooks_for_a_parent_with_nothing_to_resume() {
+    let h = harness();
+    h.service.configure_quota(
+        Arc::new(FakeReads::default()),
+        Arc::new(FakeResumer::default()),
+        FakeClock::new(),
+    );
+    h.service.open_session("ses_n");
+    assert_eq!(
+        h.service.session_entries(),
+        0,
+        "an idle parent after its scan holds no hooks"
+    );
+}
+
+/// Re-review 2: a session whose timer fired and left the module idle is dropped, without any later settlement.
+#[tokio::test]
+async fn a_session_whose_timer_has_fired_is_dropped_when_it_goes_idle() {
+    let reads = Arc::new(FakeReads {
+        rows: vec![(
+            "ses_t".into(),
+            quota_stopped_row("due", "ses_t", NOW - HOUR),
+        )],
+        ..Default::default()
+    });
+    let clock = FakeClock::new();
+    let h = harness();
+    h.service
+        .configure_quota(reads, Arc::new(FakeResumer::default()), clock.clone());
+    h.service.open_session("ses_t");
+    assert_eq!(
+        h.service.session_entries(),
+        1,
+        "the armed timer keeps the session's hooks"
+    );
+    clock.run_next().expect("the due timer");
+    assert_eq!(
+        h.service.session_entries(),
+        0,
+        "the timer fired and the module went idle, so the session is dropped"
+    );
+}
+
+/// Re-review 3: a launch with neither progress nor quota configured builds no session hooks.
+#[tokio::test]
+async fn a_launch_with_no_hooks_configured_holds_no_session_entry() {
+    let h = harness();
+    h.service
+        .launch(input("wf_n"), config("wf_n", Some("ses_n")))
+        .await
+        .expect("launched");
+    assert_eq!(
+        h.service.session_entries(),
+        0,
+        "nothing to install, so no entry"
+    );
+    h.runner.finish(0, completed(json!("done")));
+    wait_until("the run to settle", || h.service.run_count() == 0).await;
+}
+
+/// Finding 1: a close that lands between the caller's check and the module's creation leaves no module behind, so a
+/// scan after close arms nothing. The hook closes the service on another thread at the racing point.
+#[tokio::test]
+async fn a_session_open_racing_close_creates_no_quota_module() {
+    let reads = Arc::new(FakeReads {
+        rows: vec![(
+            "ses_r".into(),
+            quota_stopped_row("due", "ses_r", NOW - HOUR),
+        )],
+        ..Default::default()
+    });
+    let clock = FakeClock::new();
+    let h = harness();
+    h.service
+        .configure_quota(reads, Arc::new(FakeResumer::default()), clock.clone());
+    let service = h.service.clone();
+    h.service.set_hook_before_quota_module(Box::new(move || {
+        std::thread::spawn(move || {
+            tokio::runtime::Builder::new_current_thread()
+                .build()
+                .expect("runtime")
+                .block_on(service.close());
+        })
+        .join()
+        .expect("close finished");
+    }));
+    h.service.open_session("ses_r");
+    assert!(
+        clock.delays().is_empty(),
+        "a module created after close would arm the due stop"
+    );
+}
+
+/// Finding 2: a launch refused after its child started keeps no session hooks.
+#[tokio::test]
+async fn a_refused_launch_leaves_no_session_hooks_behind() {
+    let owners: OwnerFactory = Arc::new(|_, _, _| Err(anyhow::anyhow!("the owner refused")));
+    let h = harness_with(owners, SessionResidency::new());
+    h.service
+        .configure_progress(Arc::new(RecordingProgress::default()), 4.0);
+    let launched = h
+        .service
+        .launch(input("wf_x"), config("wf_x", Some("ses_x")))
+        .await;
+    assert!(launched.is_err(), "the factory's refusal fails the launch");
+    assert_eq!(
+        h.service.session_entries(),
+        0,
+        "a refused launch builds no session hooks"
+    );
+}
+
+/// Finding 2: a session whose last run settled, with no armed quota timer, is dropped; a later launch rebuilds it.
+#[tokio::test]
+async fn an_idle_session_is_dropped_when_its_last_run_settles() {
+    let h = harness();
+    h.service
+        .configure_progress(Arc::new(RecordingProgress::default()), 4.0);
+    h.service
+        .launch(input("wf_e"), config("wf_e", Some("ses_e")))
+        .await
+        .expect("launched");
+    assert_eq!(
+        h.service.session_entries(),
+        1,
+        "the session holds its hooks while its run is live"
+    );
+    h.runner.finish(0, completed(json!("done")));
+    wait_until("the run to settle", || h.service.run_count() == 0).await;
+    wait_until("the idle session to be dropped", || {
+        h.service.session_entries() == 0
+    })
+    .await;
+}
+
+/// Finding 8: the progress backlog reaches the sink on the owner's thread, not on the launch task.
+#[tokio::test]
+async fn the_progress_backlog_is_delivered_on_the_owner_thread_not_the_launch_task() {
+    let h = harness();
+    let progress = Arc::new(RecordingProgress::default());
+    h.service.configure_progress(progress.clone(), 4.0);
+    let launcher = std::thread::current().id();
+    h.service
+        .launch(input("wf_t"), config("wf_t", Some("ses_t")))
+        .await
+        .expect("launched");
+    wait_until("the backlog to be delivered", || {
+        !progress.threads.lock_unpoisoned().is_empty()
+    })
+    .await;
+    assert!(
+        progress
+            .threads
+            .lock_unpoisoned()
+            .iter()
+            .all(|thread| *thread != launcher),
+        "no progress is delivered on the launching task"
+    );
+    h.runner.finish(0, completed(json!("done")));
+    wait_until("the run to settle", || h.service.run_count() == 0).await;
+}
+
+/// Finding 5: a second sink on one owner does not replay the backlog (the first sink has it already).
+#[test]
+fn a_second_progress_sink_does_not_replay_the_backlog() {
+    use rust_cli_workflow::model::StoredEvent;
+    use rust_cli_workflow::run_progress::RunProgress;
+    struct Collect(Arc<Mutex<Vec<u64>>>);
+    impl RunProgress for Collect {
+        fn progress(&mut self, stored: &StoredEvent) {
+            self.0.lock_unpoisoned().push(stored.sequence);
+        }
+    }
+    let mut owner =
+        ActorDriverOwner::new(config("wf_once", None), MemoryJournal::new(), FakeSessions)
+            .expect("owner");
+    let first = Arc::new(Mutex::new(Vec::new()));
+    owner.set_progress(Box::new(Collect(first.clone())));
+    assert!(
+        !first.lock_unpoisoned().is_empty(),
+        "the backlog reaches the first sink"
+    );
+    let second = Arc::new(Mutex::new(Vec::new()));
+    owner.set_progress(Box::new(Collect(second.clone())));
+    assert!(
+        second.lock_unpoisoned().is_empty(),
+        "a second sink gets no replay"
+    );
+}
+
 /// Review of #586 (ocr, finding 1): the owner factory runs on the blocking pool. A slow factory (a migration check that
 /// waits on a busy database) must not hold the executor: a task ticking on the same current-thread runtime keeps running
 /// while the factory blocks.

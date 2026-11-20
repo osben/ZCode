@@ -134,6 +134,60 @@ fn actor_session_ref(event_type: &str, event: &Value) -> Option<(String, f64)> {
     Some((site, ordinal))
 }
 
+/// The facts `toProgressPayload` reads besides the event itself: the run's identity and launch, and the host's
+/// default concurrency. Cold replay reads them from the row and the `run-launched` event; the live path from the
+/// launch config. One struct and one builder ([`progress_envelope`]), so the two paths produce equal envelopes.
+#[derive(Debug, Clone, Default)]
+pub struct RunProgressFields {
+    pub run_id: String,
+    pub tool_call_id: Option<String>,
+    /// The run this one revises (Node `resumedFrom`), read on `run-started`.
+    pub resumed_from: Option<String>,
+    /// The run's subagent model (`run-launched` `subagentModel`), as the host gave it.
+    pub subagent_model: Option<Value>,
+    /// The run's model bindings (`run-launched` `modelBindings`): persona name to canonical model string.
+    pub model_bindings: Option<Obj>,
+    /// The host's default concurrency (`resolveWorkflowDefaultConcurrency`).
+    pub default_concurrency: f64,
+}
+
+impl RunProgressFields {
+    /// The fields cold replay reads from a stored run row and its `run-launched` event.
+    pub fn from_run(
+        run: &RunRecord,
+        subagent_model: Option<Value>,
+        model_bindings: Option<Obj>,
+        default_concurrency: f64,
+    ) -> Self {
+        Self {
+            run_id: run.run_id.clone(),
+            tool_call_id: run.tool_call_id.clone(),
+            resumed_from: run.resumed_from.clone(),
+            subagent_model,
+            model_bindings,
+            default_concurrency,
+        }
+    }
+}
+
+/// The progress envelope of one journal event: `toProgressPayload` plus the envelope's derived fields. The live path
+/// and cold replay both call it. `time_created` is the row's stamp; `hole-reached` takes `reachedAt` from it, and a
+/// live event without a stamp leaves it out (9.31, divergence 224).
+pub fn progress_envelope(
+    fields: &RunProgressFields,
+    sequence: f64,
+    event: &Value,
+    time_created: Option<i64>,
+) -> Envelope {
+    let event_type = event
+        .get("type")
+        .and_then(Value::as_str)
+        .unwrap_or_default()
+        .to_string();
+    let payload = minted_payload(fields, &event_type, event, time_created);
+    envelope_for(fields, sequence, &event_type, event, payload)
+}
+
 /// Replays one run's journal into envelopes, in journal order, with the terminal settlement taken
 /// from the row. `default_concurrency` is the host default (`resolveWorkflowDefaultConcurrency`).
 pub fn replay_envelopes(
@@ -151,6 +205,8 @@ pub fn replay_envelopes(
     let model_bindings = launched_event
         .and_then(|event| plain(event.get("modelBindings")))
         .cloned();
+    let fields =
+        RunProgressFields::from_run(run, subagent_model, model_bindings, default_concurrency);
     let terminal = is_terminal(run.status);
     let last = events.last();
     let trailing_settle = match (terminal, last) {
@@ -170,27 +226,11 @@ pub fn replay_envelopes(
     let mut envelopes: Vec<Envelope> = replayable
         .iter()
         .map(|stored| {
-            let event_type = stored
-                .event
-                .get("type")
-                .and_then(Value::as_str)
-                .unwrap_or_default()
-                .to_string();
-            let payload = minted_payload(
-                run,
-                &event_type,
-                &stored.event,
-                stored.time_created,
-                &subagent_model,
-                &model_bindings,
-                default_concurrency,
-            );
-            envelope_for(
-                run,
+            progress_envelope(
+                &fields,
                 stored.sequence as f64,
-                &event_type,
                 &stored.event,
-                payload,
+                Some(stored.time_created),
             )
         })
         .collect();
@@ -219,21 +259,27 @@ pub fn replay_envelopes(
                 .map(|stored| stored.sequence as f64 + 1.0)
                 .unwrap_or(1.0),
         };
-        envelopes.push(envelope_for(run, sequence, "run-settled", &event, payload));
+        envelopes.push(envelope_for(
+            &fields,
+            sequence,
+            "run-settled",
+            &event,
+            payload,
+        ));
     }
     envelopes
 }
 
 /// `toProgressPayload` for one stored event: bounded payload plus the derived fields the reducer reads.
 fn minted_payload(
-    run: &RunRecord,
+    fields: &RunProgressFields,
     event_type: &str,
     event: &Value,
-    time_created: i64,
-    subagent_model: &Option<Value>,
-    model_bindings: &Option<Obj>,
-    default_concurrency: f64,
+    time_created: Option<i64>,
 ) -> Obj {
+    let default_concurrency = fields.default_concurrency;
+    let subagent_model = &fields.subagent_model;
+    let model_bindings = &fields.model_bindings;
     let raw = plain(Some(event)).cloned().unwrap_or_default();
     let mut rest = raw;
     rest.shift_remove("type");
@@ -253,7 +299,7 @@ fn minted_payload(
             }
         }
         "run-started" => {
-            if let Some(resumed) = &run.resumed_from {
+            if let Some(resumed) = &fields.resumed_from {
                 payload.insert("resumedFrom".into(), json!(resumed));
             }
             payload.insert(
@@ -287,7 +333,9 @@ fn minted_payload(
         }
         "hole-reached" => {
             // `type` needs the compiled script (holeTypeOf); not minted in W3.
-            payload.insert("reachedAt".into(), json!(time_created));
+            if let Some(stamp) = time_created {
+                payload.insert("reachedAt".into(), json!(stamp));
+            }
         }
         _ => {}
     }
@@ -311,17 +359,17 @@ fn stop_reason_from_str(text: &str) -> Option<StopReason> {
 }
 
 fn envelope_for(
-    run: &RunRecord,
+    fields: &RunProgressFields,
     sequence: f64,
     event_type: &str,
     event: &Value,
     payload: Obj,
 ) -> Envelope {
     let actor_session_id = actor_session_ref(event_type, event)
-        .map(|(site, ordinal)| mint_actor_session_id(&run.run_id, &site, ordinal));
+        .map(|(site, ordinal)| mint_actor_session_id(&fields.run_id, &site, ordinal));
     Envelope {
-        run_id: Some(run.run_id.clone()),
-        tool_call_id: run.tool_call_id.clone(),
+        run_id: Some(fields.run_id.clone()),
+        tool_call_id: fields.tool_call_id.clone(),
         sequence: Some(sequence),
         event_type: Some(event_type.to_string()),
         payload: Some(payload),
