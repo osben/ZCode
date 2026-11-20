@@ -28,6 +28,8 @@ rust-cli-acp.workspace = true
 rust-cli-base.workspace = true
 rust-cli-fs.workspace = true
 rust-cli-kernel-api.workspace = true
+rust-cli-node-store.workspace = true
+rusqlite.workspace = true
 rust-cli-proc.workspace = true
 rust-cli-agents.workspace = true
 rust-cli-compact.workspace = true
@@ -51,8 +53,6 @@ futures-util.workspace = true
 rust-cli-kernel-api = { workspace = true, features = ["testing"] }
 # dev-only (ocr on the --continue prewarm): the prewarm-target pin test runs against the real
 # node-store, whose list/session_workspace/execution_worktree invariants MemoryStore does not share.
-rusqlite.workspace = true
-rust-cli-node-store.workspace = true
 rust-cli-paths.workspace = true
 serde_json.workspace = true
 tempfile.workspace = true

@@ -18,16 +18,23 @@ use rust_cli_node_store::dwf::{
     NodeStatus as DwfNodeStatus, RunRecord as DwfRun, RunStatus as DwfStatus,
     Settlement as DwfSettlement, StopReason as DwfStop,
 };
+use std::borrow::Borrow;
 
-pub struct DwfJournal<'a> {
-    conn: &'a Connection,
+/// `C` is the session database connection the journal writes through: a borrow for the app's own connection, or an owned
+/// connection for an owner that lives on its own thread (9.30).
+pub struct DwfJournal<C: Borrow<Connection>> {
+    conn: C,
     clock: fn() -> i64,
 }
 
-impl<'a> DwfJournal<'a> {
+impl<C: Borrow<Connection>> DwfJournal<C> {
     /// `conn` is a session database with Node's migrations applied (`open_session_database`).
-    pub fn new(conn: &'a Connection, clock: fn() -> i64) -> Self {
+    pub fn new(conn: C, clock: fn() -> i64) -> Self {
         Self { conn, clock }
+    }
+
+    fn conn(&self) -> &Connection {
+        self.conn.borrow()
     }
 }
 
@@ -247,13 +254,13 @@ fn node_from_dwf(node: DwfNode) -> Result<NodeRow> {
     })
 }
 
-impl JournalPort for DwfJournal<'_> {
+impl<C: Borrow<Connection>> JournalPort for DwfJournal<C> {
     fn create_run(&mut self, row: RunRow) -> Result<()> {
-        dwf::create_run(self.conn, &row_to_dwf(&row)?, (self.clock)())
+        dwf::create_run(self.conn(), &row_to_dwf(&row)?, (self.clock)())
     }
 
     fn get_run(&self, run_id: &str) -> Result<Option<RunRow>> {
-        Ok(dwf::get_run(self.conn, run_id)?.map(row_from_dwf))
+        Ok(dwf::get_run(self.conn(), run_id)?.map(row_from_dwf))
     }
 
     fn update_run_status(
@@ -269,7 +276,7 @@ impl JournalPort for DwfJournal<'_> {
             result: settlement.result.clone(),
         };
         dwf::update_run_status(
-            self.conn,
+            self.conn(),
             run_id,
             status_to_dwf(status),
             Some(&dwf_settlement),
@@ -279,7 +286,7 @@ impl JournalPort for DwfJournal<'_> {
 
     fn update_run_usage(&mut self, run_id: &str, spent_tokens: f64) -> Result<()> {
         dwf::update_run_usage(
-            self.conn,
+            self.conn(),
             run_id,
             integer(spent_tokens, "spentTokens")?,
             (self.clock)(),
@@ -292,12 +299,18 @@ impl JournalPort for DwfJournal<'_> {
         script_text: &str,
         script_hash: &str,
     ) -> Result<()> {
-        dwf::update_run_script(self.conn, run_id, script_text, script_hash, (self.clock)())
+        dwf::update_run_script(
+            self.conn(),
+            run_id,
+            script_text,
+            script_hash,
+            (self.clock)(),
+        )
     }
 
     fn update_run_caps(&mut self, run_id: &str, caps: Caps) -> Result<()> {
         dwf::update_run_caps(
-            self.conn,
+            self.conn(),
             run_id,
             integer(caps.max_concurrency, "maxConcurrency")?,
             (self.clock)(),
@@ -305,12 +318,12 @@ impl JournalPort for DwfJournal<'_> {
     }
 
     fn put_actor(&mut self, row: ActorRow) -> Result<()> {
-        dwf::put_actor(self.conn, &actor_to_dwf(&row)?, (self.clock)())
+        dwf::put_actor(self.conn(), &actor_to_dwf(&row)?, (self.clock)())
     }
 
     fn get_actor(&self, run_id: &str, actor: &Ref) -> Result<Option<ActorRow>> {
         dwf::get_actor(
-            self.conn,
+            self.conn(),
             run_id,
             &actor.site_id,
             ordinal_to_column(actor.ordinal, "actor ordinal")?,
@@ -320,7 +333,7 @@ impl JournalPort for DwfJournal<'_> {
     }
 
     fn list_actors(&self, run_id: &str) -> Result<Vec<ActorRow>> {
-        dwf::list_actors(self.conn, run_id)?
+        dwf::list_actors(self.conn(), run_id)?
             .into_iter()
             .map(actor_from_dwf)
             .collect()
@@ -331,7 +344,7 @@ impl JournalPort for DwfJournal<'_> {
         // a row that leaves them out keeps the stored value.
         let mut node = node_to_dwf(&row)?;
         let stored = dwf::get_node(
-            self.conn,
+            self.conn(),
             &row.run_id,
             &row.site_id,
             ordinal_to_column(row.ordinal, "node ordinal")?,
@@ -350,12 +363,12 @@ impl JournalPort for DwfJournal<'_> {
                 node.message_boundary = stored.message_boundary;
             }
         }
-        dwf::put_node(self.conn, &node, (self.clock)())
+        dwf::put_node(self.conn(), &node, (self.clock)())
     }
 
     fn get_node(&self, run_id: &str, instance: &Ref) -> Result<Option<NodeRow>> {
         dwf::get_node(
-            self.conn,
+            self.conn(),
             run_id,
             &instance.site_id,
             ordinal_to_column(instance.ordinal, "node ordinal")?,
@@ -365,14 +378,14 @@ impl JournalPort for DwfJournal<'_> {
     }
 
     fn list_nodes(&self, run_id: &str) -> Result<Vec<NodeRow>> {
-        dwf::list_nodes(self.conn, run_id)?
+        dwf::list_nodes(self.conn(), run_id)?
             .into_iter()
             .map(node_from_dwf)
             .collect()
     }
 
     fn append_event(&mut self, run_id: &str, event: &RunEvent) -> Result<StoredEvent> {
-        let stored = dwf::append_event(self.conn, run_id, &event.to_json(), (self.clock)())?;
+        let stored = dwf::append_event(self.conn(), run_id, &event.to_json(), (self.clock)())?;
         Ok(StoredEvent {
             sequence: u64::try_from(stored.sequence)?,
             payload_json: stringify(&stored.event),
@@ -380,7 +393,7 @@ impl JournalPort for DwfJournal<'_> {
     }
 
     fn list_events(&self, run_id: &str) -> Result<Vec<StoredEvent>> {
-        dwf::list_events(self.conn, run_id)?
+        dwf::list_events(self.conn(), run_id)?
             .into_iter()
             .map(|stored| {
                 Ok(StoredEvent {
