@@ -3488,6 +3488,76 @@ The hole notice (353) and the cold replay (363) are still open, as in 9.38.
 422. The read ports for a snippet are resolved once per eval, for its cwd, and reused for every child read (ocr on #598). Node does not
      cache them, but the cwd does not change within a snippet, so the result is the same.
 
+### 9.43 W7-10: AmendWorkflow (as built, gate off; FillWorkflowHole not built)
+
+**Scope built.** AmendWorkflow with a script or a file, and the inherited script when both are omitted. The run port's `amend` and `get_script`
+(`SessionRuns`), the run service's amend (`runtime/src/workflow_run_amend.rs`: preflight, the stop of a live predecessor as superseded,
+the import cache, the successor start), the owner's `stop_superseded` (the mailbox's `StopSuperseded`, additive to `StopInterrupted`), and
+the tool (`tools/src/workflow_amend.rs`), registered right after CreateWorkflow. The `RunStore` gains two default methods
+(`amend_preflight`, `amend_import`), implemented by `SqliteRunStore` over `DwfJournal`. CreateWorkflow's resolve, draft, diagnostics and
+concurrency helpers are now `pub(crate)` (visibility only); the submit's start error and compile check are shared with amend.
+
+**Not built, so FillWorkflowHole is not built either.** The driver still refuses a hole (divergence 124 stays). Its owner handling, `fill_hole`
+port member, splice and compile, and the tool are one unit and do not fit this PR. A run that reaches a hole still fails loudly. The
+in-place concurrency route (`retuneConcurrency`) is not built either. Both are the next PR of this row.
+
+**Order of the amend (as built, Node's order).** Preflight (`run_not_found` when the predecessor is missing or belongs to another session,
+`missing_boundaries` when a completed ask has no boundary): a refusal changes nothing. Mint the successor id. If the predecessor is live,
+post `StopSuperseded(successor)` and join its serve thread, which ends with the owner's settlement (no poll). Build the import cache from the
+settled predecessor. Read its spent tokens and name. Start the successor through `start` with the compile check, `resumed_from`, the
+inherited tokens and the cache.
+
+**Tests (red, then green where the red was observed).**
+
+- `workflow` `driver_feed_tests::stop_superseded_settles_the_run_as_superseded_by_its_successor`: written with the owner method. The first
+  run was green; no separate red run was captured.
+- `runtime` `workflow_run_amend_tests` (7): unknown predecessor; other session; missing boundaries (predecessor untouched); settled predecessor
+  gives a successor with `resumed_from`; live predecessor superseded with `superseded_by` and the settlement awaited; `get_script` per session;
+  a named parent that is not the port's. Written with the code, green on the first run.
+- `tools` `workflow_amend_tests` (13): written with the tool. Red observed in the first run: the helper did not run the permission step, so a
+  checking script was refused (CreateWorkflow's rule); fixed in the helper. Red observed: `null` read as "omitted" (serde's `Option`), fixed with
+  `present_value`. Green after both.
+- `tools` `workflow_tools_tests` and `cli` `workflow_gating_tests`: the registration order now includes AmendWorkflow; updated.
+
+**Verification status.** `cargo fmt --all --check` clean. `cargo clippy --workspace --all-targets --locked -- -D warnings` clean. Lib tests green:
+workflow 435, runtime 329, tools 612, kernel-api 439. The cli bin tests (`workflow_gating_tests`, updated, and the rest) were NOT run: the
+disk filled (ENOSPC) during the build and the run stopped. Not pushed; the PR is not opened.
+
+**Node divergences (new in W7-10, numbered from 450).**
+
+450. Compile after stop. Node's `startNewRun` compiles in the child after the predecessor is stopped, so a script the child rejects (facade
+     drift between the tool's check and the child's compile) still stops the predecessor. Node has the same window. The tool's pre-check
+     narrows it; the window is not closed.
+451. No transcript count in the import cache. The builder runs with no count, so completed asks import and an in-flight continuation
+     (message boundary of a running ask) is not built. Node counts the transcript and waits for quiet sessions. Closed by the transcript
+     store adapter (W6a), which is not composed.
+452. Input id. Node's revision inherits the predecessor's input id; the run row does not keep it, so the successor mints a new one.
+453. Per-session routing. A predecessor of another session answers `run_not_found`. Node resolves it service-wide. This is the stricter rule
+     (as 394).
+454. Owner exemption not built. AmendWorkflow always asks when the revision checks; Node's `isOwnedWorkflowAmend` skips the ask for this
+     session's own predecessor. A predecessor that is missing is found after the user has approved (Node refuses it before the ask).
+455. Concurrency-only route not built. A call with only `max_concurrency` is refused with `workflow_retune_unavailable`. Node retunes a live run
+     in place and answers `workflow_run_settled` and `workflow_run_not_retunable` in its own cases.
+456. Subagent model and script-named model bindings not built. The tool refuses `subagent_model` as CreateWorkflow does on this host. The run
+     port refuses a request that carries either, as an error.
+457. Inherited script. When both sources are omitted, the script is the one `get_script` returns. Node keeps the predecessor's file when its
+     bytes still match. This successor gets a new draft. An unknown run and a run with no stored script both answer
+     `workflow_amend_script_unavailable` (Node tells them apart).
+458. `workflow_script_unchanged` is not built. Node refuses a `path` whose bytes equal the predecessor's stored script.
+459. Texts. The `run_not_found`, `missing_boundaries` and script-unavailable texts are Node's. The source conflict, skill refusal, the
+     script-location sentence and the compile-failure note reuse CreateWorkflow's wording. Those were not compared line by line with Node's
+     `amend-workflow-source.ts` and `workflowAmendedScriptSentence`.
+460. Draft name. An inline revision's draft is named after the revision's `name`, else `workflow`. Node uses the predecessor's name.
+461. Concurrency inheritance. An omitted limit keeps the predecessor's only when it differs from the default (Node's snapshot rule, with the
+     current default). `null` is the port's default, when the port reports one. With no default reported, `null` is an omitted limit (inherits).
+462. Concurrent amends of one predecessor. A second amend while the first is stopping is refused as a host fault ("already being stopped").
+     Node awaits the same settlement promise and answers both.
+463. Holes. A run that reaches a hole is still refused by the driver (124), and FillWorkflowHole is not registered. Unchanged from 9.36.
+464. Wiring fault for a parent mismatch. A request that names another parent is an error (as submit, 380), not a refusal.
+465. Result shape. A port refusal is a failure with its text and no error code (CreateWorkflow's shape). Node's failure carries `errorCode`.
+466. Tests not covering the import-cache hit at the composed level. The builder and engine import are golden-covered (W5b). The composed amend has
+     no test that a successor's ask answers from the cache.
+
 ## 10. Open questions
 
 Each has a recommendation. The user decides. Until decided, the recommendation is the default.

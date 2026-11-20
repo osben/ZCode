@@ -57,7 +57,7 @@ fn without_an_analyzer_only_list_saved_workflows_is_registered() {
 }
 
 #[test]
-fn with_an_analyzer_create_and_save_workflow_are_registered_before_list_saved_workflows() {
+fn with_an_analyzer_create_amend_and_save_workflow_are_registered_before_list_saved_workflows() {
     let analyzer: std::sync::Arc<dyn rust_cli_kernel_api::workflow_analysis::WorkflowAnalyzer> =
         std::sync::Arc::new(NoAnalyzer);
     let tools = workflow_tools(
@@ -69,7 +69,12 @@ fn with_an_analyzer_create_and_save_workflow_are_registered_before_list_saved_wo
     let names: Vec<&str> = tools.iter().map(|tool| tool.name()).collect();
     assert_eq!(
         names,
-        ["CreateWorkflow", "SaveWorkflow", "ListSavedWorkflows"]
+        [
+            "CreateWorkflow",
+            "AmendWorkflow",
+            "SaveWorkflow",
+            "ListSavedWorkflows"
+        ]
     );
     for tool in &tools {
         assert!(tool.should_defer(), "{} is deferred", tool.name());
@@ -98,6 +103,7 @@ fn with_a_snippet_port_eval_workflow_snippet_is_registered_after_save_and_before
         names,
         [
             "CreateWorkflow",
+            "AmendWorkflow",
             "SaveWorkflow",
             "EvalWorkflowSnippet",
             "ListSavedWorkflows"

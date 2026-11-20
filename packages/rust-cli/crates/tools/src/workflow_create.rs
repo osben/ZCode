@@ -49,14 +49,14 @@ const APPROVAL_CAP: usize = 256;
 /// Node `MAX_DRAFT_ATTEMPTS`: suffixes tried for a taken draft name.
 const DRAFT_ATTEMPTS: usize = 1_000;
 /// Node `WORKFLOW_DRAFT_MAX_SLUG_CHARS` (the same cap as a saved name).
-const DRAFT_SLUG_CHARS: usize = 64;
+pub(crate) const DRAFT_SLUG_CHARS: usize = 64;
 /// Node `WORKFLOW_DRAFTS_DIR`.
-const DRAFTS_DIR: &str = ".zcode/workflow-drafts";
+pub(crate) const DRAFTS_DIR: &str = ".zcode/workflow-drafts";
 /// Node `DIAGNOSTICS_NOT_EXECUTED_NOTE`: diagnostics with no script file to point at.
-const DIAGNOSTICS_NOT_EXECUTED_NOTE: &str =
+pub(crate) const DIAGNOSTICS_NOT_EXECUTED_NOTE: &str =
     "NOTE: The workflow was NOT executed — fix the errors above and resubmit.";
 /// Node `EXECUTION_UNAVAILABLE_NOTE`: the script checks, and this session has no run port.
-const EXECUTION_UNAVAILABLE_NOTE: &str = "NOTE: The workflow was NOT executed — workflow execution is not available in this session, so the script was only typechecked.";
+pub(crate) const EXECUTION_UNAVAILABLE_NOTE: &str = "NOTE: The workflow was NOT executed — workflow execution is not available in this session, so the script was only typechecked.";
 const SUBAGENT_MODEL_UNAVAILABLE: &str =
     "This host cannot choose a subagent model; omit subagent_model.";
 const MISSING_SOURCE: &str = r"No workflow source arrived. Pass `script` for a one-off script written inline, `saved` to run a workflow saved in this project, or `path` for a script file on disk. If you did pass one, the call's arguments were not valid JSON, and a call that does not parse arrives empty. The usual cause is an unescaped backslash or double quote in the inline source: inside a JSON string a regex's `\d` must be written `\\d`. Escape it, or write the source to a file and pass `path`.";
@@ -67,39 +67,39 @@ const ARGS_WITHOUT_PATH: &str = "`args` belongs to the `path` source: it carries
 /// filled in Node's `resolveInput`; they are not model input, so they are not accepted here.
 #[derive(Debug, Clone, Deserialize)]
 #[serde(deny_unknown_fields)]
-struct CreateInput {
+pub(crate) struct CreateInput {
     #[serde(default)]
-    name: Option<String>,
+    pub(crate) name: Option<String>,
     #[serde(default)]
-    script: Option<String>,
+    pub(crate) script: Option<String>,
     #[serde(default)]
-    saved: Option<SavedInput>,
+    pub(crate) saved: Option<SavedInput>,
     #[serde(default)]
-    path: Option<String>,
+    pub(crate) path: Option<String>,
     #[serde(default)]
-    args: Option<Value>,
+    pub(crate) args: Option<Value>,
     #[serde(default)]
-    max_concurrency: Option<u64>,
+    pub(crate) max_concurrency: Option<u64>,
     #[serde(default)]
-    subagent_model: Option<String>,
+    pub(crate) subagent_model: Option<String>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
 #[serde(deny_unknown_fields)]
-struct SavedInput {
-    name: String,
+pub(crate) struct SavedInput {
+    pub(crate) name: String,
     #[serde(default)]
-    args: Option<Value>,
+    pub(crate) args: Option<Value>,
     #[serde(default, rename = "path")]
     _path: Option<IgnoredAny>,
     #[serde(default)]
-    scope: Option<String>,
+    pub(crate) scope: Option<String>,
 }
 
 /// Where the script came from. The origin decides the draft (inline and saved get one, a path does not) and the words the
 /// model reads about the file.
 #[derive(Debug, Clone)]
-enum Origin {
+pub(crate) enum Origin {
     /// Inline text: a draft named after the run (or `workflow`).
     Inline,
     /// A saved definition: a working copy of the file as read. `name` is the saved name (the run label may differ).
@@ -114,24 +114,24 @@ enum Origin {
 
 /// The script that runs, and what the run is told about it (Node's normalized input).
 #[derive(Debug, Clone)]
-struct Resolved {
+pub(crate) struct Resolved {
     /// The body that runs (a saved or path file without its metadata block).
-    script: String,
+    pub(crate) script: String,
     /// The run label: the given name, else the saved name.
-    name: Option<String>,
+    pub(crate) name: Option<String>,
     /// The declared arguments, validated and with defaults. Saved sources always pass theirs; a path passes them when
     /// it declares some; an inline script has none.
-    args: Option<Map<String, Value>>,
-    origin: Origin,
+    pub(crate) args: Option<Map<String, Value>>,
+    pub(crate) origin: Origin,
     /// Lines before the body in the file; file line = body line + this.
-    body_offset: usize,
+    pub(crate) body_offset: usize,
 }
 
 /// What the permission decision read and checked, kept for the call (keyed by the tool-use id).
 #[derive(Debug, Clone)]
-struct Prepared {
-    resolved: Resolved,
-    analysis: WorkflowAnalysis,
+pub(crate) struct Prepared {
+    pub(crate) resolved: Resolved,
+    pub(crate) analysis: WorkflowAnalysis,
 }
 
 /// The kept decisions. A full table evicts its oldest entry (never the others), and a taken entry leaves at once.
@@ -315,11 +315,11 @@ impl CreateWorkflowTool {
 }
 
 /// Where a run's script file is, in the words the model reads (Node `WorkflowScriptLocation`).
-struct Location {
+pub(crate) struct Location {
     /// A file the model named (`path`), rather than a draft the tool wrote.
-    path_source: bool,
-    described: String,
-    line_offset: usize,
+    pub(crate) path_source: bool,
+    pub(crate) described: String,
+    pub(crate) line_offset: usize,
 }
 
 fn describe_refusal(
@@ -365,7 +365,11 @@ fn describe_refusal(
 
 /// The `path` source (Node `readWorkflowScriptFile` and `resolvePathSource`): the file is read once, its block is taken
 /// as the declaration of its arguments, and nothing is written.
-fn resolve_path(input: &CreateInput, path: &str, cwd: &Path) -> Result<Resolved, String> {
+pub(crate) fn resolve_path(
+    input: &CreateInput,
+    path: &str,
+    cwd: &Path,
+) -> Result<Resolved, String> {
     let contained = match contain(cwd, path) {
         Ok(contained) => contained,
         Err(Refusal::Outside) => {
@@ -434,7 +438,7 @@ fn resolve_path(input: &CreateInput, path: &str, cwd: &Path) -> Result<Resolved,
 }
 
 /// Node `describeWorkflowScriptPath`: relative to the working directory when the file is inside it.
-fn describe_script_path(absolute: &Path, cwd: &Path) -> String {
+pub(crate) fn describe_script_path(absolute: &Path, cwd: &Path) -> String {
     match absolute.strip_prefix(cwd) {
         Ok(relative) if !relative.as_os_str().is_empty() => relative.display().to_string(),
         _ => absolute.display().to_string(),
@@ -442,7 +446,7 @@ fn describe_script_path(absolute: &Path, cwd: &Path) -> String {
 }
 
 /// The `args` object, or the schema's refusal of anything else.
-fn args_object(value: Option<&Value>) -> Result<Map<String, Value>, String> {
+pub(crate) fn args_object(value: Option<&Value>) -> Result<Map<String, Value>, String> {
     match value {
         None => Ok(Map::new()),
         Some(Value::Object(object)) => Ok(object.clone()),
@@ -452,7 +456,7 @@ fn args_object(value: Option<&Value>) -> Result<Map<String, Value>, String> {
 
 /// Node `validateWorkflowArgs`: every violation is collected, unknown keys first, then each declared argument in order.
 /// Defaults pass through the same type check as supplied values.
-fn validate_args(
+pub(crate) fn validate_args(
     declared: &[(String, ArgDecl)],
     provided: &Map<String, Value>,
 ) -> Result<Map<String, Value>, Vec<String>> {
@@ -522,7 +526,7 @@ fn type_mismatch(key: &str, spec: &ArgDecl, value: &Value, what: &str) -> Option
 }
 
 /// Node `describeArgsDeclaration`: the declared arguments, for a refusal to read.
-fn describe_declaration(label: &str, declared: Option<&[(String, ArgDecl)]>) -> String {
+pub(crate) fn describe_declaration(label: &str, declared: Option<&[(String, ArgDecl)]>) -> String {
     let Some(declared) = declared.filter(|declared| !declared.is_empty()) else {
         return format!("{label} declares no arguments.");
     };
@@ -577,7 +581,7 @@ fn draft_slug(name: &str) -> String {
 
 /// Node `writeWorkflowDraft`: the draft directory (with its own `.gitignore`, written once), then the first free name.
 /// `None` when the directory cannot be made or the claim fails.
-fn write_draft_file(dir: &Path, name: &str, text: &str) -> Option<PathBuf> {
+pub(crate) fn write_draft_file(dir: &Path, name: &str, text: &str) -> Option<PathBuf> {
     ensure_dir(dir).ok()?;
     match create_new_text(&dir.join(".gitignore"), "*\n") {
         Ok(()) => {}
@@ -602,7 +606,7 @@ fn write_draft_file(dir: &Path, name: &str, text: &str) -> Option<PathBuf> {
 }
 
 /// Node `describeWorkflowConcurrencyLimit`: one sentence when a limit is set, marked when it equals the default.
-fn concurrency_sentence(limit: Option<u64>, default: Option<usize>) -> String {
+pub(crate) fn concurrency_sentence(limit: Option<u64>, default: Option<usize>) -> String {
     let Some(limit) = limit else {
         return String::new();
     };
@@ -620,14 +624,14 @@ fn concurrency_sentence(limit: Option<u64>, default: Option<usize>) -> String {
 }
 
 /// Node `prepareCreateWorkflowApproval` and the handler's `ok` path: the confirmation names the run.
-fn confirmation_message(name: Option<&str>) -> String {
+pub(crate) fn confirmation_message(name: Option<&str>) -> String {
     match name {
         Some(name) => format!("Run workflow '{name}' in the background"),
         None => "Run the workflow script in the background".to_owned(),
     }
 }
 
-fn diagnostic_lines(
+pub(crate) fn diagnostic_lines(
     diagnostics: &[WorkflowDiagnostic],
     location: Option<&Location>,
 ) -> Vec<String> {
@@ -650,7 +654,11 @@ fn diagnostic_lines(
 }
 
 /// Node `diagnosticsNote`: the sentence that tells the model where to edit, and that it must not paste the script again.
-fn diagnostics_note(resolved: &Resolved, location: Option<&Location>, cwd: &Path) -> String {
+pub(crate) fn diagnostics_note(
+    resolved: &Resolved,
+    location: Option<&Location>,
+    cwd: &Path,
+) -> String {
     let Some(location) = location else {
         return match resolved.origin {
             Origin::Saved { .. } => "NOTE: The workflow was NOT executed — the saved file needs fixing (edit it, or save a corrected version).".to_owned(),
@@ -678,7 +686,7 @@ fn diagnostics_note(resolved: &Resolved, location: Option<&Location>, cwd: &Path
     )
 }
 
-fn output_for(text_body: String, display: Value) -> ToolOutput {
+pub(crate) fn output_for(text_body: String, display: Value) -> ToolOutput {
     let mut output = text(text_body);
     output.display = display;
     output

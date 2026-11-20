@@ -15,7 +15,10 @@ use rust_cli_node_store::dwf::{
 };
 use serde_json::json;
 
-use crate::journal_dwf::{row_from_dwf, status_to_dwf};
+use crate::import_build::{
+    BuildOptions, BuildOutcome, ImportRefusal, build_imported_cache, preflight_amend_import,
+};
+use crate::journal_dwf::{DwfJournal, row_from_dwf, status_to_dwf};
 use crate::model::{RunRow, RunStatus};
 use rust_cli_node_store::dwf::codecs::INTERRUPTED_CODE;
 
@@ -61,6 +64,18 @@ pub trait RunStore: Send + Sync {
     fn list_runs(&self, query: &RunListQuery) -> Result<Vec<RunListRow>>;
     /// Node `getRun(runId)`.
     fn get_run(&self, run_id: &str) -> Result<Option<RunRow>>;
+    /// Node `preflightAmendImport` over this store's journal (9.43): the predecessor exists and its completed asks
+    /// have boundaries. Read-only. A store with no journal cannot answer, which is a host fault.
+    fn amend_preflight(&self, predecessor_run_id: &str) -> Result<Result<RunRow, ImportRefusal>> {
+        let _ = predecessor_run_id;
+        anyhow::bail!("this run store has no journal to preflight an amendment from")
+    }
+    /// Node `buildImportedCache` over this store's journal (9.43), without a transcript count: completed asks import,
+    /// and an in-flight continuation is not built (the transcript surface is not composed yet).
+    fn amend_import(&self, predecessor_run_id: &str) -> Result<BuildOutcome> {
+        let _ = predecessor_run_id;
+        anyhow::bail!("this run store has no journal to import an amended run from")
+    }
 }
 
 /// The `RunStore` over one session database. `clock` stamps the rows a settlement writes.
@@ -145,5 +160,17 @@ impl RunStore for SqliteRunStore {
     fn get_run(&self, run_id: &str) -> Result<Option<RunRow>> {
         let conn = self.conn.lock_unpoisoned();
         Ok(dwf::get_run(&conn, run_id)?.map(row_from_dwf))
+    }
+
+    fn amend_preflight(&self, predecessor_run_id: &str) -> Result<Result<RunRow, ImportRefusal>> {
+        let conn = self.conn.lock_unpoisoned();
+        let journal = DwfJournal::new(&*conn, self.clock);
+        preflight_amend_import(&journal, predecessor_run_id)
+    }
+
+    fn amend_import(&self, predecessor_run_id: &str) -> Result<BuildOutcome> {
+        let conn = self.conn.lock_unpoisoned();
+        let journal = DwfJournal::new(&*conn, self.clock);
+        build_imported_cache(&journal, predecessor_run_id, BuildOptions::default())
     }
 }

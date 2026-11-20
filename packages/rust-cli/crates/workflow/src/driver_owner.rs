@@ -719,10 +719,21 @@ impl<J: JournalPort, S: ActorSessions> ActorDriverOwner<J, S> {
     /// `stopped(interrupted)`, and the settlement releases the guard, the governor link and the clocks. Served on the
     /// owner's thread by the mailbox.
     pub fn stop_interrupted(&mut self) -> Result<()> {
+        self.stop_with(StopReason::Interrupted, None)
+    }
+
+    /// The run's stop by an amendment (9.43, Node `controller.abort({ superseded: newRunId })`): the run settles as
+    /// `stopped(superseded)` and names the successor, as the journal's `superseded_by` column does.
+    pub fn stop_superseded(&mut self, successor_run_id: &str) -> Result<()> {
+        self.stop_with(StopReason::Superseded, Some(successor_run_id.to_owned()))
+    }
+
+    /// The shared stop: the same settlement order for every reason (see `stop_interrupted`).
+    fn stop_with(&mut self, reason: StopReason, superseded_by: Option<String>) -> Result<()> {
         // The stop runs whatever the pump reports. A run that does not settle holds its guard, so every later close of
         // its parent waits out the full bound. The pump's error is still returned, after the run has settled.
         let pumped = self.pump();
-        let result = self.engine.stop(StopReason::Interrupted, None, None);
+        let result = self.engine.stop(reason, None, superseded_by);
         let stopped = self.after_engine(result);
         pumped?;
         stopped
