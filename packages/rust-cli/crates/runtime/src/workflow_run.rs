@@ -40,6 +40,8 @@ use crate::workflow_quota::{QuotaRunReads, QuotaRunResumer, SessionQuotaPort};
 mod list;
 #[path = "workflow_run_orphans.rs"]
 mod orphans;
+#[path = "workflow_run_resume.rs"]
+mod resume;
 
 pub use orphans::ReconcileReport;
 
@@ -128,11 +130,26 @@ pub enum LaunchFailure {
     Attach(String),
     /// The child did not start (a rejected script, or a failed compile or entry write).
     Child(Box<LaunchError>),
+    /// The check after the child's compile refused the launch (9.37: a resume's `compile_failed` or `script_mismatch`).
+    /// The child is stopped and nothing is kept.
+    Refused {
+        reason: &'static str,
+        message: Option<String>,
+    },
 }
+
+/// What a launch checks on the child's compile, after the child started and before its owner is built. Only a resume
+/// passes one (9.37). It may fill the engine config from the compile and refuse the launch.
+pub(crate) type CompileCheck =
+    Box<dyn FnOnce(&RunningChild, &mut EngineConfig) -> Result<(), LaunchFailure> + Send>;
 
 impl fmt::Display for LaunchFailure {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
+            Self::Refused { reason, message } => match message {
+                Some(message) => f.write_str(message),
+                None => f.write_str(reason),
+            },
             Self::Closed => f.write_str(
                 "dynamic workflow run service is closed; a launch after close is a wiring fault",
             ),
@@ -547,6 +564,17 @@ impl WorkflowRunService {
         input: LaunchInput,
         config: EngineConfig,
     ) -> Result<(), LaunchFailure> {
+        self.start(input, config, None).await
+    }
+
+    /// The launch behind `launch` and the resume (9.37). `check` runs once the child has compiled and before the owner is
+    /// built; a refusal stops the child and keeps nothing.
+    pub(crate) async fn start(
+        &self,
+        input: LaunchInput,
+        mut config: EngineConfig,
+        check: Option<CompileCheck>,
+    ) -> Result<(), LaunchFailure> {
         let inner = self.inner.clone();
         let Some(parent) = config.parent_session_id.clone() else {
             return Err(LaunchFailure::NoParentSession);
@@ -589,6 +617,12 @@ impl WorkflowRunService {
             .start(input, bridge)
             .await
             .map_err(|error| LaunchFailure::Child(Box::new(error)))?;
+        if let Some(check) = check
+            && let Err(error) = check(&running, &mut config)
+        {
+            running.stop.stop();
+            return Err(error);
+        }
         let RunningChild { stop, outcome, .. } = running;
 
         // The run's progress and quota setup, and the facts the sink reads, taken before the config moves (9.31).
@@ -1079,3 +1113,7 @@ mod tests;
 #[cfg(test)]
 #[path = "workflow_run_store_tests.rs"]
 mod store_tests;
+
+#[cfg(test)]
+#[path = "workflow_run_resume_tests.rs"]
+mod resume_tests;

@@ -182,6 +182,7 @@ async fn a_launched_run_actor_completes_its_turn_under_the_parents_selection_and
         parent.clone(),
         tokio::runtime::Handle::current(),
         Arc::new(RecordingPort::default()),
+        Arc::new(rust_cli_kernel_api::dynamic_workflow::SessionGates::default()),
     )
     .expect("the service is built over the runner");
     service
@@ -240,6 +241,7 @@ async fn a_parent_with_no_selection_refuses_its_actor_at_the_ask() {
         parent.clone(),
         tokio::runtime::Handle::current(),
         Arc::new(RecordingPort::default()),
+        Arc::new(rust_cli_kernel_api::dynamic_workflow::SessionGates::default()),
     )
     .expect("the service is built over the runner");
     service
@@ -335,6 +337,7 @@ async fn a_session_open_settles_the_parents_orphan_in_the_composed_service() {
         }),
         tokio::runtime::Handle::current(),
         Arc::new(RecordingPort::default()),
+        Arc::new(rust_cli_kernel_api::dynamic_workflow::SessionGates::default()),
     )
     .expect("the service is built over the runner");
 
@@ -369,6 +372,7 @@ async fn without_a_child_runner_no_run_service_is_built() {
         }),
         tokio::runtime::Handle::current(),
         Arc::new(RecordingPort::default()),
+        Arc::new(rust_cli_kernel_api::dynamic_workflow::SessionGates::default()),
     );
     assert!(service.is_none(), "no child runner, no run service");
     assert!(!database.exists(), "nothing is opened");
@@ -397,6 +401,7 @@ async fn a_built_run_service_is_idle_and_opens_nothing_until_a_launch() {
         }),
         tokio::runtime::Handle::current(),
         Arc::new(RecordingPort::default()),
+        Arc::new(rust_cli_kernel_api::dynamic_workflow::SessionGates::default()),
     )
     .expect("the service is built over the runner");
 
@@ -439,6 +444,7 @@ async fn a_run_launched_in_the_composed_service_records_its_progress_to_its_pare
         }),
         tokio::runtime::Handle::current(),
         port.clone(),
+        Arc::new(rust_cli_kernel_api::dynamic_workflow::SessionGates::default()),
     )
     .expect("the service is built over the runner");
 

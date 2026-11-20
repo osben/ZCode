@@ -81,7 +81,44 @@ export function compileWorkflowForRust(raw: unknown) {
     },
     { runId: params.runId },
   );
-  return { ok: true as const, scriptHash: rest.scriptHash, compiled: rest, entrySource };
+  // The reply is JSON: a Map or Set would serialize as {} or []. The copy below is for the reply only; Node's own
+  // compile result keeps its Maps (9.37, divergence 333).
+  return {
+    ok: true as const,
+    scriptHash: rest.scriptHash,
+    compiled: jsonShape(rest) as Record<string, unknown>,
+    entrySource,
+  };
+}
+
+/**
+ * A JSON-safe copy of a value: Maps become objects keyed by their keys (as text), Sets become arrays, and both are
+ * converted at every depth. Plain objects and arrays are copied, every other value is kept.
+ */
+export function jsonShape(value: unknown): unknown {
+  if (value instanceof Map) {
+    const out: Record<string, unknown> = {};
+    for (const [key, entry] of value.entries()) {
+      const text = String(key);
+      // Distinct keys can share a text (1 and "1"); the reply must not drop one of them silently.
+      if (Object.prototype.hasOwnProperty.call(out, text)) {
+        throw new Error(`two Map keys have the same key text "${text}"; the reply cannot carry both`);
+      }
+      out[text] = jsonShape(entry);
+    }
+    return out;
+  }
+  if (value instanceof Set) return [...value].map((entry) => jsonShape(entry));
+  if (Array.isArray(value)) return value.map((entry) => jsonShape(entry));
+  // Only plain objects are copied entry by entry. Dates, RegExps, URLs and the rest keep their own JSON form
+  // (JSON.stringify calls their toJSON), so they are not turned into {}.
+  const proto = typeof value === "object" && value !== null ? Object.getPrototypeOf(value) : undefined;
+  if (proto === Object.prototype || proto === null) {
+    return Object.fromEntries(
+      Object.entries(value as Record<string, unknown>).map(([key, entry]) => [key, jsonShape(entry)]),
+    );
+  }
+  return value;
 }
 
 /**
