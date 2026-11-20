@@ -118,6 +118,10 @@ jobs:
         run: pnpm rust-agent:automation-tools:check
 
       # The dynamic-workflow tool contracts of zcode-rs are generated from Node's tool entries (specs/fork-rust-workflow-engine.md, W7-1).
+      # Their handlers import @zcode/dynamic-workflow through its dist, which a fresh checkout does not have yet.
+      - name: Build @zcode/dynamic-workflow for the workflow tool contracts
+        run: pnpm --filter "@zcode/dynamic-workflow" build
+
       - name: zcode-rs workflow tool contracts
         run: pnpm rust-agent:workflow-tools:check
 
