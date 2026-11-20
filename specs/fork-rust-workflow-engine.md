@@ -2762,6 +2762,17 @@ is now an option: it is the fallback for a runner with no settings map, which th
 Still open after round 2: 272 (browser port), 273 for production launches (no caller records the mode yet), and 274 (the
 refusal text is English; Node's is Chinese).
 
+**Review round 3 (Codex re-review of #591 at 4d424ec52, one MEDIUM; fixed).** An amend-resume's first live dispatch has no
+pin of its own, and the predecessor's pin is the session seed (`ActorSessionSeed.resolved_model`). The driver discarded the
+seed, so an actor that used model A inherited the parent's model B and journaled B. The seed now travels with the session
+request (`ActorSessionRequest.seed`), and the pin is `currentRunPin ?? seed.resolvedModel` (Node
+`dynamic-workflow-run-launch.ts`, the `runtimeFactory` pin). The precedence is persona, run, current-run pin, seed pin,
+parent's current selection, and the chosen model is journaled. Red: `an_amended_actor_keeps_its_predecessors_model_over_the_parents`
+ran on B with the seed ignored (the round-2 behaviour) and on A with the seed used. Round 2's resume tests now repeat their
+first prompt, since the ask text is hashed on replay. Divergence 281: the predecessor's pin applies only when the seed
+reaches the session, which the import cache does for an actor with a carried in-flight ask or consumed entries (Node
+`ImportedActorState.seed`); the scheduler builds it the same way.
+
 ## 10. Open questions
 
 Each has a recommendation. The user decides. Until decided, the recommendation is the default.

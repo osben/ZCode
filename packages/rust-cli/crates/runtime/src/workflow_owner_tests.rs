@@ -404,6 +404,7 @@ async fn actor_asks(
         "siteId": "plain",
         "actor": local,
         "prompt": prompt,
+        "instructions": prompt,
     }))
     .expect("ask");
     handler.request(ask, Some(engine_id)).await
@@ -571,7 +572,7 @@ async fn a_resumed_run_keeps_the_mode_its_launch_recorded() {
         .launch(input("wf_r"), config("wf_r", Some("ses_p")))
         .await
         .expect("resumed");
-    actor_asks(&runner.launches()[0].handler, "a1", ada(), "again")
+    actor_asks(&runner.launches()[0].handler, "a1", ada(), "do it")
         .await
         .expect("the resumed turn completes");
     let seen = agents.seen.lock().expect("seen").clone();
@@ -688,7 +689,7 @@ async fn a_resumed_actor_keeps_the_model_it_was_journaled_with() {
         .launch(input("wf_k"), config("wf_k", Some("ses_p")))
         .await
         .expect("resumed");
-    actor_asks(&runner.launches()[0].handler, "a1", ada(), "again")
+    actor_asks(&runner.launches()[0].handler, "a1", ada(), "do it")
         .await
         .expect("the resumed turn completes");
     assert_eq!(
@@ -798,5 +799,51 @@ async fn two_overlapping_actors_each_keep_their_own_persona() {
     assert_eq!(prompts[0].1, "Be terse.", "Ada's persona");
     assert!(prompts[1].0.starts_with("Bob ("), "{}", prompts[1].0);
     assert_eq!(prompts[1].1, "Be wordy.", "Bob's persona");
+    let _ = service.close().await;
+}
+
+/// 9.33 review round 3: an amend-resume's first live dispatch has no pin of its own, so the actor keeps the model its
+/// predecessor journaled (the seed's pin, Node `currentRunPin ?? seed?.resolvedModel`), not the parent's current model.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn an_amended_actor_keeps_its_predecessors_model_over_the_parents() {
+    use rust_cli_workflow::imported_cache::{
+        ImportedActorCandidate, ImportedInFlightAsk, ImportedRunCache,
+    };
+    use rust_cli_workflow::persona::normalize_persona;
+    use rust_cli_workflow::scheduler::input_hash;
+
+    let dir = tempfile::tempdir().expect("temp dir");
+    let path = database(dir.path());
+    let agents = RecordingAgents::replying("done");
+    let parent = ParentFixture::with(Some(selection("acct-b", "mb")));
+    let (service, runner, _residency) = bound_service(path, parent, agents.clone());
+
+    let candidate = ImportedActorCandidate {
+        persona: normalize_persona(Some("Ada"), Some(&ada())),
+        entries: Vec::new(),
+        in_flight: Some(ImportedInFlightAsk {
+            input_hash: input_hash("do it"),
+            message_boundary: 0,
+        }),
+        transcript_source_session_id: "ses_p".to_owned(),
+        resolved_model: Some("acct-a/ma".to_owned()),
+    };
+    let mut config = launched("wf_am", guarded());
+    config.imported_cache = Some(ImportedRunCache {
+        actors: std::collections::BTreeMap::from([("Ada".to_owned(), candidate)]),
+        world: Default::default(),
+    });
+    service
+        .launch(input("wf_am"), config)
+        .await
+        .expect("launched");
+    actor_asks(&runner.launches()[0].handler, "a1", ada(), "do it")
+        .await
+        .expect("the amended turn completes");
+    assert_eq!(
+        agents.selections(),
+        vec![selection("acct-a", "ma")],
+        "the predecessor's pinned model, not the parent's current one"
+    );
     let _ = service.close().await;
 }

@@ -264,11 +264,20 @@ impl<S: ActorSessions> SettingsRecording<S> {
                 )
             })?
             .selection;
-        let pin = match self.journal.get_actor(&self.run_id, &request.actor)? {
-            Some(row) => match row.resolved_model {
-                Some(text) => Some(parse_picker(&text).map_err(|error| anyhow!(error))?),
-                None => None,
-            },
+        // Node `currentRunPin ?? seed?.resolvedModel`: the run's own pin (a resume), else the predecessor's pin the
+        // actor was seeded with (an amend-resume's first live dispatch).
+        let own = match self.journal.get_actor(&self.run_id, &request.actor)? {
+            Some(row) => row.resolved_model,
+            None => None,
+        };
+        let pin_text = own.or_else(|| {
+            request
+                .seed
+                .as_ref()
+                .and_then(|seed| seed.resolved_model.clone())
+        });
+        let pin = match pin_text {
+            Some(text) => Some(parse_picker(&text).map_err(|error| anyhow!(error))?),
             None => None,
         };
         Ok(match (pin, current) {

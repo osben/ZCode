@@ -85,6 +85,7 @@ fn request(parent: Option<&str>) -> ActorSessionRequest {
         title: "workflow subagent site@1".into(),
         link_path: "dwf/run_1/site@1".into(),
         persona: json!({}),
+        seed: None,
     }
 }
 
