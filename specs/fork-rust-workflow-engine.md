@@ -3227,7 +3227,9 @@ Nothing user-visible changes: the gate is still closed unless the Host sends the
 - **Port members added on the run service.** `resolve_question` (kernel-api default unsupported, implemented by `SessionRuns` in
   `runtime/src/workflow_run_list.rs`). `LiveRun` now carries the run's `ActorHandle`, so the answer goes to the owner of the live
   run that parks the question. The live runs of the session are asked in launch order; the first that holds the question answers
-  it (the owner's `answer` returns `None` for a question it does not hold).
+  it (the owner's `answer` returns `None` for a question it does not hold). A run whose owner is gone (`NotDelivered`: it
+  settled after the snapshot) is skipped, and an error is reported only when no run accepted the answer (`first_answer`;
+  ocr on #597, finding 1, test-first).
 - **Model text is formatted in Rust (decision for Q6, 390).** The three formats are short (one line per run, or one sentence).
   `ListWorkflowRuns` writes one `<run ... />` line per row with ISO timestamps and `workflowRunAttribute`'s whitespace collapse and
   XML escape (`prompts::workflow_notice::escape_xml`). The resume and resolve texts are Node's, verbatim. The helper stays I/O-free
@@ -3248,7 +3250,9 @@ Nothing user-visible changes: the gate is still closed unless the Host sends the
 392. GetWorkflowRun is not built. Its detail needs the run's log tail, roster, phases, health, holes, artifacts and pending
      questions from live state, and its formatter and summary are a large port of Node's `get-workflow-run-*.ts`. Without it the
      model cannot read a pending question's id except from the escalation notice (Node's fallback is GetWorkflowRun's
-     `pendingQuestions`). `get_run_detail` stays unsupported. Follow-up: a run detail read and its formatter.
+     `pendingQuestions`). `get_run_detail` stays unsupported. Follow-up: a run detail read and its formatter. Until GetWorkflowRun is
+     registered, the `unknown_question` text (391) points the model at a tool it cannot call. Node's text is kept verbatim: the gate
+     is off, and GetWorkflowRun lands before the gate opens (ocr on #597, finding 4).
 393. AmendWorkflow and FillWorkflowHole are not built (W7-10, and the amend port member).
 394. Per-session routing. Node has one run service per app, and its `resolveQuestion` answers any qid in that table. Rust asks only
      the live runs of the calling session, which is the stricter rule the repository states for enumeration surfaces. A qid of
@@ -3294,7 +3298,7 @@ test `resolve_question_is_refused_as_unknown_when_no_live_run_of_the_session_hol
 passed first time. The cli `workflow_gating_tests` were updated for the new `wired_workflow_tools` and `gating` parameters and pass.
 
 Green: `cargo fmt --all --check`; `cargo clippy --workspace --all-targets --locked -- -D warnings`; lib tests of `rust-cli-kernel-api`
-(440), `rust-cli-runtime` (304), `rust-cli-tools` (598); the cli binary tests (559).
+(440), `rust-cli-runtime` (309, of which five are the answer-selection tests added for ocr finding 1), `rust-cli-tools` (598); the cli binary tests (559).
 
 ## 10. Open questions
 

@@ -301,14 +301,16 @@ async fn serve(
         context.dynamic_workflow_gates().clone(),
     );
     // Fork (9.29, W7-5c): the per-session run reads (`workflowRuns`, the run list) answer from the service too.
+    // One wrapper of the service, coerced to each trait object the composition holds (the run sessions and the host).
+    let workflow_service = workflow_service.map(Arc::new);
     if let Some(service) = &workflow_service {
         let sessions: Arc<dyn rust_cli_kernel_api::workflow_run::DynamicWorkflowRunSessions> =
-            Arc::new(service.clone());
+            service.clone();
         run_sessions.set(sessions.clone());
         context.set_dynamic_workflow_runs(sessions);
     }
-    let workflow_runs =
-        workflow_service.map(|service| Arc::new(service) as Arc<dyn WorkflowRunHost>);
+    let workflow_runs: Option<Arc<dyn WorkflowRunHost>> =
+        workflow_service.map(|service| service as Arc<dyn WorkflowRunHost>);
     if let Some(runs) = &workflow_runs {
         context.set_workflow_runs(runs.clone());
     }

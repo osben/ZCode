@@ -35,7 +35,7 @@ fn names(tools: &[Arc<dyn Tool>]) -> Vec<String> {
 }
 
 #[test]
-fn without_an_analyzer_only_list_saved_workflows_is_wired() {
+fn without_an_analyzer_the_run_tools_and_list_saved_are_wired() {
     let tools = wired_workflow_tools(None, &PathBuf::from("/home"), no_runs());
     assert_eq!(
         names(&tools),

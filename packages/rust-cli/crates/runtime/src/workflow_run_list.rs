@@ -22,7 +22,7 @@ use rust_cli_kernel_api::workflow_run::{
     DynamicWorkflowRunError, DynamicWorkflowRunPort, DynamicWorkflowRunSessions, LifecycleStatus,
     ListQuery, ResolveQuestionRefusalReason, ResolveQuestionResult,
 };
-use rust_cli_workflow::actor_mailbox::ActorHandle;
+use rust_cli_workflow::actor_mailbox::{ActorHandle, MailboxError};
 use rust_cli_workflow::engine::EngineConfig;
 use rust_cli_workflow::model::{RunRow, RunStatus, StopReason, js_number};
 use rust_cli_workflow::run_store::{RunListQuery, RunListRow};
@@ -81,6 +81,29 @@ pub(crate) struct LiveRun {
     pub token: u64,
     pub meta: Arc<RunMeta>,
     pub handle: ActorHandle,
+}
+
+/// Picks the answer among the live runs' outcomes, in launch order. The first accepted answer wins. A run whose owner is
+/// gone (`NotDelivered`: it settled after the snapshot) is skipped. An error is returned only when no run accepted and
+/// some run failed for another reason.
+///
+pub(crate) fn first_answer<T>(
+    outcomes: impl IntoIterator<Item = Result<Option<T>, MailboxError>>,
+) -> Result<Option<T>, MailboxError> {
+    let mut failure = None;
+    for outcome in outcomes {
+        match outcome {
+            Ok(Some(answer)) => return Ok(Some(answer)),
+            Ok(None) | Err(MailboxError::NotDelivered) => {}
+            Err(error) => {
+                failure.get_or_insert(error);
+            }
+        }
+    }
+    match failure {
+        Some(error) => Err(error),
+        None => Ok(None),
+    }
 }
 
 /// Node `unknown_question`: the text the service gives a qid no live run of the session holds.
@@ -428,20 +451,19 @@ impl WorkflowRunService {
     ) -> Result<ResolveQuestionResult, DynamicWorkflowRunError> {
         let mut live = self.live_runs_of(parent);
         live.sort_by_key(|run| run.token);
-        for run in live {
-            let outcome = run.handle.answer(qid.as_str(), answer).map_err(|error| {
-                DynamicWorkflowRunError::new(format!(
-                    "the answer to question {qid} did not reach its run: {error}"
-                ))
-            })?;
-            if outcome.is_some() {
-                return Ok(ResolveQuestionResult::Resolved { qid: qid.clone() });
-            }
+        let outcomes = live
+            .iter()
+            .map(|run| run.handle.answer(qid.as_str(), answer));
+        match first_answer(outcomes) {
+            Ok(Some(_)) => Ok(ResolveQuestionResult::Resolved { qid: qid.clone() }),
+            Ok(None) => Ok(ResolveQuestionResult::Refused {
+                reason: ResolveQuestionRefusalReason::UnknownQuestion,
+                message: unknown_question_message(qid.as_str()),
+            }),
+            Err(error) => Err(DynamicWorkflowRunError::new(format!(
+                "the answer to question {qid} did not reach its run: {error}"
+            ))),
         }
-        Ok(ResolveQuestionResult::Refused {
-            reason: ResolveQuestionRefusalReason::UnknownQuestion,
-            message: unknown_question_message(qid.as_str()),
-        })
     }
 
     /// Node `listRunsForSession`: the session's newest rows, each summarized with the session's live precedence.
