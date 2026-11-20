@@ -460,6 +460,70 @@ fn replay_mints_the_derived_fields_the_live_path_sends() {
     assert!(envelopes[5].payload.as_ref().unwrap().get("type").is_none());
 }
 
+/// 9.31: the live progress path and cold replay build each envelope with one function, so for the same journal rows
+/// they are equal. A live `hole-reached` has no row stamp in the workflow journal, so it has no `reachedAt` (9.31
+/// divergence 224); the replay keeps it.
+#[test]
+fn the_live_envelope_of_a_journal_row_is_the_replayed_one() {
+    use super::replay::{RunProgressFields, progress_envelope};
+    let conn = database();
+    // Re-review 8: the local journal also carries the two events whose minted fields the shared fixture lacks
+    // (`run-caps-changed` takes the concurrency ceiling, `run-settled` the resumable flag).
+    let mut rows = journal();
+    rows.push(json!({
+        "type": "run-caps-changed",
+        "runId": "dwfrun-1",
+        "caps": { "maxConcurrency": 2 },
+        "previous": { "maxConcurrency": 8 },
+    }));
+    rows.push(json!({
+        "type": "run-settled",
+        "status": "stopped",
+        "stopReason": "provider",
+    }));
+    let events = stored_events(&conn, &rows);
+    let run = run_row(RunStatus::Running);
+    let replayed = replay_envelopes(&run, &events, 8.0);
+    let launched = events
+        .iter()
+        .find(|stored| stored.event.get("type") == Some(&json!("run-launched")))
+        .expect("the journal launches the run");
+    let fields = RunProgressFields::from_run(
+        &run,
+        launched.event.get("subagentModel").cloned(),
+        launched
+            .event
+            .get("modelBindings")
+            .and_then(|bindings| super::js::plain(Some(bindings)))
+            .cloned(),
+        8.0,
+    );
+    assert_eq!(events.len(), replayed.len());
+    for (stored, replayed) in events.iter().zip(&replayed) {
+        let live = progress_envelope(
+            &fields,
+            stored.sequence as f64,
+            &stored.event,
+            Some(stored.time_created),
+        );
+        assert_eq!(&live, replayed, "sequence {}", stored.sequence);
+        let no_stamp = progress_envelope(&fields, stored.sequence as f64, &stored.event, None);
+        let is_hole = stored.event.get("type") == Some(&json!("hole-reached"));
+        if is_hole {
+            assert!(
+                no_stamp
+                    .payload
+                    .as_ref()
+                    .unwrap()
+                    .get("reachedAt")
+                    .is_none()
+            );
+        } else {
+            assert_eq!(&no_stamp, replayed);
+        }
+    }
+}
+
 #[test]
 fn replay_settles_a_terminal_run_from_the_row() {
     let conn = database();

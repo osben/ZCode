@@ -96,10 +96,15 @@ pub struct QuotaAutoResume {
     inner: Arc<Inner>,
 }
 
+/// Called when the module goes idle (no call in flight, no armed timer). The owner uses it to drop a session it no longer
+/// needs; it runs with no lock of the module held.
+pub type IdleCallback = Box<dyn Fn() + Send + Sync>;
+
 struct Inner {
     port: Arc<dyn QuotaResumePort>,
     clock: Arc<dyn RedriveClock>,
     state: Mutex<State>,
+    on_idle: Option<IdleCallback>,
     /// Test seam: runs once, after a timer has taken its slot and before it records and resumes.
     #[cfg(test)]
     between_take_and_record: Mutex<Option<Box<dyn FnOnce() + Send>>>,
@@ -108,6 +113,8 @@ struct Inner {
 #[derive(Default)]
 struct State {
     disposed: bool,
+    /// Calls of this module in flight: a scan, a settlement, a timer job. Idle requires none (re-review 1).
+    busy: usize,
     next_generation: u64,
     /// The armed timer of each run, by generation. A job whose generation is not the run's current one does nothing.
     timers: HashMap<String, u64>,
@@ -125,17 +132,70 @@ enum Fire {
     Resume { expected_at: u64, retries_left: u32 },
 }
 
+/// A guard for one call of the module in flight. While it lives the module is not idle; when the last one ends and no
+/// timer is armed, the module's idle callback runs.
+#[must_use = "dropping the guard ends the call in flight; bind it for the call's duration"]
+pub struct InUse {
+    inner: Arc<Inner>,
+}
+
+impl Drop for InUse {
+    fn drop(&mut self) {
+        let idle = {
+            let mut state = self.inner.lock();
+            state.busy -= 1;
+            state.busy == 0 && state.timers.is_empty()
+        };
+        if idle && let Some(on_idle) = &self.inner.on_idle {
+            on_idle();
+        }
+    }
+}
+
+/// Marks one call in flight. Called with the module's own state lock released.
+fn busy(inner: &Arc<Inner>) -> InUse {
+    inner.lock().busy += 1;
+    InUse {
+        inner: inner.clone(),
+    }
+}
+
 impl QuotaAutoResume {
     pub fn new(port: Arc<dyn QuotaResumePort>, clock: Arc<dyn RedriveClock>) -> Self {
+        Self::build(port, clock, None)
+    }
+
+    /// A module that calls `on_idle` whenever it goes idle.
+    pub fn with_idle_callback(
+        port: Arc<dyn QuotaResumePort>,
+        clock: Arc<dyn RedriveClock>,
+        on_idle: IdleCallback,
+    ) -> Self {
+        Self::build(port, clock, Some(on_idle))
+    }
+
+    fn build(
+        port: Arc<dyn QuotaResumePort>,
+        clock: Arc<dyn RedriveClock>,
+        on_idle: Option<IdleCallback>,
+    ) -> Self {
         Self {
             inner: Arc::new(Inner {
                 port,
                 clock,
                 state: Mutex::new(State::default()),
+                on_idle,
                 #[cfg(test)]
                 between_take_and_record: Mutex::new(None),
             }),
         }
+    }
+
+    /// Marks a call of the owner in flight: the module is not idle until the guard drops. The owner takes it under its
+    /// own lock, before it hands the module out, so an eviction that follows sees the call.
+    #[must_use = "the module is not idle until the guard drops"]
+    pub fn in_use(&self) -> InUse {
+        busy(&self.inner)
     }
 
     /// Test seam: the hook runs once, after the next timer takes its slot and before it records and resumes.
@@ -150,6 +210,7 @@ impl QuotaAutoResume {
 
     /// Node's run-settled subscription: a run of this session settled in this process.
     pub fn on_run_settled(&self, run_id: &str) {
+        let _busy = busy(&self.inner);
         if self.inner.lock().disposed {
             return;
         }
@@ -159,6 +220,7 @@ impl QuotaAutoResume {
 
     /// Node's cold-start scan: the session's recent runs, the due ones resumed now and the others armed.
     pub fn scan(&self) {
+        let _busy = busy(&self.inner);
         match self.inner.port.list_session_runs(COLD_START_SCAN_LIMIT) {
             Ok(rows) => {
                 for row in rows {
@@ -171,6 +233,12 @@ impl QuotaAutoResume {
                 "Dynamic workflow quota auto-resume scan failed"
             ),
         }
+    }
+
+    /// Whether no call is in flight and no timer is armed. Only then can the module be dropped without losing a resume.
+    pub fn is_idle(&self) -> bool {
+        let state = self.inner.lock();
+        state.busy == 0 && state.timers.is_empty()
     }
 
     /// Node's `dispose`: cancels every timer; nothing resumes afterwards.
@@ -219,6 +287,13 @@ fn arm(inner: &Arc<Inner>, run_id: &str, resume_at: u64) {
     let (generation, delay_ms, start_at) = {
         let mut state = inner.lock();
         if state.disposed {
+            tracing::info!(
+                event = "dynamic_workflow.quota_resume.arm_skipped",
+                run_id,
+                resume_at,
+                reason = "disposed",
+                "Dynamic workflow quota auto-resume not armed: the module is disposed"
+            );
             return;
         }
         if let Some(previous) = state.last_resumed_at.get(run_id).copied()
@@ -310,6 +385,8 @@ fn schedule(inner: &Arc<Inner>, run_id: &str, generation: u64, delay_ms: u64, fi
 
 /// Node `fire`: the timer wakes. A timer whose generation is no longer the run's does nothing.
 fn fire_job(inner: &Arc<Inner>, run_id: &str, generation: u64, fire: Fire) {
+    // The job is in flight from the moment it takes its timer until its retry (if any) is armed: no idle in between.
+    let _busy = busy(inner);
     let Fire::Resume {
         expected_at,
         retries_left,

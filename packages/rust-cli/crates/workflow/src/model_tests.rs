@@ -12,7 +12,11 @@ fn integral_numbers_serialize_as_integers_like_json_stringify() {
     assert_eq!(text(-0.0), "0");
     assert_eq!(text(3.0), "3");
     assert_eq!(text(-17.0), "-17");
-    assert_eq!(text(9_007_199_254_740_991.0), "9007199254740991", "2^53 - 1");
+    assert_eq!(
+        text(9_007_199_254_740_991.0),
+        "9007199254740991",
+        "2^53 - 1"
+    );
 }
 
 #[test]

@@ -2259,6 +2259,44 @@ Divergence 103 (recorded in 9.24, from PR #580) is closed here. Its numbering st
 
 **Not done.** The composition (`set_store`, `set_clock`, `set_dynamic_workflow_runs`, the `reconcile_session` call at session open). Progress fan-out and `QuotaAutoResume` (5b). The `ListWorkflowRuns` tool's wiring to `list_runs` (W7-7 and later). Nothing in the cli.
 
+### 9.31 W7-5b: run progress fan-out and quota auto-resume (as built, gate off)
+
+**Scope built.** The progress path from the owner's journal append to a port, the live projection, and the quota auto-resume wired to the run service. Nothing is registered with the composition, so the gate stays off and nothing user-visible changes.
+
+- **Shared envelope builder** (`node-store/src/workflow_runs/replay.rs`): `RunProgressFields` and `progress_envelope(fields, sequence, event, time_created)`. Cold replay and the live path both call it, so for the same journal rows they are equal. A test (`the_live_envelope_of_a_journal_row_is_the_replayed_one`) pins it. No second copy of `toProgressPayload`: the bounding, `resumable`, `concurrencyCeiling`, `subagentModel`, `modelBindings` and `actorSessionId` all come from replay.
+- **Driver hook** (`workflow/src/engine.rs`): `WorkflowDriver::emit_stored(event, stored)`, defaulting to `emit`, forwarded by the blanket impls. `WorkflowEngine::record` passes the row `append_event` returns. Only `ActorPort` overrides it.
+- **Sink** (`workflow/src/run_progress.rs`): `ProgressSink` (the `RunProgress` trait the owner calls) takes one row, builds the envelope, applies it to the session's `LiveProjection` under its lock, and hands the progress payload and the deltas to `WorkflowRunProgressPort::record` (kernel-api, `workflow_run_progress.rs`). The identity gate drops an explicit foreign parent. A port error and a panic in the port are logged; neither reaches the run. `ActorDriverOwner::set_progress` delivers the rows already journaled (`run-started` is journaled while the engine is built) and then installs the sink.
+- **Service hooks** (`runtime/src/workflow_run.rs`): `configure_progress(port, default_concurrency)`, `configure_quota(reads, resumer, clock)` and `open_session(parent)`. None of them changes `WorkflowRunService::new`. Per parent session the service holds one projection and one `QuotaAutoResume`. The launch takes the sink and the module before the config moves into the factory. The settle hook runs on the owner thread after `settle_run`, with no lock held. `close` disposes every module before it closes the residencies.
+- **Quota port** (`runtime/src/workflow_quota.rs`): `QuotaRunReads` (get one row, list a session's rows) and `QuotaRunResumer` are narrow traits. `SessionQuotaPort` implements the `QuotaResumePort` over them for one session. `UnwiredResume` is the production resumer until a run-level resume exists. It refuses `resume_not_wired`, which is not transient, so the module logs once and arms no retry.
+
+**Tests.** Red first for the sink: the 10 tests in `workflow/src/run_progress_tests.rs` ran against `todo!()` bodies and all failed, then passed. The envelope parity test, and the runtime tests (`workflow_run_tests.rs`, six added: a launched run's progress in journal order, `open_session` resuming the due stop and arming the rest, close disposing the modules, the settle hook reading its row, the unwired resume not retried, and the session port's scope), were written with their implementation and passed on the first run. Their red step was not captured.
+
+**Node divergences (new in W7-5b, numbered from 220).**
+
+220. The progress is not persisted to the parent session. Node appends it as a `dynamic_workflow_run_progress` session event. Rust hands it to `WorkflowRunProgressPort::record`, and no production implementation exists yet (the session event and the Host notification are the composition's). Cold reads come from replay, as before. Until that port is installed, nothing is recorded.
+221. No throttling or coalescing in the sink. Node's sink has none either; the batch rules of `node-store` `publish.rs` apply where the Host publishes.
+222. The projection is applied before the port is called, so a failed record still moves the live projection. Node's projection follows the Host's record. The journal is the record here, so the projection follows the journal.
+223. The live payload carries no `truncated` flag. `bound_payload` returns none, and cold replay does not carry it either. Live and cold are equal to each other; both differ from Node.
+224. A live `hole-reached` has no `reachedAt`. The workflow journal keeps no row stamp, so the live path passes none, and replay keeps the journal's `time_created`. Holes are refused until W7-8, so no live hole event is produced yet.
+225. `launchInputId` is not minted on any payload. The reducer does not read it, and replay does not mint it either.
+226. The identity gate can only see a mismatch if the service's owned session and the run's parent differ. The service passes the same session for both, so the branch is covered by the sink tests alone.
+227. Log assertions are not ported. Node's sink tests inject a logger; Rust logs through `tracing` with event names only. The "logger absent" Node test has no Rust counterpart.
+228. A panic in the port is caught and logged as `runtime_unavailable`. Node has no panic path. The catch keeps the run alive, which is the intent of its degradation rules.
+229. The owner delivers its already-journaled rows to a late sink (`set_progress`). Node wires its sink before construction, so there is no backlog. The output is the same: each row once, in sequence order.
+230. The settle hook runs on the owner thread, after the settlement, not on the event loop as Node's `subscribeRunSettled` does. Close disposes the modules before it stops the runs, so a settled run after close arms nothing.
+231. The scan needs a by-parent run list, and no production `QuotaRunReads` exists. `list_non_terminal_runs` is the orphan query and is not the same read (it excludes terminal runs, and Node's scan reads the last 64 runs of any status). The run list of 5a-4 should provide it. Until then the scan finds nothing in production.
+232. Quota auto-resume cannot resume a run. Rust has no run-level resume: kernel-api `resume` is unsupported, and `workflow/src/resume.rs` only has the settle order. `UnwiredResume` refuses with `resume_not_wired`. This is a W7-7 follow-up: `QuotaRunResumer` gets the engine-level resume when it lands.
+233. The quota module exists from the first launch of a session, and the scan runs only at `open_session`. The composition must call `open_session` for each session it opens, or a run stopped in an earlier process is not picked up. Node's app runs the scan at start.
+234. The workflowRuns snapshot is not served from the projection. The Host still answers the empty snapshot, which the gate-off path requires. Serving it is the W7-5b follow-up that goes with the Host notification (220).
+235. Cross-run order within one session is not kept. Each run's events reach the port in journal order, since one owner thread calls its sink. Two runs' apply and record are not one step, so their deltas can reach the Host out of the order they were applied. Node is single-threaded and applies them in one order. A per-session delivery lock would close the gap; it is not added, to keep the projection lock free of port calls.
+236. A session's hooks (its projection and quota module) are dropped when the session is idle: no live run, no armed quota timer, and no call of the module in flight (a scan, a settlement including its row read, or a timer job) (`evict_if_idle`, after a settlement or a failed launch). A later launch rebuilds them: the projection starts empty, and the module loses its spacing state (`last_resumed_at`, `resume_starts`). Node keeps both for the life of the app. The loss is bounded: a settled quota stop re-arms only when it settles, and the module keeps its state until the session is idle.
+
+**What the composition must call (for the PR that wires `cli`).** Nothing changes in `WorkflowRunService::new`.
+
+- `service.configure_progress(port, default_concurrency)`, once, with a `WorkflowRunProgressPort` implementation. Without it, no progress is recorded.
+- `service.configure_quota(reads, Arc::new(UnwiredResume), Arc::new(ThreadClock))`, once, with a `QuotaRunReads` implementation (none yet, see 231).
+- `service.open_session(parent_session_id)` when a session opens, from a blocking task (it reads the journal).
+
 ### 9.30 W7-5a-5: production owner assembly and run service composition (as built, part)
 
 **Scope built.** The production owner assembly (`runtime/src/workflow_owner.rs`), the composition of the run service in the
