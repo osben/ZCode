@@ -559,10 +559,34 @@ fn the_tool_is_deferred_read_only_false_and_budgeted_to_24000_bytes() {
     );
 }
 
+// ocr round 1 (PR #584): a `path` is contained by its real location, so a symlink inside the workspace cannot lead out.
+
+#[cfg(unix)]
+#[tokio::test]
+async fn a_symlink_inside_the_workspace_that_leads_out_is_denied() {
+    let harness = Harness::new(FakePort::answering(completed(None, &[])));
+    harness.write("keep.ts", "return 0;");
+    let outside = harness.cwd.parent().expect("a parent").join("outside.ts");
+    rust_cli_fs::text_files::write_text(&outside, "return 1;").expect("the outside file");
+    rust_cli_fs::text_files::symlink(&outside, &harness.cwd.join("link.ts")).expect("the symlink");
+    let decision = harness
+        .tool
+        .check_permissions(&json!({"path": "link.ts"}), &harness.with_skill())
+        .await;
+    match decision {
+        PermissionDecision::Deny { message } => {
+            assert!(message.contains("is outside the workspace"), "{message}");
+        }
+        other => panic!("expected a denial, got {other:?}"),
+    }
+    assert!(harness.port.runs.lock().unwrap().is_empty());
+}
+
 // ocr round 1 (PR #584): a snippet with world.run must not run without the confirmation of its own call.
 
 #[tokio::test]
-async fn a_world_run_snippet_without_its_confirmation_is_not_run_and_the_model_is_asked_to_call_again() {
+async fn a_world_run_snippet_without_its_confirmation_is_not_run_and_the_model_is_asked_to_call_again()
+ {
     let port = Arc::new(FakePort {
         check: Ok(SnippetCheck::Ready { world_run: true }),
         outcome: Ok(completed(None, &[])),

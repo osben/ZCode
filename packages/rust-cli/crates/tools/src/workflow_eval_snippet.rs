@@ -28,7 +28,8 @@ use serde::Deserialize;
 use serde_json::{Value, json};
 use tokio::sync::mpsc;
 
-use crate::workflow_save::{describe, diagnostic_value, normalize};
+use crate::workflow_create::path_in_workspace;
+use crate::workflow_save::{describe, diagnostic_value};
 use crate::workflow_tools::{
     Contract, DYNAMIC_WORKFLOW_SKILL, contract, skill_loaded, workspace_dir,
 };
@@ -134,29 +135,12 @@ fn schema_failure(input: &EvalInput) -> Option<String> {
     }
 }
 
-/// A `path` inside the workspace, lexically normalized (no disk access, as Save). A path outside is refused here (Node
-/// accepts any path; divergence 161).
-fn resolve_inside(cwd: &Path, input_path: &str) -> Result<PathBuf, String> {
-    let joined = if Path::new(input_path).is_absolute() {
-        PathBuf::from(input_path)
-    } else {
-        cwd.join(input_path)
-    };
-    let resolved = normalize(&joined);
-    if resolved.starts_with(normalize(cwd)) {
-        Ok(resolved)
-    } else {
-        Err(format!(
-            "The workflow script file {input_path} is outside the workspace. Pass a `path` inside it, or submit the script inline."
-        ))
-    }
-}
-
 /// Node `readWorkflowScriptFile` with `parseFrontmatter: false`: the whole file is the snippet.
 fn read_path(cwd: &Path, input_path: &str) -> Result<Source, String> {
-    let absolute = resolve_inside(cwd, input_path)?;
-    let described = describe(&absolute, cwd);
-    let code = read_text(&absolute).map_err(|error| {
+    // Containment is the one CreateWorkflow uses: the lexical path and the real path (symlinks resolved) both stay inside.
+    let (resolved, real) = path_in_workspace(cwd, input_path)?;
+    let described = describe(&resolved, cwd);
+    let code = read_text(&real).map_err(|error| {
         format!(
             "The workflow script file {described} could not be read: {error}. Pass `path` for a file that exists, or submit the script inline."
         )
@@ -392,7 +376,11 @@ impl Tool for EvalWorkflowSnippetTool {
                 // No confirmation waits for this call. A snippet with world.run is not run on that account: the model
                 // calls again, and the permission decision asks (the same rule as SaveWorkflow's call).
                 let source = resolve_source(&input, &cwd).map_err(failed)?;
-                let check = self.port.check(&source.code).await.map_err(|error| failed(error.message))?;
+                let check = self
+                    .port
+                    .check(&source.code)
+                    .await
+                    .map_err(|error| failed(error.message))?;
                 if matches!(check, SnippetCheck::Ready { world_run: true }) {
                     return Err(failed(
                         "EvalWorkflowSnippet has no confirmation for this snippet, so nothing was run. Call it again.".to_owned(),

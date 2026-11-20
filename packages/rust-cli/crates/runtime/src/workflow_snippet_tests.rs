@@ -562,7 +562,10 @@ async fn the_timeout_settles_the_run_while_a_world_read_is_in_flight() {
     // The child's read is in flight for 1.5s; the request is not awaited to its answer.
     let read = tokio::spawn(async move {
         handler
-            .request(world_read_request("slow", "read", vec![json!("a.txt")]), None)
+            .request(
+                world_read_request("slow", "read", vec![json!("a.txt")]),
+                None,
+            )
             .await
     });
     let started = std::time::Instant::now();

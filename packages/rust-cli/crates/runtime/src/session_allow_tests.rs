@@ -310,3 +310,34 @@ async fn a_subagent_grant_answers_only_that_subagent() {
     let rules = store.project_rules(&workspace()).await.unwrap();
     assert!(rules.sourced().is_empty(), "{rules:?}");
 }
+
+/// Review: an "always allow in this session" on a CreateWorkflow ask answers its next ask in that session at once.
+#[tokio::test]
+async fn a_create_workflow_session_grant_answers_its_next_ask_without_a_prompt() {
+    let store = Arc::new(MemoryStore::default());
+    let kernel = Arc::new(kernel_with(store));
+    let (id, handle) = open(&kernel).await;
+    let mut events = handle.subscribe(Some(0));
+    let first = {
+        let (port, request) = (port(&kernel, &id).await, ask("CreateWorkflow", true));
+        tokio::spawn(async move { port.ask(request).await })
+    };
+    let interaction = asked(&mut events).await;
+    answer(&handle, interaction, PermissionAnswer::AllowSession).await;
+    first.await.unwrap().unwrap();
+
+    let again = tokio::time::timeout(Duration::from_secs(5), async {
+        port(&kernel, &id)
+            .await
+            .ask(ask("CreateWorkflow", true))
+            .await
+    })
+    .await
+    .expect("answered without a prompt")
+    .unwrap();
+    assert!(matches!(
+        again.answer,
+        Answer::Permission(PermissionAnswer::Allow { .. })
+    ));
+    assert!(handle.view().await.unwrap().pending.is_empty());
+}

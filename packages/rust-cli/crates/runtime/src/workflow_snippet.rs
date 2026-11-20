@@ -31,8 +31,8 @@ use rust_cli_kernel_api::workflow_child::{
     ChildEvent, ChildHandler, ChildRequest, CreateActor, Outcome, RequestType, WireError,
 };
 use rust_cli_kernel_api::workflow_snippet::{
-    SnippetCheck, SnippetLaunch, SnippetOutcome, SnippetRequest, SnippetStart, WorkflowSnippetError,
-    WorkflowSnippetPort, WorkflowSnippetRunner,
+    SnippetCheck, SnippetLaunch, SnippetOutcome, SnippetRequest, SnippetStart,
+    WorkflowSnippetError, WorkflowSnippetPort, WorkflowSnippetRunner,
 };
 use rust_cli_workflow::engine::{
     AskMessage, AskOutcome, EngineConfig, RunSettlement, SubmitVerdict, WorkflowDriver,
@@ -119,7 +119,8 @@ impl WorkflowDriver for SnippetDriver {
             return;
         }
         if message.chars().count() > MAX_LOG_CHARS {
-            sink.logs.push(message.chars().take(MAX_LOG_CHARS).collect());
+            sink.logs
+                .push(message.chars().take(MAX_LOG_CHARS).collect());
             sink.logs_truncated = true;
         } else {
             sink.logs.push(message.clone());
@@ -476,18 +477,18 @@ impl WorkflowSnippetPort for SnippetService {
             run_id,
             cwd: request.cwd,
         };
-        let start = match tokio::time::timeout_at(deadline, self.runner.start(launch, handler)).await
-        {
-            Ok(start) => start?,
-            Err(_elapsed) => {
-                return Ok(SnippetOutcome::Failed {
-                    code: ErrorCode::Interrupted.as_str().to_owned(),
-                    message: timeout_message(request.timeout_ms),
-                    logs: Vec::new(),
-                    logs_truncated: false,
-                });
-            }
-        };
+        let start =
+            match tokio::time::timeout_at(deadline, self.runner.start(launch, handler)).await {
+                Ok(start) => start?,
+                Err(_elapsed) => {
+                    return Ok(SnippetOutcome::Failed {
+                        code: ErrorCode::Interrupted.as_str().to_owned(),
+                        message: timeout_message(request.timeout_ms),
+                        logs: Vec::new(),
+                        logs_truncated: false,
+                    });
+                }
+            };
         let running = match start {
             SnippetStart::Rejected(diagnostics) => {
                 return Ok(SnippetOutcome::Diagnostics(diagnostics));
