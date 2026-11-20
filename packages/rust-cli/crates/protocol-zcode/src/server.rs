@@ -54,7 +54,7 @@ struct Preferences {
 pub struct Server {
     pub(crate) context: Arc<Context>,
     pub(crate) kernel: Arc<dyn Kernel>,
-    pub(crate) bridge: SessionBridge<Live>,
+    pub(crate) bridge: Arc<SessionBridge<Live>>,
     /// Fork: the requests and creations in flight per session (Node `sessionRequestCounts`, `sessionCreationIds`).
     pub(crate) in_flight: Arc<crate::fork::in_flight::InFlight>,
     /// Fork: spawns the per-session subagent table watchers.
@@ -141,8 +141,17 @@ impl Server {
         Self {
             instance: context.fresh("instance"),
             in_flight: Arc::default(),
-            bridge: SessionBridge::new(kernel.clone(), spawner.clone(), EVENT_BATCH_WINDOW)
-                .with_close_listener(crate::fork::node_helper::close_listener(context.clone())),
+            bridge: {
+                // Fork (9.34): the run progress port reaches the open sessions through the context.
+                let bridge = Arc::new(
+                    SessionBridge::new(kernel.clone(), spawner.clone(), EVENT_BATCH_WINDOW)
+                        .with_close_listener(crate::fork::node_helper::close_listener(
+                            context.clone(),
+                        )),
+                );
+                context.set_live_bridge(bridge.clone());
+                bridge
+            },
             spawner,
             context,
             kernel,

@@ -272,6 +272,13 @@ async fn serve(
         built.kernel.workflow_residency(),
         opened.paths.database().as_path(),
         opened.workspace.root.as_str(),
+        // Fork (9.34): the run progress goes to the parent session's entry and to its open stream.
+        Arc::new(rust_cli_protocol_zcode::WorkflowProgressHost::new(
+            opened.paths.database().as_path().to_path_buf(),
+            Arc::new(rust_cli_protocol_zcode::BridgeDelivery::new(
+                context.clone(),
+            )),
+        )),
     );
     // Fork (9.29, W7-5c): the per-session run reads (`workflowRuns`, the run list) answer from the service too.
     if let Some(service) = &workflow_service {

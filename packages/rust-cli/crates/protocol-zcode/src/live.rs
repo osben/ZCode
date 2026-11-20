@@ -648,6 +648,18 @@ impl Live {
         self.write(outgoing).await;
     }
 
+    /// Fork (specs/fork-rust-workflow-engine.md, 9.34): a run's projection deltas, from the run progress port. They go to
+    /// the subscribers in the session's frame order and are not kept in the session projection (the run's state lives in
+    /// the run service's projection, and cold reads come from the journal). In the session's pump task.
+    pub async fn workflow_runs_changed(&self, deltas: Vec<Value>) {
+        let outgoing = {
+            let mut state = self.state();
+            state.log.record(deltas);
+            self.collect(&mut state)
+        };
+        self.write(outgoing).await;
+    }
+
     /// Fork: a ticket for a banner read, taken before the read (see [`Self::set_admission`]).
     pub fn admission_ticket(&self) -> u64 {
         self.admission_tickets

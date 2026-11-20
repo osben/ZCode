@@ -27,6 +27,9 @@ futures-util.workspace = true
 # Fork: desktop attachment refs are local paths (the Host's zero-copy prompt attachment transfer).
 rust-cli-fs.workspace = true
 rust-cli-kernel-api.workspace = true
+# Fork (9.34): the run progress port writes the parent session's progress entry.
+rust-cli-node-store.workspace = true
+rusqlite.workspace = true
 rust-cli-protocol-core.workspace = true
 # Fork: the unknown-model output limit of workspace model calls.
 rust-cli-prompts.workspace = true
@@ -42,9 +45,7 @@ url.workspace = true
 
 [dev-dependencies]
 # Fork: the session-data protocol test runs the deletion, measure and purge methods against the real session store.
-rust-cli-node-store.workspace = true
 rust-cli-paths.workspace = true
-rusqlite.workspace = true
 # Builds the test images of attachment preparation.
 image.workspace = true
 rust-cli-kernel-api = { workspace = true, features = ["testing"] }

@@ -61,6 +61,11 @@ pub struct Context {
     /// Fork (specs/fork-rust-workflow-engine.md, 9.30): the run service's lifecycle, set once by the composition root
     /// when it builds the service; the shutdown closes the live runs through it.
     workflow_runs: std::sync::OnceLock<Arc<dyn rust_cli_kernel_api::workflow_run::WorkflowRunHost>>,
+    /// Fork (specs/fork-rust-workflow-engine.md, 9.34): the open sessions, set once by the server that owns them. The run
+    /// progress port delivers a run's live deltas through it to the parent session's stream.
+    live_bridge: std::sync::OnceLock<
+        Arc<rust_cli_protocol_core::sessions::SessionBridge<crate::live::Live>>,
+    >,
     /// Fork: the entry's model port for workspace model calls (`fork::workspace_model`); without it those methods
     /// stay unported.
     model_port: std::sync::OnceLock<Arc<dyn ModelPort>>,
@@ -134,6 +139,21 @@ impl Context {
         &self,
     ) -> Option<&Arc<dyn rust_cli_kernel_api::workflow_child::WorkflowChildRunner>> {
         self.workflow_runner.get()
+    }
+
+    /// Fork (9.34): the open sessions (set once by the server; without it a run's live deltas reach no stream).
+    pub fn set_live_bridge(
+        &self,
+        bridge: Arc<rust_cli_protocol_core::sessions::SessionBridge<crate::live::Live>>,
+    ) {
+        let _ = self.live_bridge.set(bridge);
+    }
+
+    /// Fork (9.34): the open sessions, when the server installed them.
+    pub fn live_bridge(
+        &self,
+    ) -> Option<&Arc<rust_cli_protocol_core::sessions::SessionBridge<crate::live::Live>>> {
+        self.live_bridge.get()
     }
 
     /// Fork (9.30): the run service's lifecycle (set once; without it no run service exists to close).
@@ -304,6 +324,7 @@ impl Context {
             workflow_child: std::sync::OnceLock::new(),
             workflow_runner: std::sync::OnceLock::new(),
             dynamic_workflow_runs: std::sync::OnceLock::new(),
+            live_bridge: std::sync::OnceLock::new(),
             workflow_runs: std::sync::OnceLock::new(),
             model_port: std::sync::OnceLock::new(),
             mcp_processes: std::sync::OnceLock::new(),

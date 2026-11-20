@@ -57,6 +57,7 @@ pub mod workflow_compile;
 pub mod workflow_entry;
 pub mod workflow_host;
 pub mod workflow_lines;
+pub mod workflow_progress;
 pub mod workflow_runner;
 // Fork: the snippet runner is built by the composition root with the gate (W7-7); nothing constructs it yet.
 #[allow(dead_code)]
