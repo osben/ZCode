@@ -235,3 +235,54 @@ fn a_failed_helper_call_and_a_malformed_reply_both_mean_the_checker_cannot_answe
     let clean = analysis_verdict(Ok(json!({"ok": true, "diagnostics": []}))).expect("a verdict");
     assert!(clean.ok);
 }
+
+// W7-8c (specs/fork-rust-workflow-engine.md, 9.28): the snippet compile client.
+
+#[test]
+fn the_eval_snippet_request_carries_the_code_and_the_run_id_only() {
+    assert_eq!(
+        eval_snippet_params("return 1;", "dwfeval-1"),
+        json!({"scriptText": "return 1;", "runId": "dwfeval-1"})
+    );
+}
+
+#[test]
+fn a_ready_snippet_keeps_the_world_run_flag_and_the_entry() {
+    let reply =
+        json!({"ok": true, "worldRun": true, "entrySource": "export const payload = {};\n"});
+    assert_eq!(
+        parse_eval_snippet(&reply).unwrap(),
+        SnippetCompiled::Ready {
+            world_run: true,
+            entry_source: "export const payload = {};\n".to_owned(),
+        }
+    );
+}
+
+#[test]
+fn a_rejected_snippet_keeps_its_diagnostics_as_workflow_diagnostics() {
+    let reply = json!({
+        "ok": false,
+        "diagnostics": [{"code": 2304, "line": 2, "column": 3, "message": "Cannot find name 'agent'."}],
+    });
+    assert_eq!(
+        parse_eval_snippet(&reply).unwrap(),
+        SnippetCompiled::Rejected {
+            diagnostics: vec![rust_cli_kernel_api::workflow_analysis::WorkflowDiagnostic {
+                code: 2304,
+                line: 2,
+                column: 3,
+                message: "Cannot find name 'agent'.".to_owned(),
+            }],
+        }
+    );
+}
+
+#[test]
+fn a_snippet_reply_without_its_ok_flag_or_entry_is_malformed() {
+    let no_flag = parse_eval_snippet(&json!({"worldRun": false})).expect_err("no ok flag");
+    assert!(no_flag.message.contains("does not match its contract"));
+    let no_entry = parse_eval_snippet(&json!({"ok": true, "worldRun": false}))
+        .expect_err("a ready snippet needs its entry");
+    assert!(no_entry.message.contains("does not match its contract"));
+}

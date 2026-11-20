@@ -244,7 +244,7 @@ fn unreadable(described: &str, error: &std::io::Error) -> String {
 }
 
 /// Node `describeWorkflowScriptPath`: relative to the working directory when the file is inside it.
-fn describe(absolute: &Path, cwd: &Path) -> String {
+pub(crate) fn describe(absolute: &Path, cwd: &Path) -> String {
     match absolute.strip_prefix(cwd) {
         Ok(relative) if !relative.as_os_str().is_empty() => relative.display().to_string(),
         _ => absolute.display().to_string(),
@@ -357,7 +357,7 @@ fn confirmation_message(
     message
 }
 
-fn diagnostic_value(diagnostic: &WorkflowDiagnostic) -> Value {
+pub(crate) fn diagnostic_value(diagnostic: &WorkflowDiagnostic) -> Value {
     json!({
         "code": diagnostic.code,
         "column": diagnostic.column,

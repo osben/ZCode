@@ -168,16 +168,19 @@ impl Ledger {
             let pid = child
                 .id()
                 .ok_or_else(|| io::Error::other("spawned child has no pid"))?;
-            let record = self.record(pid, purpose).await.map(|path| Pending {
+            // Owned from the spawn on: the record below awaits, and a caller that drops this future while it waits must
+            // still end the group, which only `Tracked`'s drop does.
+            let mut tracked = Tracked {
+                child,
+                pid,
+                record: None,
+                confirmed: false,
+            };
+            tracked.record = self.record(pid, purpose).await.map(|path| Pending {
                 path,
                 _instance: self.inner.clone(),
             });
-            Ok(Tracked {
-                child,
-                pid,
-                record,
-                confirmed: false,
-            })
+            Ok(tracked)
         }
         #[cfg(windows)]
         {

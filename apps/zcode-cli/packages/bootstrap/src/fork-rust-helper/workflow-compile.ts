@@ -5,11 +5,51 @@ import {
   ListWorkflowRunsInputSchema,
 } from "@zcode/contracts";
 import { builtInTools } from "@zcode/core";
-import { analyzeWorkflowScript } from "@zcode/dynamic-workflow";
+import {
+  analyzeWorkflowScript,
+  collectDiagnostics,
+  collectSites,
+  collectWorldRunCommands,
+  createWorkflowProgram,
+  lowerWorkflow,
+  SNIPPET_FACADE_DTS,
+} from "@zcode/dynamic-workflow";
 import { renderChildEntry } from "@zcode/dynamic-workflow-runtime";
 import { compileOnce } from "../app/dynamic-workflow-run-compile.js";
 import { parseParams } from "../zcode-protocol/server-types.js";
-import { workflowCompileParamsSchema, workflowFormatParamsSchema } from "./workflow-protocol.js";
+import {
+  workflowCompileParamsSchema,
+  workflowEvalSnippetParamsSchema,
+  workflowFormatParamsSchema,
+} from "./workflow-protocol.js";
+
+/**
+ * `helper/workflow/evalSnippet` (W7-8c): the snippet compile of Node's `dynamic-workflow-snippet-service.ts`, in the same
+ * order. Diagnostics of the snippet facade come first, then the world.run literals; a clean snippet is lowered and its child
+ * entry rendered for the run id the Rust side gives. `worldRun` says whether the snippet carries a world.run command, which
+ * decides the confirmation. Nothing is started and nothing is read from disk.
+ */
+export function evalSnippetForRust(raw: unknown) {
+  const params = parseParams(workflowEvalSnippetParamsSchema, raw);
+  const workflow = createWorkflowProgram(params.scriptText, { facadeDts: SNIPPET_FACADE_DTS });
+  const diagnostics = collectDiagnostics(workflow.program);
+  if (diagnostics.length > 0) return { ok: false as const, diagnostics };
+  const table = collectSites(workflow);
+  const worldRun = collectWorldRunCommands(workflow, table);
+  if (worldRun.diagnostics.length > 0) {
+    return { ok: false as const, diagnostics: worldRun.diagnostics };
+  }
+  const lowered = lowerWorkflow(workflow, table);
+  const entrySource = renderChildEntry(
+    { lowered: lowered.code, args: {}, run: { id: params.runId } },
+    { runId: params.runId },
+  );
+  return {
+    ok: true as const,
+    worldRun: worldRun.commands.length > 0,
+    entrySource,
+  };
+}
 
 /**
  * `helper/workflow/compile`: the same gates as the Node CreateWorkflow handler (analysis, then compile once). A script
