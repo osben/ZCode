@@ -99,3 +99,88 @@ fn the_request_carries_the_run_identity_and_only_the_optional_fields_given() {
         json!({"scriptText": "return 1;", "runId": "run-2", "args": {"topic": "x"}, "resumedFrom": "run-1"})
     );
 }
+
+// W7-2 (specs/fork-rust-workflow-engine.md, 9.17): the window display and the run list and run detail text.
+
+#[test]
+fn a_display_reply_is_the_window_or_none() {
+    let window = json!({"kind": "create_workflow", "nodes": []});
+    assert_eq!(
+        parse_display(&json!({"display": window})).unwrap(),
+        Some(json!({"kind": "create_workflow", "nodes": []}))
+    );
+    assert_eq!(parse_display(&json!({"display": null})).unwrap(), None);
+    assert!(parse_display(&json!({"display": "text"})).is_err());
+    assert!(parse_display(&json!({})).is_err());
+}
+
+#[test]
+fn a_text_reply_is_the_formatted_string() {
+    assert_eq!(
+        parse_text(&json!({"text": "<workflow_runs count=\"0\">"})).unwrap(),
+        "<workflow_runs count=\"0\">"
+    );
+    assert!(parse_text(&json!({"text": 1})).is_err());
+    assert!(parse_text(&json!({})).is_err());
+}
+
+#[test]
+fn the_run_list_request_carries_the_query_the_listed_rows_and_the_cwd() {
+    let input = serde_json::Map::from_iter([("limit".to_owned(), json!(5))]);
+    let listed = json!({"runs": [], "truncated": false});
+    assert_eq!(
+        run_list_params(&input, &listed, "/work/project"),
+        json!({
+            "kind": "runList",
+            "input": {"limit": 5},
+            "listed": {"runs": [], "truncated": false},
+            "workingDirectory": "/work/project",
+        })
+    );
+}
+
+// ocr findings on PR #571: the window needs the script's model bindings, and an unknown run sends `detail: null`.
+
+#[test]
+fn the_display_request_carries_the_model_bindings_only_when_given() {
+    assert_eq!(
+        display_params("return 1;", None),
+        json!({"kind": "display", "scriptText": "return 1;"})
+    );
+    let bindings = serde_json::Map::from_iter([("gpt-5".to_owned(), json!("zhipu/gpt-5"))]);
+    assert_eq!(
+        display_params("return 1;", Some(&bindings)),
+        json!({
+            "kind": "display",
+            "scriptText": "return 1;",
+            "modelBindings": {"gpt-5": "zhipu/gpt-5"},
+        })
+    );
+}
+
+#[test]
+fn an_unknown_run_is_sent_as_a_null_detail() {
+    assert_eq!(
+        run_detail_params("dwfrun-gone", None, "/work/project"),
+        json!({
+            "kind": "runDetail",
+            "runId": "dwfrun-gone",
+            "detail": null,
+            "workingDirectory": "/work/project",
+        })
+    );
+}
+
+#[test]
+fn the_run_detail_request_carries_the_run_id_the_detail_and_the_cwd() {
+    let detail = json!({"runId": "dwfrun-1", "status": "running"});
+    assert_eq!(
+        run_detail_params("dwfrun-1", Some(&detail), "/work/project"),
+        json!({
+            "kind": "runDetail",
+            "runId": "dwfrun-1",
+            "detail": {"runId": "dwfrun-1", "status": "running"},
+            "workingDirectory": "/work/project",
+        })
+    );
+}

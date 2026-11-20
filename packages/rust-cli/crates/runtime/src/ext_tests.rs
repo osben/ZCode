@@ -103,6 +103,7 @@ async fn plugin_agents_reach_the_agent_listing() {
         Arc::new(MemoryTaskLists::default()),
         Extensions {
             agent_memory_root: None,
+            dynamic_workflow: None,
             config: ExtConfig {
                 plugin_dirs: vec![EnvPath::new(KIT)],
                 workspace: Some(workspace()),
@@ -221,6 +222,7 @@ async fn the_session_catalog_follows_the_incognito_profile() {
         Arc::new(MemoryTaskLists::default()),
         Extensions {
             agent_memory_root: None,
+            dynamic_workflow: None,
             config: ExtConfig {
                 plugin_dirs: vec![EnvPath::new(KIT)],
                 workspace: Some(workspace()),
@@ -463,6 +465,120 @@ async fn read_topic_resource_is_registered_only_with_topic_resources() {
                 .any(|name| name == rust_cli_kernel_api::tool_names::READ_TOPIC_RESOURCE),
             expected,
             "{:?}",
+            catalog.tools
+        );
+    }
+}
+
+/// Fork (W7-1, review finding 1): a session-gated dynamic-workflow tool reaches the session's catalog through the full
+/// chain (built-in, ext, policy) when its record opens the gate, in either mode, and not without a record.
+#[tokio::test]
+async fn a_gated_workflow_tool_reaches_the_catalog_only_through_an_open_gate() {
+    use rust_cli_kernel_api::dynamic_workflow::{DynamicWorkflowGate, DynamicWorkflowGates};
+    use rust_cli_kernel_api::ids::SessionId;
+    use rust_cli_kernel_api::tool::{Tool, ToolError, ToolOutput, ToolProgress, ToolUseContext};
+
+    struct Stub;
+    #[async_trait::async_trait]
+    impl Tool for Stub {
+        fn name(&self) -> &str {
+            rust_cli_kernel_api::tool_names::CREATE_WORKFLOW
+        }
+        fn input_schema(&self) -> serde_json::Value {
+            serde_json::json!({ "type": "object" })
+        }
+        fn description(&self, _context: &rust_cli_kernel_api::tool::PromptContext) -> String {
+            "stub".to_owned()
+        }
+        async fn call(
+            &self,
+            _input: serde_json::Value,
+            _context: ToolUseContext,
+            _progress: tokio::sync::mpsc::Sender<ToolProgress>,
+        ) -> Result<ToolOutput, ToolError> {
+            Ok(rust_cli_kernel_api::tool::text(String::new()))
+        }
+    }
+    struct Fixed(Option<DynamicWorkflowGate>);
+    impl DynamicWorkflowGates for Fixed {
+        fn gate(&self, _session: &SessionId) -> Option<DynamicWorkflowGate> {
+            self.0
+        }
+    }
+    let open = DynamicWorkflowGate {
+        enabled: true,
+        tools_on_demand: false,
+    };
+    let on_demand = DynamicWorkflowGate {
+        enabled: true,
+        tools_on_demand: true,
+    };
+    for (gate, expected) in [(None, false), (Some(open), true), (Some(on_demand), true)] {
+        let env = MemoryEnvironment::new(EnvFacts {
+            cwd: EnvPath::new("/Users/dev/work"),
+            platform: "darwin".to_owned(),
+            os_version: "Darwin 24".to_owned(),
+            shell: "zsh".to_owned(),
+            is_git_repo: false,
+            home: Some(EnvPath::new("/Users/dev")),
+            uid: None,
+        });
+        let store = Arc::new(MemoryStore::default());
+        let kernel = LocalKernel::with_extensions(
+            Ports {
+                model: Arc::new(ScriptedModel::new(Vec::new())),
+                environments: environments(Arc::new(env)),
+                store: store.clone(),
+                artifacts: store,
+                clock: Arc::new(FixedClock(1_000)),
+                ids: Arc::new(SequentialIds::default()),
+            },
+            Defaults {
+                selection: selection().into(),
+                mode: PermissionMode::Default,
+                max_turns: None,
+                search_tools: false,
+                task_tools: None,
+                limits: Default::default(),
+            },
+            ContextConfig::new(Surface::Print),
+            CompactConfig::default(),
+            Arc::new(MemoryTaskLists::default()),
+            Extensions {
+                agent_memory_root: None,
+                dynamic_workflow: Some(crate::ext::DynamicWorkflowGating {
+                    gates: Arc::new(Fixed(gate)),
+                    tools: vec![Arc::new(Stub) as Arc<dyn Tool>],
+                }),
+                ..Extensions::none()
+            },
+        );
+        let session = kernel
+            .create_session(CreateSession {
+                id: None,
+                workspace: workspace(),
+                selection: selection(),
+                mode: PermissionMode::Default,
+                plan: false,
+                incognito: None,
+            })
+            .await
+            .unwrap();
+        let catalog = kernel
+            .session_catalog(rust_cli_kernel_api::catalog::CatalogQuery {
+                session,
+                workspace: workspace(),
+                selection: selection(),
+            })
+            .await
+            .unwrap();
+        assert_eq!(
+            catalog
+                .tools
+                .iter()
+                .any(|name| name == rust_cli_kernel_api::tool_names::CREATE_WORKFLOW),
+            expected,
+            "gate {gate:?}: {:?}",
             catalog.tools
         );
     }

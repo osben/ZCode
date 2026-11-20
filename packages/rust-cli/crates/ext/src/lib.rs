@@ -363,13 +363,16 @@ impl ExtRegistry {
         tools
     }
 
+    /// `base` is the built-in layer's list: the session-less one for `tools()`, the session's own for a snapshot, so a
+    /// session-gated tool (the dynamic-workflow tools, W7-1) reaches the model's list.
     fn assemble_with(
         &self,
+        base: Vec<Arc<dyn Tool>>,
         wait_tool: Arc<dyn Tool>,
         wait: bool,
         mcp: Vec<Arc<dyn Tool>>,
     ) -> Vec<Arc<dyn Tool>> {
-        let mut tools = self.base.tools();
+        let mut tools = base;
         tools.push(self.skill.clone());
         if wait {
             tools.push(wait_tool);
@@ -381,7 +384,12 @@ impl ExtRegistry {
 
 impl ToolRegistry for ExtRegistry {
     fn tools(&self) -> Vec<Arc<dyn Tool>> {
-        self.assemble_with(self.wait.clone(), self.mcp.has_pending(), self.mcp.tools())
+        self.assemble_with(
+            self.base.tools(),
+            self.wait.clone(),
+            self.mcp.has_pending(),
+            self.mcp.tools(),
+        )
     }
 
     fn find(&self, name: &str) -> Option<Arc<dyn Tool>> {
@@ -447,12 +455,14 @@ impl ToolRegistry for ExtRegistry {
         // (specs/fork-rust-workspace-plugins-mcp.md).
         let mcp = self.session_mcp(session);
         let wait_tool = self.wait_of(&mcp);
+        // Fork (W7-1): the built-in layer's session view, so a session-gated tool reaches the model's list.
+        let base = self.base.snapshot(session).tools;
         if let Some(profile) = self.incognito.profile(session) {
             // Fork: an incognito session sees only the servers and tools its profile keeps.
             let (tools, view) = mcp.snapshot_where(|scope| incognito::keeps_scope(&profile, scope));
             let wait =
                 !view.pending().is_empty() || (mcp.declared(session) && !view.servers.is_empty());
-            let mut tools = self.assemble_with(wait_tool, wait, tools);
+            let mut tools = self.assemble_with(base, wait_tool, wait, tools);
             tools.retain(|tool| !self.incognito.hides(session, tool.as_ref()));
             return ToolSnapshot {
                 tools: self.with_app_tools(session, tools),
@@ -462,7 +472,7 @@ impl ToolRegistry for ExtRegistry {
         let (tools, view) = mcp.snapshot();
         let wait = !view.pending().is_empty() || mcp.declared(session);
         ToolSnapshot {
-            tools: self.with_app_tools(session, self.assemble_with(wait_tool, wait, tools)),
+            tools: self.with_app_tools(session, self.assemble_with(base, wait_tool, wait, tools)),
             mcp: Some(view),
         }
     }

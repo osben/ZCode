@@ -65,6 +65,16 @@ pub struct Extensions {
     pub hook_transcripts: Option<Arc<dyn rust_cli_kernel_api::hooks::HookTranscripts>>,
     /// Fork (rule 18): the storage root of subagent persistent memory; None when memory is off or the Host gives none.
     pub agent_memory_root: Option<std::path::PathBuf>,
+    /// Fork (W7-1, specs/fork-rust-workflow-engine.md 9.2): the dynamic-workflow gate and the tools it gates. The tools
+    /// reach a session only through its recorded gate, and a session without a record sees none; None registers none.
+    pub dynamic_workflow: Option<DynamicWorkflowGating>,
+}
+
+/// Fork (W7-1): the per-session gate source and the dynamic-workflow tools it gates (`runtime::workflow_gate`).
+#[derive(Clone)]
+pub struct DynamicWorkflowGating {
+    pub gates: Arc<dyn rust_cli_kernel_api::dynamic_workflow::DynamicWorkflowGates>,
+    pub tools: Vec<Arc<dyn rust_cli_kernel_api::tool::Tool>>,
 }
 
 impl Extensions {
@@ -87,6 +97,7 @@ impl Extensions {
             models: None,
             hook_transcripts: None,
             agent_memory_root: None,
+            dynamic_workflow: None,
         }
     }
 }

@@ -44,6 +44,7 @@ use crate::model_failure::{
 };
 use crate::model_failure::{provider_stop_error, quota_reset_at, retry_after_of};
 use crate::persona::persona_name;
+use crate::residency::{LiveRun, LiveRunGuard, SessionResidency};
 use crate::run_concurrency::RunConcurrency;
 use crate::stall_clock::RunStallClock;
 use crate::world_host::{WORLD_JOB_LIMIT, WorldJob, WorldWiring, spawn_world_job};
@@ -99,6 +100,13 @@ pub trait ActorSessions {
     /// Resolve the deferred of a parked question with the main agent's answer (Node `deferred.resolve(answer)`): the
     /// blocked escalate call returns it as its tool result.
     fn deliver_answer(&mut self, session: &str, qid: &str, answer: &str) -> Result<()>;
+    /// Close the session once the run has settled (Node `releaseActorSessions`, per session). The owner calls it once per
+    /// session, from the engine's dispose. A failure is recorded and logged; it does not fail the settlement.
+    fn close_session(&mut self, session: &str) -> Result<()>;
+    /// Drains the deferred closes that failed after their turn landed. A port that has no such closes returns nothing.
+    fn take_close_failures(&mut self) -> Vec<(String, String)> {
+        Vec::new()
+    }
 }
 
 /// The answer to a `submit_result` call, which is the tool result the model reads.
@@ -193,9 +201,39 @@ pub struct ActorPort<S: ActorSessions> {
     world_running: usize,
     /// The engine's verdict for each instance, taken by the owner right after the engine call that made it.
     verdicts: HashMap<String, SubmitVerdict>,
+    /// Set by the engine's dispose (once per settlement). A disposed port refuses new sessions.
+    disposed: bool,
+    /// Close failures, as (session, message). Recorded for the owner's caller; the settlement does not fail on them.
+    pub(crate) close_failures: Vec<(String, String)>,
 }
 
 impl<S: ActorSessions> WorkflowDriver for ActorPort<S> {
+    /// Node's `dispose` (W6b part 6): the engine calls it once per settlement. Each session the run created is handed to
+    /// the close port once, in session-id order, so the close does not depend on map order. A failed close is recorded
+    /// and logged; the settlement does not fail. The close port waits for a turn that is still running (turn side).
+    fn dispose(&mut self) {
+        if self.disposed {
+            return;
+        }
+        self.disposed = true;
+        let mut sessions: Vec<String> = self.actor_of_session.keys().cloned().collect();
+        sessions.sort();
+        // `disposed` makes this run once per driver, and no session can be created after it, so each session is asked
+        // exactly once.
+        for session in sessions {
+            if let Err(error) = self.sessions.close_session(&session) {
+                let message = format!("{error:#}");
+                tracing::warn!(
+                    event = "dynamic_workflow.actor_runtime.close_failed",
+                    session = %session,
+                    error = %message,
+                    "a workflow actor's session did not close"
+                );
+                self.close_failures.push((session, message));
+            }
+        }
+    }
+
     fn minted_session_id(&self, run_id: &str, actor: &Ref) -> Option<String> {
         Some(rust_cli_node_store::mint_actor_session_id(
             run_id,
@@ -210,6 +248,10 @@ impl<S: ActorSessions> WorkflowDriver for ActorPort<S> {
         persona: &Value,
         _seed: Option<&crate::imported_cache::ActorSessionSeed>,
     ) -> Result<String> {
+        // Node's `Workflow driver closed during actor creation`: a disposed driver accepts no new session.
+        if self.disposed {
+            return Err(anyhow!("Workflow driver is closed"));
+        }
         let request = ActorSessionRequest {
             run_id: self.run_id.clone(),
             parent_session_id: self.parent_session_id.clone(),
@@ -383,6 +425,8 @@ pub struct ActorDriverOwner<J: JournalPort, S: ActorSessions> {
     redrive: Option<RedriveWiring>,
     /// The run-level stall clock (W6b part 5). Attached with the redrive wiring; released at settlement.
     stall: Option<RunStallClock>,
+    /// The run's residency guard on its parent session (W6b part 6). Held from the launch to the settlement.
+    residency: Option<LiveRunGuard>,
 }
 
 /// What the owner holds of the governor for its run: the port, and the subscription's end.
@@ -435,6 +479,8 @@ impl<J: JournalPort, S: ActorSessions> ActorDriverOwner<J, S> {
             queued_world: Vec::new(),
             world_queue: VecDeque::new(),
             world_running: 0,
+            disposed: false,
+            close_failures: Vec::new(),
         };
         let book = EscalationBook::new(config.run_id.clone());
         let engine = WorkflowEngine::new(config, journal, port)?;
@@ -445,7 +491,46 @@ impl<J: JournalPort, S: ActorSessions> ActorDriverOwner<J, S> {
             concurrency: None,
             redrive: None,
             stall: None,
+            residency: None,
         })
+    }
+
+    /// Node's launch registration of residency-blocking work (W6b part 6): the run's parent session holds a guard from
+    /// the launch to the settlement, so the session is not evicted while the run is live. A run that has settled takes
+    /// no guard. Settlement releases it (see `pump`).
+    pub fn attach_residency(
+        &mut self,
+        residency: &SessionResidency,
+        run: Arc<dyn LiveRun>,
+    ) -> Result<()> {
+        // An earlier guard is released first, so one run holds one guard.
+        self.residency.take();
+        let Some(parent) = self.engine.driver.parent_session_id.clone() else {
+            return Err(anyhow!(
+                "a workflow run needs its parent session, which keeps it resident"
+            ));
+        };
+        if self.engine.is_settled() {
+            return Ok(());
+        }
+        let run_id = self.engine.run_id().to_owned();
+        self.residency = Some(residency.acquire(&parent, &run_id, run)?);
+        Ok(())
+    }
+
+    /// The closes of the run's sessions that failed, as (session, message), drained: the ones the port recorded at
+    /// settlement, then the ones the turn side refused after a turn landed. A failed close never fails the settlement;
+    /// this is where a caller (W7) reads it. A second call returns only the failures since the first.
+    pub fn take_close_failures(&mut self) -> Vec<(String, String)> {
+        let mut failures = std::mem::take(&mut self.engine.driver.close_failures);
+        failures.extend(self.engine.driver.sessions.take_close_failures());
+        failures
+    }
+
+    /// The driver port, for tests of the port's own rules after settlement.
+    #[cfg(test)]
+    pub(crate) fn driver_for_test(&mut self) -> &mut ActorPort<S> {
+        &mut self.engine.driver
     }
 
     /// Node's launch registration (`setRunBound` with the run's cap, then `subscribe`): binds the run on the governor
@@ -1189,10 +1274,12 @@ impl<J: JournalPort, S: ActorSessions> ActorDriverOwner<J, S> {
         {
             self.engine.driver.world = None;
         }
-        // Settlement releases the run from the governor (once: `release_concurrency` takes the link).
+        // Settlement releases the run from the governor (once: `release_concurrency` takes the link), and the parent
+        // session's residency guard (W6b part 6).
         if self.engine.is_settled() {
             self.release_concurrency();
             self.release_redrive();
+            self.residency.take();
         }
         match first {
             Some(error) => Err(error),

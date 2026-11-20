@@ -265,6 +265,10 @@ impl ActorSessions for Sessions {
     fn deliver_answer(&mut self, session: &str, qid: &str, answer: &str) -> anyhow::Result<()> {
         self.turns.deliver_answer(session, qid, answer)
     }
+
+    fn close_session(&mut self, session: &str) -> anyhow::Result<()> {
+        self.turns.close_session(session)
+    }
 }
 
 fn needs_ok(_schema: &Value, value: &Value) -> Vec<Violation> {

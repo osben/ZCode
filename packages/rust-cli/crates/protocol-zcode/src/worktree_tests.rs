@@ -2649,6 +2649,51 @@ async fn a_submission_activation_in_another_workspace_is_refused() {
     assert_eq!(ack["result"]["sessionId"], session.as_str());
 }
 
+/// W7-1 review finding 6 (specs/fork-rust-workflow-engine.md 9.2): a refused submission activation leaves the gate its
+/// reservation recorded unchanged; the gate its activation asks for is recorded only once the activation is accepted.
+#[tokio::test]
+async fn a_refused_activation_leaves_the_gate_record_unchanged() {
+    use rust_cli_kernel_api::dynamic_workflow::DynamicWorkflowGate;
+
+    let (_scope, server, _kernel) = server();
+    let (parent, other) = (tempfile::tempdir().unwrap(), tempfile::tempdir().unwrap());
+    let workspace = parent.path().to_str().unwrap().to_owned();
+    let ack = run(
+        &server,
+        json!({"commandId": "r1", "clientId": "k", "type": "createSession", "issuedAt": 1,
+            "payload": {"workspaceId": workspace, "submissionPreparation": {"submissionId": "sub"}}}),
+    )
+    .await;
+    assert_eq!(ack["status"], "accepted", "{ack}");
+    let session = ack["result"]["sessionId"].as_str().unwrap().to_owned();
+    let id = SessionId::new(&session);
+    let closed = Some(DynamicWorkflowGate {
+        enabled: false,
+        tools_on_demand: false,
+    });
+    assert_eq!(server.dynamic_workflow_gate(&id), closed);
+
+    let activate = |command: &str, workspace: &str| {
+        json!({"commandId": command, "clientId": "k", "type": "createSession", "issuedAt": 1,
+            "payload": {"workspaceId": workspace, "preparedSessionId": session,
+                "expectedSubmissionId": "sub",
+                "dynamicWorkflowEnabled": true, "dynamicWorkflowMode": "onDemand"}})
+    };
+    let ack = run(&server, activate("a1", other.path().to_str().unwrap())).await;
+    assert_eq!(ack["status"], "rejected", "{ack}");
+    assert_eq!(server.dynamic_workflow_gate(&id), closed);
+
+    let ack = run(&server, activate("a2", &workspace)).await;
+    assert_eq!(ack["status"], "accepted", "{ack}");
+    assert_eq!(
+        server.dynamic_workflow_gate(&id),
+        Some(DynamicWorkflowGate {
+            enabled: true,
+            tools_on_demand: true,
+        })
+    );
+}
+
 /// Node lists a prepared session under `workspaceID ?? directory` and compares that key with `workspaceId`. A row a
 /// Node agent wrote with a workspace identity besides its directory is activated with the identity, not the path.
 #[tokio::test]
