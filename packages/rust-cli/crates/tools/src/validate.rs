@@ -88,16 +88,24 @@ fn join(path: &str, key: &str) -> String {
     }
 }
 
-/// Node's `formatIssueValue` for the options of an enum: strings quoted, the rest as text, joined with `|`.
-fn invalid_option_message(values: &[Value]) -> String {
-    let options: Vec<String> = values
-        .iter()
-        .map(|value| match value {
-            Value::String(text) => format!("\"{text}\""),
-            other => other.to_string(),
-        })
-        .collect();
-    format!("Invalid option: expected one of {}", options.join("|"))
+/// Node's `formatIssueValue`: strings quoted, the rest as text.
+fn format_issue_value(value: &Value) -> String {
+    match value {
+        Value::String(text) => format!("\"{text}\""),
+        other => other.to_string(),
+    }
+}
+
+/// Node's `createInvalidValueIssue` message: a single allowed value reads `Invalid input: expected "x"`, several read
+/// `Invalid option: expected one of "x"|"y"`.
+fn invalid_value_message(values: &[Value]) -> String {
+    match values {
+        [only] => format!("Invalid input: expected {}", format_issue_value(only)),
+        _ => {
+            let options: Vec<String> = values.iter().map(format_issue_value).collect();
+            format!("Invalid option: expected one of {}", options.join("|"))
+        }
+    }
 }
 
 fn child_segments(segments: &[Value], key: &str) -> Vec<Value> {
@@ -108,8 +116,10 @@ fn child_segments(segments: &[Value], key: &str) -> Vec<Value> {
 
 /// `segments` is the path as Node's issues carry it (keys, and numbers for array items); `path` is the dotted text.
 fn check(schema: &Value, value: &Value, path: &str, segments: &[Value], issues: &mut Vec<Issue>) {
-    // The enum check comes first and replaces the type check: Node reports a value outside the enum as `invalid_value`,
-    // whatever its type.
+    // Node's `validateNode` reports a value outside the enum as `invalid_value`, whatever its type, and then goes on: a
+    // type mismatch is reported only when no value constraint failed, and a type mismatch returns before the string,
+    // number, array and object constraints run. So an enum failure on a string still reports its `minLength`.
+    let mut value_constraint_failed = false;
     if let Some(options) = schema.get("enum").and_then(Value::as_array)
         && !options.contains(value)
     {
@@ -117,16 +127,18 @@ fn check(schema: &Value, value: &Value, path: &str, segments: &[Value], issues: 
             segments: segments.to_vec(),
             values: options.clone(),
         });
-        return;
+        value_constraint_failed = true;
     }
     if let Some(expected) = schema.get("type").and_then(Value::as_str)
         && !matches_type(expected, value)
     {
-        issues.push(Issue::Mismatch {
-            path: path.to_owned(),
-            expected: expected.to_owned(),
-            received: received(value),
-        });
+        if !value_constraint_failed {
+            issues.push(Issue::Mismatch {
+                path: path.to_owned(),
+                expected: expected.to_owned(),
+                received: received(value),
+            });
+        }
         return;
     }
     if let Value::String(text) = value
@@ -279,7 +291,7 @@ pub(crate) fn validate(tool: &str, schema: &Value, input: &Value) -> Option<Stri
                         code: "invalid_value",
                         values: values.clone(),
                         path: segments.clone(),
-                        message: invalid_option_message(values),
+                        message: invalid_value_message(values),
                     }))
                 }
                 _ => None,

@@ -2122,7 +2122,7 @@ The W7-5 brief covers more than one PR. The Node sources are about 160 KB (`dyna
 15. Fixed. `text_files` is private and re-exported at the fs crate root: `read_text`, `write_text`, `list_file_names`, `canonicalize_path`, `symlink_to` (unix), and `is_regular_file` (the sync `is_file`; the root `is_file` is the async one). The docs say `metadata` follows symlinks and any stat error is not-a-file. The non-UTF-8 listing test is gated off macOS, because APFS refuses such names (EILSEQ).
 
 **Divergence 118.** Windows device names are not usable workflow names: the stem before the first dot, compared case-insensitively to `CON`, `PRN`, `AUX`, `NUL`, `COM1` to `COM9` and `LPT1` to `LPT9`, is refused with or without an extension. Node accepts them, and a file such as `con.dwf.ts` cannot be written on Windows.
-**Divergence 119.** A `script_path` is also compared after symlinks are resolved (canonical paths of the file and of the workspace). A link inside the workspace to a file outside it is refused. This extends divergence 113, which was lexical only. Node has no such check.
+**Divergence 119.** A `script_path` is also compared after symlinks are resolved (canonical paths of the file and of the workspace). A link inside the workspace to a file outside it is refused. This extends divergence 113, which was lexical only. Node has no such check. The guarantee covers the named link: the file is read at the real path that was checked, so a link swapped in at the named path after the check cannot redirect the read. It does not cover a writer inside the workspace that replaces the real file, or one of its ancestor directories, with a link out of the workspace between the check and the read (path-based check then read, a residual TOCTOU window). Closing it needs a descriptor-pinned open (open, then verify the descriptor's canonical path). Not done; recorded here as the known residual.
 
 **Review round 2 (ocr on PR #585, head 80f93030c, seven findings; merged with origin/fork 89a0af22e, CreateWorkflow).** Verdicts:
 
@@ -2135,6 +2135,15 @@ The W7-5 brief covers more than one PR. The Node sources are about 160 KB (`dyna
 - L7. Fixed. The stem is `split_once('.')`, with no dead fallback.
 
 The `text_files` module stays private and re-exported at the fs root; the merge took origin's `create_new_text`, `ensure_dir` and `symlink`, and dropped the duplicate `canonicalize_path` and `symlink_to`.
+
+**Review round 3 (ocr on PR #585, head dbaf50529; six findings, verdicts per finding).**
+
+- Containment doc (medium). Fixed by qualifying the guarantee, not by a pinned open: the module doc and divergence 119 now state that a swap of `real` or of an ancestor directory between the check and the read is not covered. Pinned open is the follow-up if the residual matters.
+- Single-value enum (low). Fixed. Node's `createInvalidValueIssue` says `Invalid input: expected "x"` for one allowed value; the port said `Invalid option: expected one of "x"`. Tests `a_single_value_enum_says_expected_not_one_of` and `a_missing_single_value_enum_says_expected_not_one_of` were red on the old code.
+- Enum then `minLength` (low). Fixed. Node's `validateNode` continues after an enum failure: only a type mismatch returns, and the string constraints run when the type matches. The port returned after the enum, so `enum` plus `minLength` now reports `invalid_value` then `too_small`, as Node does. Test `an_enum_failure_still_reports_a_min_length_failure_on_the_same_string` was red on the old code. The enum-plus-type-mismatch case still reports only `invalid_value`.
+- Duplicate `normalize` (low). Fixed. The local copy is deleted; `contain` uses `rust_cli_base::path::normalize`. The contract for input is documented: absolute, or relative to `cwd` and joined before normalizing, so a leading `..` is accepted only when it lands back inside the workspace (test `a_leading_parent_segment_is_resolved_against_the_workspace_before_the_check`, green on the old code too).
+- Case-sensitive prefix on Windows (low). Fixed. The lexical prefix check folds ASCII case under `cfg!(windows)` (`lexically_within`). The canonical comparison already agrees on case on Windows, since canonical paths carry the on-disk case. Red: `the_lexical_prefix_check_can_fold_ascii_case` failed on the old stub. The Windows path itself is not run here (macOS only).
+- Coverage (low). Added the absolute-path-inside case, a workspace root that is a symlink, and a link inside the workspace to a file inside it (with `real` == the resolved target). All three pass on the old code, so they pin existing behaviour rather than fix it.
 
 ### 9.25 W7-5a-3: runtime workflow run service (as built, part)
 

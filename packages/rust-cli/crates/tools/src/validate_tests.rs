@@ -176,3 +176,109 @@ fn an_enum_type_mismatch_falls_back_to_the_invalid_value_json() {
         "[\n  {\n    \"code\": \"invalid_value\",\n    \"values\": [\n      \"fast\",\n      \"safe\"\n    ],\n    \"path\": [\n      \"mode\"\n    ],\n    \"message\": \"Invalid option: expected one of \\\"fast\\\"|\\\"safe\\\"\"\n  }\n]"
     );
 }
+
+/// Review round 3 (port of Node `createInvalidValueIssue`): a single-value enum says `expected "x"`, not `one of`.
+#[test]
+fn a_single_value_enum_says_expected_not_one_of() {
+    let schema = json!({
+        "additionalProperties": false,
+        "properties": {"mode": {"type": "string", "enum": ["only"]}},
+        "required": ["mode"],
+        "type": "object"
+    });
+    assert_eq!(
+        validate("OneTool", &schema, &json!({"mode": "other"})).unwrap(),
+        r#"[
+  {
+    "code": "invalid_value",
+    "values": [
+      "only"
+    ],
+    "path": [
+      "mode"
+    ],
+    "message": "Invalid input: expected \"only\""
+  }
+]"#
+    );
+}
+
+/// The same single-value message for a missing required property whose schema has the enum.
+#[test]
+fn a_missing_single_value_enum_says_expected_not_one_of() {
+    let schema = json!({
+        "additionalProperties": false,
+        "properties": {"mode": {"type": "string", "enum": ["only"]}},
+        "required": ["mode"],
+        "type": "object"
+    });
+    assert_eq!(
+        validate("OneTool", &schema, &json!({})).unwrap(),
+        r#"[
+  {
+    "code": "invalid_value",
+    "values": [
+      "only"
+    ],
+    "path": [
+      "mode"
+    ],
+    "message": "Invalid input: expected \"only\""
+  }
+]"#
+    );
+}
+
+/// Review round 3 (port of Node `validateNode`): an enum failure does not stop the other constraints. A string outside
+/// the enum that is also too short gets `invalid_value` and then `too_small`, as Node reports both.
+#[test]
+fn an_enum_failure_still_reports_a_min_length_failure_on_the_same_string() {
+    let schema = json!({
+        "additionalProperties": false,
+        "properties": {"mode": {"type": "string", "enum": ["abc", "def"], "minLength": 5}},
+        "required": ["mode"],
+        "type": "object"
+    });
+    assert_eq!(
+        validate("LengthTool", &schema, &json!({"mode": "x"})).unwrap(),
+        r#"[
+  {
+    "code": "invalid_value",
+    "values": [
+      "abc",
+      "def"
+    ],
+    "path": [
+      "mode"
+    ],
+    "message": "Invalid option: expected one of \"abc\"|\"def\""
+  },
+  {
+    "origin": "string",
+    "code": "too_small",
+    "minimum": 5,
+    "inclusive": true,
+    "path": [
+      "mode"
+    ],
+    "message": "Too small: expected string to have >=5 characters"
+  }
+]"#
+    );
+}
+
+/// An enum failure on a value of the wrong type stays a single `invalid_value`: the type check is skipped after it and
+/// the string constraints do not run on a non-string (Node returns from `validateNode` on a type mismatch).
+#[test]
+fn an_enum_failure_with_a_type_mismatch_reports_only_the_enum() {
+    let schema = json!({
+        "additionalProperties": false,
+        "properties": {"mode": {"type": "string", "enum": ["abc", "def"], "minLength": 5}},
+        "required": ["mode"],
+        "type": "object"
+    });
+    let text = validate("LengthTool", &schema, &json!({"mode": 7})).unwrap();
+    assert_eq!(text.matches("\"code\"").count(), 1, "{text}");
+    assert!(text.contains("invalid_value"), "{text}");
+    assert!(!text.contains("too_small"), "{text}");
+}
