@@ -1,0 +1,335 @@
+//! The session's reminder host, composed into the progress host, over a fake clock (specs/fork-rust-workflow-engine.md, 9.41,
+//! W7-8e; divergences 357 to 360 of 9.38). The fake timers fire in time order, and a cancelled timer does nothing.
+
+use std::collections::HashMap;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
+
+use serde_json::{Value, json};
+
+use super::{ReminderTimers, RunDecisions, SessionReminders, TokioTimers};
+use crate::fork::workflow_progress::{ProgressDelivery, WorkflowNotices, WorkflowProgressHost};
+use crate::fork::workflow_reminder::{MINUTE_MS, OpenDecisions, OpenQuestion};
+use rust_cli_kernel_api::workflow_run_progress::WorkflowRunProgressPort;
+
+fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
+    mutex.lock().unwrap_or_else(PoisonError::into_inner)
+}
+
+struct Pending {
+    due: u64,
+    cancelled: Arc<AtomicBool>,
+    fire: Option<Box<dyn FnOnce() + Send>>,
+}
+
+/// A clock the test moves by hand. `advance_to` fires every timer that falls due on the way, in order.
+#[derive(Default)]
+struct FakeTimers {
+    now: Mutex<u64>,
+    pending: Mutex<Vec<Pending>>,
+}
+
+impl FakeTimers {
+    fn advance_to(&self, to: u64) {
+        loop {
+            let due = {
+                let mut pending = lock(&self.pending);
+                let next = pending
+                    .iter()
+                    .enumerate()
+                    .filter(|(_, timer)| timer.fire.is_some() && timer.due <= to)
+                    .min_by_key(|(_, timer)| timer.due)
+                    .map(|(index, _)| index);
+                next.map(|index| {
+                    let timer = &mut pending[index];
+                    (timer.due, timer.cancelled.clone(), timer.fire.take())
+                })
+            };
+            let Some((at, cancelled, fire)) = due else {
+                break;
+            };
+            *lock(&self.now) = at;
+            if !cancelled.load(Ordering::SeqCst)
+                && let Some(fire) = fire
+            {
+                fire();
+            }
+        }
+        *lock(&self.now) = to;
+    }
+}
+
+impl ReminderTimers for FakeTimers {
+    fn now_ms(&self) -> u64 {
+        *lock(&self.now)
+    }
+
+    fn schedule(&self, delay_ms: u64, fire: Box<dyn FnOnce() + Send>) -> Box<dyn FnOnce() + Send> {
+        let cancelled = Arc::new(AtomicBool::new(false));
+        let due = self.now_ms() + delay_ms;
+        lock(&self.pending).push(Pending {
+            due,
+            cancelled: cancelled.clone(),
+            fire: Some(fire),
+        });
+        Box::new(move || cancelled.store(true, Ordering::SeqCst))
+    }
+}
+
+/// The live runs and what each still owes. A run's read can fail.
+#[derive(Default)]
+struct Runs {
+    live: Mutex<Vec<String>>,
+    open: Mutex<HashMap<String, Result<Option<OpenDecisions>, String>>>,
+}
+
+impl Runs {
+    fn with_question(run: &str) -> Arc<Self> {
+        let runs = Self::default();
+        *lock(&runs.live) = vec![run.to_owned()];
+        lock(&runs.open).insert(
+            run.to_owned(),
+            Ok(Some(OpenDecisions {
+                questions: vec![OpenQuestion {
+                    qid: "q1".to_owned(),
+                    subagent: "reviewer".to_owned(),
+                    question: "Which branch?".to_owned(),
+                    context: None,
+                    asked_at: Some(0),
+                }],
+                holes: Vec::new(),
+                draft_path: None,
+            })),
+        );
+        Arc::new(runs)
+    }
+}
+
+impl RunDecisions for Runs {
+    fn live_run_ids(&self) -> Vec<String> {
+        lock(&self.live).clone()
+    }
+
+    fn open(&self, run_id: &str) -> Result<Option<OpenDecisions>, String> {
+        lock(&self.open).get(run_id).cloned().unwrap_or(Ok(None))
+    }
+}
+
+#[derive(Default)]
+struct Notices {
+    posted: Mutex<Vec<(String, String)>>,
+}
+
+impl WorkflowNotices for Notices {
+    fn post(&self, parent_session_id: &str, text: String) {
+        lock(&self.posted).push((parent_session_id.to_owned(), text));
+    }
+}
+
+impl Notices {
+    fn texts(&self) -> Vec<String> {
+        lock(&self.posted)
+            .iter()
+            .map(|(_, text)| text.clone())
+            .collect()
+    }
+}
+
+/// The injected clock of the tokio timers (their delays are real; the time they report is not read).
+struct FixedClock;
+
+impl rust_cli_kernel_api::clock::Clock for FixedClock {
+    fn now_ms(&self) -> u64 {
+        0
+    }
+
+    fn time_zone(&self) -> String {
+        "UTC".to_owned()
+    }
+}
+
+struct Quiet;
+
+impl ProgressDelivery for Quiet {
+    fn deliver(&self, _parent_session_id: &str, _deltas: Vec<Value>) {}
+}
+
+struct Session {
+    timers: Arc<FakeTimers>,
+    notices: Arc<Notices>,
+    reminders: Arc<SessionReminders>,
+    progress: WorkflowProgressHost,
+}
+
+fn session(runs: Arc<dyn RunDecisions>) -> Session {
+    let timers = Arc::new(FakeTimers::default());
+    let notices = Arc::new(Notices::default());
+    let reminders = SessionReminders::new("parent_1", runs, timers.clone(), notices.clone());
+    let progress = WorkflowProgressHost::new(Arc::new(Quiet)).with_reminder(reminders.clock());
+    Session {
+        timers,
+        notices,
+        reminders,
+        progress,
+    }
+}
+
+fn minutes(count: u64) -> u64 {
+    count * MINUTE_MS
+}
+
+#[test]
+fn the_first_reminder_fires_after_fifteen_idle_minutes_and_names_the_question() {
+    let fx = session(Runs::with_question("run_1"));
+    fx.reminders.turn_finished();
+    fx.timers.advance_to(minutes(15) - 1);
+    assert!(
+        fx.notices.texts().is_empty(),
+        "nothing before 15 idle minutes"
+    );
+    fx.timers.advance_to(minutes(15));
+    let texts = fx.notices.texts();
+    assert_eq!(texts.len(), 1, "one reminder at 15 minutes");
+    assert!(
+        texts[0].contains("<reminder>1 of 2</reminder>"),
+        "{}",
+        texts[0]
+    );
+    assert!(texts[0].contains("Which branch?"), "{}", texts[0]);
+    assert!(
+        texts[0].contains(&format!("waited-ms=\"{}\"", minutes(15))),
+        "{}",
+        texts[0]
+    );
+    assert_eq!(lock(&fx.notices.posted)[0].0, "parent_1");
+}
+
+#[test]
+fn a_turn_that_starts_before_the_delay_cancels_the_reminder() {
+    let fx = session(Runs::with_question("run_1"));
+    fx.reminders.turn_finished();
+    fx.timers.advance_to(minutes(10));
+    fx.reminders.turn_started();
+    fx.timers.advance_to(minutes(60));
+    assert!(
+        fx.notices.texts().is_empty(),
+        "a busy session is not reminded"
+    );
+}
+
+#[test]
+fn the_second_reminder_comes_thirty_minutes_after_the_idle_start_and_then_no_more() {
+    let fx = session(Runs::with_question("run_1"));
+    fx.reminders.turn_finished();
+    fx.timers.advance_to(minutes(30));
+    let texts = fx.notices.texts();
+    assert_eq!(texts.len(), 2, "the first at 15 minutes, the second at 30");
+    assert!(texts[0].contains("<reminder>1 of 2</reminder>"));
+    assert!(texts[1].contains("<reminder>2 of 2</reminder>"));
+    fx.timers.advance_to(minutes(240));
+    assert_eq!(
+        fx.notices.texts().len(),
+        2,
+        "a run gets two reminders, no third"
+    );
+}
+
+#[test]
+fn an_open_set_change_through_the_composed_progress_host_restarts_the_idle_clock() {
+    let fx = session(Runs::with_question("run_1"));
+    fx.reminders.turn_finished();
+    fx.timers.advance_to(minutes(10));
+    let event = json!({
+        "eventType": "escalation-raised",
+        "runId": "run_1",
+        "payload": {"qid": "q1", "question": "Which branch?", "actorName": "reviewer"}
+    });
+    fx.progress
+        .record("parent_1", &event, &[])
+        .expect("the progress record succeeds");
+    // The reminder is measured from the change, not from the idle start. No notice sink is set here, so the escalation
+    // itself posts nothing and the count below counts reminders only.
+    let before = fx.notices.texts().len();
+    fx.timers.advance_to(minutes(24));
+    assert_eq!(
+        fx.notices.texts().len(),
+        before,
+        "no reminder before 15 minutes from the change"
+    );
+    fx.timers.advance_to(minutes(25));
+    let texts = fx.notices.texts();
+    assert_eq!(texts.len(), before + 1);
+    assert!(
+        texts[before].contains("<reminder>1 of 2</reminder>"),
+        "{}",
+        texts[before]
+    );
+}
+
+#[test]
+fn a_run_whose_read_fails_is_skipped_without_a_reminder() {
+    let runs = Runs::with_question("run_1");
+    lock(&runs.open).insert(
+        "run_1".to_owned(),
+        Err("the snapshot is unreadable".to_owned()),
+    );
+    let fx = session(runs);
+    fx.reminders.turn_finished();
+    fx.timers.advance_to(minutes(30));
+    assert!(fx.notices.texts().is_empty(), "a failed read sends nothing");
+}
+
+#[test]
+fn the_host_reads_busy_and_idle_from_the_session_edges() {
+    let fx = session(Runs::with_question("run_1"));
+    // Before any edge the session is not idle: a clock that is never told it is idle never arms.
+    fx.timers.advance_to(minutes(20));
+    assert!(fx.notices.texts().is_empty());
+    // The idle period is measured from the idle edge (20 minutes), not from the start of the clock.
+    fx.reminders.turn_finished();
+    fx.timers.advance_to(minutes(34));
+    assert!(
+        fx.notices.texts().is_empty(),
+        "15 minutes count from the idle edge"
+    );
+    fx.timers.advance_to(minutes(35));
+    assert_eq!(fx.notices.texts().len(), 1);
+    fx.timers.advance_to(minutes(50));
+    assert_eq!(fx.notices.texts().len(), 2);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn the_tokio_timers_fire_once_and_a_cancel_stops_the_timer() {
+    let timers = TokioTimers::new(tokio::runtime::Handle::current(), Arc::new(FixedClock));
+    let (tx, rx) = tokio::sync::oneshot::channel::<&'static str>();
+    let tx = Arc::new(Mutex::new(Some(tx)));
+    let fired = tx.clone();
+    let _cancel = timers.schedule(
+        10,
+        Box::new(move || {
+            if let Some(tx) = lock(&fired).take() {
+                let _ = tx.send("fired");
+            }
+        }),
+    );
+    let answer = tokio::time::timeout(std::time::Duration::from_secs(5), rx)
+        .await
+        .expect("the timer fires")
+        .expect("the timer sends");
+    assert_eq!(answer, "fired");
+
+    let (tx2, rx2) = tokio::sync::oneshot::channel::<&'static str>();
+    let tx2 = Arc::new(Mutex::new(Some(tx2)));
+    let fired2 = tx2.clone();
+    let cancel = timers.schedule(
+        50,
+        Box::new(move || {
+            if let Some(tx) = lock(&fired2).take() {
+                let _ = tx.send("fired");
+            }
+        }),
+    );
+    cancel();
+    let waited = tokio::time::timeout(std::time::Duration::from_millis(300), rx2).await;
+    assert!(waited.is_err(), "a cancelled timer does not fire");
+}

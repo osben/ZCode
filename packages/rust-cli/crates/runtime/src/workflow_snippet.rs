@@ -43,7 +43,7 @@ use rust_cli_workflow::event::RunEvent;
 use rust_cli_workflow::imported_cache::ActorSessionSeed;
 use rust_cli_workflow::journal::MemoryJournal;
 use rust_cli_workflow::model::{Caps, Ref, StopReason};
-use rust_cli_workflow::world_read::{WorldReadPorts, execute_world_read};
+use rust_cli_workflow::world_read::{WorldReadPorts, WorldReadRoots, execute_world_read};
 use serde_json::Value;
 
 /// Log limits (Node `MAX_LOGS` and `MAX_LOG_CHARS`): the first 100 items, each cut to 2048 characters, and a flag when any
@@ -53,14 +53,14 @@ const MAX_LOG_CHARS: usize = 2_048;
 /// Node `MAX_ARTIFACT_BYTES`: the serialized return value's cap.
 const MAX_ARTIFACT_BYTES: usize = 256 * 1024;
 
-/// The snippet service: the runner port and the read port.
+/// The snippet service: the runner port and the read ports, made per root (a snippet reads under its own cwd, 9.41).
 pub struct SnippetService {
     runner: Arc<dyn WorkflowSnippetRunner>,
-    reads: Arc<dyn WorldReadPorts>,
+    reads: Arc<dyn WorldReadRoots>,
 }
 
 impl SnippetService {
-    pub fn new(runner: Arc<dyn WorkflowSnippetRunner>, reads: Arc<dyn WorldReadPorts>) -> Self {
+    pub fn new(runner: Arc<dyn WorkflowSnippetRunner>, reads: Arc<dyn WorldReadRoots>) -> Self {
         Self { runner, reads }
     }
 }
@@ -158,7 +158,7 @@ impl Core {
 /// send).
 struct SnippetHandler {
     core: Arc<Mutex<Core>>,
-    reads: Arc<dyn WorldReadPorts>,
+    reads: Arc<dyn WorldReadRoots>,
     cwd: PathBuf,
 }
 
@@ -186,7 +186,7 @@ impl ChildHandler for SnippetHandler {
                 };
                 Box::pin(world_read(
                     self.core.clone(),
-                    self.reads.clone(),
+                    self.reads.at(&self.cwd),
                     self.cwd.clone(),
                     request.site_id,
                     op,
@@ -492,6 +492,7 @@ impl WorkflowSnippetPort for SnippetService {
             reads: self.reads.clone(),
             cwd: request.cwd.clone(),
         });
+        // The reads of this snippet are rooted at its cwd (the handler asks the roots port for it per read).
         let launch = SnippetLaunch {
             code: request.code,
             run_id,

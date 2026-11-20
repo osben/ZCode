@@ -23,12 +23,14 @@ use rust_cli_workflow::artifact_publish::{
 };
 use rust_cli_workflow::engine_artifacts::ArtifactPublishRequest;
 use rust_cli_workflow::error::ErrorCode;
-use rust_cli_workflow::world_read::{RunRequest, RunStatus, WorldReadPorts, execute_world_read};
+use rust_cli_workflow::world_read::{
+    RunRequest, RunStatus, WorldReadPorts, WorldReadRoots, execute_world_read,
+};
 use serde_json::{Value, json};
 
 use crate::LocalEnvironment;
 use crate::shell::ShellConfig;
-use crate::world_ports::{StoreAdapter, WorldFs, WorldPorts};
+use crate::world_ports::{StoreAdapter, WorldFs, WorldPorts, WorldRoots};
 
 struct Fixture {
     /// Holds the directory; the path is not canonicalized, so on macOS the workspace sits behind `/var` -> `/private/var`
@@ -731,4 +733,33 @@ async fn a_path_to_a_fifo_is_refused_without_blocking_the_read() {
     .await
     .expect("the read does not block on a fifo");
     assert_eq!(answer, Err(FsFault::NotFile));
+}
+
+/// Divergence 313 of 9.41: a snippet's reads are rooted at its session's directory. The roots port answers each root
+/// with its own ports, so a glob at one root never sees another root's files.
+#[tokio::test(flavor = "multi_thread")]
+async fn the_roots_port_globs_under_the_root_it_is_asked_for() {
+    let fx = fixture();
+    let elsewhere = fx.base.join("elsewhere");
+    std::fs::create_dir_all(&elsewhere).unwrap();
+    std::fs::write(elsewhere.join("only-here.txt"), "x").unwrap();
+    std::fs::write(fx.root.join("only-there.txt"), "x").unwrap();
+    let roots = WorldRoots::new(fx.ports.env(), tokio::runtime::Handle::current());
+    let at_elsewhere = roots.at(&elsewhere);
+    let at_work = roots.at(&fx.root);
+    let (found_elsewhere, found_work) = blocking(move || {
+        (
+            at_elsewhere.glob("*.txt", 10).unwrap(),
+            at_work.glob("*.txt", 10).unwrap(),
+        )
+    })
+    .await;
+    let names = |hits: rust_cli_workflow::world_read::GlobHits| -> Vec<String> {
+        hits.files
+            .iter()
+            .map(|path| path.rsplit('/').next().unwrap_or_default().to_owned())
+            .collect()
+    };
+    assert_eq!(names(found_elsewhere), vec!["only-here.txt".to_owned()]);
+    assert_eq!(names(found_work), vec!["only-there.txt".to_owned()]);
 }

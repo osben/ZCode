@@ -51,6 +51,29 @@ static NEXT_OPERATION: AtomicU64 = AtomicU64::new(1);
 /// read and a run are bounded by the same number.
 pub const READ_TEXT_CAP_BYTES: usize = caps::RUN_STREAM_MAX_BYTES;
 
+/// The ports of any workspace root over one environment (9.41, divergence 313): each `at` is a `WorldPorts` rooted there,
+/// sharing the environment and the runtime handle.
+pub struct WorldRoots {
+    env: Arc<LocalEnvironment>,
+    handle: tokio::runtime::Handle,
+}
+
+impl WorldRoots {
+    pub fn new(env: Arc<LocalEnvironment>, handle: tokio::runtime::Handle) -> Self {
+        Self { env, handle }
+    }
+}
+
+impl rust_cli_workflow::world_read::WorldReadRoots for WorldRoots {
+    fn at(&self, root: &Path) -> Arc<dyn WorldReadPorts> {
+        Arc::new(WorldPorts::new(
+            self.env.clone(),
+            root.to_path_buf(),
+            self.handle.clone(),
+        ))
+    }
+}
+
 impl WorldPorts {
     pub fn new(env: Arc<LocalEnvironment>, root: PathBuf, handle: tokio::runtime::Handle) -> Self {
         Self { env, root, handle }

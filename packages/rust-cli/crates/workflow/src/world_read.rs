@@ -119,6 +119,14 @@ pub trait WorldReadPorts: Send + Sync {
     fn run(&self, request: &RunRequest) -> Result<RunOutcome, String>;
 }
 
+/// The read ports of one workspace root. A snippet's reads are rooted at its session's directory, as Node roots a snippet
+/// at its cwd (specs/fork-rust-workflow-engine.md, 9.41, divergence 313), so the ports are made per call, not once per
+/// process.
+pub trait WorldReadRoots: Send + Sync {
+    /// The ports whose glob, grep and run are rooted at `root`.
+    fn at(&self, root: &std::path::Path) -> std::sync::Arc<dyn WorldReadPorts>;
+}
+
 /// Execute one world read or run. `cwd` is the workspace root (the base of every relative path).
 pub fn execute_world_read(
     cwd: &Path,
