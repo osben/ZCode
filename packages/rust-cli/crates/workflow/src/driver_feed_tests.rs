@@ -156,6 +156,25 @@ fn stop_interrupted_settles_the_run_as_interrupted() {
     ));
 }
 
+/// The amendment's stop (9.43, Node `controller.abort({ superseded })`): the run settles as `stopped(superseded)` and
+/// names its successor, which is what the journal and the resume gate read.
+#[test]
+fn stop_superseded_settles_the_run_as_superseded_by_its_successor() {
+    let (mut owner, sessions) = new_owner();
+    start_ask(&mut owner, &sessions);
+    owner
+        .stop_superseded("dwfrun-successor")
+        .expect("stop as superseded");
+    assert!(matches!(
+        owner.settlement(),
+        Some(RunSettlement::Stopped {
+            reason: StopReason::Superseded,
+            superseded_by: Some(successor),
+            ..
+        }) if successor == "dwfrun-successor"
+    ));
+}
+
 /// A run's `LiveRun` that stops nothing by itself: only the owner's own stop settles the run here.
 struct QuietRun;
 

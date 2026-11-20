@@ -130,6 +130,9 @@ pub(crate) enum ActorRequest {
     Feed { session: String, event: FeedEvent },
     /// The run's stop from the residency ledger (W6b part 6, `LiveRun`). No answer goes back.
     StopInterrupted,
+    /// The run's stop by an amendment (9.43): it settles as `stopped(superseded)` naming `successor_run_id`. No answer
+    /// goes back; the caller waits for the settlement itself.
+    StopSuperseded { successor_run_id: String },
     /// The child's `create-actor` (W7-5a-2). The answer is the engine's actor id, which the child's later requests name.
     CreateActor {
         site_id: String,
@@ -412,6 +415,11 @@ fn dispatch_request<J: JournalPort, S: ActorSessions>(
                 tracing::warn!("the owner failed to settle an interrupted run: {error:#}");
             }
         }
+        ActorRequest::StopSuperseded { successor_run_id } => {
+            if let Err(error) = owner.stop_superseded(&successor_run_id) {
+                tracing::warn!("the owner failed to settle a superseded run: {error:#}");
+            }
+        }
     }
 }
 
@@ -523,6 +531,13 @@ impl ActorHandle {
     /// Asks the owner to settle its run as interrupted (W6b part 6). Posted without an answer.
     pub fn stop_interrupted(&self) -> bool {
         self.post(ActorRequest::StopInterrupted)
+    }
+
+    /// Asks the owner to settle its run as superseded by `successor_run_id` (9.43). Posted without an answer.
+    pub fn stop_superseded(&self, successor_run_id: &str) -> bool {
+        self.post(ActorRequest::StopSuperseded {
+            successor_run_id: successor_run_id.to_owned(),
+        })
     }
 
     /// The child's `create-actor` (W7-5a-2): the engine's id for the new actor.

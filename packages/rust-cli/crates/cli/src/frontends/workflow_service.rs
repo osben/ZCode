@@ -19,6 +19,7 @@ use rust_cli_runtime::workflow_assembly::ActorSessionRelease;
 use rust_cli_runtime::workflow_owner::{ActorBindingsPort, OwnerStores, bound_owner_factory};
 use rust_cli_runtime::workflow_quota::StoreQuotaReads;
 use rust_cli_runtime::workflow_run::WorkflowRunService;
+use rust_cli_workflow::import_build::{BuildOutcome, ImportRefusal};
 use rust_cli_workflow::model::RunRow;
 use rust_cli_workflow::model_failure::ThreadClock;
 use rust_cli_workflow::residency::SessionResidency;
@@ -145,6 +146,14 @@ impl RunStore for LazyRunStore {
 
     fn get_run(&self, run_id: &str) -> Result<Option<RunRow>> {
         self.get()?.get_run(run_id)
+    }
+
+    fn amend_preflight(&self, predecessor_run_id: &str) -> Result<Result<RunRow, ImportRefusal>> {
+        self.get()?.amend_preflight(predecessor_run_id)
+    }
+
+    fn amend_import(&self, predecessor_run_id: &str) -> Result<BuildOutcome> {
+        self.get()?.amend_import(predecessor_run_id)
     }
 
     fn run_detail(

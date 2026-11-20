@@ -17,6 +17,7 @@ use rust_cli_node_store::dwf::{self, RunRecord, RunStatus as DwfStatus, StopReas
 use rust_cli_workflow::actor_mailbox::ActorMailbox;
 use rust_cli_workflow::driver_owner::ActorDriverOwner;
 use rust_cli_workflow::engine::{AskSpec, EngineConfig};
+use rust_cli_workflow::import_build::{BuildOutcome, ImportRefusal};
 use rust_cli_workflow::journal::MemoryJournal;
 use rust_cli_workflow::model::RunRow;
 use rust_cli_workflow::residency::SessionResidency;
@@ -1043,6 +1044,16 @@ impl RunStore for Probe {
         self.note_read();
         self.inner.get_run(run_id)
     }
+
+    fn amend_preflight(&self, predecessor_run_id: &str) -> Result<Result<RunRow, ImportRefusal>> {
+        self.note_read();
+        self.inner.amend_preflight(predecessor_run_id)
+    }
+
+    fn amend_import(&self, predecessor_run_id: &str) -> Result<BuildOutcome> {
+        self.note_read();
+        self.inner.amend_import(predecessor_run_id)
+    }
 }
 
 fn probed(
@@ -1175,6 +1186,14 @@ impl RunStore for Racing {
     }
     fn get_run(&self, run_id: &str) -> Result<Option<RunRow>> {
         self.inner.get_run(run_id)
+    }
+
+    fn amend_preflight(&self, predecessor_run_id: &str) -> Result<Result<RunRow, ImportRefusal>> {
+        self.inner.amend_preflight(predecessor_run_id)
+    }
+
+    fn amend_import(&self, predecessor_run_id: &str) -> Result<BuildOutcome> {
+        self.inner.amend_import(predecessor_run_id)
     }
 }
 

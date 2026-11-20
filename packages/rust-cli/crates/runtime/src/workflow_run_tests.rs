@@ -1364,6 +1364,20 @@ impl rust_cli_workflow::run_store::RunStore for DetailStore {
             .find(|(row, _, _)| row.run_id == run_id)
             .map(|(row, _, _)| row.clone()))
     }
+    fn amend_preflight(
+        &self,
+        _predecessor_run_id: &str,
+    ) -> anyhow::Result<
+        Result<rust_cli_workflow::model::RunRow, rust_cli_workflow::import_build::ImportRefusal>,
+    > {
+        anyhow::bail!("the detail store has no journal to preflight an amendment from")
+    }
+    fn amend_import(
+        &self,
+        _predecessor_run_id: &str,
+    ) -> anyhow::Result<rust_cli_workflow::import_build::BuildOutcome> {
+        anyhow::bail!("the detail store has no journal to import an amended run from")
+    }
     fn run_detail(
         &self,
         run_id: &str,

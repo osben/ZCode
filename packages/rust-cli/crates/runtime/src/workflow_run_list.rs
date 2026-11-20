@@ -19,8 +19,9 @@ use rust_cli_kernel_api::ids::QuestionId;
 use rust_cli_kernel_api::ids::{SessionId, WorkflowRunId};
 use rust_cli_kernel_api::workflow_child::LaunchInput;
 use rust_cli_kernel_api::workflow_run::{
-    DynamicWorkflowRunError, DynamicWorkflowRunPort, DynamicWorkflowRunSessions, LifecycleStatus,
-    ListQuery, ResolveQuestionRefusalReason, ResolveQuestionResult, SubmitRequest,
+    AmendRequest, AmendResult, DynamicWorkflowRunError, DynamicWorkflowRunPort,
+    DynamicWorkflowRunSessions, LifecycleStatus, ListQuery, ResolveQuestionRefusalReason,
+    ResolveQuestionResult, SubmitRequest,
 };
 use rust_cli_workflow::actor_mailbox::{ActorHandle, MailboxError};
 use rust_cli_workflow::engine::EngineConfig;
@@ -417,7 +418,7 @@ pub(crate) struct SessionRuns {
     parent: String,
 }
 
-async fn on_blocking_pool<T: Send + 'static>(
+pub(super) async fn on_blocking_pool<T: Send + 'static>(
     work: impl FnOnce() -> Result<T, DynamicWorkflowRunError> + Send + 'static,
 ) -> Result<T, DynamicWorkflowRunError> {
     tokio::task::spawn_blocking(work).await.map_err(|error| {
@@ -476,6 +477,22 @@ impl DynamicWorkflowRunPort for SessionRuns {
         self.service
             .default_concurrency_value()
             .map(|value| value as usize)
+    }
+
+    /// Node `getScript` (9.43): the stored script of a run of this session, `None` when it has none or is not its own.
+    async fn get_script(
+        &self,
+        run_id: &WorkflowRunId,
+    ) -> Result<Option<String>, DynamicWorkflowRunError> {
+        let service = self.service.clone();
+        let parent = self.parent.clone();
+        let run_id = run_id.as_str().to_owned();
+        on_blocking_pool(move || service.script_of(&parent, &run_id)).await
+    }
+
+    /// Node `amend` (9.43): a successor of a run of this session; the predecessor is stopped if it is live.
+    async fn amend(&self, request: AmendRequest) -> Result<AmendResult, DynamicWorkflowRunError> {
+        self.service.amend_run(&self.parent, request).await
     }
 
     /// Node `submit` (9.39): a new run under this session, the parent Node names (`parentSessionId`).
