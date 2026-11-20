@@ -76,10 +76,11 @@ use table::{Closer, OpenSessions};
 use crate::assemble::SurfaceTraits;
 
 pub use acp::{AcpSetup, external_agent};
-pub use ext::{ExtConfig, Extensions};
+pub use ext::{DynamicWorkflowGating, ExtConfig, Extensions};
 pub use hook_transcripts::LocalHookTranscripts;
 pub use rust_cli_compact::{AutoCompactAt, CompactConfig, Thresholds as CompactThresholds};
 pub use rust_cli_context::{Attribution, ContextConfig, DesktopContext, OutputStyle, Surface};
+pub use workflow_gate::wired_workflow_tools;
 // hooks 快照（`LocalKernel::replace_hooks` 的参数）：前端的测试组装它不必依赖 hooks crate（修复线 F37 的 TUI 测试）。
 pub use rust_cli_hooks::{HookSource, HooksConfig, HooksSettings};
 pub use rust_cli_query::{RequestLimits, ThinkingTokens};
@@ -261,7 +262,7 @@ impl LocalKernel {
         context: ContextConfig,
         compact: CompactConfig,
         tasks: Arc<dyn TaskListStore>,
-        extensions: Extensions,
+        mut extensions: Extensions,
     ) -> Self {
         // Fork (slice 3 layer B): the main loop resolves an off-peak run's ticket through the Host's port.
         let off_peak_port = extensions.off_peak.clone();
@@ -280,6 +281,14 @@ impl LocalKernel {
         let machine = ports.environments.primary_machine();
         // Fork: the one in-memory owner of the sessions' incognito profiles, read by every gate.
         let incognito = rust_cli_kernel_api::incognito::IncognitoProfiles::default();
+        // Fork (W7-7a, divergence 55): the incognito automationTools toggle closes the workflow gate of its session,
+        // read here from the kernel's own profiles, so every entry point sees the same fact.
+        if let Some(gating) = extensions.dynamic_workflow.as_mut() {
+            gating.gates = Arc::new(workflow_gate::AutomationGated::new(
+                gating.gates.clone(),
+                incognito.clone(),
+            ));
+        }
         // Fork: the one in-memory owner of the sessions' workspaces (specs/fork-rust-workspace-plugins-mcp.md),
         // read by the per-workspace plugin and MCP views.
         let workspaces = rust_cli_kernel_api::workspace_key::SessionWorkspaces::default();

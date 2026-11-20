@@ -25,6 +25,7 @@ use rust_cli_protocol_zcode::{
 use crate::assemble::{self, Controller};
 use crate::frontends::app_workspace::{AppWorkspace, ProcessConfig};
 use crate::frontends::node_helper;
+use crate::frontends::workflow_gating;
 use crate::frontends::workflow_service;
 use crate::process::{ControllerRun, Start};
 
@@ -169,6 +170,13 @@ async fn serve(
     );
     context.set_app_tools_router(app_tools.clone());
     spec.app_tools = Some(app_tools);
+    // Fork (W7-7a, 9.36): the workflow gate source, over the table the protocol server records into (divergence 56), and
+    // the tools wired in this build. The gate stays closed for every session the Host does not open it for.
+    spec.dynamic_workflow = Some(workflow_gating::gating(
+        context.dynamic_workflow_gates().clone(),
+        node_helper.as_ref(),
+        &facts.process.home,
+    ));
     spec.node_helper = node_helper;
     // Fork: the Host's off-peak store (specs/fork-rust-automations.md, slice 3).
     spec.off_peak = Some(Arc::new(HostOffPeak::new(context.clone())));

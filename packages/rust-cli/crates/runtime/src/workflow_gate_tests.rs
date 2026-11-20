@@ -11,7 +11,7 @@ use rust_cli_kernel_api::tool_names;
 use serde_json::{Value, json};
 use tokio::sync::mpsc;
 
-use super::GatedRegistry;
+use super::{AutomationGated, GatedRegistry};
 
 /// A stub tool: the gate only reads its name and `should_defer`.
 struct Stub {
@@ -185,6 +185,47 @@ fn on_demand_defers_every_workflow_tool_and_keeps_the_base_tools_undeferred() {
         .find_for(&session, tool_names::CREATE_WORKFLOW)
         .expect("on demand still finds the tool for execution");
     assert!(found.should_defer());
+}
+
+// W7-7a (divergence 55): the incognito automationTools toggle closes the gate of its session, read at each call.
+#[test]
+fn an_incognito_session_that_excludes_automation_tools_sees_no_workflow_tool() {
+    let incognito = rust_cli_kernel_api::incognito::IncognitoProfiles::default();
+    let locked = rust_cli_kernel_api::incognito::IncognitoProfile::LOCKDOWN;
+    incognito.record(&SessionId::new("locked"), Some(locked));
+    let mut keeps_automation = locked;
+    keeps_automation.automation_tools = true;
+    incognito.record(&SessionId::new("kept"), Some(keeps_automation));
+    let gates = Gates(
+        [("locked", OPEN), ("kept", OPEN), ("plain", OPEN)]
+            .into_iter()
+            .map(|(session, gate)| (session.to_owned(), gate))
+            .collect(),
+    );
+    let base = Base {
+        tools: vec![Arc::new(Stub { name: "Read" }) as Arc<dyn Tool>],
+    };
+    let registry = GatedRegistry::new(
+        Arc::new(base),
+        Arc::new(AutomationGated::new(Arc::new(gates), incognito)),
+        workflow_stubs(),
+    );
+    let locked = SessionId::new("locked");
+    assert!(
+        registry
+            .find_for(&locked, tool_names::CREATE_WORKFLOW)
+            .is_none()
+    );
+    assert_eq!(names(&registry.snapshot(&locked).tools), ["Read"]);
+    for session in ["kept", "plain"] {
+        let session = SessionId::new(session);
+        assert!(
+            registry
+                .find_for(&session, tool_names::CREATE_WORKFLOW)
+                .is_some(),
+            "{session:?} keeps the workflow tools"
+        );
+    }
 }
 
 #[test]
