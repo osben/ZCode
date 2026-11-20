@@ -10,7 +10,9 @@ use rust_cli_kernel_api::tool::Tool;
 use rust_cli_kernel_api::workflow_analysis::{
     WorkflowAnalysis, WorkflowAnalysisError, WorkflowAnalyzer,
 };
-use rust_cli_kernel_api::workflow_run::{DynamicWorkflowRunSessions, LateRunSessions};
+use rust_cli_kernel_api::workflow_run::{
+    DynamicWorkflowRunError, DynamicWorkflowRunSessions, LateRunSessions, SubmitRequest,
+};
 use rust_cli_runtime::wired_workflow_tools;
 
 use super::gating;
@@ -50,12 +52,13 @@ fn without_an_analyzer_the_run_tools_and_list_saved_are_wired() {
 }
 
 #[test]
-fn with_an_analyzer_save_is_wired_before_list_and_create_never_is() {
+fn with_an_analyzer_create_and_save_are_wired_before_the_run_tools_and_list_saved() {
     let analyzer: Arc<dyn WorkflowAnalyzer> = Arc::new(NoAnalyzer);
     let tools = wired_workflow_tools(Some(analyzer), &PathBuf::from("/home"), no_runs());
     assert_eq!(
         names(&tools),
         [
+            "CreateWorkflow",
             "SaveWorkflow",
             "ListWorkflowRuns",
             "GetWorkflowRun",
@@ -64,6 +67,30 @@ fn with_an_analyzer_save_is_wired_before_list_and_create_never_is() {
             "ListSavedWorkflows"
         ]
     );
+}
+
+#[tokio::test]
+async fn a_submit_before_the_late_slot_is_set_is_unsupported_and_a_second_set_is_refused() {
+    // The slot is set once the run service exists. A submit that races the composition gets the typed unsupported error,
+    // not a panic, and a second set is refused (the first stays), as the composition's warn expects.
+    let late = LateRunSessions::default();
+    let port = late.for_session(&SessionId::new("ses_a"));
+    let error = port
+        .submit(SubmitRequest {
+            script_text: "return 1".to_owned(),
+            cwd: "project".to_owned(),
+            name: None,
+            args: None,
+            parent_session_id: Some(SessionId::new("ses_a")),
+            tool_call_id: None,
+            max_concurrency: None,
+            script_path: None,
+        })
+        .await
+        .expect_err("no run service is set yet");
+    assert_eq!(error, DynamicWorkflowRunError::unsupported("submit"));
+    assert!(late.set(no_runs()), "the first set is kept");
+    assert!(!late.set(no_runs()), "a second set is refused");
 }
 
 #[test]

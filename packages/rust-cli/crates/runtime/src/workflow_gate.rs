@@ -117,24 +117,20 @@ impl ToolRegistry for GatedRegistry {
     }
 }
 
-/// Fork (W7-7a, 9.36): the workflow tools wired to a port in this build, in Node's order. SaveWorkflow needs the analyzer
-/// (the helper's check), and ListSavedWorkflows reads the home's saved store. CreateWorkflow is dropped even with an
-/// analyzer: `workflow_tools` offers it without a run port, and that form (it typechecks and says it did not run) must
-/// not reach a session. EvalWorkflowSnippet is not offered either: its reads are rooted at the process workspace, not at
-/// the session's directory (9.36, divergence 313).
+/// Fork (W7-7a, 9.36; W7-8d, 9.39; W7-9, 9.40): the workflow tools wired in this build, in Node's order: CreateWorkflow
+/// (with the analyzer and the run sessions), SaveWorkflow (with the analyzer), the run tools (ListWorkflowRuns,
+/// ResumeWorkflowRun, ResolveWorkflowQuestion) through `runs`, then ListSavedWorkflows. EvalWorkflowSnippet is not offered
+/// either: no snippet port is composed yet. Its reads are rooted per call at the session's directory (9.41, divergence 313,
+/// closed in the service), so the port is the only thing missing.
 ///
-/// Fork (W7-9, 9.40): the run tools (ListWorkflowRuns, ResumeWorkflowRun, ResolveWorkflowQuestion) read and act through
-/// `runs`, the per-session run port of the calling session. They sit before ListSavedWorkflows, in Node's order.
+/// The run tools read and act through `runs`, the per-session run port of the calling session.
 pub fn wired_workflow_tools(
     analyzer: Option<Arc<dyn rust_cli_kernel_api::workflow_analysis::WorkflowAnalyzer>>,
     home: &std::path::Path,
     runs: Arc<dyn rust_cli_kernel_api::workflow_run::DynamicWorkflowRunSessions>,
 ) -> Vec<Arc<dyn Tool>> {
     let mut tools: Vec<Arc<dyn Tool>> =
-        rust_cli_tools::workflow_tools(analyzer, home.to_path_buf(), None, None)
-            .into_iter()
-            .filter(|tool| tool.name() != rust_cli_kernel_api::tool_names::CREATE_WORKFLOW)
-            .collect();
+        rust_cli_tools::workflow_tools(analyzer, home.to_path_buf(), Some(runs.clone()), None);
     let list_saved = tools
         .iter()
         .position(|tool| tool.name() == rust_cli_kernel_api::tool_names::LIST_SAVED_WORKFLOWS)

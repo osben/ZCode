@@ -3209,6 +3209,128 @@ it is a timing flake in the shell-notice path, not this change.
 **Not done.** The hole notice (353, W7-8); the host that wires the reminder clock (357, 358, 359, 360); the cold replay (363); a composed
 escalation test through a real run; the gate.
 
+### 9.39 W7-8d: CreateWorkflow submit and registration (as built, gate off)
+
+**Scope built.** The run service's `submit` (kernel-api `DynamicWorkflowRunPort::submit`, Node `submitDynamicWorkflowRun`
+and `startNewRun`) over the per-session ports (`DynamicWorkflowRunSessions::for_session`, divergence 322), and CreateWorkflow
+registered in `wired_workflow_tools` when the helper's analyzer exists and the run sessions are wired. Closes 312 and 322.
+Code: `runtime/src/workflow_run_submit.rs` (the submit, the caps, the id, the mode record, the compile check),
+`runtime/src/workflow_run_list.rs` (`SessionRuns::submit` and `default_concurrency`), `runtime/src/workflow_run.rs`
+(`configure_concurrency`, `configure_bindings`), `runtime/src/workflow_run_resume.rs` (`tables_of`: the compile's two tables read
+without the resume's empty refusal), `tools/src/workflow_create.rs` (`with_sessions`: each call submits through the port of its
+own `context.session`), `tools/src/workflow_tools.rs` (`workflow_tools` takes the sessions), `runtime/src/workflow_gate.rs`
+(`wired_workflow_tools(analyzer, home, runs)`: CreateWorkflow first, then SaveWorkflow, the run tools of 9.40, ListSavedWorkflows),
+`cli/src/frontends/workflow_gating.rs` and `app_server.rs` (the one late slot, `kernel-api` `workflow_run::LateRunSessions`, is set
+once the service is built; the run tools of 9.40 read the same slot),
+`cli/src/frontends/workflow_service.rs` (the defaults and the bindings port of the composed service).
+
+**Decisions.**
+
+1. A submit mints `dwfrun-<uuid>` and starts the run through the same `start` as a resume (9.37), with `check` after the child's
+   compile. The check fills `ask_specs`, `site_phases` and `script_hash` from that compile; the run's own engine then has its tables.
+2. The caps are Node's `normalizeRunConcurrency(requested, defaultConcurrency())`: omission is the default, a supplied value is floored
+   to one with no upper limit. The default is the governor's formula, set once by the composition (`configure_concurrency`).
+3. The parent's permission mode is recorded on the launch by `record_parent_mode` (9.35), on the blocking pool, before the child starts.
+   A service with no bindings port refuses the submit, and so does a read error (fail closed).
+4. The tool calls `for_session(&context.session)`. Each session's port is the run service's `SessionRuns`, which holds the parent.
+5. The kernel-api `LateRunSessions` (9.40's slot, merged here; this PR first had its own copy, dropped) is set after `workflow_service::build`. The gate source (and so the tool list) is built before the service, so the
+   tools hold the late holder. Until it is set, a submit answers unsupported, which the tool reports as a failed call.
+6. The tool's result text, the concurrency sentence and the draft handling are 9.27's, unchanged. CreateWorkflow is still unreachable by
+   default: the gate is closed for every session the Host does not open.
+
+**Node divergences (new in W7-8d, numbered from 370).**
+
+370. Closes 312. CreateWorkflow is registered with the analyzer and the run sessions. Without the sessions it is dropped from the wired set, so
+     a session never sees a tool that cannot run (9.36's rule kept).
+371. Closes 322 and 329. The tool holds the sessions port and routes by the calling session. The run service is one per app, and its
+     `SessionRuns` port holds the parent, so a submit is attributed to the port's session. A request that names a different
+     `parentSessionId` is refused (typed `DynamicWorkflowRunError`, nothing started, nothing re-attributed; review round, 9.39 below).
+372. The launch input id is not the parent turn's. Node's `resolveLaunchAnchor` takes the active turn's inputId for a chat CreateWorkflow
+     (the subagent steps attribute to that turn), and a minted UUID v7 otherwise. The Rust submit mints a v4-shaped uuid, so the actors'
+     steps are not attributed to the turn that launched the run. `ToolUseContext.run` is not passed.
+373. The run id is `dwfrun-` plus a v4 uuid from the platform's CSPRNG (`rust_cli_platform::ids::uuid_v4`, the one helper that
+     protocol-zcode's wire ids also use). Node uses `randomUUID()`, also a CSPRNG. The characters, prefix and version bits match.
+374. The compile reports both tables, and an empty pair is accepted (a script with no asks and no phases). Resume still refuses an empty
+     pair (9.37, divergence 333), because a stored script's tables cannot be told from a missing reply there.
+375. Fewer submit fields. `SubmitRequest` has no `trace`, `launchInputId`, `phaseNames`, `phaseAlongside`, `subagentModel`,
+     `modelBindings`, `holes` or `inheritedTokens`. The tool does not fill them (150 of 9.27). A script's phase table is not recorded, so
+     the progress has no phases, and its holes are not opened (holes are not built).
+376. The permission mode is read through the bindings port (9.35) before the child starts, and the submit is refused when the port is not
+     configured or the read fails. Node reads `permissionMode()` with no port to fail. The read is one cold store load (9.35, 304).
+377. Compile refusals. Node's submit never sees a compile refusal (CreateWorkflow checks the script first, 9.27). A child refusal here
+     is a submit error with the helper's diagnostics in `L{line}:C{column}` lines under a header, capped at Node's
+     2000-unit diagnostics bound (`cap_diagnostics_text`, shared with the resume's `boundedResumeDiagnostics`; review round). Node's
+     CreateWorkflow path does not bound its own diagnostics, so the cap is a Rust-side choice for text that reaches the model.
+378. The caps default is set once by the composition (`configure_concurrency`, the governor formula at build), not per launch from
+     `availableParallelism()`. The values are equal (9.34, 293).
+379. `run-launched` carries `scriptPath` (the file the tool named, a draft or a `path` source) through the launch fields. Node writes it
+     there too. The run row has no script path column (as Node's). Whether GetWorkflowRun shows it is 9.40's (W7-9).
+380. The launch fields `toolCallId` and `parentSessionId` are not set on `run-launched`. The row carries both (as the engine writes them from
+     the config), so the journal's read is the same; the event's copy is not checked against Node's payload.
+381. A port that is not configured answers `unsupported` for submit and for `defaultConcurrency`. Node always has the service. The
+     composition sets it after the gate source is built (the late holder, decision 5). Gate off, so no session reaches it.
+382. The default concurrency is the port's `usize` (the governor's count, a whole number). Node's is a number. No difference in value.
+383. A submit's name is the run's `name` (the row's `name`). Node's run label is the registry's description, then the run id. The label
+     derivation for a live run with no row is 9.29's (the `RunMeta` label), unchanged.
+384. A submit with `args` stores them as the row's args and passes them to the child as the launch's args. Node passes the same object through
+     (`args_json`). An inline script has none.
+385. The composed test (`a_submit_through_the_composed_sessions_starts_a_run_under_its_session`) runs the submit through `build` with a fake
+     child that reports the two tables. It does not run the helper's compile, a real child, or the gate.
+386. The tests are at the unit level: a fake child (`FakeChildRunner`), a real session database, the production owner. No test runs the
+     submit from a Host session through the protocol, and no desktop run was made.
+387. No amend. Node's `amend` (the predecessor, the import cache, the supersede) is not built; AmendWorkflow is not registered (314).
+388. The run's usage baseline (`inheritedTokens`) and the imported cache are absent (amend only).
+389. A tool call whose submit fails returns the port's message as a failed call. Node's handler maps `submit` errors the same way as a
+     tool failure; the wording is not verified against Node's handler.
+
+**Tests (red first where the code did not exist).**
+
+- `runtime` `workflow_run_submit_tests.rs` (8): written first, run red (8 of 8 failing: the port answered unsupported), green after.
+  Cover: a submitted run starts on its own row and settles (parent, cwd, name, tool call id, args); the default and the floor of the
+  caps; the parent's mode recorded on `run-launched` as `edit`; an empty table pair accepted; a rejected compile starts nothing and
+  names its diagnostics; no bindings port refused and nothing started; a failed read refused; the session's port submits under that
+  session and reports the default.
+- `tools` `workflow_create_tests.rs`: `a_create_workflow_call_submits_through_the_port_of_its_own_session` (the first run was a compile
+  error on the missing `with_sessions`, the constructor the test names, not a behaviour red; the behaviour run after the constructor
+  was green).
+- `runtime` gate: the wired set is checked in the cli `workflow_gating_tests.rs`: CreateWorkflow is wired only with run sessions; the
+  late holder answers no default until set.
+- `cli` `workflow_service_tests.rs` `a_submit_through_the_composed_sessions_starts_a_run_under_its_session`: red on the default
+  concurrency and on the bindings (the first run failed "the governor's default is the caps default"), green after the composition
+  calls `configure_concurrency` and `configure_bindings`.
+- Clippy `-D warnings` over the workspace, all targets: clean. `cargo fmt --check` clean. Lib suites green: runtime 311, tools 580,
+  workflow 434, kernel-api 439, protocol-zcode 963, node-store 357 (1 ignored); cli bins 561.
+
+**Review round (ocr on #599, head 1e62f87fa; findings checked against 40489b9fe).**
+
+- Medium, the run and launch ids from a non-CSPRNG source: fixed. The ids come from `rust_cli_platform::ids::uuid_v4` (ring's
+  `SystemRandom`, the entry `clippy.toml` reserves for cryptographic randomness). protocol-zcode's wire ids use the same helper, so
+  one copy remains. The helper's layout tests passed on the first run (written with the body, not red first; said so here).
+- Medium, a request that names another parent was silently re-attributed: fixed. `submit_run` refuses it with a typed
+  `DynamicWorkflowRunError` naming both sessions, before anything starts. Red first: the routing test codified re-attribution, and
+  it was changed to name its own parent; `a_submit_that_names_another_parent_is_refused_and_starts_nothing` was written with the
+  refusal (not red first).
+- Medium, the rejection text unbounded: fixed. `cap_diagnostics_text` (resume's bound, 2000 UTF-16 units, one unit reserved for
+  the ellipsis) caps the submit's rejection text, and the resume's diagnostics use the same function. Test:
+  `a_long_compile_rejection_is_capped_at_the_resume_bound` (400 diagnostics; written with the code, not red first).
+- Low, `tables_of` wording: fixed. The shared reader names only what is missing; `compiled_tables` (resume) appends "so the run
+  cannot be resumed", so the resume's messages are unchanged.
+- Low, `configure_concurrency` not validated: fixed. A non-finite value or one below 1 is refused (logged) and nothing is kept.
+  Red first: `an_invalid_default_concurrency_is_refused_and_the_first_valid_one_is_kept` failed on the NaN acceptance.
+- Low, set-once setters silent on a second call: fixed. `configure_concurrency` and `configure_bindings` log a warning on a second
+  set, as `set_store` does; the composition logs when `LateRunSessions::set` returns false.
+- Low, the late-slot test did not cover submit before set: fixed. `a_submit_before_the_late_slot_is_set_is_unsupported_and_a_second_set_is_refused`
+  (cli gating tests) checks the typed unsupported error and that a second set is refused.
+- Low, `with_sessions` as the only constructor: fixed. The constructor is `CreateWorkflowTool::new(analyzer, runs, home)`.
+- Low, the needless clone of `tool_call_id`: fixed (moved).
+- Low, the `CompiledChild` doc block hijacked the W7-5e doc: fixed (the W7-5e doc is back on its test).
+- Obsolete, the `workflow_gate.rs` `LateRunSessions` findings (a doc with a missing `false`, a `set` that returns a bool nobody reads):
+  the type is gone; the one slot is kernel-api's `LateRunSessions` (merged from #597).
+- Rejected: none.
+
+**Not done.** Amend (387), the phase table and holes (375), the turn's input id (372), the trace (375), the Host-session protocol test and the
+live child (386), and the desktop check. Gate stays off.
+
 ### 9.40 W7-9: run tools (as built, gate off)
 
 **Scope built.** Three of the four run tools: ListWorkflowRuns, ResumeWorkflowRun and ResolveWorkflowQuestion. Each reads or acts
@@ -3423,6 +3545,72 @@ after the formatter change. Node's golden text is the wording of `get-workflow-r
 frames; the counts and the ages in the goldens are exact, from one fixed clock. Node's own handler test file
 (`core/tests/get-workflow-run-tool.test.ts`, 1768 lines) was not ported in this round: its cases are the next step, and the goldens
 here are checked against the formatter's source wording, not against that file.
+
+### 9.41 W7-8e: per-call snippet root and the reminder host (as built, gate off)
+
+**Scope built.** Two of the three things 9.38 and 9.28 left open, in part.
+
+- **Snippet reads are rooted per call (313).** `WorldReadRoots` (workflow, `world_read.rs`) answers the read ports of one root:
+  `at(root)`. The production adapter `WorldRoots` (env-local, `world_ports.rs`) makes a `WorldPorts` rooted there, over the same
+  environment and runtime handle. `SnippetService` now holds a `WorldReadRoots` and asks it for each child read at the snippet's
+  own cwd, so a snippet's glob and grep see the session's directory, not the process's. The trait `WorldReadPorts` is unchanged.
+- **The reminder host (357 to 360, in part).** `protocol-zcode/src/fork/workflow_reminder_host.rs`: `TokioTimers` (the runtime's
+  sleep, the time from the injected kernel `Clock`, a cancel aborts the task), the `RunDecisions` seam (live run ids and a run's open
+  decisions, synchronous, a failed read is an `Err`), and `SessionReminders`, one session's clock with its host and its two turn
+  edges (`turn_started` is busy, `turn_finished` is idle). The host's `remind` builds the `blocked` formatter's input (each open
+  question with its wait from `asked_at`, each hole from `since`, the run label is the run id) and posts it through the same
+  `WorkflowNotices` sink as the escalation and stall notices.
+
+**Not done.** The snippet is not registered: `wired_workflow_tools` still offers no EvalWorkflowSnippet, because no snippet port is
+composed (divergence 411). The reminder clock is not composed into the app: no session turn edge calls `SessionReminders`, no
+`RunDecisions` adapter over the run service exists, and the composition does not call `with_reminder` (divergences 412 to 414).
+The hole notice (353) and the cold replay (363) are still open, as in 9.38.
+
+**Tests (red, then green).**
+
+- `env-local` `the_roots_port_globs_under_the_root_it_is_asked_for`: written with the port in one edit, so the first run was a
+  compile error (no `WorldRoots`), then green. The assertion is the behaviour: a glob at one root never sees another root's files.
+- `runtime` `a_snippet_reads_under_its_own_cwd_not_the_process_cwd` (the recording roots port): the roots port is asked for the
+  snippet's cwd only. The other 20 snippet tests were rewritten to the roots type (a `Fixed` adapter) and stayed green (21 of 21).
+- `protocol-zcode` `workflow_reminder_host_tests.rs` (7 cases): red first as unresolved imports, then green. The cases are a fake
+  clock that fires timers in order and drops cancelled ones: the first reminder at 15 idle minutes names the question with
+  `waited-ms`; a busy turn cancels; the second reminder is 30 minutes after the idle edge and then no third; an open-set change
+  through the composed `WorkflowProgressHost` restarts the idle clock; a failed run read sends nothing; the idle period counts from the
+  edge; and the tokio timers fire once and a cancel stops one (real time, 10 ms and 50 ms).
+- Clippy with `-D warnings` over the workspace, all targets: clean (one red run: `SystemTime::now` is a disallowed method, so the
+  host takes the injected clock instead).
+- `cargo fmt --all --check`: clean. Lib tests of runtime (171), workflow (440), kernel-api (304), protocol-zcode (970), node-store
+  (357), tools (579), env-local (434) and the cli bin tests (559) pass.
+
+**Node divergences (new in W7-8e, numbered from 410).**
+
+410. The per-call root is a port factory (`WorldReadRoots::at`), not a root argument on `WorldReadPorts`. Node passes the cwd
+     through its port call. The factory keeps the trait and its many test fakes unchanged.
+411. EvalWorkflowSnippet is not registered in production. A snippet port needs the helper link, the child launcher and the local
+     environment's roots, and the gate source is built before the composition has them (`app_server.rs`, `workflow_gating::gating`).
+     Node registers it in every entry point when the flag is on. Closing 313 for registration waits on that composition.
+412. The reminder clock is inert in the app. The host exists and is tested, but no session turn edge calls `SessionReminders`. The
+     natural source is `live.rs`, where `TurnStarted` and `TurnFinished` already reach the off-peak run.
+413. The idle edge is the turn's end (`TurnFinished`). Node's `session_idle` is the command queue draining, which also covers a
+     queued next turn. A queued turn ends idle for a moment in Rust, and the clock's arm is cancelled by the next start (not verified
+     against a live session).
+414. No `RunDecisions` adapter over the run service exists. Node awaits the run snapshot. A Rust adapter must answer from memory or run
+     its async read off the owner thread (divergence 358 in part: the host skips a failed read, the adapter is not built).
+415. A failed snapshot read is logged (`dynamic_workflow.reminder.read_failed`) and the run is skipped for that reminder. Node's
+     `onReadError` is not checked line by line.
+416. The timers' delay is a real sleep on the runtime. A cancel aborts the task, so a pending reminder does not keep the process
+     alive (359). Whether the production runtime shuts down with a timer pending is not tested.
+417. The reminder's run label is the run id (as 9.38 divergence 352). A question's wait is the send time minus `asked_at`, and a
+     question with no `asked_at` waits 0. Node's wait arithmetic was not compared line by line.
+418. The reminder text is the `blocked` formatter's (360 closed for the text). Its run label and `draft_path` come from the
+     open decisions, not from a run registry.
+419. The reminder is posted through `WorkflowNotices` (the signal channel), not Node's command queue (as 9.38 divergence 350).
+420. The tokio timer test uses real delays (10 ms and 50 ms), not paused time, so it can be slow on a loaded machine. It does not
+     assert timing beyond "fires" and "does not fire after a cancel".
+421. A snippet whose cwd is empty or relative is refused before any start or read (ocr on #598). Confinement is lexical against the
+     cwd, and an empty root contains every path. Node's snippet has no such refusal (its cwd is always a session's directory).
+422. The read ports for a snippet are resolved once per eval, for its cwd, and reused for every child read (ocr on #598). Node does not
+     cache them, but the cwd does not change within a snippet, so the result is the same.
 
 ## 10. Open questions
 

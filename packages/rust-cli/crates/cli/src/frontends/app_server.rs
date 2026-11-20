@@ -172,7 +172,8 @@ async fn serve(
     spec.app_tools = Some(app_tools);
     // Fork (W7-7a, 9.36): the workflow gate source, over the table the protocol server records into (divergence 56), and
     // the tools wired in this build. The gate stays closed for every session the Host does not open it for.
-    // Fork (W7-9, 9.40): the run tools reach the run sessions the run service sets below, once it is built.
+    // Fork (W7-9, 9.40; W7-8d, 9.39): the run tools and CreateWorkflow reach the run sessions the run service sets below,
+    // once it is built. One late slot serves both.
     let run_sessions = Arc::new(rust_cli_kernel_api::workflow_run::LateRunSessions::default());
     spec.dynamic_workflow = Some(workflow_gating::gating(
         context.dynamic_workflow_gates().clone(),
@@ -306,7 +307,12 @@ async fn serve(
     if let Some(service) = &workflow_service {
         let sessions: Arc<dyn rust_cli_kernel_api::workflow_run::DynamicWorkflowRunSessions> =
             service.clone();
-        run_sessions.set(sessions.clone());
+        if !run_sessions.set(sessions.clone()) {
+            tracing::warn!(
+                event = "workflow.run.sessions_set_twice",
+                "the run sessions were set twice; the first one stays"
+            );
+        }
         context.set_dynamic_workflow_runs(sessions);
     }
     let workflow_runs: Option<Arc<dyn WorkflowRunHost>> =

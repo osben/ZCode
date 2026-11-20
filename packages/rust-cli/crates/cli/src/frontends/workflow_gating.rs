@@ -2,9 +2,10 @@
 //! server registers behind it. The table is the context's (divergence 56); the kernel reads it through the extensions,
 //! and the incognito toggle closes a session's gate in the runtime (divergence 55).
 //!
-//! Registered here: SaveWorkflow (with the helper's analyzer) and ListSavedWorkflows. CreateWorkflow is not: its run
-//! port (`submit`) is not built yet, so it would only typecheck and say it did not run. EvalWorkflowSnippet is not: its
-//! reads are rooted at the process workspace, not at the session's directory. Both stay unregistered until their PRs.
+//! Registered here: CreateWorkflow and SaveWorkflow (with the helper's analyzer), the run tools (9.40) and
+//! ListSavedWorkflows, all reaching the run sessions through one late slot the composition sets once the run service is
+//! built (9.39, 9.40). EvalWorkflowSnippet is not: its reads are rooted at the process workspace, not at the session's
+//! directory.
 
 use std::path::Path;
 use std::sync::Arc;

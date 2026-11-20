@@ -419,6 +419,106 @@ async fn a_built_run_service_is_idle_and_opens_nothing_until_a_launch() {
     );
 }
 
+/// The fake child, compiled as the helper compiles a script with no asks and no phases.
+struct CompiledChild(Arc<FakeChildRunner>);
+
+#[async_trait]
+impl rust_cli_kernel_api::workflow_child::WorkflowChildRunner for CompiledChild {
+    async fn start(
+        &self,
+        input: LaunchInput,
+        handler: Arc<dyn rust_cli_kernel_api::workflow_child::ChildHandler>,
+    ) -> Result<
+        rust_cli_kernel_api::workflow_child::RunningChild,
+        rust_cli_kernel_api::workflow_child::LaunchError,
+    > {
+        let mut running = self.0.start(input, handler).await?;
+        running.compiled = json!({ "askSpecs": {}, "sitePhases": {} });
+        Ok(running)
+    }
+}
+
+/// W7-8d (9.39): a submit through the composed service's session port starts a run under that session, with the
+/// governor's default concurrency. The composition wires the same bindings port the actors read.
+#[tokio::test]
+async fn a_submit_through_the_composed_sessions_starts_a_run_under_its_session() {
+    use rust_cli_kernel_api::workflow_run::{DynamicWorkflowRunSessions, SubmitRequest};
+
+    let dir = tempfile::tempdir().expect("temp dir");
+    let database = dir.path().join("sessions.db");
+    {
+        let (conn, _) =
+            open_session_database(&database, MIGRATION_LOCK_WAIT, 1).expect("session database");
+        add_session(&conn, "ses_p");
+    }
+    let runner = Arc::new(FakeChildRunner::new());
+    // The helper's compile reports both tables (the child's compile, 9.39); the fake reports none, so wrap it.
+    let compiling: Arc<dyn rust_cli_kernel_api::workflow_child::WorkflowChildRunner> =
+        Arc::new(CompiledChild(runner.clone()));
+    let service = build(
+        Some(compiling),
+        Arc::new(SessionResidency::new()),
+        &database,
+        "/work",
+        Arc::new(FakeAgents::default()),
+        Arc::new(FixedParent {
+            selection: None,
+            mode: Some(PermissionMode::AcceptEdits),
+        }),
+        tokio::runtime::Handle::current(),
+        Arc::new(RecordingPort::default()),
+        Arc::new(rust_cli_kernel_api::dynamic_workflow::SessionGates::default()),
+    )
+    .expect("the service is built over the runner");
+
+    let sessions: &dyn DynamicWorkflowRunSessions = &service;
+    let port = sessions.for_session(&SessionId::new("ses_p"));
+    assert!(
+        port.default_concurrency().is_some_and(|value| value >= 4),
+        "the governor's default is the caps default"
+    );
+    let run = port
+        .submit(SubmitRequest {
+            script_text: "return 1".to_owned(),
+            cwd: "project".to_owned(),
+            name: Some("composed".to_owned()),
+            args: None,
+            parent_session_id: Some(SessionId::new("ses_p")),
+            tool_call_id: Some("toolu_composed".to_owned()),
+            max_concurrency: None,
+            script_path: None,
+        })
+        .await
+        .expect("the submit starts the run");
+
+    let launches = runner.launches();
+    assert_eq!(launches.len(), 1, "the child started once");
+    assert_eq!(launches[0].input.run_id, run.to_string());
+    assert_eq!(launches[0].input.script_text, "return 1");
+
+    runner.finish(
+        0,
+        Outcome::Completed(Completion {
+            ok: true,
+            value: Some(json!("done")),
+            error: None,
+        }),
+    );
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while service.run_count() != 0 {
+        assert!(Instant::now() < deadline, "the run settles");
+        tokio::time::sleep(Duration::from_millis(5)).await;
+    }
+    let conn = open_session_database(&database, MIGRATION_LOCK_WAIT, 1)
+        .expect("session database")
+        .0;
+    let row = dwf::get_run(&conn, run.as_str())
+        .expect("the row read")
+        .expect("the run has its row");
+    assert_eq!(row.parent_session_id.as_deref(), Some("ses_p"));
+    assert_eq!(row.status, RunStatus::Completed);
+}
+
 /// W7-5e (9.34): a run launched through the composed service records its progress to its parent session, through the
 /// port the composition was given. Node's sink appends each run event to the parent; the first is `run-started`.
 #[tokio::test]

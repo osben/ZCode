@@ -43,7 +43,7 @@ use rust_cli_workflow::event::RunEvent;
 use rust_cli_workflow::imported_cache::ActorSessionSeed;
 use rust_cli_workflow::journal::MemoryJournal;
 use rust_cli_workflow::model::{Caps, Ref, StopReason};
-use rust_cli_workflow::world_read::{WorldReadPorts, execute_world_read};
+use rust_cli_workflow::world_read::{WorldReadPorts, WorldReadRoots, execute_world_read};
 use serde_json::Value;
 
 /// Log limits (Node `MAX_LOGS` and `MAX_LOG_CHARS`): the first 100 items, each cut to 2048 characters, and a flag when any
@@ -53,14 +53,14 @@ const MAX_LOG_CHARS: usize = 2_048;
 /// Node `MAX_ARTIFACT_BYTES`: the serialized return value's cap.
 const MAX_ARTIFACT_BYTES: usize = 256 * 1024;
 
-/// The snippet service: the runner port and the read port.
+/// The snippet service: the runner port and the read ports, made per root (a snippet reads under its own cwd, 9.41).
 pub struct SnippetService {
     runner: Arc<dyn WorkflowSnippetRunner>,
-    reads: Arc<dyn WorldReadPorts>,
+    reads: Arc<dyn WorldReadRoots>,
 }
 
 impl SnippetService {
-    pub fn new(runner: Arc<dyn WorkflowSnippetRunner>, reads: Arc<dyn WorldReadPorts>) -> Self {
+    pub fn new(runner: Arc<dyn WorkflowSnippetRunner>, reads: Arc<dyn WorldReadRoots>) -> Self {
         Self { runner, reads }
     }
 }
@@ -158,6 +158,7 @@ impl Core {
 /// send).
 struct SnippetHandler {
     core: Arc<Mutex<Core>>,
+    /// The snippet's read ports, resolved once for its cwd by `eval`.
     reads: Arc<dyn WorldReadPorts>,
     cwd: PathBuf,
 }
@@ -468,6 +469,16 @@ impl WorkflowSnippetPort for SnippetService {
     }
 
     async fn eval(&self, request: SnippetRequest) -> Result<SnippetOutcome, WorkflowSnippetError> {
+        // Confinement needs a real root. An empty cwd is an empty root, which contains every path, and a relative cwd would
+        // root the reads at the process directory. Refused before anything starts or reads (ocr on #598).
+        if !request.cwd.is_absolute() {
+            return Err(WorkflowSnippetError {
+                message: format!(
+                    "the snippet's working directory '{}' is not an absolute path, so its reads cannot be confined to the workspace.",
+                    request.cwd.display()
+                ),
+            });
+        }
         // One deadline for the whole snippet: the start (compile, entry, spawn), the run, and the child's world reads.
         let deadline = tokio::time::Instant::now() + Duration::from_millis(request.timeout_ms);
         let sink = Arc::new(Mutex::new(Sink::default()));
@@ -489,7 +500,7 @@ impl WorkflowSnippetPort for SnippetService {
         }));
         let handler: Arc<dyn ChildHandler> = Arc::new(SnippetHandler {
             core: core.clone(),
-            reads: self.reads.clone(),
+            reads: self.reads.at(&request.cwd),
             cwd: request.cwd.clone(),
         });
         let launch = SnippetLaunch {
