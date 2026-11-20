@@ -308,7 +308,10 @@ fn base() -> ActorRunBase {
             environment: EnvironmentId::new("local"),
             root: EnvPath::new("/work"),
         },
-        selection: ModelSelection::new("account:bigmodel-team-coding-plan", GLM_5_3_ACCOUNT),
+        selection: Some(ModelSelection::new(
+            "account:bigmodel-team-coding-plan",
+            GLM_5_3_ACCOUNT,
+        )),
         mode: PermissionMode::Default,
         persona_prompt: PERSONA.to_owned(),
         interactions: None,

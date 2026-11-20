@@ -2662,6 +2662,51 @@ right "Be terse."). Both were restored.
      a second actor of the same run sees the parent's selection at its own creation. Same as 270 for the timing; the
      difference is only visible when the selection changes mid-run.
 
+**Review round 2 (Codex GPT-6.1-Sol on #591, four findings; fixed).** The text above is kept for the record; where round 2
+differs, round 2 is the current state. Seven of the new tests were red on the round-1 code (named below); the overlap test
+was green there, since per-session persona recording already existed, and it pins the behaviour.
+
+1. **Resume mode (HIGH, fixed).** A resumed run (no launch fields) got YOLO. `launch_facts` now reads the journaled
+   `run-launched` event when the config carries no launch, as Node reads `readRunSubagentPermissionMode` on resume. A
+   launch's own mode wins, and the models fall back per field to the journal, as Node does. Red: `a_resumed_run_keeps_the_mode_its_launch_recorded`
+   (BypassPermissions, not Guarded). The first run is interrupted mid-ask, because a completed ask replays from the
+   journal without a turn, so a resume that re-asked a finished actor would test nothing.
+2. **Model precedence (MEDIUM, fixed; divergence 271 closed).** Each actor's model, resolved when its session is created,
+   in Node's order (`workflow-actor-model.ts`): the persona's model, looked up in the run's `modelBindings` (an unbound name
+   refuses the actor's session, as Node's `WorkflowActorModelUnboundError`); then the run's `subagentModel`; then the
+   journaled pin (`resolvedModel` of the actor's row; a pin matching the parent's current model keeps the parent's
+   selection with its reasoning, a different pin is used as it is); then the parent's current selection. The resolved
+   model is journaled as `provider/model` on the actor's row before its first turn (Node `journalActorResolvedModel`); the
+   engine carries the field forward. A run model is an override, so an actor runs when its parent has no selection.
+   Red: `the_persona_model_wins_over_the_run_model_and_the_parent`, `the_run_model_wins_over_the_parent_when_the_persona_names_none`,
+   `a_run_model_runs_an_actor_whose_parent_has_no_selection`, `a_resumed_actor_keeps_the_model_it_was_journaled_with`
+   (the journaled row is empty on the round-1 code).
+3. **Per-actor selection (MEDIUM, fixed; divergences 270 and 277 closed for the selection).** The parent's current
+   selection is read when each actor's session is created, and the actor keeps it (`ActorSettings`, one record per
+   session). A change between two actors reaches the second only, and an actor created while the parent has no selection
+   is refused while a later actor runs. Red: `a_selection_change_reaches_the_next_actor_and_not_the_running_one`,
+   `an_absent_selection_refuses_only_the_actors_created_before_it_is_set`. The workspace and the interactions channel are
+   still read once at launch (divergence 278).
+4. **Persona per actor (LOW, test added).** `two_overlapping_actors_each_keep_their_own_persona`: two actors whose turns
+   overlap (each turn waits 60 ms) each run under their own prompt. Green on both the round-1 and the round-2 code.
+
+The turn runner takes each turn's persona and selection from its session's recorded settings (`AgentTurnRunner::with_settings`).
+A session with no record is refused, and so is a session whose selection is none (`NO_SELECTION`). `ActorRunBase.selection`
+is now an option: it is the fallback for a runner with no settings map, which the agents' tests use.
+
+**Divergences from round 2 (numbered from 278).**
+
+278. The workspace and the interactions channel are read from the parent once, at the launch. Node's `createActorRuntime`
+     reads the parent's session when each actor's runtime is built (`create-app.ts`). A change of the parent's workspace or
+     interactions during a run is not followed. Unverified whether either changes in practice.
+279. The journaled pin is parsed as Node's `providerId/modelId`, with a `$reasoning` segment accepted when present. Node's
+     pin parse has no reasoning segment; the journal writes none, so the two agree on every row this build writes.
+280. Only the selection is read per actor. The journal's permission mode for a resume (273) is read once, at the owner's
+     build, which is when Node reads it too (`runSubagentPermissionMode`, read before the runtime factory runs).
+
+Still open after round 2: 272 (browser port), 273 for production launches (no caller records the mode yet), and 274 (the
+refusal text is English; Node's is Chinese).
+
 ## 10. Open questions
 
 Each has a recommendation. The user decides. Until decided, the recommendation is the default.

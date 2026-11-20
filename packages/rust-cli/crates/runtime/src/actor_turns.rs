@@ -110,7 +110,8 @@ pub fn actor_permission_mode(recorded: Option<&Value>) -> PermissionMode {
 pub struct ActorRunBase {
     pub parent: SessionId,
     pub workspace: WorkspaceRef,
-    pub selection: ModelSelection,
+    /// The selection a turn runs on when the runner has no settings map (see `with_settings`). None refuses the turn.
+    pub selection: Option<ModelSelection>,
     pub mode: PermissionMode,
     pub persona_prompt: String,
     pub interactions: Option<Arc<dyn Interactions>>,
@@ -148,20 +149,28 @@ impl ActorRunBase {
     }
 }
 
-/// The persona system prompt of each child session of a run (9.33). The owner's session factory records it when the
-/// actor's session is created, and each turn of that session reads it. One map is shared by a run's sessions.
-#[derive(Clone, Default)]
-pub struct PersonaPrompts(Arc<Mutex<HashMap<String, String>>>);
+/// What one actor's session is bound to, fixed when the session is created (9.33, Node `createActorRuntime`): its persona's
+/// system prompt, and the model its turns run on. `selection` None refuses the actor's turns.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ActorSettings {
+    pub persona: String,
+    pub selection: Option<ModelSelection>,
+}
 
-impl PersonaPrompts {
-    pub fn record(&self, session: &str, prompt: String) {
+/// The settings of each child session of a run. The owner's session factory records them when an actor's session is
+/// created, and each turn of that session reads them. One map is shared by a run's sessions.
+#[derive(Clone, Default)]
+pub struct ActorSettingsMap(Arc<Mutex<HashMap<String, ActorSettings>>>);
+
+impl ActorSettingsMap {
+    pub fn record(&self, session: &str, settings: ActorSettings) {
         self.0
             .lock()
             .unwrap_or_else(PoisonError::into_inner)
-            .insert(session.to_owned(), prompt);
+            .insert(session.to_owned(), settings);
     }
 
-    pub fn get(&self, session: &str) -> Option<String> {
+    pub fn get(&self, session: &str) -> Option<ActorSettings> {
         self.0
             .lock()
             .unwrap_or_else(PoisonError::into_inner)
@@ -170,14 +179,22 @@ impl PersonaPrompts {
     }
 }
 
+/// The text of a turn of an actor whose session was created with no model selection (Node `requireActorModelSelection`).
+pub const NO_SELECTION: &str =
+    "the actor's session has no model selection: the parent session has none for it to inherit";
+
+/// The text of a turn whose session has no recorded settings (a run that records them never reaches it).
+const NO_SETTINGS: &str =
+    "the actor's session has no recorded settings: it was not created by its run";
+
 /// The workflow's turn runner over the agents crate.
 pub struct AgentTurnRunner<A: ActorAgents> {
     agents: Arc<A>,
     handle: Handle,
     base: ActorRunBase,
     mailbox: ActorHandle,
-    /// The per-session persona prompts of a run (9.33). None: every turn takes `base.persona_prompt`.
-    personas: Option<PersonaPrompts>,
+    /// The per-session settings of a run (9.33). None: every turn takes the base's persona and selection.
+    settings: Option<ActorSettingsMap>,
 }
 
 impl<A: ActorAgents> AgentTurnRunner<A> {
@@ -189,14 +206,14 @@ impl<A: ActorAgents> AgentTurnRunner<A> {
             handle,
             base,
             mailbox,
-            personas: None,
+            settings: None,
         }
     }
 
-    /// Takes each turn's persona prompt from the session's record (9.33) instead of the base's. A session with no record
-    /// keeps the base's prompt.
-    pub fn with_personas(mut self, personas: PersonaPrompts) -> Self {
-        self.personas = Some(personas);
+    /// Takes each turn's persona and selection from its session's recorded settings (9.33). A session with no record is
+    /// refused, since a run records every session it creates.
+    pub fn with_settings(mut self, settings: ActorSettingsMap) -> Self {
+        self.settings = Some(settings);
         self
     }
 }
@@ -313,6 +330,20 @@ impl<A: ActorAgents> TurnRunner for AgentTurnRunner<A> {
             Handle::try_current().is_err(),
             "the ask thread must not be inside a runtime: block_on would panic there"
         );
+        // The session's persona and model, fixed when it was created. Without a settings map the base's are used.
+        let (persona_prompt, selection) = match &self.settings {
+            None => (
+                self.base.persona_prompt.clone(),
+                self.base.selection.clone(),
+            ),
+            Some(settings) => match settings.get(session) {
+                Some(settings) => (settings.persona, settings.selection),
+                None => return Err(TurnFailure::plain(NO_SETTINGS)),
+            },
+        };
+        let Some(selection) = selection else {
+            return Err(TurnFailure::plain(NO_SELECTION));
+        };
         let token = CancellationToken::new();
         // One gate per turn, bound to this turn's session: the owner reports a write by session, so a gate kept from
         // an earlier ask would name that ask's session. The owner dedupes the reports of one ask.
@@ -325,13 +356,9 @@ impl<A: ActorAgents> TurnRunner for AgentTurnRunner<A> {
             parent: self.base.parent.clone(),
             interaction_description: interaction.to_owned(),
             interactions: self.base.interactions.clone(),
-            persona_prompt: self
-                .personas
-                .as_ref()
-                .and_then(|personas| personas.get(session))
-                .unwrap_or_else(|| self.base.persona_prompt.clone()),
+            persona_prompt,
             workspace: self.base.workspace.clone(),
-            selection: self.base.selection.clone(),
+            selection,
             mode: self.base.mode,
             port: Some(SubmitPort {
                 port: Arc::new(MailboxPort {
