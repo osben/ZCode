@@ -1,5 +1,5 @@
 //! Ported from `saved-workflows-store.test.ts` (the list, save, scope and shadowing cases) and the name rules of
-//! `saved-workflow.ts`. The move, resolve and argument-validation cases belong to CreateWorkflow's `saved` source.
+//! `saved-workflow.ts`. The resolve cases are ported with CreateWorkflow's `saved` source (W7-8a, `workflow_create.rs`).
 
 use std::path::{Path, PathBuf};
 
@@ -274,4 +274,59 @@ fn an_empty_argument_description_survives_a_save_and_a_list() {
     let listing = dirs.store().list();
     assert!(listing.invalid.is_empty(), "{:?}", listing.invalid);
     assert_eq!(listing.entries[0].args, Some(vec![("q".to_owned(), decl)]));
+}
+
+#[test]
+fn resolve_reads_the_project_copy_first_and_the_global_one_only_when_asked() {
+    let dirs = Dirs::new("resolve");
+    let store = dirs.store();
+    store
+        .save("nightly", &meta("global"), "return 'g';", Scope::Global)
+        .expect("global");
+    let found = store.resolve("nightly", None).expect("global is found");
+    assert_eq!(found.scope, Scope::Global);
+    assert_eq!(found.script, "return 'g';");
+    store
+        .save("nightly", &meta("project"), "return 'p';", Scope::Project)
+        .expect("project");
+    let found = store.resolve("nightly", None).expect("project is found");
+    assert_eq!(found.scope, Scope::Project);
+    assert_eq!(found.meta.description, "project");
+    let global = store
+        .resolve("nightly", Some(Scope::Global))
+        .expect("the global copy");
+    assert_eq!(global.script, "return 'g';");
+}
+
+#[test]
+fn resolve_refuses_an_unusable_name_before_the_disk_and_names_a_missing_or_malformed_file() {
+    let dirs = Dirs::new("resolve-refusals");
+    let store = dirs.store();
+    assert_eq!(store.resolve("a/b", None), Err(ResolveRefusal::InvalidName));
+    assert_eq!(
+        store.resolve("missing", None),
+        Err(ResolveRefusal::NotFound)
+    );
+    dirs.write(
+        &dirs.cwd.join(PROJECT_DIR),
+        "broken.dwf.ts",
+        "/* zcode-workflow\ndescription: [\n*/\nreturn 1;",
+    );
+    match store.resolve("broken", None) {
+        Err(ResolveRefusal::Parse { path, detail }) => {
+            assert!(path.ends_with("broken.dwf.ts"), "{}", path.display());
+            assert!(!detail.is_empty());
+        }
+        other => panic!("a malformed block is a parse refusal: {other:?}"),
+    }
+}
+
+#[test]
+fn resolve_keeps_the_body_and_the_line_offset_of_a_file_with_a_block() {
+    let dirs = Dirs::new("resolve-offset");
+    dirs.write(&dirs.cwd.join(PROJECT_DIR), "pr.dwf.ts", BLOCK);
+    let found = dirs.store().resolve("pr", None).expect("found");
+    assert_eq!(found.script, "return 1;");
+    assert_eq!(found.source, BLOCK);
+    assert_eq!(found.body_line_offset, 3);
 }

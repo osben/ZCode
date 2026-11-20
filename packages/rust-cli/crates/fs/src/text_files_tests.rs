@@ -20,3 +20,14 @@ fn a_missing_directory_lists_as_not_found() {
     let error = list_file_names(&dir.path().join("absent")).expect_err("absent");
     assert_eq!(error.kind(), io::ErrorKind::NotFound);
 }
+
+#[test]
+fn a_new_file_is_claimed_once_and_an_existing_one_is_never_overwritten() {
+    let dir = tempfile::TempDir::new().expect("tempdir");
+    ensure_dir(dir.path()).expect("dir");
+    let path = dir.path().join("draft.dwf.ts");
+    create_new_text(&path, "first").expect("first claim");
+    let error = create_new_text(&path, "second").expect_err("taken");
+    assert_eq!(error.kind(), io::ErrorKind::AlreadyExists);
+    assert_eq!(read_text(&path).expect("read"), "first");
+}

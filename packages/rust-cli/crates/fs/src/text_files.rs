@@ -30,6 +30,22 @@ pub fn write_text(path: &Path, text: &str) -> io::Result<()> {
     std::fs::write(path, text)
 }
 
+/// Creates a new file with the text, failing with `AlreadyExists` when the path is taken (the claim is one operation, as
+/// Node's `wx` flag). The parent directory must exist.
+pub fn create_new_text(path: &Path, text: &str) -> io::Result<()> {
+    use std::io::Write;
+    let mut file = std::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(path)?;
+    file.write_all(text.as_bytes())
+}
+
+/// Creates a directory and its missing parents.
+pub fn ensure_dir(path: &Path) -> io::Result<()> {
+    std::fs::create_dir_all(path)
+}
+
 /// Whether the path is an existing regular file (a missing path or a directory is not).
 pub fn is_file(path: &Path) -> bool {
     std::fs::metadata(path).is_ok_and(|metadata| metadata.is_file())

@@ -2125,6 +2125,115 @@ Divergence 103 (recorded in 9.24, from PR #580) is closed here. Its numbering st
 - Tests: `policy/src/lib_tests_always_ask.rs`, through `PolicyGate::decide` and `check_rules`. Red before the chain change: an always-ask tool was an ordinary ask (Default) and an Allow under guarded, bypass, and a user, project, local or CLI allow rule. Green after.
 - SaveWorkflow (#580, merged as 49687cfd8) is the first user: its `check_permissions` returns `PermissionDecision::always_ask(…, independent: true)` (`tools/src/workflow_save.rs`, the `always_ask(..., true)` call). This is the Node check: `apps/zcode-cli/packages/core/src/tool/handlers/save-workflow.ts:289,292` sets `alwaysAsk` true and `allowAlways` false, so the prompt is asked in every mode with no always-allow offered. Its test `save_workflow_asks_through_the_policy_chain_and_only_a_session_rule_skips_it` (`tools/src/workflow_save_tests.rs`) runs through `PolicyGate::decide`. A PreToolUse allow is covered by `a_hook_allow_does_not_skip_an_always_ask_in_the_pipeline` (`tools/src/pipeline_hook_tests.rs`), which runs the real policy gate and asks again.
 
+### 9.27 W7-8a CreateWorkflow (as built)
+
+**Scope.** The CreateWorkflow tool: its input rules, the three sources (inline, `saved`, `path`), the draft file, the
+permission ask, the diagnostics path and the backgrounded submit through a new `DynamicWorkflowRunPort::submit`. The
+gate stays off. `workflow_tools` now returns CreateWorkflow before SaveWorkflow when an analyzer is given, and nothing
+calls `workflow_tools` yet, so no session sees the tool. The run service (W7-5) is not in fork; the submit is tested
+with a fake port.
+
+**As built.**
+
+- `kernel-api/src/workflow_run.rs`: `SubmitRequest` (script text, cwd, name, args, parent session, tool call id,
+  `max_concurrency`, script path) and `submit`, which defaults to `DynamicWorkflowRunError::unsupported`. The trace, the
+  launch input, the phase table and the model selections are not in it; their owning PRs add them.
+- `tools/src/workflow_create.rs` (the tool):
+  - `validate_input`: schema shape (non-empty name, `max_concurrency` above 0, `saved` name and scope, `args` an object),
+    exactly one source, `args` only with `path`, the Skill gate (428, exempt for a saved run), then `subagent_model`
+    (refused, see 142).
+  - `check_permissions`: resolves the source once (saved definition, `path` file or inline text), typechecks it, keeps the
+    result under the tool-use id (cap 256). A clean script asks with `always_ask(…, independent: false)` and the whole-tool
+    rule as its suggestion (Node `alwaysAsk` with `allowAlways: "session"`, `create-workflow.ts:470,482`). A script that
+    does not check, or a source that cannot be resolved, is allowed so that the call reports it. A failed checker denies.
+  - `call`: uses the kept result (or checks again, and refuses to start a clean script, see 155), writes the draft,
+    then reports diagnostics (file lines, Node's notes) or submits through the port. Without a port the result says the
+    script was typechecked and not run (`EXECUTION_UNAVAILABLE_NOTE`). A refused submit fails the call.
+- Draft: `<cwd>/.zcode/workflow-drafts/<slug>.dwf.ts`, with a `.gitignore` of `*` written once. A taken name takes the
+  next `-N` suffix (exclusive create, no overwrite). A write that fails leaves no draft, and the run starts with no script
+  path. `draft_slug` follows Node's `workflowDraftSlug` (see 153).
+- `tools/src/saved_workflow.rs`: `Store::resolve(name, scope)` (Node `resolveSavedWorkflow`): project copy first, then
+  global, with an optional scope; refusals `InvalidName`, `Parse`, `Read`, `NotFound`.
+- `fs/src/text_files.rs`: `create_new_text` (exclusive create) and `ensure_dir`.
+- `tools/src/workflow_tools.rs`: one registration entry and a `run_port` parameter (the two call sites are updated).
+  `workflow_save.rs` makes `normalize` `pub(crate)`. Nothing else in the shared files changed.
+
+**Node parity checked against source.** Argument validation order and texts (`create-workflow-source.ts`
+`validateCreateWorkflowSource`, `resolveCreateWorkflowInput`); the saved and path argument messages and their declaration
+lines (`describeArgsDeclaration`, `resolvePathSource`); the diagnostics notes and location sentences
+(`workflow-script-notes.ts`); the response text, the concurrency sentence (`describeWorkflowConcurrencyLimit`) and the
+submit fields that the tool fills (`create-workflow.ts`); the draft directory and slug rules (`workflow-drafts.ts`); the
+skill gate exemption for a saved-only call (`workflow-skill-gate.ts`).
+
+**Red first (TDD).** The tests were written first, with a stub `workflow_create.rs` (validate Ok, check Passthrough, call
+returns empty text). The run was 26 of 27 failing on assertions; the one passing test checks only the name, the deferral,
+the read-only flag and the 24 000-byte budget. The three `Store::resolve` tests were red against a stub that returned
+`NotFound`. Not seen red: the `create_new_text` test (added after its code, and it passed at once) and the registration
+test (its expected list was changed together with the one-entry edit).
+
+**Tests.** `workflow_create_tests.rs` (27) covers: the input rules and the 428 and 400 refusals; the always-ask through
+`PolicyGate` in every mode, where only a session rule skips it and a deny rule denies; a clean inline draft, asked and
+started; the next free draft name; the slug; diagnostics in file lines with no run; a checker that cannot answer; a run
+without a port; a failed submit; the saved source (body, defaults, validated args, working copy); a path source (block
+stripped, args, no draft); the `path` outside the workspace; a diagnostic in a saved copy on its file line; the limit
+reaching the port and the default marker; no limit; approved bytes run after the file changes; no decision, no run; a
+draft that cannot be written; the run label. `saved_workflow_tests.rs` gains 3 resolve tests; `text_files_tests.rs` gains
+1; `workflow_tools_tests.rs` checks the order CreateWorkflow, SaveWorkflow, ListSavedWorkflows.
+
+**Node divergences (new in W7-8a, numbered 140 to 155).**
+
+140. No window display and no causality graph. Node's output carries `causalityGraph` and the confirmation draws it
+     (`create-workflow.ts`: `boundGraphOfAnalysis`, `displayOfAnalysis`). The analyzer port returns `ok` and the
+     diagnostics only, so the output has no `causalityGraph` and the ask has no display. Needs the helper's display (W7-2)
+     and the bounds.
+141. No window adjustments. Node's `applyInputAdjustments`, the `adjustable_settings` fill and the "the user adjusted the
+     settings" sentence are not built. The user cannot change the limit or the model in the window.
+142. No model catalog port. `subagent_model` is refused on every call with Node's no-catalog text
+     ("This host cannot choose a subagent model; omit subagent_model."). Node resolves the name when a catalog exists, so a
+     host with one accepts a model this host refuses.
+143. Script-named models are not bound. Node's `readScriptModelBindings`, the 9011 unbound-model diagnostics and
+     `withScriptModelBindingsResolved` are not run, and submit carries no `modelBindings`.
+144. No phase fallback for the draft name. Node names an unnamed draft after the script's first `phase("…")` literal
+     (`resolveWorkflowDraftName`), else `workflow`. Without the causality graph this tool uses `workflow`.
+145. Draft timing. Node writes the saved copy in `resolveInput`, before the confirmation, and keeps it when the user
+     refuses. This tool writes saved copies and inline drafts in `call`, after the approval. A refused saved call leaves no
+     copy, and the confirmation cannot name the draft path.
+146. No read state for drafts. Node's `recordAuthoredWorkflowDraft` tells the read tracker the draft's bytes, so an Edit
+     needs no prior Read. Nothing records the draft here; the model must Read it first.
+147. Call-time refusals carry no error code. Node's resolution failures (unknown saved name, invalid arguments, unreadable
+     file) are `failure()` results with code 400, and they come before the confirmation. Here they come from `call` as
+     `ToolError::Failed` text, after an allow (no prompt), and that error has no code. Input-shape refusals from
+     `validate_input` keep their 400 or 428.
+148. A failed checker denies the decision. Node's `analyzeScript` runs in-process (`workflow-script-analysis.ts` calls
+     `analyzeWorkflowScript`) and cannot fail. The Rust checker is the helper, so a failure denies with the helper's message
+     (as divergence 108 for SaveWorkflow).
+149. A `path` must resolve inside the workspace (lexical normalization; symlinks are not resolved). Node accepts any path.
+     Same rule as SaveWorkflow's `script_path` (divergence 113), with this tool's own wording.
+150. Fewer submit fields. Node's submit request includes `trace` (required), `launchInputId`, `phaseNames`,
+     `phaseAlongside`, `subagentModel` and `modelBindings`. `SubmitRequest` carries only what this tool fills; the rest
+     arrive with the run service (W7-5) and the model catalog.
+151. The confirmation is one line of English with no title and no preview (see 140). Node's dialog is localized, has a
+     title, and carries a diagnostic reason the UI filters.
+152. No timeout and no cancellation declared. Node declares a 15 s timeout with no per-call override and
+     `cancellation.supported: false`. The Rust tool trait has no timeout field (as divergence 109); the call is not
+     cancellable, as in Node. The result budget is Node's 24 000 bytes.
+153. The draft slug approximates Unicode classes. Node keeps `\p{L}` and `\p{N}`. Rust keeps `char::is_alphabetic` and
+     `char::is_numeric`. `is_alphabetic` also keeps Other_Alphabetic marks (some Mn and Mc marks in Indic scripts) that Node
+     drops, so such a name gets a different file stem. Digits and letters match.
+154. The "available" list omits shadowed copies. Node lists each scope without shadowing (`describeAvailableWorkflows`,
+     `create-workflow-source.ts`), so a global copy hidden by a project copy appears. Rust uses `Store::list`, which applies
+     shadowing.
+155. A clean script with no decision is refused. If `call` finds no kept decision, it checks the script again and refuses to
+     run a script that checks ("has no confirmation for this script, so nothing was started"). Node's handler runs only after
+     its permission step, so this is a safety net for an order the Rust executor does not produce.
+
+**Not done here.** The window display and causality graph (140), the window adjustments (141), the model catalog and
+script model bindings (142, 143), the phase draft name (144), the draft read state (146), the run service and the submit
+behind it (W7-5), and the gate (W9). `EvalWorkflowSnippet` is in the other agent's PR and is not touched here.
+
+**Not verified.** Whether the app stores the whole-tool suggestion (the "always allow in this session" option) as a session
+rule. The tool sends the suggestion; the handling of it in the app is not checked here.
+
 ## 10. Open questions
 
 Each has a recommendation. The user decides. Until decided, the recommendation is the default.
