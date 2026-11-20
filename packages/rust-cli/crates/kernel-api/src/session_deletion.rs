@@ -57,6 +57,15 @@ pub enum DeletionBegin {
     Changed,
 }
 
+/// Fork (W7-6): the sessions of a tree that hold a live workflow run, in the tree's order. A session with a live run is
+/// busy for deletion and erase, as Node's residency `busy` makes it, so the callers refuse before any side effect.
+pub fn live_run_busy_ids(tree: &[String], live: &[crate::ids::SessionId]) -> Vec<String> {
+    tree.iter()
+        .filter(|id| live.iter().any(|session| session.as_str() == id.as_str()))
+        .cloned()
+        .collect()
+}
+
 /// Node `localeCompare` (ICU root collation) for session ids, artifact ids and file paths. Three levels, as ICU does:
 /// primary (the base letter; punctuation before digits, digits before letters), secondary (the accent of a Latin
 /// letter), tertiary (lowercase before uppercase). Latin letters with a common accent fold to their base; other

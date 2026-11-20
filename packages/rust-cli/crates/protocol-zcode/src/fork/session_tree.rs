@@ -99,6 +99,10 @@ pub(crate) fn running_session_ids(server: &Server, tree_ids: &[String]) -> Vec<S
     for session in server.kernel.running_agent_sessions(&tree) {
         running.insert(session.as_str().to_owned());
     }
+    // Fork (W7-6): a session with a live workflow run is busy, as Node's residency `busy` makes it.
+    for session in server.kernel.live_run_sessions(&tree) {
+        running.insert(session.as_str().to_owned());
+    }
     tree_ids
         .iter()
         .filter(|id| running.contains(*id))

@@ -248,3 +248,219 @@ fn a_stop_cannot_close_its_own_session() {
         .expect("the stop ran");
     assert!(outcome.contains("stop"), "{outcome}");
 }
+
+/// W7-6: a retire refuses a new guard at once, before any close has started to wait.
+#[test]
+fn retiring_a_session_refuses_a_new_guard_without_waiting() {
+    let residency = SessionResidency::new();
+    let _ticket = residency.begin_close("ses_retiring");
+    let (run, _stops) = fake_run();
+    assert!(residency.acquire("ses_retiring", "run_late", run).is_err());
+}
+
+/// W7-6: the sessions that hold a live run are listed in id order; a settled one is not.
+#[test]
+fn live_sessions_are_listed_in_id_order_and_settled_ones_are_not() {
+    let residency = SessionResidency::new();
+    let (b_run, _b) = fake_run();
+    let (a_run, _a) = fake_run();
+    let (settled, _s) = fake_run();
+    let _b_guard = residency.acquire("ses_b", "run_b", b_run).expect("b");
+    let _a_guard = residency.acquire("ses_a", "run_a", a_run).expect("a");
+    let settled_guard = residency.acquire("ses_c", "run_c", settled).expect("c");
+    drop(settled_guard);
+    assert_eq!(residency.sessions_with_live_runs(), vec!["ses_a", "ses_b"]);
+}
+
+/// W7-6: the shutdown drain closes every session that holds a live run. The runs settle a little after their stop.
+#[test]
+fn drain_closes_every_session_with_a_live_run() {
+    let residency = SessionResidency::with_close_wait(Duration::from_secs(5));
+    let (first, first_stops) = fake_run();
+    let (second, second_stops) = fake_run();
+    let a = residency
+        .acquire("ses_one", "run_1", first.clone())
+        .expect("a");
+    let b = residency
+        .acquire("ses_two", "run_2", second.clone())
+        .expect("b");
+    // The drain closes one session at a time, so the second run is stopped only after the first has settled.
+    let settler = thread::spawn(move || {
+        first_stops.recv().expect("first stop");
+        drop(a);
+        second_stops.recv().expect("second stop");
+        drop(b);
+    });
+    let errors = residency.drain();
+    settler.join().expect("settler");
+    assert!(errors.is_empty(), "{errors:?}");
+    assert!(residency.sessions_with_live_runs().is_empty());
+    assert_eq!(first.stops.load(Ordering::SeqCst), 1);
+    assert_eq!(second.stops.load(Ordering::SeqCst), 1);
+}
+
+/// W7-6 (divergence 63): a closed session that is resumed in the same process accepts guards again.
+#[test]
+fn a_closed_session_accepts_guards_again_once_reopened() {
+    let residency = SessionResidency::new();
+    residency.close("ses_resumed").expect("close");
+    assert!(residency.reopen("ses_resumed"), "no close is in flight");
+    let (run, _stops) = fake_run();
+    residency
+        .acquire("ses_resumed", "run_resumed", run)
+        .expect("a run attaches after the reopen");
+    residency
+        .close("ses_resumed")
+        .expect("a later close retires it again");
+    let (late, _late_stops) = fake_run();
+    assert!(residency.acquire("ses_resumed", "run_late", late).is_err());
+}
+
+/// W7-6 (divergence 63): a reopen that arrives while a close is still waiting does not block and does not resurrect
+/// the session early: it takes effect when that close ends. Until then the session refuses guards.
+#[test]
+fn a_reopen_during_an_in_flight_close_takes_effect_when_the_close_ends() {
+    let residency = Arc::new(SessionResidency::with_close_wait(Duration::from_secs(5)));
+    let (run, stops) = fake_run();
+    let guard = residency.acquire("ses_busy", "run_1", run).expect("guard");
+    let closer = residency.clone();
+    let closing = thread::spawn(move || closer.close("ses_busy"));
+    stops.recv().expect("the close stops the run");
+    assert!(
+        !residency.reopen("ses_busy"),
+        "a reopen during a close is pending, not immediate"
+    );
+    let (early, _early_stops) = fake_run();
+    assert!(
+        residency.acquire("ses_busy", "run_early", early).is_err(),
+        "the session still refuses guards while its close is in flight"
+    );
+    drop(guard);
+    closing
+        .join()
+        .expect("close thread")
+        .expect("the close finishes once the run settles");
+    let (after, _after_stops) = fake_run();
+    residency
+        .acquire("ses_busy", "run_after", after)
+        .expect("the pending reopen took effect when the close ended");
+}
+
+/// W7-6: the drain has one bound for the whole shutdown. A run that never settles is reported by name, and a session
+/// after it in the drain does not get a second full wait.
+#[test]
+fn drain_is_bounded_as_a_whole_and_names_the_stuck_runs() {
+    let residency = SessionResidency::with_close_wait(Duration::from_millis(100));
+    let (stuck, _s1) = fake_run();
+    let (also_stuck, _s2) = fake_run();
+    let _held = residency
+        .acquire("ses_stuck", "run_stuck", stuck)
+        .expect("a");
+    let _held_too = residency
+        .acquire("ses_later", "run_later", also_stuck)
+        .expect("b");
+    let started = Instant::now();
+    let errors = residency.drain();
+    assert!(
+        started.elapsed() < Duration::from_millis(400),
+        "the drain waited more than its bound: {:?}",
+        started.elapsed()
+    );
+    let text = errors
+        .iter()
+        .map(|error| format!("{error:#}"))
+        .collect::<Vec<_>>()
+        .join("\n");
+    assert!(text.contains("run_stuck"), "{text}");
+    assert!(text.contains("run_later"), "{text}");
+    // W7-6 review D: the drain visits sessions in id order, so `ses_stuck` is reached after `ses_later` has spent the
+    // bound. It did not wait at all, and the message says so instead of reporting a wait of the full bound.
+    let reached_late = errors
+        .iter()
+        .map(|error| format!("{error:#}"))
+        .find(|text| text.contains("run_stuck"))
+        .expect("the session reached after the bound is reported");
+    assert!(reached_late.contains("bound was spent"), "{reached_late}");
+    assert!(!reached_late.contains("still live after"), "{reached_late}");
+}
+
+/// W7-6 review A: a close begun on the async thread is registered with its retire, so a reopen before the close's job
+/// runs is pending, and the session stays refused until that close ends.
+#[test]
+fn a_reopen_before_a_begun_close_runs_is_pending() {
+    let residency = SessionResidency::new();
+    let ticket = residency.begin_close("ses_gap");
+    assert!(
+        !residency.reopen("ses_gap"),
+        "the close is registered, so the reopen waits"
+    );
+    let (run, _stops) = fake_run();
+    assert!(residency.acquire("ses_gap", "run_gap", run).is_err());
+    ticket.run().expect("the close finishes");
+    let (after, _after_stops) = fake_run();
+    residency
+        .acquire("ses_gap", "run_after", after)
+        .expect("the pending reopen applies when the close ends");
+}
+
+/// W7-6 review A: a delayed close job that runs after a full close and reopen cycle does not re-retire the session.
+#[test]
+fn a_delayed_close_job_does_not_retire_a_session_reopened_after_it_began() {
+    let residency = SessionResidency::new();
+    let delayed = residency.begin_close("ses_cycle");
+    residency
+        .begin_close("ses_cycle")
+        .run()
+        .expect("the second close finishes");
+    assert!(
+        !residency.reopen("ses_cycle"),
+        "the delayed close is still in flight"
+    );
+    delayed.run().expect("the delayed job finishes");
+    let (run, _stops) = fake_run();
+    residency
+        .acquire("ses_cycle", "run_cycle", run)
+        .expect("the session stays open after the delayed job");
+}
+
+/// W7-6 review B: a close begun after a pending reopen supersedes it, so the reopen is not applied at the end.
+#[test]
+fn a_close_begun_after_a_pending_reopen_supersedes_it() {
+    let residency = SessionResidency::new();
+    let first = residency.begin_close("ses_super");
+    assert!(!residency.reopen("ses_super"));
+    let second = residency.begin_close("ses_super");
+    drop(first);
+    second.run().expect("the close finishes");
+    let (run, _stops) = fake_run();
+    assert!(residency.acquire("ses_super", "run_super", run).is_err());
+}
+
+/// W7-6 review C: a close that gives up on stuck runs still lets a reopen in flight take effect. The user's resume
+/// wins; the stuck runs are reported by the close's error.
+#[test]
+fn a_reopen_during_a_close_that_gives_up_takes_effect_when_it_ends() {
+    let residency = Arc::new(SessionResidency::with_close_wait(Duration::from_millis(
+        100,
+    )));
+    let (run, stops) = fake_run();
+    let _held = residency
+        .acquire("ses_gave_up", "run_stuck", run)
+        .expect("guard");
+    let closer = residency.clone();
+    let closing = thread::spawn(move || closer.close("ses_gave_up"));
+    stops.recv().expect("the close stops the run");
+    assert!(
+        !residency.reopen("ses_gave_up"),
+        "pending while the close runs"
+    );
+    let error = closing
+        .join()
+        .expect("close thread")
+        .expect_err("the run never settles");
+    assert!(format!("{error:#}").contains("run_stuck"));
+    let (after, _after_stops) = fake_run();
+    residency
+        .acquire("ses_gave_up", "run_after", after)
+        .expect("the reopen applies even though the close gave up");
+}

@@ -20,6 +20,7 @@ use rust_cli_kernel_api::permission::ProjectRules;
 use rust_cli_kernel_api::store::{LoadedSession, RuntimePresence};
 use rust_cli_policy::PolicyGate;
 use rust_cli_session::{Opened, Session, SessionDeps, SessionState};
+use rust_cli_workflow::residency::{CloseTicket, SessionResidency};
 use tokio_util::sync::CancellationToken;
 
 use crate::LocalKernel;
@@ -189,6 +190,40 @@ impl SessionScoped {
 pub(crate) struct Closer {
     pub(crate) sessions: Weak<Mutex<HashMap<SessionId, Slot>>>,
     pub(crate) scoped: SessionScoped,
+    /// The process's residency ledger (W7-6, the one shared with the run service): a close retires the session there
+    /// and waits for its live runs on the blocking pool.
+    pub(crate) residency: Arc<SessionResidency>,
+}
+
+/// W7-6: `SessionResidency::close` on the blocking pool. Its wait is for the runs to settle, which takes their turns'
+/// cleanup, so it must not hold a tokio worker. Nothing waits for its result: a stuck close is logged here, since the
+/// close that started it has already returned. Without a tokio runtime (no caller in the tree) it runs on its own thread.
+/// The ticket was begun on the async thread (retire and in-flight count in one step), so the job only runs it: it never
+/// re-retires the session, and a reopen that came in between stays pending until the job ends.
+pub(crate) fn spawn_residency_close(
+    ticket: CloseTicket,
+    session: &SessionId,
+) -> Option<tokio::task::JoinHandle<Result<(), String>>> {
+    let id = session.as_str().to_owned();
+    let job = move || {
+        ticket.run().map_err(|error| {
+            let message = format!("{error:#}");
+            tracing::error!(
+                event = "session.residency_close_failed",
+                session = %id,
+                error = %message,
+                "the session's live runs did not settle, so its close is incomplete"
+            );
+            message
+        })
+    };
+    match tokio::runtime::Handle::try_current() {
+        Ok(handle) => Some(handle.spawn_blocking(job)),
+        Err(_) => {
+            std::thread::spawn(job);
+            None
+        }
+    }
 }
 
 impl rust_cli_session::Released for Closer {
@@ -197,6 +232,9 @@ impl rust_cli_session::Released for Closer {
         // Fork: a top-level session is closed for the agents' notice forwarders from here, before its actor exits
         // (a notice no live agent owns is no longer acknowledged into its Hub). Not under the session table lock.
         self.scoped.agents.session_closing(session);
+        // W7-6: refuse new runs on the session at once, then drain its live runs off the async thread.
+        let ticket = self.residency.begin_close(session.as_str());
+        drop(spawn_residency_close(ticket, session));
         let Some(sessions) = self.sessions.upgrade() else {
             return;
         };
@@ -276,6 +314,9 @@ impl LocalKernel {
         presence: RuntimePresence,
     ) -> Arc<Session> {
         let id = state.meta.id.clone();
+        // W7-6 (divergence 63): a session opened again in this process accepts runs again. While its previous close is
+        // still in flight the reopen is pending, and takes effect when that close ends; it never waits here.
+        let _ = self.residency.reopen(id.as_str());
         let mut sessions = self.sessions();
         if let Some(Slot::Open(open)) = sessions.get(&id) {
             return open.session.clone();
@@ -324,5 +365,67 @@ impl LocalKernel {
             }),
         );
         session
+    }
+}
+
+#[cfg(test)]
+mod residency_close_tests {
+    use super::*;
+    use rust_cli_workflow::residency::LiveRun;
+    use std::sync::mpsc::{Sender, channel};
+    use std::time::Duration;
+
+    /// A run that reports its stop and settles only when the test drops its guard.
+    struct FakeRun {
+        stopped: Sender<()>,
+    }
+
+    impl LiveRun for FakeRun {
+        fn stop_interrupted(&self) {
+            let _ = self.stopped.send(());
+        }
+    }
+
+    /// W7-6: the residency close waits on the blocking pool. The runtime thread keeps running while the run settles on
+    /// it, so the close's wait never holds a tokio worker.
+    #[tokio::test(flavor = "current_thread")]
+    async fn a_residency_close_waits_off_the_runtime_thread() {
+        let residency = Arc::new(SessionResidency::with_close_wait(Duration::from_secs(5)));
+        let (stopped, stops) = channel();
+        let guard = residency
+            .acquire("ses_close", "run_1", Arc::new(FakeRun { stopped }))
+            .expect("guard");
+        let session = SessionId::new("ses_close");
+        let ticket = residency.begin_close("ses_close");
+        let close = spawn_residency_close(ticket, &session).expect("a runtime is running");
+        tokio::task::yield_now().await;
+        stops
+            .recv_timeout(Duration::from_secs(5))
+            .expect("the close stops the live run");
+        drop(guard);
+        close
+            .await
+            .expect("the close task ends")
+            .expect("the close finishes once the run settles");
+    }
+
+    /// W7-6: a close that cannot finish is reported, with the session and the run named, and nothing is retried silently.
+    #[tokio::test(flavor = "current_thread")]
+    async fn a_stuck_residency_close_is_reported_with_its_session() {
+        let residency = Arc::new(SessionResidency::with_close_wait(Duration::from_millis(50)));
+        let (stopped, _stops) = channel();
+        let _held = residency
+            .acquire("ses_stuck", "run_stuck", Arc::new(FakeRun { stopped }))
+            .expect("guard");
+        let session = SessionId::new("ses_stuck");
+        let ticket = residency.begin_close("ses_stuck");
+        let close = spawn_residency_close(ticket, &session).expect("a runtime is running");
+        let error = close
+            .await
+            .expect("the close task ends")
+            .expect_err("the run never settles");
+        let text = format!("{error:#}");
+        assert!(text.contains("ses_stuck"), "{text}");
+        assert!(text.contains("run_stuck"), "{text}");
     }
 }

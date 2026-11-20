@@ -44,6 +44,7 @@ pub(super) async fn delete(
     // Checked before any side effect: a running turn's actor would keep committing after the
     // delete, and the kernel refuses to delete an open session anyway. Node surfaces delete
     // failures as `fault.command.executionFailed`, so the refusal uses the same code.
+    let id = SessionId::new(session);
     if live.sink.status().0 == Phase::Running {
         return Ack::refused(
             &envelope.command_id,
@@ -53,7 +54,17 @@ pub(super) async fn delete(
             revision,
         );
     }
-    let id = SessionId::new(session);
+    // Fork (W7-6): a live workflow run keeps the session resident, so it is busy too (Node residency `busy`).
+    let live_runs = server.kernel.live_run_sessions(std::slice::from_ref(&id));
+    if !live_runs.is_empty() {
+        return Ack::refused(
+            &envelope.command_id,
+            Status::Failed,
+            EXECUTION_FAILED,
+            "a workflow run is live in this session",
+            revision,
+        );
+    }
     // Read the row's workspace before anything closes: the sessions-index topic is keyed by it.
     let workspace = live
         .sink

@@ -382,6 +382,24 @@ impl Kernel for LocalKernel {
         self.agents.running_agent_sessions(sessions)
     }
 
+    /// Fork (W7-6): the sessions among `sessions` with a live workflow run in the residency ledger.
+    fn live_run_sessions(&self, sessions: &[SessionId]) -> Vec<SessionId> {
+        sessions
+            .iter()
+            .filter(|session| self.residency.live_runs(session.as_str()) > 0)
+            .cloned()
+            .collect()
+    }
+
+    /// Fork (W7-6): the shutdown drain, on the blocking pool (its waits must not hold a tokio worker).
+    async fn drain_live_runs(&self) -> Vec<String> {
+        let residency = self.residency.clone();
+        match tokio::task::spawn_blocking(move || residency.drain()).await {
+            Ok(errors) => errors.iter().map(|error| format!("{error:#}")).collect(),
+            Err(error) => vec![format!("the residency drain did not finish: {error}")],
+        }
+    }
+
     /// Fork: `session/eraseTree` erased these sessions (their runtimes already closed). The agents stop their notice
     /// forwarders; every machine forgets them, cancelling their background commands and dropping pending notices, as
     /// session close does on exit (session crate `closing.rs`) and as Node's runtime close does.
