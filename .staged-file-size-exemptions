@@ -476,8 +476,11 @@ apps/zcode-cli/packages/pdf-plugin/skills/pdf/scripts/pdf_qa.py
 apps/zcode-cli/packages/pdf-plugin/skills/pdf/scripts/poster_validate.py
 apps/zcode-cli/packages/pdf-plugin/skills/pdf/scripts/toc_validate.py
 apps/zcode-cli/packages/spreadsheets-plugin/skills/xlsx/xlsx.py
+
+# Upstream 3.19.0 LibreOffice wrappers carrying small fork cancel/cleanup fixes; kept whole so the next
+# upstream sync stays a clean three-way merge. Not byte-identical to upstream, so the pending-upstream
+# identity exemption does not cover them: keep these entries at the sync unless upstream adopts the fixes.
 apps/zcode-cli/packages/documents-plugin/scripts/zcode_libreoffice.py
 apps/zcode-cli/packages/pdf-plugin/scripts/zcode_libreoffice.py
 apps/zcode-cli/packages/presentations-plugin/scripts/zcode_libreoffice.py
 apps/zcode-cli/packages/spreadsheets-plugin/scripts/zcode_libreoffice.py
-apps/zcode-cli/packages/zcode-cua-plugin/scripts/computer-use-client.mjs
