@@ -78,6 +78,10 @@ pub use fork::workflow_host::{
 pub use fork::workflow_progress::{
     BridgeDelivery, SignalNotices, WorkflowNotices, WorkflowProgressHost,
 };
+pub use fork::workflow_reminder::{
+    BlockedReminderClock, OpenDecisions, OpenHole, OpenQuestion, REMINDER_DELAYS_MS, Reminder,
+    ReminderHost,
+};
 pub use fork::workflow_runner::ProtocolChildRunner;
 pub use fork::workflow_wire::{ChildEvent, ChildRequest, Completion, CreateActor, WireError};
 pub use fork::{

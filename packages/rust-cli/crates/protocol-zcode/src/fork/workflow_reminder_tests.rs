@@ -23,6 +23,8 @@ struct Fake {
     open: Mutex<HashMap<String, OpenDecisions>>,
     reminds: Mutex<Vec<(String, usize)>>,
     timers: Mutex<Vec<Timer>>,
+    /// A clock the next `read_open` re-enters (a host whose read calls back into the clock).
+    reenter: Mutex<Option<std::sync::Weak<BlockedReminderClock>>>,
 }
 
 impl Fake {
@@ -111,6 +113,16 @@ impl ReminderHost for Fake {
     }
 
     fn read_open(&self, run_id: &str) -> Option<OpenDecisions> {
+        let reenter = self
+            .reenter
+            .lock()
+            .expect("reenter")
+            .take()
+            .and_then(|weak| weak.upgrade());
+        if let Some(clock) = reenter {
+            // The host's read calls back into the clock, as a snapshot read that records an event would.
+            clock.open_set_changed(run_id);
+        }
         self.open.lock().expect("open").get(run_id).cloned()
     }
 
@@ -253,6 +265,33 @@ fn a_run_with_nothing_open_is_not_reminded() {
     fake.at(15 * MINUTE_MS);
     fake.fire_latest();
     assert!(fake.reminds().is_empty());
+}
+
+/// Review (ocr on #596): a host whose read calls back into the clock must not deadlock it. The clock holds no lock while it
+/// calls the host, so the re-entrant call completes and the expiry carries on. The run is driven on its own thread so a
+/// deadlock fails the test instead of hanging it.
+#[test]
+fn a_host_whose_read_re_enters_the_clock_does_not_deadlock() {
+    let fake = Fake::new(&["r1"]);
+    let clock = clock(&fake);
+    *fake.reenter.lock().expect("reenter") = Some(Arc::downgrade(&clock));
+    clock.session_idle();
+    fake.at(15 * MINUTE_MS);
+    let (done_tx, done_rx) = std::sync::mpsc::channel();
+    let runner = fake.clone();
+    std::thread::spawn(move || {
+        runner.fire_latest();
+        let _ = done_tx.send(());
+    });
+    done_rx
+        .recv_timeout(std::time::Duration::from_secs(5))
+        .expect("the clock finished its expiry: no deadlock on a re-entrant read");
+    // The re-entrant change moved the epoch during the read, so this expiry is void (Node's epoch check after its reads):
+    // nothing is sent now, and the idle clock re-armed from the change fires 15 minutes later.
+    assert!(fake.reminds().is_empty(), "the voided expiry sends nothing");
+    fake.at(30 * MINUTE_MS);
+    fake.fire_latest();
+    assert_eq!(fake.reminds(), vec![("r1".to_owned(), 1)]);
 }
 
 #[test]

@@ -8,7 +8,7 @@
 //! machine is built here; the host that the composition would give it (the session's idle edges, a timer, the run
 //! snapshot read) is not wired yet (divergence 357 of 9.38).
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, Mutex, MutexGuard, Weak};
 
 pub const MINUTE_MS: u64 = 60_000;
@@ -181,11 +181,14 @@ impl BlockedReminderClock {
 
     /// Cancels the timer and computes the next one. The timer is scheduled outside the lock.
     fn arm(&self, reached: u64) {
+        // The host is asked before the lock is taken: a host call may call back into the clock.
+        let live = self.host.live_run_ids();
+        let now = self.host.now_ms();
         let (cancel, plan) = {
             let mut state = self.lock();
             state.epoch += 1;
             let cancel = state.cancel.take();
-            (cancel, self.plan_locked(&mut state, reached))
+            (cancel, self.plan_locked(&mut state, &live, now, reached))
         };
         if let Some(cancel) = cancel {
             cancel();
@@ -218,11 +221,18 @@ impl BlockedReminderClock {
 
     /// The next timer: the smallest delay above `reached` among the live runs that still have one. `None` when no run
     /// has a reminder left or the session is busy.
-    fn plan_locked(&self, state: &mut State, reached: u64) -> Option<(u64, u64, u64)> {
+    fn plan_locked(
+        &self,
+        state: &mut State,
+        live: &[String],
+        now: u64,
+        reached: u64,
+    ) -> Option<(u64, u64, u64)> {
         let idle_since = state.idle_since?;
+        prune_locked(state, live);
         let mut next: Option<u64> = None;
-        for run_id in self.live_runs_locked(state) {
-            let Some(delay) = self.delay_for_locked(state, &run_id) else {
+        for run_id in live {
+            let Some(delay) = self.delay_for_locked(state, run_id) else {
                 continue;
             };
             if delay <= reached {
@@ -231,7 +241,7 @@ impl BlockedReminderClock {
             next = Some(next.map_or(delay, |best| best.min(delay)));
         }
         let target = next?;
-        let wait = (idle_since + target).saturating_sub(self.host.now_ms());
+        let wait = (idle_since + target).saturating_sub(now);
         Some((state.epoch, target, wait))
     }
 
@@ -247,20 +257,27 @@ impl BlockedReminderClock {
         if !self.host.is_idle() {
             return;
         }
-        let due: Vec<(String, OpenDecisions)> = {
+        // No lock is held while the host is asked: its reads may call back into the clock (review of #596).
+        let live = self.host.live_run_ids();
+        let candidates: Vec<String> = {
             let mut state = self.lock();
-            let runs = self.live_runs_locked(&mut state);
-            runs.into_iter()
+            prune_locked(&mut state, &live);
+            live.iter()
                 .filter(|run_id| {
                     self.delay_for_locked(&state, run_id)
                         .is_some_and(|delay| delay <= reached)
                 })
-                .filter_map(|run_id| {
-                    let open = self.host.read_open(&run_id)?;
-                    (!open.is_empty()).then_some((run_id, open))
-                })
+                .cloned()
                 .collect()
         };
+        let mut due: Vec<(String, OpenDecisions)> = Vec::new();
+        for run_id in candidates {
+            if let Some(open) = self.host.read_open(&run_id)
+                && !open.is_empty()
+            {
+                due.push((run_id, open));
+            }
+        }
         let now = self.host.now_ms();
         if self.lock().epoch != epoch {
             return;
@@ -287,21 +304,23 @@ impl BlockedReminderClock {
         }
     }
 
-    /// The live runs, and the counts of any run that is no longer live are dropped: a run resumed later under the same
-    /// id starts its reminders again from the first.
-    fn live_runs_locked(&self, state: &mut State) -> Vec<String> {
-        let live = self.host.live_run_ids();
-        if !state.sent.is_empty() {
-            state.sent.retain(|run_id, _| live.contains(run_id));
-        }
-        live
-    }
-
     /// The delay the run's next reminder needs, or `None` when its reminders are used up.
     fn delay_for_locked(&self, state: &State, run_id: &str) -> Option<u64> {
         let count = state.sent.get(run_id).copied().unwrap_or(0);
         self.delays.get(count).copied()
     }
+}
+
+/// The counts of a run that is no longer live are dropped: a run resumed later under the same id starts its reminders
+/// again from the first. Membership is a set, as Node's check is (review of #596).
+fn prune_locked(state: &mut State, live: &[String]) {
+    if state.sent.is_empty() {
+        return;
+    }
+    let alive: HashSet<&str> = live.iter().map(String::as_str).collect();
+    state
+        .sent
+        .retain(|run_id, _| alive.contains(run_id.as_str()));
 }
 
 #[cfg(test)]

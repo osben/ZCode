@@ -141,6 +141,63 @@ fn other_run_events_post_nothing() {
     assert!(posted.0.lock().expect("posted").is_empty());
 }
 
+/// A reminder host that only counts the timers the clock schedules, with one live run that owes a decision.
+#[derive(Default)]
+struct Timers {
+    scheduled: std::sync::atomic::AtomicU64,
+}
+
+impl crate::fork::workflow_reminder::ReminderHost for Timers {
+    fn live_run_ids(&self) -> Vec<String> {
+        vec!["dwfrun-7".to_owned()]
+    }
+    fn is_idle(&self) -> bool {
+        true
+    }
+    fn read_open(&self, _run_id: &str) -> Option<crate::fork::workflow_reminder::OpenDecisions> {
+        None
+    }
+    fn remind(&self, _reminder: crate::fork::workflow_reminder::Reminder) {}
+    fn now_ms(&self) -> u64 {
+        0
+    }
+    fn schedule(
+        &self,
+        _delay_ms: u64,
+        _fire: Box<dyn FnOnce() + Send>,
+    ) -> Box<dyn FnOnce() + Send> {
+        self.scheduled
+            .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        Box::new(|| {})
+    }
+}
+
+/// The progress path hands an open-set event to the reminder clock, which restarts its idle clock; any other event leaves
+/// the clock alone.
+#[test]
+fn an_open_set_event_restarts_the_reminder_clock_and_an_unrelated_event_does_not() {
+    let timers = Arc::new(Timers::default());
+    let clock = crate::fork::workflow_reminder::BlockedReminderClock::new(timers.clone());
+    clock.session_idle();
+    let armed = timers.scheduled.load(std::sync::atomic::Ordering::SeqCst);
+    let host = WorkflowProgressHost::new(Arc::new(Quiet)).with_reminder(clock);
+
+    host.record("ses_parent", &event("node-settled", json!({})), &[])
+        .expect("recorded");
+    assert_eq!(
+        timers.scheduled.load(std::sync::atomic::Ordering::SeqCst),
+        armed,
+        "an unrelated event does not touch the clock"
+    );
+
+    host.record("ses_parent", &raised(), &[]).expect("recorded");
+    assert_eq!(
+        timers.scheduled.load(std::sync::atomic::Ordering::SeqCst),
+        armed + 1,
+        "an open-set event re-arms the idle clock"
+    );
+}
+
 #[test]
 fn a_host_without_a_notice_sink_still_records_the_deltas() {
     let host = WorkflowProgressHost::new(Arc::new(Quiet));

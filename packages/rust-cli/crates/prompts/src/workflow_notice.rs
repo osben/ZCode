@@ -30,7 +30,7 @@ pub struct Stall<'a> {
 
 /// The stall notice (Node `formatWorkflowStallNotification`).
 pub fn stall(input: &Stall<'_>) -> String {
-    let minutes = ((input.since_ms + 30_000) / 60_000).max(1);
+    let minutes = (input.since_ms.saturating_add(30_000) / 60_000).max(1);
     let mut lines = banner();
     lines.push("<workflow-stall>".into());
     lines.push(format!("  <run-id>{}</run-id>", escape_xml(input.run_id)));
@@ -218,7 +218,7 @@ pub fn blocked(input: &Blocked<'_>) -> String {
         .chain(input.holes.iter().map(|hole| hole.waited_ms))
         .max()
         .unwrap_or(0);
-    let minutes = ((oldest + 30_000) / 60_000).max(1);
+    let minutes = (oldest.saturating_add(30_000) / 60_000).max(1);
     let mut what = Vec::new();
     if !input.questions.is_empty() {
         what.push(count_noun(input.questions.len(), "question"));
@@ -339,3 +339,7 @@ fn utf16_prefix(value: &str, max: usize) -> String {
 #[cfg(test)]
 #[path = "workflow_notice_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "workflow_notice_edge_tests.rs"]
+mod edge_tests;
