@@ -11,9 +11,9 @@ use rust_cli_base::clock::SystemClock;
 use rust_cli_base::sync::LockUnpoisoned;
 use rust_cli_kernel_api::workflow_child::WorkflowChildRunner;
 use rust_cli_node_store::{MIGRATION_LOCK_WAIT, open_session_database};
-use rust_cli_runtime::workflow_owner::{
-    OwnerStores, UnwiredRelease, UnwiredTurns, production_owner_factory,
-};
+use rust_cli_runtime::actor_turns::ActorAgents;
+use rust_cli_runtime::workflow_assembly::ActorSessionRelease;
+use rust_cli_runtime::workflow_owner::{ActorBindingsPort, OwnerStores, bound_owner_factory};
 use rust_cli_runtime::workflow_quota::{StoreQuotaReads, UnwiredResume};
 use rust_cli_runtime::workflow_run::WorkflowRunService;
 use rust_cli_workflow::model::RunRow;
@@ -25,11 +25,13 @@ use super::workflow_governor::GovernorRunConcurrency;
 
 /// Builds the run service over the process's ports, or none when there is no child runner (no helper configured).
 /// `database` is the session database the app opened; `directory` is the workspace the runs write their rows under.
-pub(crate) fn build(
+pub(crate) fn build<A: ActorAgents + ActorSessionRelease>(
     runner: Option<Arc<dyn WorkflowChildRunner>>,
     residency: Arc<SessionResidency>,
     database: &Path,
     directory: &str,
+    agents: Arc<A>,
+    bindings: Arc<dyn ActorBindingsPort>,
 ) -> Option<WorkflowRunService> {
     let runner = runner?;
     let stores = OwnerStores {
@@ -38,9 +40,14 @@ pub(crate) fn build(
         version: env!("CARGO_PKG_VERSION").to_owned(),
         clock: now_ms,
     };
-    // The turn side and the release are refused until the agents' bindings exist (9.30); see `workflow_owner`.
-    let factory =
-        production_owner_factory(stores, Arc::new(UnwiredTurns), Arc::new(UnwiredRelease));
+    // Each actor's turn runs on the agents under its parent's bindings (9.35, `bound_owner_factory`, 9.33).
+    let factory = bound_owner_factory(
+        stores,
+        agents,
+        tokio::runtime::Handle::current(),
+        bindings,
+        Arc::new(SystemClock::utc()),
+    );
     let concurrency = Arc::new(GovernorRunConcurrency::new(
         rust_cli_model::governor::process(),
     ));

@@ -410,6 +410,16 @@ impl Session {
         closing::ask(&self.requests, request).await
     }
 
+    /// Fork (9.35): the session-level ask entry of this open session, for a workflow run's actors. Its asks are not part of
+    /// a turn: they wait on the session's user, and a close moves them to the process's detached entry (as an App call's do).
+    pub fn session_asks(&self) -> Arc<dyn rust_cli_kernel_api::orchestration::Interactions> {
+        Arc::new(sink::SessionAsks::new(
+            self.requests.downgrade(),
+            self.id.clone(),
+            self.deps.detached.clone(),
+        ))
+    }
+
     /// Fork: the tool context an MCP App call is authorized with outside any turn (specs/fork-rust-node-helper.md F3,
     /// `helper/authorizeAppTool`). Its prompt is a session-level ask that `cancel` withdraws; a closed session fails.
     pub async fn app_tool_context(

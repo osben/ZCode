@@ -33,6 +33,7 @@ mod usage;
 pub mod workflow_assembly;
 mod workflow_gate;
 // Fork: EvalWorkflowSnippet's service on the Rust engine (W7-8c, specs/fork-rust-workflow-engine.md, 9.28).
+pub mod workflow_bindings;
 pub mod workflow_owner;
 pub mod workflow_quota;
 pub mod workflow_run;
@@ -202,6 +203,8 @@ pub struct LocalKernel {
     hook_rows: bool,
     /// Fork: the main loop's tool pipeline; MCP App calls are authorized with it (app_tool.rs).
     pipeline: Arc<rust_cli_tools::Pipeline>,
+    /// Fork (9.35): the child-session agents, shared with the workflow run service: an actor's turn runs on them.
+    workflow_agents: Arc<rust_cli_agents::Agents>,
 }
 
 impl LocalKernel {
@@ -357,7 +360,7 @@ impl LocalKernel {
             (&defaults, traits, extensions.node_desktop),
             extensions.code_intelligence.clone(),
         );
-        let agents = assemble::agents(
+        let agents = Arc::new(assemble::agents(
             &ports,
             (&parts, tasks, &agent_catalog),
             (&late, scope.spawner(), &extensions.peers),
@@ -369,7 +372,7 @@ impl LocalKernel {
                     as Arc<dyn rust_cli_kernel_api::subagent_config::SubagentSkillGrants>,
                 extensions.agent_memory_root.clone(),
             ),
-        );
+        ));
         // Fork: ACP agent processes by session; a session close releases its process.
         let acp_host = extensions.acp.clone().map(|setup| {
             Arc::new(acp::AcpHost::new(
@@ -494,6 +497,7 @@ impl LocalKernel {
             typed_compact: extensions.node_desktop,
             hook_rows: extensions.node_desktop,
             pipeline,
+            workflow_agents: agents,
         }
     }
 
@@ -548,6 +552,21 @@ impl LocalKernel {
     /// resident and a session close waits for the run.
     pub fn workflow_residency(&self) -> Arc<rust_cli_workflow::residency::SessionResidency> {
         self.residency.clone()
+    }
+
+    /// Fork (9.35): the agents an actor's turn of a workflow run runs on (the same agents the main loop's Agent tool uses).
+    pub fn workflow_agents(&self) -> Arc<rust_cli_agents::Agents> {
+        self.workflow_agents.clone()
+    }
+
+    /// Fork (9.35): the production actor bindings, over the app's session store and its open sessions. Call it from a
+    /// runtime thread: the port blocks on the store through that runtime's handle.
+    pub fn workflow_bindings(&self) -> Arc<dyn workflow_owner::ActorBindingsPort> {
+        Arc::new(workflow_bindings::SessionBindings::new(
+            self.ports.store.clone(),
+            self.sessions.clone(),
+            tokio::runtime::Handle::current(),
+        ))
     }
 
     /// 会话的主 env（注册表的 `primary_machine()`）：会话、`/cd`、`/diff`、导出、项目清单、`@` 清单都在它上面。

@@ -2773,6 +2773,82 @@ first prompt, since the ask text is hashed on replay. Divergence 281: the predec
 reaches the session, which the import cache does for an actor with a carried in-flight ask or consumed entries (Node
 `ImportedActorState.seed`); the scheduler builds it the same way.
 
+### 9.35 W7-5f: production actor bindings wiring (as built, gate off)
+
+**Scope built.** The app's run service now runs an actor's turn on the real agents under the parent session's bindings.
+It replaces the `UnwiredTurns` composition of 9.30 and 9.33 with `bound_owner_factory`, and it records the parent's
+permission mode at the launch (9.33 "Not done", divergence 273). Nothing calls `launch` yet, so the gate stays off and no
+run starts in the app.
+
+- `runtime/src/workflow_bindings.rs` `SessionBindings`: the production `ActorBindingsPort` over the app's session store and
+  its open sessions. `parent_bindings` reads the stored session (`SessionStore::load`): the model selection, the workspace,
+  and the interactions channel, which is the open session's session-level ask entry (`Session::session_asks`, in the
+  session crate). `parent_permission_mode` reads the stored mode (`plan` reads as plan). The store is awaited through the
+  runtime's handle, so the port is called on the blocking pool, as the owner's factory already is.
+- `runtime/src/workflow_owner.rs`: `ActorBindingsPort::parent_permission_mode` (default: none, so existing fixtures are
+  unchanged). `record_parent_mode(config, port)` is the launch-input seam: it writes the parent's mode on the launch's
+  `subagentPermissionMode` the way Node's submit does (`workflowSubagentPermissionModeField`), so `run-launched` carries it and
+  the actors read it. A launch with no parent or no known mode is left as it was.
+- `runtime/src/lib.rs`: `LocalKernel::workflow_agents()` (the kernel's `Agents`, now held by the kernel) and
+  `LocalKernel::workflow_bindings()` (the production port over the kernel's store and open sessions).
+- `cli/src/frontends/workflow_service.rs` `build(runner, residency, database, directory, agents, bindings)`: builds
+  `bound_owner_factory` over the agents, `Handle::current()` and `SystemClock`. `app_server.rs` passes the kernel's agents and
+  bindings. The W7-5c lines (`configure_progress`, `WorkflowProgressHost`) are untouched.
+
+**Refusal.** A parent with no model selection still starts its run; each actor's turn is refused at its ask with
+`NO_SELECTION` (9.33, item 274), and the agents never see it. A parent the store does not know refuses the launch as an
+attach failure (9.33, item 276).
+
+**Tests, red first.**
+
+- `workflow_bindings_tests.rs` (5). Red on the stub (`parent_bindings` returned None, the mode was not recorded):
+  `the_port_reads_the_parents_selection_workspace_and_mode_from_the_store` (panicked "the parent is known"),
+  `a_parent_without_a_selection_is_known_with_none` (the same panic), and `the_launch_records_the_parents_mode_as_node_records_it`
+  (left None, right `Some("build")`). Green on the stub, and kept as guards: `an_unknown_parent_is_not_known` and
+  `a_launch_from_a_parent_with_no_known_mode_records_nothing`.
+- `workflow_service_tests.rs`, two composed tests through `build` with `FakeChildRunner`. On the 9.33 composition
+  (`UnwiredTurns`), `a_launched_run_actor_completes_its_turn_under_the_parents_selection_and_mode` failed with "the workflow
+  actor's agent bindings are not wired in this build". Green after. `a_parent_with_no_selection_refuses_its_actor_at_the_ask`
+  first passed on the unwired composition for the wrong reason (any refusal); its assertion now names the missing selection,
+  and it is then red there too. The three pre-existing gate-off tests changed only by the two new arguments.
+- Mutation checks after green (each restored after its run): `record_parent_mode` made a no-op fails the composed happy
+  path on the turn's mode (left BypassPermissions, right AcceptEdits). The port's selection read as None fails
+  `the_port_reads_the_parents_selection_workspace_and_mode_from_the_store` (left None, right the stored selection); the
+  composed tests use `FixedParent`, not the port, so they do not see that mutation. The refusal test, put back on the
+  unwired composition, fails on its tightened assertion ("not wired in this build" does not name the selection).
+
+**Node divergences (new in W7-5f, numbered from 300).**
+
+300. The parent's selection, workspace and mode are read from the store, not from the live session. Node's
+     `createActorRuntime` reads the session's current selection (`create-app.ts`). The two agree when every change of the
+     selection and the mode is committed before the next launch. Unverified: whether the app commits a selection change
+     at once, or only at the next turn.
+301. The interactions channel is the open parent's session-level ask entry. A closed parent gives none, so an actor's ask
+     then fails with "no channel", not through Node's detached ask path (the process-level entry of 9.33 / agents §4.1.2).
+     A run whose parent closes mid-run is therefore not followed by its user prompts. Unverified against Node for that case.
+302. A store read error is None, the same as an unknown session. Node's session store throws, and the submit fails with that
+     error. The launch's refusal text is therefore "not known" for both.
+303. `record_parent_mode` is the seam, not a caller. Node's submit is the caller, and the tools that would start a run (the
+     CreateWorkflow path, 9.27) are behind the gate and do not call `launch` yet. The tools PR must call `record_parent_mode`
+     on each launch it makes. Divergence 273 is closed for the seam and open for the caller.
+304. The recorded name is `PermissionMode::node_name` through the workflow crate's `subagent_permission_mode_of`: default and
+     dontAsk record `build`, plan records `build`, acceptEdits `edit`, bypassPermissions `yolo`, and guarded and auto record
+     their own names. Node's `workflowSubagentPermissionModeOf` passes any mode through except `plan`; whether Node's session
+     can hold guarded or auto is not checked here.
+305. The mode is read once at the launch. Node reads `permissionMode()` in the turn that creates the run, which is the same
+     moment. A mode change between the launch and an actor's creation is not seen by the actor, as Node's resume rule
+     requires (9.33, item 273).
+306. The composed test runs the actor's turn on a recording fake of `ActorAgents`, not on the real `Agents` with a scripted
+     provider. The real agents are the ones `app_server.rs` passes; no test runs a real provider turn through the
+     composition. The provider path is covered by the agents' own tests (9.33, item 202).
+307. The browser port is still absent (9.33, item 272): an actor's browser is not available and is not closed at dispose.
+308. The progress sink, the draft writer, the task-link and artifact stores, and the launch input-id resolver (9.30 item 213)
+     are still absent. The launch seam records only the mode.
+
+**Not done.** A production caller of `launch` (the tools, gated, W9); the browser port (272); the progress sink (5b, 9.31);
+the models below the parent's selection beyond the run and persona models of 9.33 (already done there); a live-mode read
+(300).
+
 ## 10. Open questions
 
 Each has a recommendation. The user decides. Until decided, the recommendation is the default.

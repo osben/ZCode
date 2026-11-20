@@ -272,6 +272,8 @@ async fn serve(
         built.kernel.workflow_residency(),
         opened.paths.database().as_path(),
         opened.workspace.root.as_str(),
+        built.kernel.workflow_agents(),
+        built.kernel.workflow_bindings(),
     );
     // Fork (9.29, W7-5c): the per-session run reads (`workflowRuns`, the run list) answer from the service too.
     if let Some(service) = &workflow_service {

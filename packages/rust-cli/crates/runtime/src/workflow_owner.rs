@@ -18,11 +18,14 @@ use rust_cli_kernel_api::env::WorkspaceRef;
 use rust_cli_kernel_api::ids::SessionId;
 use rust_cli_kernel_api::model::ModelSelection;
 use rust_cli_kernel_api::orchestration::Interactions;
+use rust_cli_kernel_api::permission::PermissionMode;
 use rust_cli_node_store::{MIGRATION_LOCK_WAIT, open_session_database};
 use rust_cli_workflow::actor_sessions::NodeActorSessions;
 use rust_cli_workflow::actor_turns::{TurnInput, TurnRunner};
 use rust_cli_workflow::driver_owner::{ActorDriverOwner, ActorSessionRequest, ActorSessions};
+use rust_cli_workflow::driver_rules::subagent_permission_mode_of;
 use rust_cli_workflow::engine::{AskMessage, EngineConfig};
+use rust_cli_workflow::event::LaunchFields;
 use rust_cli_workflow::journal::JournalPort;
 use rust_cli_workflow::journal_dwf::DwfJournal;
 use rust_cli_workflow::model::{Ref, StoredEvent};
@@ -121,6 +124,31 @@ pub struct ParentBindings {
 pub trait ActorBindingsPort: Send + Sync + 'static {
     /// The bindings of `parent`, or None when the session is not known.
     fn parent_bindings(&self, parent: &str) -> Option<ParentBindings>;
+
+    /// The parent's permission mode now, read once when a run is launched from it (9.35, Node `permissionMode()` at
+    /// submit). None when the port has no mode for the parent: the launch then records no mode.
+    fn parent_permission_mode(&self, parent: &str) -> Option<PermissionMode> {
+        let _ = parent;
+        None
+    }
+}
+
+/// Fork (9.35, divergence 273): records the parent's permission mode on a launch, as Node's submit records the session's
+/// mode at the moment the run is created (`workflowSubagentPermissionModeField`). Resume never calls this. Every session
+/// mode has a recordable name (plan reads as build); a parent whose mode is unknown records nothing, so the actors read YOLO.
+pub fn record_parent_mode(config: &mut EngineConfig, bindings: &dyn ActorBindingsPort) {
+    let Some(parent) = config.parent_session_id.clone() else {
+        return;
+    };
+    let Some(mode) = bindings.parent_permission_mode(&parent) else {
+        return;
+    };
+    let recorded =
+        subagent_permission_mode_of(Some(mode.node_name())).map(|mode| mode.as_str().to_owned());
+    config
+        .launch
+        .get_or_insert_with(LaunchFields::default)
+        .subagent_permission_mode = recorded;
 }
 
 /// Node `parseModelPickerValue`: `provider/model`, with an optional `$reasoning` after the model.
