@@ -1,4 +1,8 @@
-import type { ZCodeProtocolError, ZCodeProtocolMessage, ZCodeProtocolResponse } from "@zcode/shared";
+import type {
+  ZCodeProtocolError,
+  ZCodeProtocolMessage,
+  ZCodeProtocolResponse,
+} from "@zcode/shared";
 import { zcodePluginsCancelOperationParamsSchema, zcodeProtocolMethods } from "@zcode/shared";
 import {
   callMcpUiTool,
@@ -83,7 +87,11 @@ import type { Logger } from "@zcode/contracts";
 import type { ForkRustHelperMcpHost } from "./mcp-host.js";
 import type { ForkRustHelperClient } from "./rust-client.js";
 import type { createWorkflowRunReads } from "./workflow-run-reads.js";
-import { compileWorkflowForRust, formatWorkflowForRust } from "./workflow-compile.js";
+import {
+  compileWorkflowForRust,
+  evalSnippetForRust,
+  formatWorkflowForRust,
+} from "./workflow-compile.js";
 import { FORK_RUST_HELPER_WORKFLOW } from "./workflow-protocol.js";
 
 type Handler = (params: unknown) => Promise<unknown> | unknown;
@@ -147,7 +155,8 @@ export class ForkRustHelperServer {
       [zcodeProtocolMethods.pluginsConfigure]: (params) => configurePlugin(context, params),
       [zcodeProtocolMethods.pluginsResetConfig]: (params) => resetPluginConfig(context, params),
       [zcodeProtocolMethods.pluginsValidate]: (params) => validatePlugin(context, params),
-      [zcodeProtocolMethods.pluginsRestoreBuiltin]: (params) => restoreBuiltinPlugin(context, params),
+      [zcodeProtocolMethods.pluginsRestoreBuiltin]: (params) =>
+        restoreBuiltinPlugin(context, params),
       [zcodeProtocolMethods.pluginsMarketplaceAdd]: withSignal((params, signal) =>
         addPluginMarketplace(context, params, signal),
       ),
@@ -160,8 +169,10 @@ export class ForkRustHelperServer {
         resolveSuggestedPluginReference(context, params, signal),
       ),
       [zcodeProtocolMethods.pluginsCancelOperation]: (params) => this.cancelOperation(params),
-      [zcodeProtocolMethods.pluginsReadUserOptions]: (params) => readPluginUserOptions(context, params),
-      [zcodeProtocolMethods.pluginsListUiSurfaces]: (params) => listPluginUiSurfaces(context, params),
+      [zcodeProtocolMethods.pluginsReadUserOptions]: (params) =>
+        readPluginUserOptions(context, params),
+      [zcodeProtocolMethods.pluginsListUiSurfaces]: (params) =>
+        listPluginUiSurfaces(context, params),
       // With a sessionId these answer from the frozen catalog of a session Rust opened (F3).
       [zcodeProtocolMethods.pluginsReferenceCatalog]: (params) =>
         getPluginReferenceCatalog(context, params),
@@ -169,21 +180,26 @@ export class ForkRustHelperServer {
         getPluginReferenceCatalog(context, params, true),
       [zcodeProtocolMethods.workflowsList]: (params) => listSavedWorkflowsOp(context, params),
       [zcodeProtocolMethods.workflowsGet]: (params) => getSavedWorkflowOp(context, params),
-      [zcodeProtocolMethods.workflowsUpdateMeta]: (params) => updateSavedWorkflowMetaOp(context, params),
+      [zcodeProtocolMethods.workflowsUpdateMeta]: (params) =>
+        updateSavedWorkflowMetaOp(context, params),
       [zcodeProtocolMethods.workflowsDelete]: (params) => deleteSavedWorkflowOp(context, params),
       [zcodeProtocolMethods.workflowsRuns]: (params) => listSavedWorkflowRunsOp(context, params),
       [zcodeProtocolMethods.workflowsMove]: (params) => moveSavedWorkflowOp(context, params),
       [zcodeProtocolMethods.workflowsSave]: (params) => saveSavedWorkflowFromRunOp(context, params),
-      [zcodeProtocolMethods.workflowsForRun]: (params) => findSavedWorkflowForRunOp(context, params),
+      [zcodeProtocolMethods.workflowsForRun]: (params) =>
+        findSavedWorkflowForRunOp(context, params),
       ...deps.workflowRuns,
       // W4: stateless workflow compile and format (no storage, no session).
       [FORK_RUST_HELPER_WORKFLOW.compile]: (params) => compileWorkflowForRust(params),
       [FORK_RUST_HELPER_WORKFLOW.format]: (params) => formatWorkflowForRust(params),
+      [FORK_RUST_HELPER_WORKFLOW.evalSnippet]: (params) => evalSnippetForRust(params),
       // F3: the same handlers as Node's protocol server, on the helper's session records.
-      [zcodeProtocolMethods.pluginsMentionItems]: (params) => getPluginMentionItems(context, params),
+      [zcodeProtocolMethods.pluginsMentionItems]: (params) =>
+        getPluginMentionItems(context, params),
       [zcodeProtocolMethods.mcpReadResource]: (params) => readMcpUiResource(context, params),
       [zcodeProtocolMethods.mcpUiOpenInstance]: (params) => openMcpUiInstance(context, params),
-      [zcodeProtocolMethods.mcpUiValidateInstance]: (params) => validateMcpUiInstance(context, params),
+      [zcodeProtocolMethods.mcpUiValidateInstance]: (params) =>
+        validateMcpUiInstance(context, params),
       [zcodeProtocolMethods.mcpUiCloseInstance]: (params) => closeMcpUiInstance(context, params),
       [zcodeProtocolMethods.mcpUiSampling]: (params) => sampleMcpUi(context, params),
       [zcodeProtocolMethods.mcpUiCancelSampling]: (params) => cancelMcpUiSampling(context, params),
@@ -193,13 +209,16 @@ export class ForkRustHelperServer {
       [zcodeProtocolMethods.mcpUiListResources]: (params) => listMcpUiResources(context, params),
       [zcodeProtocolMethods.mcpUiListResourceTemplates]: (params) =>
         listMcpUiResourceTemplates(context, params),
-      [zcodeProtocolMethods.mcpUiSubscribeResource]: (params) => subscribeMcpUiResource(context, params),
+      [zcodeProtocolMethods.mcpUiSubscribeResource]: (params) =>
+        subscribeMcpUiResource(context, params),
       [zcodeProtocolMethods.mcpUiUnsubscribeResource]: (params) =>
         unsubscribeMcpUiResource(context, params),
-      [zcodeProtocolMethods.mcpUiRegisterAppTools]: (params) => registerMcpUiAppTools(context, params),
+      [zcodeProtocolMethods.mcpUiRegisterAppTools]: (params) =>
+        registerMcpUiAppTools(context, params),
       [zcodeProtocolMethods.mcpUiUnregisterAppTools]: (params) =>
         unregisterMcpUiAppTools(context, params),
-      [zcodeProtocolMethods.mcpUiClaimAppToolCall]: (params) => claimMcpUiAppToolCall(context, params),
+      [zcodeProtocolMethods.mcpUiClaimAppToolCall]: (params) =>
+        claimMcpUiAppToolCall(context, params),
       [zcodeProtocolMethods.mcpUiResolveAppToolCall]: (params) =>
         resolveMcpUiAppToolCall(context, params),
     };
@@ -209,17 +228,26 @@ export class ForkRustHelperServer {
     this.helperRequests = new Map<string, HelperRequestHandler>([
       [FORK_RUST_HELPER_F3.mcpConnect, (params) => host.connect(params)],
       // F4-D7: child-session facts come from Rust only; a conflict is refused with -32602.
-      [FORK_RUST_HELPER_BROWSER_CHILD_SESSION, async (params) => {
-        if (!browser) throw new ProtocolRequestError(-32601, "The browser control is not configured");
-        browser.childSession(params);
-        return {};
-      }],
-      [FORK_RUST_HELPER_BROWSER_TURN_SCREENSHOT, async (params) => {
-        if (!browser) throw new ProtocolRequestError(-32601, "The browser control is not configured");
-        const parsed = turnScreenshotParamsSchema.safeParse(params);
-        if (!parsed.success) throw new ProtocolRequestError(-32602, "Invalid helper/browser/turnScreenshot params");
-        return browser.turnScreenshot(parsed.data);
-      }],
+      [
+        FORK_RUST_HELPER_BROWSER_CHILD_SESSION,
+        async (params) => {
+          if (!browser)
+            throw new ProtocolRequestError(-32601, "The browser control is not configured");
+          browser.childSession(params);
+          return {};
+        },
+      ],
+      [
+        FORK_RUST_HELPER_BROWSER_TURN_SCREENSHOT,
+        async (params) => {
+          if (!browser)
+            throw new ProtocolRequestError(-32601, "The browser control is not configured");
+          const parsed = turnScreenshotParamsSchema.safeParse(params);
+          if (!parsed.success)
+            throw new ProtocolRequestError(-32602, "Invalid helper/browser/turnScreenshot params");
+          return browser.turnScreenshot(parsed.data);
+        },
+      ],
       [FORK_RUST_HELPER_F3.sessionOpen, (params) => host.openSession(params)],
       [FORK_RUST_HELPER_F3.appToolsCall, (params) => host.callAppTool(params)],
       [FORK_RUST_HELPER_F3.ping, async () => ({})],
@@ -227,19 +255,35 @@ export class ForkRustHelperServer {
     this.helperNotifications = new Map<string, HelperRequestHandler>([
       [FORK_RUST_HELPER_F3.mcpSend, (params) => host.send(params)],
       // Async, so a malformed close is a rejection the dispatch logs rather than a throw.
-      [FORK_RUST_HELPER_F3.mcpClose, async (params) => host.closePipe(requireString(params, "connection"))],
+      [
+        FORK_RUST_HELPER_F3.mcpClose,
+        async (params) => host.closePipe(requireString(params, "connection")),
+      ],
       [FORK_RUST_HELPER_F3.sessionClose, (params) => host.closeSession(params)],
       [FORK_RUST_HELPER_F3.appToolsCancel, async (params) => host.cancelAppTool(params)],
-      [FORK_RUST_HELPER_BROWSER_CHILD_SESSION_END, (params) => browser?.childSessionEnd(params) ?? Promise.resolve()],
-      [FORK_RUST_HELPER_BROWSER_TURN_SCREENSHOT_CANCEL, async (params) => {
-        const parsed = turnScreenshotCancelParamsSchema.safeParse(params);
-        if (!parsed.success) throw new ProtocolRequestError(-32602, "Invalid helper/browser/turnScreenshotCancel params");
-        browser?.cancelTurnScreenshot(parsed.data.sessionId, parsed.data.turnId);
-      }],
-      [FORK_RUST_HELPER_TURN_ENDED, async (params) => {
-        const { sessionId, turnId } = requireTurnEnded(params);
-        await browser?.turnEnded(sessionId, turnId);
-      }],
+      [
+        FORK_RUST_HELPER_BROWSER_CHILD_SESSION_END,
+        (params) => browser?.childSessionEnd(params) ?? Promise.resolve(),
+      ],
+      [
+        FORK_RUST_HELPER_BROWSER_TURN_SCREENSHOT_CANCEL,
+        async (params) => {
+          const parsed = turnScreenshotCancelParamsSchema.safeParse(params);
+          if (!parsed.success)
+            throw new ProtocolRequestError(
+              -32602,
+              "Invalid helper/browser/turnScreenshotCancel params",
+            );
+          browser?.cancelTurnScreenshot(parsed.data.sessionId, parsed.data.turnId);
+        },
+      ],
+      [
+        FORK_RUST_HELPER_TURN_ENDED,
+        async (params) => {
+          const { sessionId, turnId } = requireTurnEnded(params);
+          await browser?.turnEnded(sessionId, turnId);
+        },
+      ],
     ]);
   }
 
@@ -261,16 +305,21 @@ export class ForkRustHelperServer {
       const run = this.helperNotifications.get(message.method);
       // A notification has no answer: a refused one is logged, since a thrown error would close the connection.
       if (run)
-        await run((message as { params?: Record<string, unknown> }).params).catch((error: unknown) =>
-          this.deps.logger?.warn("Rust helper notification refused", {
-            event: "fork_rust_helper.notification.refused",
-            method: message.method,
-            error: errorMessage(error),
-          }),
+        await run((message as { params?: Record<string, unknown> }).params).catch(
+          (error: unknown) =>
+            this.deps.logger?.warn("Rust helper notification refused", {
+              event: "fork_rust_helper.notification.refused",
+              method: message.method,
+              error: errorMessage(error),
+            }),
         );
       return undefined;
     }
-    const { id, method, params } = message as { id: string | number; method: string; params?: unknown };
+    const { id, method, params } = message as {
+      id: string | number;
+      method: string;
+      params?: unknown;
+    };
     try {
       return { id, result: await this.dispatch(method, params) };
     } catch (error) {

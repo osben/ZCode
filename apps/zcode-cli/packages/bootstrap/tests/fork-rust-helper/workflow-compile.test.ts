@@ -427,3 +427,102 @@ describe("fork: helper/workflow/format run list, run detail and window display (
     await helper.done;
   });
 });
+
+// W7-8c (specs/fork-rust-workflow-engine.md, 9.28): EvalWorkflowSnippet's compile. The snippet facade declares no agent() and
+// its world.run commands must be literals, as in Node's `dynamic-workflow-snippet-service.ts`. Nothing runs here.
+describe("fork: helper/workflow/evalSnippet (W7-8c)", () => {
+  it("advertises evalSnippet in helper/initialize", async () => {
+    const helper = await startHelper();
+    const reply = await helper.request("helper/initialize", {
+      protocolVersion: FORK_RUST_HELPER_PROTOCOL_VERSION,
+    });
+    expect(reply.result?.methods).toContain("helper/workflow/evalSnippet");
+    expect(FORK_RUST_HELPER_METHODS).toContain("helper/workflow/evalSnippet");
+    helper.close();
+    await helper.done;
+  });
+
+  it("compiles a read-only snippet: ok, no world.run, and the entry is rendered for its run", async () => {
+    const helper = await startHelper();
+    const reply = await helper.request("helper/workflow/evalSnippet", {
+      scriptText: "const total = [1, 2, 3].reduce((a, b) => a + b, 0);\nreturn total;",
+      runId: "dwfeval-w78c-1",
+    });
+    expect(reply.error).toBeUndefined();
+    const result = reply.result as { ok: boolean; worldRun: boolean; entrySource: string };
+    expect(result.ok).toBe(true);
+    expect(result.worldRun).toBe(false);
+    expect(result.entrySource).toContain('"id":"dwfeval-w78c-1"');
+    expect(result.entrySource).toContain("export const payload");
+    helper.close();
+    await helper.done;
+  });
+
+  it("reports a literal world.run as worldRun true", async () => {
+    const helper = await startHelper();
+    const reply = await helper.request("helper/workflow/evalSnippet", {
+      scriptText: 'const status = await world.run("git", ["status", "--short"]);\nreturn status;',
+      runId: "dwfeval-w78c-2",
+    });
+    const result = reply.result as { ok: boolean; worldRun: boolean };
+    expect(result.ok).toBe(true);
+    expect(result.worldRun).toBe(true);
+    helper.close();
+    await helper.done;
+  });
+
+  it("refuses agent() in a snippet: the snippet facade has no actors, so the answer carries diagnostics and no entry", async () => {
+    const helper = await startHelper();
+    const reply = await helper.request("helper/workflow/evalSnippet", {
+      scriptText: VALID_SCRIPT,
+      runId: "dwfeval-w78c-3",
+    });
+    expect(reply.error).toBeUndefined();
+    const result = reply.result as {
+      ok: boolean;
+      diagnostics: { code: number; line: number; column: number; message: string }[];
+      entrySource?: string;
+    };
+    expect(result.ok).toBe(false);
+    expect(result.diagnostics.length).toBeGreaterThan(0);
+    expect(result.entrySource).toBeUndefined();
+    helper.close();
+    await helper.done;
+  });
+
+  it("answers a snippet with a type error as ok false with positioned diagnostics", async () => {
+    const helper = await startHelper();
+    const reply = await helper.request("helper/workflow/evalSnippet", {
+      scriptText: BROKEN_SCRIPT,
+      runId: "dwfeval-w78c-4",
+    });
+    const result = reply.result as { ok: boolean; diagnostics: { line: number }[] };
+    expect(result.ok).toBe(false);
+    expect(result.diagnostics[0]?.line).toEqual(expect.any(Number));
+    helper.close();
+    await helper.done;
+  });
+
+  it("refuses a non-literal world.run command with diagnostics, as the snippet service does", async () => {
+    const helper = await startHelper();
+    const reply = await helper.request("helper/workflow/evalSnippet", {
+      scriptText:
+        'function run(cmd: string) {\n  return world.run(cmd, []);\n}\nreturn run("git");',
+      runId: "dwfeval-w78c-5",
+    });
+    const result = reply.result as { ok: boolean; diagnostics: unknown[]; entrySource?: string };
+    expect(result.ok).toBe(false);
+    expect(result.diagnostics.length).toBeGreaterThan(0);
+    expect(result.entrySource).toBeUndefined();
+    helper.close();
+    await helper.done;
+  });
+
+  it("refuses a missing runId as -32602", async () => {
+    const helper = await startHelper();
+    const reply = await helper.request("helper/workflow/evalSnippet", { scriptText: "return 1;" });
+    expect(reply.error?.code).toBe(-32602);
+    helper.close();
+    await helper.done;
+  });
+});

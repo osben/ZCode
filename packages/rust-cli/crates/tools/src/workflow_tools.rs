@@ -16,10 +16,12 @@ use rust_cli_kernel_api::tool::{Tool, ToolUseContext};
 use rust_cli_kernel_api::tool_names;
 use rust_cli_kernel_api::workflow_analysis::WorkflowAnalyzer;
 use rust_cli_kernel_api::workflow_run::DynamicWorkflowRunPort;
+use rust_cli_kernel_api::workflow_snippet::WorkflowSnippetPort;
 use serde::Deserialize;
 use serde_json::Value;
 
 use crate::workflow_create::CreateWorkflowTool;
+use crate::workflow_eval_snippet::EvalWorkflowSnippetTool;
 use crate::workflow_list::ListSavedWorkflowsTool;
 use crate::workflow_save::SaveWorkflowTool;
 
@@ -100,14 +102,16 @@ pub async fn skill_loaded(context: &ToolUseContext) -> bool {
     })
 }
 
-/// The dynamic-workflow tools to register, in Node's registration order (CreateWorkflow, SaveWorkflow, then
-/// ListSavedWorkflows). CreateWorkflow and SaveWorkflow check scripts, so they exist only with an analyzer; without one,
-/// neither is offered. CreateWorkflow starts runs through `run_port` (no port: it typechecks and says it did not run).
-/// All reach a session only through the gate (`runtime::workflow_gate`), whose source no entry point sets yet.
+/// The dynamic-workflow tools to register, in Node's registration order (CreateWorkflow, SaveWorkflow,
+/// EvalWorkflowSnippet, then ListSavedWorkflows). CreateWorkflow and SaveWorkflow check scripts, so they exist only with
+/// an analyzer; without one, neither is offered. CreateWorkflow starts runs through `run_port` (no port: it typechecks and
+/// says it did not run). EvalWorkflowSnippet runs a snippet, so it exists only with a snippet port. All reach a session
+/// only through the gate (`runtime::workflow_gate`), whose source no entry point sets yet.
 pub fn workflow_tools(
     analyzer: Option<Arc<dyn WorkflowAnalyzer>>,
     home: PathBuf,
     run_port: Option<Arc<dyn DynamicWorkflowRunPort>>,
+    snippets: Option<Arc<dyn WorkflowSnippetPort>>,
 ) -> Vec<Arc<dyn Tool>> {
     let mut tools: Vec<Arc<dyn Tool>> = Vec::new();
     if let Some(analyzer) = analyzer {
@@ -117,6 +121,9 @@ pub fn workflow_tools(
             home.clone(),
         )));
         tools.push(Arc::new(SaveWorkflowTool::new(analyzer, home.clone())));
+    }
+    if let Some(snippets) = snippets {
+        tools.push(Arc::new(EvalWorkflowSnippetTool::new(snippets)));
     }
     tools.push(Arc::new(ListSavedWorkflowsTool::new(home)));
     tools

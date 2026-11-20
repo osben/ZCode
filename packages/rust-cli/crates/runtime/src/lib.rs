@@ -32,8 +32,10 @@ mod table;
 mod usage;
 pub mod workflow_assembly;
 mod workflow_gate;
+// Fork: EvalWorkflowSnippet's service on the Rust engine (W7-8c, specs/fork-rust-workflow-engine.md, 9.28).
 pub mod workflow_owner;
 pub mod workflow_run;
+pub mod workflow_snippet;
 mod workspace_sessions;
 
 use std::sync::Arc;
