@@ -20,6 +20,10 @@ use crate::test_support::{harness, text};
 struct Runs {
     live: Vec<String>,
     settled: Option<(String, String)>,
+    /// Journal rows of other sessions: readable, but `ownedByThisSession` is false.
+    foreign: Vec<String>,
+    /// Every read and cancel fails with a real error (not the unsupported fallback).
+    fail: bool,
     cancels: Mutex<Vec<(String, CancelInitiator)>>,
 }
 
@@ -43,16 +47,33 @@ impl DynamicWorkflowRunPort for Runs {
         run_id: &WorkflowRunId,
         initiator: CancelInitiator,
     ) -> Result<bool, DynamicWorkflowRunError> {
+        if self.fail {
+            return Err(DynamicWorkflowRunError::new("the run read did not finish"));
+        }
+        // Only a live run of the session is stopped (the service answers false for anything else, with no stop).
+        if !self.live.iter().any(|id| id == run_id.as_str()) {
+            return Ok(false);
+        }
         self.cancels
             .lock_unpoisoned()
             .push((run_id.as_str().to_owned(), initiator));
-        Ok(self.live.iter().any(|id| id == run_id.as_str()))
+        Ok(true)
     }
 
     async fn get_run_detail(
         &self,
         run_id: &WorkflowRunId,
     ) -> Result<Option<Value>, DynamicWorkflowRunError> {
+        if self.fail {
+            return Err(DynamicWorkflowRunError::new("the run read did not finish"));
+        }
+        if self.foreign.iter().any(|id| id == run_id.as_str()) {
+            return Ok(Some(json!({
+                "runId": run_id.as_str(),
+                "status": "running",
+                "ownedByThisSession": false,
+            })));
+        }
         // A live run reads as running (its gap form, 9.42); a settled one reads as its journal status.
         let status = if self.live.iter().any(|id| id == run_id.as_str()) {
             Some("running".to_owned())
@@ -62,7 +83,9 @@ impl DynamicWorkflowRunPort for Runs {
                 .filter(|(id, _)| id == run_id.as_str())
                 .map(|(_, status)| status.clone())
         };
-        Ok(status.map(|status| json!({"runId": run_id.as_str(), "status": status, "ownedByThisSession": true})))
+        Ok(status.map(
+            |status| json!({"runId": run_id.as_str(), "status": status, "ownedByThisSession": true}),
+        ))
     }
 }
 
@@ -164,5 +187,65 @@ async fn an_unknown_id_is_still_no_task_found_with_a_run_port_wired() {
     assert_eq!(
         text(&output),
         "<tool_use_error>No task found with ID: nope</tool_use_error>"
+    );
+}
+
+/// Another session's run is readable but not this session's: TaskStop and the user's stop both say no task, and nothing is
+/// cancelled (the ownership flag is the guard, 9.48).
+#[tokio::test]
+async fn a_run_of_another_session_is_no_task_for_this_one() {
+    let harness = harness(None);
+    let runs = Arc::new(Runs {
+        foreign: vec!["wf_run_3".to_owned()],
+        ..Runs::default()
+    });
+    assert!(
+        harness
+            .agents
+            .set_run_sessions(Arc::new(OneSession(runs.clone())))
+    );
+    let output = harness
+        .call("sess_parent", "TaskStop", json!({"task_id": "wf_run_3"}))
+        .await;
+    assert_eq!(
+        text(&output),
+        "<tool_use_error>No task found with ID: wf_run_3</tool_use_error>"
+    );
+    let stopped = harness
+        .agents
+        .signals()
+        .stop_task(&SessionId::new("sess_parent"), "wf_run_3", user_operation())
+        .await;
+    assert_eq!(stopped, Err("No task found with ID: wf_run_3".to_owned()));
+    assert!(runs.recorded().is_empty(), "nothing was cancelled");
+}
+
+/// A real failure of the run port is surfaced, not reported as no task (only the unsupported fallback means "not a run").
+#[tokio::test]
+async fn a_failed_run_port_is_surfaced_not_reported_as_no_task() {
+    let harness = harness(None);
+    let runs = Arc::new(Runs {
+        live: vec!["wf_run_1".to_owned()],
+        fail: true,
+        ..Runs::default()
+    });
+    assert!(harness.agents.set_run_sessions(Arc::new(OneSession(runs))));
+    let parent = SessionId::new("sess_parent");
+    let stopped = harness
+        .agents
+        .signals()
+        .stop_task(&parent, "wf_run_1", user_operation())
+        .await;
+    let message = stopped.expect_err("the failure is the stop's answer");
+    assert!(message.contains("the run read did not finish"), "{message}");
+    assert!(!message.contains("No task found"), "{message}");
+    let output = harness
+        .call("sess_parent", "TaskStop", json!({"task_id": "wf_run_1"}))
+        .await;
+    assert!(output.is_error);
+    assert!(
+        text(&output).contains("the run read did not finish"),
+        "{}",
+        text(&output)
     );
 }

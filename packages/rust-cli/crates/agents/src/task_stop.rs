@@ -16,7 +16,9 @@ use rust_cli_kernel_api::permission::PermissionDecision;
 use rust_cli_kernel_api::tool::{
     PromptContext, Tool, ToolError, ToolOutput, ToolProgress, ToolUseContext, Validation, invalid,
 };
-use rust_cli_kernel_api::workflow_run::{CancelInitiator, DynamicWorkflowRunPort};
+use rust_cli_kernel_api::workflow_run::{
+    CancelInitiator, DynamicWorkflowRunError, DynamicWorkflowRunPort,
+};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use tokio::sync::mpsc;
@@ -120,10 +122,20 @@ impl<'a> Caller<'a> {
 const RUN_COMMAND: &str = "workflow run";
 
 /// Fork (W8a, 9.48): a run's journal detail, when the run belongs to the session asking. The port reads any journal row
-/// (as Node's `getRunDetail` does), so the ownership flag decides.
-async fn owned_run_detail(port: &dyn DynamicWorkflowRunPort, run: &WorkflowRunId) -> Option<Value> {
-    let detail = port.get_run_detail(run).await.ok().flatten()?;
-    (detail.get("ownedByThisSession") == Some(&Value::Bool(true))).then_some(detail)
+/// (as Node's `getRunDetail` does), so the ownership flag decides. The unsupported fallback means "no run port here" and
+/// is `Ok(None)`; any other failure is returned, since it is not the same as "not a run".
+async fn owned_run_detail(
+    port: &dyn DynamicWorkflowRunPort,
+    run: &WorkflowRunId,
+) -> Result<Option<Value>, DynamicWorkflowRunError> {
+    match port.get_run_detail(run).await {
+        Ok(Some(detail)) => {
+            Ok((detail.get("ownedByThisSession") == Some(&Value::Bool(true))).then_some(detail))
+        }
+        Ok(None) => Ok(None),
+        Err(error) if error.is_unsupported() => Ok(None),
+        Err(error) => Err(error),
+    }
 }
 
 /// 成功停止：（任务 ID、`local_agent` / `local_bash`、描述或命令、远端的机器）。
@@ -333,8 +345,14 @@ impl TaskStopTool {
 
     /// Fork (W8a, 9.48): the journal detail of a workflow run this session owns, under `id`. None when no run port is
     /// wired or the session has no such run, so the id is not a run.
-    async fn session_run(&self, id: &str, context: &Caller<'_>) -> Option<Value> {
-        let sessions = self.core.run_sessions.get()?;
+    async fn session_run(
+        &self,
+        id: &str,
+        context: &Caller<'_>,
+    ) -> Result<Option<Value>, DynamicWorkflowRunError> {
+        let Some(sessions) = self.core.run_sessions.get() else {
+            return Ok(None);
+        };
         let port = sessions.for_session(context.session);
         owned_run_detail(port.as_ref(), &WorkflowRunId::new(id)).await
     }
@@ -356,6 +374,11 @@ impl TaskStopTool {
         } else {
             CancelInitiator::Model
         };
+        let failed = |error: DynamicWorkflowRunError| -> Option<Result<StoppedTask, ToolError>> {
+            Some(Err(ToolError::Failed {
+                message: error.to_string(),
+            }))
+        };
         match port.cancel(&run, initiator).await {
             Ok(true) => Some(Ok(StoppedTask {
                 id: id.to_owned(),
@@ -363,14 +386,22 @@ impl TaskStopTool {
                 command: RUN_COMMAND.to_owned(),
                 machine: MachineName::primary(),
             })),
-            Ok(false) => {
-                let detail = owned_run_detail(port.as_ref(), &run).await?;
-                let status = detail.get("status").and_then(Value::as_str)?.to_owned();
-                Some(Err(ToolError::Failed {
-                    message: format!("Task {id} is not running (status: {status})"),
-                }))
-            }
-            Err(_) => None,
+            Ok(false) => match owned_run_detail(port.as_ref(), &run).await {
+                Ok(Some(detail)) => {
+                    let status = detail
+                        .get("status")
+                        .and_then(Value::as_str)
+                        .unwrap_or("unknown")
+                        .to_owned();
+                    Some(Err(ToolError::Failed {
+                        message: format!("Task {id} is not running (status: {status})"),
+                    }))
+                }
+                Ok(None) => None,
+                Err(error) => failed(error),
+            },
+            Err(error) if error.is_unsupported() => None,
+            Err(error) => failed(error),
         }
     }
 
@@ -524,13 +555,15 @@ impl Tool for TaskStopTool {
         let Some(id) = task_id(input) else {
             return invalid("Missing required parameter: task_id".to_owned());
         };
+        // Fork (W8a, 9.48): the run check goes first, as in `stop`, so both classify an id the same way.
+        match self.session_run(&id, &Caller::of(context)).await {
+            Ok(Some(_)) => return Validation::Ok,
+            Ok(None) => {}
+            Err(error) => return invalid(error.to_string()),
+        }
         match self.find(&id, &Caller::of(context)).await {
             Ok(_) => Validation::Ok,
-            // Fork (W8a, 9.48): a workflow run of this session is a valid target; its stop answers for it.
-            Err(message) => match self.session_run(&id, &Caller::of(context)).await {
-                Some(_) => Validation::Ok,
-                None => invalid(message),
-            },
+            Err(message) => invalid(message),
         }
     }
 

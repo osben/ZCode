@@ -10,7 +10,7 @@ use std::collections::{HashMap, VecDeque};
 
 use rust_cli_base::sync::LockUnpoisoned;
 use rust_cli_kernel_api::workflow_run::{CancelInitiator, DynamicWorkflowRunError};
-use rust_cli_workflow::model::StopReason;
+use rust_cli_workflow::driver_owner::StopInitiator;
 use serde_json::Value;
 
 use super::WorkflowRunService;
@@ -33,7 +33,12 @@ pub(crate) struct RetiredQuestions {
 }
 
 impl RetiredQuestions {
+    /// Retires `qid`. A question already answered stays answered: a withdrawal never downgrades it (Node's `withdraw`
+    /// retires only a parked question, so a resolved one keeps `already_resolved`).
     fn retire(&mut self, qid: &str, how: Retired) {
+        if how == Retired::Withdrawn && self.reason(qid) == Some(Retired::Resolved) {
+            return;
+        }
         if self.reasons.insert(qid.to_owned(), how).is_none() {
             self.order.push_back(qid.to_owned());
         }
@@ -49,12 +54,30 @@ impl RetiredQuestions {
     }
 }
 
-/// The stop reason of a cancel. The amend path stops its predecessor itself (9.43), so no cancel names a successor.
-fn stop_reason(initiator: &CancelInitiator) -> Option<StopReason> {
+/// The qids in a run's snapshot `pendingQuestions` (the projection's list of parked questions). Entries without a string
+/// `qid` are skipped.
+fn pending_question_ids(run: &Value) -> Vec<String> {
+    run.get("pendingQuestions")
+        .and_then(Value::as_array)
+        .map(|questions| {
+            questions
+                .iter()
+                .filter_map(|question| question.get("qid").and_then(Value::as_str))
+                .map(str::to_owned)
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+/// The stop initiator of a cancel. The amend path stops its predecessor itself (9.43), so no cancel names a successor, and
+/// that is a caller error rather than a missing capability.
+fn stop_initiator(initiator: &CancelInitiator) -> Result<StopInitiator, DynamicWorkflowRunError> {
     match initiator {
-        CancelInitiator::User => Some(StopReason::User),
-        CancelInitiator::Model => Some(StopReason::Model),
-        CancelInitiator::Superseded(_) => None,
+        CancelInitiator::User => Ok(StopInitiator::User),
+        CancelInitiator::Model => Ok(StopInitiator::Model),
+        CancelInitiator::Superseded(_) => Err(DynamicWorkflowRunError::new(
+            "a cancel names no successor: amend stops its predecessor itself",
+        )),
     }
 }
 
@@ -67,9 +90,7 @@ impl WorkflowRunService {
         run_id: &str,
         initiator: &CancelInitiator,
     ) -> Result<bool, DynamicWorkflowRunError> {
-        let Some(reason) = stop_reason(initiator) else {
-            return Err(DynamicWorkflowRunError::unsupported("cancel"));
-        };
+        let initiator = stop_initiator(initiator)?;
         let handle = {
             let state = self.inner.state.lock_unpoisoned();
             state
@@ -82,8 +103,10 @@ impl WorkflowRunService {
             return Ok(false);
         };
         // The parked questions are read before the stop: the stop withdraws them, and a later answer is refused.
+        // Approximation (divergence 606): a question parked after this read and before the stop is withdrawn but not
+        // retired, so its later answer reads as `unknown_question`.
         let parked = self.parked_question_ids(parent, run_id);
-        if !handle.stop_run(reason) {
+        if !handle.stop_run(initiator) {
             // The owner is gone, so the run is settling or settled: there is nothing left to stop.
             return Ok(false);
         }
@@ -95,15 +118,7 @@ impl WorkflowRunService {
     fn parked_question_ids(&self, parent: &str, run_id: &str) -> Vec<String> {
         self.run_snapshot_of(parent, run_id)
             .as_ref()
-            .and_then(|run| run.get("pendingQuestions"))
-            .and_then(Value::as_array)
-            .map(|questions| {
-                questions
-                    .iter()
-                    .filter_map(|question| question.get("qid").and_then(Value::as_str))
-                    .map(str::to_owned)
-                    .collect()
-            })
+            .map(pending_question_ids)
             .unwrap_or_default()
     }
 
@@ -118,5 +133,37 @@ impl WorkflowRunService {
     /// How a question left the registry, if it did and was not parked since.
     pub(crate) fn retired_reason(&self, qid: &str) -> Option<Retired> {
         self.inner.state.lock_unpoisoned().retired.reason(qid)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use serde_json::json;
+
+    use super::{Retired, RetiredQuestions, pending_question_ids};
+
+    #[test]
+    fn the_parked_ids_come_from_the_projection_qids() {
+        // The field names are the projection's (`pendingQuestions`, `qid`); an entry without a string qid is skipped.
+        let run = json!({
+            "runId": "wf_1",
+            "pendingQuestions": [
+                {"qid": "q_1", "question": "which?"},
+                {"question": "no id"},
+                {"qid": "q_2"}
+            ]
+        });
+        assert_eq!(pending_question_ids(&run), vec!["q_1", "q_2"]);
+        assert!(pending_question_ids(&json!({"runId": "wf_1"})).is_empty());
+    }
+
+    #[test]
+    fn a_withdrawal_never_downgrades_an_answered_question() {
+        let mut table = RetiredQuestions::default();
+        table.retire("q_1", Retired::Resolved);
+        table.retire("q_1", Retired::Withdrawn);
+        assert_eq!(table.reason("q_1"), Some(Retired::Resolved));
+        table.retire("q_2", Retired::Withdrawn);
+        assert_eq!(table.reason("q_2"), Some(Retired::Withdrawn));
     }
 }

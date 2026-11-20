@@ -4153,7 +4153,21 @@ Divergences:
 608. The `superseded` initiator is refused as unsupported by `cancel`. The amend path stops its predecessor itself (9.43).
 609. Listing runs in the background registry is not built: runs are not in the `backgroundWorks` projection or in `/tasks`, so the GUI shows no card for a run. A run is cancelled only by its id (`cancelBackgroundWork` or TaskStop). It needs the run's lifecycle events in the projection, which fall with the W8b notifications.
 
-Not done in this part: 609 (listing), 607 (ask-failure withdrawals), and the service-level row 69 test.
+610. Run ownership is the exact calling session, not its session tree. `command_sessions` and `visible` widen the other target types to the tree (L18), but the run lookup does not. A run started from a subagent's session is therefore not stoppable from the top-level session. Not verified against Node's registry scope; recorded as a deliberate narrower scope until checked.
+
+Review round (ocr on #607, fifteen findings). Fixed with tests where practical:
+
+- A real run-port failure is surfaced as the stop's or the validation's error. Only the unsupported fallback means "not a run" (medium, TaskStop). `owned_run_detail` returns a `Result` for the same reason (medium, the detail read).
+- The stop initiator is narrowed to `StopInitiator { User, Model }` in the owner and the mailbox, so no caller can request a superseded or provider stop through this path (medium, owner; mailbox handle). A `Superseded` cancel is a plain error, not the unsupported sentinel.
+- Validation checks the run first, as `stop` does (order consistency).
+- A withdrawal never downgrades an answered question in the retired table (unit test).
+- A resolve delivers and retires under one lock, so a concurrent resolve reads the retirement in order.
+- `cancel` runs on the blocking pool, as its sibling reads do.
+- Tests: a foreign run is "no task" and nothing is cancelled; a failed run port surfaces its error; the projection's qid extraction is pinned by a unit test.
+
+Rejected: the two adjacent booleans on `Caller` (`by_user`, `user`). Each construction site sets them explicitly, and the user-stop test asserts the `User` initiator, so a copied derivation would fail there. The parked-snapshot race is kept as divergence 606 with a note in the code.
+
+Not done in this part: 609 (listing), 607 (ask-failure withdrawals), 610 (tree ownership), and the service-level row 69 test.
 
 ## 10. Open questions
 

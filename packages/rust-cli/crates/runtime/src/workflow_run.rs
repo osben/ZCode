@@ -222,6 +222,9 @@ struct Inner {
     /// previous fill wrote. One permit, held across the helper's call and the owner's apply (a semaphore, since a tokio guard
     /// may not be held across an await).
     fills: Arc<tokio::sync::Semaphore>,
+    /// Serializes a question's answer with its retirement (W8a, 9.48): a resolve delivers and retires under this lock, so a
+    /// concurrent resolve of the same question reads the retired table after the delivery, not before it.
+    resolves: Mutex<()>,
 }
 
 /// What the composition configures. Each hook is off until its setter runs, so a service without them behaves as 9.25.
@@ -499,6 +502,7 @@ impl WorkflowRunService {
                 bindings: OnceLock::new(),
                 default_concurrency: OnceLock::new(),
                 fills: Arc::new(tokio::sync::Semaphore::new(1)),
+                resolves: Mutex::new(()),
             }),
         }
     }

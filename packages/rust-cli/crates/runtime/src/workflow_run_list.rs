@@ -109,6 +109,12 @@ pub(crate) fn first_answer<T>(
 }
 
 /// Node `unknown_question`: the text the service gives a qid no live run of the session holds.
+fn unknown_question_message(qid: &str) -> String {
+    format!(
+        "Unknown question id {qid}. It may be misspelled, or it may come from a process that is gone: parked questions are not persisted, so they vanish on restart (a resume makes the subagent ask again under a new id). Use GetWorkflowRun to read the run's pendingQuestions for the ids that are actually awaiting an answer."
+    )
+}
+
 /// Node's `already_resolved` message (`workflow-escalation-registry.ts`).
 fn already_resolved_message(qid: &str) -> String {
     format!(
@@ -120,12 +126,6 @@ fn already_resolved_message(qid: &str) -> String {
 fn run_not_in_flight_message(qid: &str) -> String {
     format!(
         "The ask that raised question {qid} is no longer in flight (the run was cancelled, or that ask already failed), so nobody is waiting for this answer. Use GetWorkflowRun to see the run's current state before deciding what to do next."
-    )
-}
-
-fn unknown_question_message(qid: &str) -> String {
-    format!(
-        "Unknown question id {qid}. It may be misspelled, or it may come from a process that is gone: parked questions are not persisted, so they vanish on restart (a resume makes the subagent ask again under a new id). Use GetWorkflowRun to read the run's pendingQuestions for the ids that are actually awaiting an answer."
     )
 }
 
@@ -524,8 +524,11 @@ impl DynamicWorkflowRunPort for SessionRuns {
         run_id: &WorkflowRunId,
         initiator: CancelInitiator,
     ) -> Result<bool, DynamicWorkflowRunError> {
-        self.service
-            .cancel_run_of(&self.parent, run_id.as_str(), &initiator)
+        // The service's state and projection locks are taken here, and a snapshot is cloned: off the async workers.
+        let service = self.service.clone();
+        let parent = self.parent.clone();
+        let run_id = run_id.as_str().to_owned();
+        on_blocking_pool(move || service.cancel_run_of(&parent, &run_id, &initiator)).await
     }
 
     /// Node `submit` (9.39): a new run under this session, the parent Node names (`parentSessionId`).
@@ -635,6 +638,9 @@ impl WorkflowRunService {
         qid: &QuestionId,
         answer: &str,
     ) -> Result<ResolveQuestionResult, DynamicWorkflowRunError> {
+        // The delivery and the retired-table read/write are one step for a resolve (W8a, 9.48): a concurrent resolve of the
+        // same question waits here and then reads its retirement, so the refusal class is race-free.
+        let _resolving = self.inner.resolves.lock_unpoisoned();
         let mut live = self.live_runs_of(parent);
         live.sort_by_key(|run| run.token);
         let outcomes = live

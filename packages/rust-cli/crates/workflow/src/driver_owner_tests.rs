@@ -724,7 +724,9 @@ fn a_user_stop_while_parked_withdraws_the_question_and_a_later_answer_finds_noth
         EscalateOutcome::Parked { qid } => qid,
         other => panic!("expected a park, got {other:?}"),
     };
-    owner.stop_run(StopReason::User).expect("stop");
+    owner
+        .stop_run(crate::driver_owner::StopInitiator::User)
+        .expect("stop");
     let instance = first_turn_instance(&sessions);
     {
         let log = sessions.0.borrow();
