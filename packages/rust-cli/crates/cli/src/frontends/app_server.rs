@@ -365,6 +365,19 @@ async fn serve(
     }
     // Fork (9.29, W7-5c): the per-session run reads (`workflowRuns`, the run list) answer from the service too.
     // One wrapper of the service, coerced to each trait object the composition holds (the run sessions and the host).
+    // Fork (W9a, 9.53): the hub's start resolves saved workflows in the user's home and checks the script with the helper
+    // (the analyzer CreateWorkflow uses). Without a helper the start is unsupported, as the tools are.
+    if let (Some(service), Some(helper)) = (&workflow_service, spec.node_helper.as_ref()) {
+        let analyzer = Arc::new(
+            rust_cli_protocol_zcode::workflow_compile::HelperWorkflowAnalyzer::new(helper.clone()),
+        );
+        if !service.configure_saved_start(facts.process.home.to_path_buf(), analyzer) {
+            tracing::warn!(
+                event = "workflow.run.saved_start_set_twice",
+                "the saved-start ports were set twice; the first ones stay"
+            );
+        }
+    }
     let workflow_service = workflow_service.map(Arc::new);
     // Fork (9.44): the reminder clocks read each session's runs from the service's memory.
     if let Some(service) = &workflow_service

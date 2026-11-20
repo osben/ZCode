@@ -23,7 +23,8 @@ use rust_cli_kernel_api::workflow_run::{
     AmendRequest, AmendResult, CancelInitiator, DynamicWorkflowRunError, DynamicWorkflowRunPort,
     DynamicWorkflowRunSessions, FillHoleOutcome, FillHoleRequest, LifecycleStatus, ListQuery,
     ResolveQuestionRefusalReason, ResolveQuestionResult, RetuneOutcome, RetuneRequest,
-    SubmitRequest,
+    SettingsOutcome, SettingsRequest, StartSavedOutcome, StartSavedRequest, SubmitRequest,
+    WorkflowTurnSink,
 };
 use rust_cli_workflow::actor_mailbox::{ActorHandle, MailboxError};
 use rust_cli_workflow::engine::EngineConfig;
@@ -509,6 +510,28 @@ impl DynamicWorkflowRunPort for SessionRuns {
     /// Node `amend` (9.43): a successor of a run of this session; the predecessor is stopped if it is live.
     async fn amend(&self, request: AmendRequest) -> Result<AmendResult, DynamicWorkflowRunError> {
         self.service.amend_run(&self.parent, request).await
+    }
+
+    /// Node `amendWorkflowRunSettings` (9.53, W9a): the GUI "Configure" change, for this session's runs.
+    async fn amend_settings(
+        &self,
+        request: SettingsRequest,
+        sink: Arc<dyn WorkflowTurnSink>,
+    ) -> Result<SettingsOutcome, DynamicWorkflowRunError> {
+        self.service
+            .amend_settings(&self.parent, request, sink.as_ref())
+            .await
+    }
+
+    /// Node `startSavedWorkflowRun` (9.53, W9a): the hub's direct start, in this session.
+    async fn start_saved(
+        &self,
+        request: StartSavedRequest,
+        sink: Arc<dyn WorkflowTurnSink>,
+    ) -> Result<StartSavedOutcome, DynamicWorkflowRunError> {
+        self.service
+            .start_saved(&self.parent, request, sink.as_ref())
+            .await
     }
 
     /// Node `fillHole` (9.45): fills one waiting hole of a run in flight of this session.

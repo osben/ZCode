@@ -53,6 +53,8 @@ mod resume;
 mod retune;
 #[path = "workflow_run_settings.rs"]
 mod settings;
+#[path = "workflow_run_start.rs"]
+mod start;
 #[path = "workflow_run_submit.rs"]
 mod submit;
 
@@ -195,6 +197,12 @@ pub struct WorkflowRunService {
     inner: Arc<Inner>,
 }
 
+/// Fork (W9a, 9.53): the ports of a hub start (`configure_saved_start`).
+pub(crate) struct SavedStartPorts {
+    pub(crate) home: std::path::PathBuf,
+    pub(crate) analyzer: Arc<dyn rust_cli_kernel_api::workflow_analysis::WorkflowAnalyzer>,
+}
+
 struct Inner {
     /// The service's own weak handle, for the idle callbacks of the quota modules.
     me: Weak<Inner>,
@@ -222,6 +230,9 @@ struct Inner {
     bindings: OnceLock<Arc<dyn ActorBindingsPort>>,
     /// Node `defaultConcurrency()` (9.39): the caps default of a submit. Set once by the composition.
     default_concurrency: OnceLock<f64>,
+    /// Fork (W9a, 9.53): the saved-workflow store's home and the compile checker of a hub start. Set once by the
+    /// composition; without it a hub start is unsupported.
+    saved_start: OnceLock<SavedStartPorts>,
     /// Serializes FillWorkflowHole calls (9.45): a fill reads the run's script, and the next fill must read the one the
     /// previous fill wrote. One permit, held across the helper's call and the owner's apply (a semaphore, since a tokio guard
     /// may not be held across an await).
@@ -505,6 +516,7 @@ impl WorkflowRunService {
                 before_quota_module: Mutex::new(None),
                 bindings: OnceLock::new(),
                 default_concurrency: OnceLock::new(),
+                saved_start: OnceLock::new(),
                 fills: Arc::new(tokio::sync::Semaphore::new(1)),
                 resolves: Mutex::new(()),
             }),
@@ -514,6 +526,19 @@ impl WorkflowRunService {
     /// Node `defaultConcurrency()` (9.39): the caps default of a submit, and the port's `default_concurrency`. Set once by
     /// the composition root (the governor's formula over the process's cores). Returns `false` when the value is not
     /// finite or below one (refused, nothing kept), or when a value is already set (the first one stays, logged).
+    /// Fork (W9a, 9.53): sets the hub start's ports, the user's home (where saved workflows live) and the compile checker
+    /// (the same analyzer CreateWorkflow uses). Set once; a second call keeps the first.
+    pub fn configure_saved_start(
+        &self,
+        home: std::path::PathBuf,
+        analyzer: Arc<dyn rust_cli_kernel_api::workflow_analysis::WorkflowAnalyzer>,
+    ) -> bool {
+        self.inner
+            .saved_start
+            .set(SavedStartPorts { home, analyzer })
+            .is_ok()
+    }
+
     pub fn configure_concurrency(&self, default_concurrency: f64) -> bool {
         if !default_concurrency.is_finite() || default_concurrency < 1.0 {
             tracing::warn!(
@@ -1233,3 +1258,6 @@ mod submit_tests;
 #[cfg(test)]
 #[path = "workflow_run_amend_tests.rs"]
 mod amend_tests;
+#[cfg(test)]
+#[path = "workflow_run_start_tests.rs"]
+mod start_tests;

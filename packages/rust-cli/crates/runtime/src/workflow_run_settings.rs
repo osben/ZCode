@@ -1,11 +1,11 @@
-//! Fork: the GUI "Configure" settings change and its settings turn (specs/fork-rust-workflow-engine.md, 9.50, W8c; Node
+//! Fork: the GUI "Configure" settings change and its settings turn (specs/fork-rust-workflow-engine.md, 9.50, W8c, 9.53; Node
 //! `amendWorkflowRunSettings` in `core/src/runtime/methods/dynamic-workflow-run-settings.ts`, and the settings turn in
 //! `dynamic-workflow-run-settings-turn.ts`).
 //!
 //! A concurrency-only change to a live run is applied in place (the same run, no stop, no successor). Any other change
 //! amends the run with the predecessor's script and arguments. Either way the parent records a settings turn: a
-//! control-only turn whose text tells the model what changed. The method is not wired to a command yet: the v4
-//! `amendWorkflowRunSettings` command is W9, and the sink is passed in by its caller (divergence 669).
+//! control-only turn whose text tells the model what changed. The v4 `amendWorkflowRunSettings` command reaches it through
+//! the port (9.53, W9a); the sink is the protocol's, passed in by the caller. The types are in kernel-api (9.53).
 //!
 //! The order is Node's. Every refusal before the retune or the amend has no side effects. A failure after the amend
 //! has started is not rolled back, as Node does not roll it back.
@@ -14,97 +14,17 @@
 //! names script models (refused the same way: the models are not rebound), the draft file for the kept script (the
 //! successor has none), the background tracking of the successor.
 
-use rust_cli_kernel_api::ids::{SessionId, WorkflowRunId};
+use rust_cli_kernel_api::ids::SessionId;
 use rust_cli_kernel_api::workflow_run::{
     AmendRefusalReason, AmendRequest, AmendResult, DynamicWorkflowRunError, RetuneOutcome,
-    RetuneRefusal, RetuneRequest,
+    RetuneRefusal, RetuneRequest, SettingsAmend, SettingsChange, SettingsOutcome, SettingsRefusal,
+    SettingsRequest, SettingsTurn, WorkflowTurnSink,
 };
 use rust_cli_platform::ids::uuid_v4;
 use rust_cli_workflow::model::RunStatus;
 
 use super::WorkflowRunService;
 use super::list::on_blocking_pool;
-
-/// The GUI's change (Node `AmendWorkflowRunSettingsInput`). An omitted field keeps the run's setting. Inside a `Some`, `None`
-/// returns the setting to the default (Node's `null`) and a value sets it.
-#[derive(Debug, Clone, PartialEq)]
-pub struct SettingsRequest {
-    pub run_id: WorkflowRunId,
-    /// Any value is refused: a subagent-model change is not built (divergence 663).
-    pub subagent_model: Option<Option<String>>,
-    pub max_concurrency: Option<Option<f64>>,
-}
-
-/// One side of a limit change. `None` is the default, which Node leaves absent from its metadata.
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub struct Change {
-    pub from: Option<f64>,
-    pub to: Option<f64>,
-}
-
-/// What the settings turn records of the change (the parts of Node's `WorkflowSettingsAmendMeta` this host builds).
-#[derive(Debug, Clone, PartialEq)]
-pub struct SettingsAmend {
-    /// Absent for an in-place change: its absence means "applied in place" (Node).
-    pub predecessor_run_id: Option<String>,
-    pub max_concurrency: Option<Change>,
-    /// Node's `ceiling`: the default concurrency at the change.
-    pub default_concurrency: f64,
-}
-
-/// A settings turn, as the parent receives it: the model-facing text and the card's metadata.
-#[derive(Debug, Clone, PartialEq)]
-pub struct SettingsTurn {
-    pub text: String,
-    /// The run the card is about: the successor for an amendment, the run itself for an in-place change.
-    pub run_id: WorkflowRunId,
-    pub tool_call_id: String,
-    pub name: Option<String>,
-    /// The title seed (Node `titleInput`): the run's name, else the run id the change started from.
-    pub title_input: String,
-    pub amend: SettingsAmend,
-}
-
-/// The parent's side of a change (Node `activateDynamicWorkflowTools` and `enqueueSettingsTurn`). Production wiring is W9;
-/// until then no caller passes a sink.
-pub trait RunSettingsSink: Send + Sync {
-    /// A successful configuration activates the workflow tools (Node, `source: "run_control"`).
-    fn activate(&self, parent: &SessionId);
-    /// Queues the settings turn to the parent as a control-only turn, after the work in flight.
-    fn settings_turn(&self, parent: &SessionId, turn: SettingsTurn);
-}
-
-/// The answer of a settings change. A refusal changes nothing, with one exception: `Refused(StartFailed)` can follow an
-/// amend that already stopped and superseded a live predecessor (the amend's message says so). The caller cannot tell
-/// the two apart from the variant alone, so it must read the message as well.
-#[derive(Debug, Clone, PartialEq)]
-pub enum SettingsOutcome {
-    /// Applied in place: the same run, with no stop and no successor.
-    Retuned {
-        run_id: WorkflowRunId,
-        tool_call_id: String,
-    },
-    /// The run was amended: a successor started, and the predecessor it superseded if it was live.
-    Amended {
-        run_id: WorkflowRunId,
-        tool_call_id: String,
-        superseded_run_id: Option<WorkflowRunId>,
-    },
-    Refused(SettingsRefusal),
-}
-
-/// Why a change is refused, in Node's vocabulary (`not_found`, `not_configurable`, `unchanged`, `script_missing`,
-/// `model_unavailable`, `missing_boundaries`, `start_failed`).
-#[derive(Debug, Clone, PartialEq)]
-pub enum SettingsRefusal {
-    NotFound,
-    NotConfigurable,
-    Unchanged,
-    ScriptMissing,
-    ModelUnavailable { message: String },
-    MissingBoundaries,
-    StartFailed { message: String },
-}
 
 /// Node `buildSettingsMessageText` (9.50): the model-facing sentence of a settings change. English, because it enters the
 /// provider transcript. It names only what changed, and it ends by telling the model not to change the run again.
@@ -179,7 +99,7 @@ impl WorkflowRunService {
         &self,
         parent: &str,
         request: SettingsRequest,
-        sink: &dyn RunSettingsSink,
+        sink: &dyn WorkflowTurnSink,
     ) -> Result<SettingsOutcome, DynamicWorkflowRunError> {
         let Some(store) = self.inner.store.get().cloned() else {
             return Err(DynamicWorkflowRunError::unsupported(
@@ -253,7 +173,7 @@ impl WorkflowRunService {
                 let name = display_name(row.name.as_deref());
                 let amend = SettingsAmend {
                     predecessor_run_id: None,
-                    max_concurrency: Some(Change {
+                    max_concurrency: Some(SettingsChange {
                         from: side_of(previous, default_concurrency),
                         to: side_of(max_concurrency, default_concurrency),
                     }),
@@ -341,7 +261,7 @@ impl WorkflowRunService {
                 let name = display_name(row.name.as_deref());
                 let amend = SettingsAmend {
                     predecessor_run_id: Some(run_id.clone()),
-                    max_concurrency: Some(Change {
+                    max_concurrency: Some(SettingsChange {
                         from: side_of(current, default),
                         to: side_of(next, default),
                     }),

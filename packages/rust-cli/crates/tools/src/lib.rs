@@ -60,6 +60,8 @@ mod workflow_save;
 mod workspace_path;
 // Fork: CreateWorkflow (W7-8a).
 mod workflow_create;
+/// Fork (W9a, 9.53): the hub's saved-start resolution (Node `startSavedWorkflowRun` steps 1 and 2).
+pub mod workflow_start;
 // Fork: AmendWorkflow (W7-10, specs/fork-rust-workflow-engine.md, 9.43).
 mod workflow_amend;
 // Fork: FillWorkflowHole (W7-12, specs/fork-rust-workflow-engine.md, 9.45).

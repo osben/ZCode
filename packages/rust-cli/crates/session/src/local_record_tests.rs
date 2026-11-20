@@ -332,3 +332,56 @@ async fn a_rename_during_a_turn_commits_now_and_records_after_the_turn() {
     let view = built.session.view().await.unwrap();
     assert!(has_record(&view.messages), "{:?}", sources(&view.messages));
 }
+
+/// Fork (W9a, 9.53): a workflow control record is a meta user message with its source, committed while the session is idle,
+/// and it is not a human turn: the next request carries its text.
+#[tokio::test]
+async fn an_idle_workflow_record_is_a_meta_message_with_its_source_and_the_next_request_carries_it()
+{
+    let model = Arc::new(ScriptedModel::new(vec![
+        text_response(&["first"]),
+        text_response(&["second"]),
+    ]));
+    let built = Setup::new(model.clone()).build().await;
+    let mut events = built.session.subscribe(Some(0));
+    built.session.send(submit("c1", "hello")).await;
+    until(&mut events, finished).await;
+    let before = built.store.facts(&crate::test_support::meta().id).len();
+    let ack = built
+        .session
+        .send(envelope(
+            "c2",
+            Command::RecordWorkflowTurn {
+                text: "Started the saved workflow \"digest\" (global) as run dwfrun-1.".to_owned(),
+                source: "workflow_launch".to_owned(),
+            },
+        ))
+        .await;
+    assert!(matches!(ack, Ack::Accepted { .. }), "{ack:?}");
+    let facts = built.store.facts(&crate::test_support::meta().id);
+    let added: Vec<Message> = facts[before..]
+        .iter()
+        .filter_map(|fact| match fact {
+            Fact::MessageAppended { message } => Some(message.clone()),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(added.len(), 1, "one meta message, no turn of its own");
+    match &added[0] {
+        Message::User(user) => assert_eq!(
+            user.origin,
+            UserOrigin::Meta {
+                source: "workflow_launch".to_owned()
+            }
+        ),
+        other => panic!("expected a user message, got {other:?}"),
+    }
+    built.session.send(submit("c3", "next")).await;
+    until(&mut events, finished).await;
+    let requests = model.requests();
+    let texts = last_user_texts(&requests[1]);
+    assert!(
+        texts.iter().any(|text| text.contains("dwfrun-1")),
+        "the model reads the record: {texts:#?}"
+    );
+}

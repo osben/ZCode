@@ -23,6 +23,26 @@ fn system_random(bytes: &mut [u8]) {
         .expect("the system's cryptographic random source is available");
 }
 
+/// Fork (W9a, 9.53): a random v7 uuid (RFC 9562: a 48-bit millisecond timestamp, then random bits), the form Node's
+/// `uuidv7()` mints for a hub launch's input id. The random part comes from the same CSPRNG as `uuid_v4`.
+pub fn uuid_v7(unix_millis: u64) -> String {
+    let mut bytes = [0u8; 16];
+    system_random(&mut bytes);
+    let millis = unix_millis.to_be_bytes();
+    bytes[..6].copy_from_slice(&millis[2..]);
+    bytes[6] = (bytes[6] & 0x0f) | 0x70;
+    bytes[8] = (bytes[8] & 0x3f) | 0x80;
+    let hex: String = bytes.iter().map(|byte| format!("{byte:02x}")).collect();
+    format!(
+        "{}-{}-{}-{}-{}",
+        &hex[0..8],
+        &hex[8..12],
+        &hex[12..16],
+        &hex[16..20],
+        &hex[20..32]
+    )
+}
+
 /// The v4 layout of 16 random bytes: version nibble 4, RFC 4122 variant bits, then the canonical text form.
 fn uuid_from_bytes(mut bytes: [u8; 16]) -> String {
     bytes[6] = (bytes[6] & 0x0f) | 0x40;
@@ -72,5 +92,24 @@ mod tests {
                 "variant: {id}"
             );
         }
+    }
+}
+
+#[cfg(test)]
+mod v7_tests {
+    use super::uuid_v7;
+
+    #[test]
+    fn a_v7_uuid_carries_the_millisecond_clock_then_random_bits() {
+        let id = uuid_v7(0x0123_4567_89ab);
+        assert_eq!(&id[..8], "01234567");
+        assert_eq!(&id[9..13], "89ab");
+        assert_eq!(id.as_bytes()[14], b'7', "the version nibble is 7: {id}");
+        assert!(
+            matches!(id.as_bytes()[19], b'8' | b'9' | b'a' | b'b'),
+            "{id}"
+        );
+        assert_eq!(id.len(), 36);
+        assert_ne!(uuid_v7(1), uuid_v7(1), "the random part differs per call");
     }
 }

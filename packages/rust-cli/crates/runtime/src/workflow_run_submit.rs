@@ -129,6 +129,18 @@ impl WorkflowRunService {
         parent: &str,
         request: SubmitRequest,
     ) -> Result<WorkflowRunId, DynamicWorkflowRunError> {
+        self.submit_run_with_launch(parent, request, None).await
+    }
+
+    /// Fork (W9a, 9.53): `submit_run` with the launch anchor the caller minted. A hub start mints its UUID v7 once and
+    /// uses it for both the launch turn and the run's `run-launched.inputId` (Node `launchInputId`); without one the submit
+    /// mints a UUID (divergence 371).
+    pub(crate) async fn submit_run_with_launch(
+        &self,
+        parent: &str,
+        request: SubmitRequest,
+        launch_input_id: Option<String>,
+    ) -> Result<WorkflowRunId, DynamicWorkflowRunError> {
         let Some(default) = self.default_concurrency_value() else {
             return Err(DynamicWorkflowRunError::unsupported("submit"));
         };
@@ -169,7 +181,7 @@ impl WorkflowRunService {
             // Node's launch anchor: the inputId of the turn that launched the run. Until the tool passes its turn, a
             // direct launch mints one (divergence 371). The script file is recorded on `run-launched` (Node).
             launch: Some(LaunchFields {
-                input_id: uuid_v4(),
+                input_id: launch_input_id.unwrap_or_else(uuid_v4),
                 script_path: request.script_path,
                 ..LaunchFields::default()
             }),

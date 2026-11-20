@@ -26,6 +26,18 @@ pub(crate) fn is_record(user: &UserMessage) -> bool {
     .contains(&source.as_str()))
 }
 
+/// Fork (W9a, 9.53): the meta user message of a workflow control record.
+fn workflow_turn_message(ids: &dyn Ids, source: String, text: String) -> Message {
+    Message::User(UserMessage {
+        stall_execution: None,
+        epilogue_start: None,
+        intent: None,
+        id: ids.message(),
+        content: vec![ContentBlock::Text { text }],
+        origin: UserOrigin::Meta { source },
+    })
+}
+
 /// 一条记录的消息，按提交顺序。
 pub(crate) fn record_messages(ids: &dyn Ids, record: &LocalCommandRecord) -> Vec<Message> {
     record
@@ -65,16 +77,48 @@ impl Actor {
         accepted()
     }
 
+    /// Fork (W9a, 9.53): `Command::RecordWorkflowTurn`. A workflow control record is a meta user message (no turn, no model
+    /// call). Busy: it waits for the work in flight, like a held local record. Always `Accepted`; a failed store is logged.
+    pub(crate) async fn record_workflow_turn(
+        &mut self,
+        command: CommandId,
+        text: String,
+        source: String,
+    ) -> Ack {
+        if self.busy() {
+            self.held_workflow_turns.push((source, text));
+            return accepted();
+        }
+        let message = workflow_turn_message(self.deps.ids.as_ref(), source, text);
+        if let Err(reason) = self
+            .commit_record_messages(Some(command), vec![message])
+            .await
+        {
+            tracing::warn!(%reason, "the workflow control record could not be stored");
+        }
+        accepted()
+    }
+
     /// 回合或压缩收尾后：把这期间到达的记录按到达顺序一批提交。
     pub(crate) async fn flush_held_records(&mut self) {
-        if self.busy() || self.held_records.is_empty() {
+        if self.busy() || (self.held_records.is_empty() && self.held_workflow_turns.is_empty()) {
             return;
         }
         let records = std::mem::take(&mut self.held_records);
-        let messages = records
+        let mut messages: Vec<Message> = records
             .iter()
             .flat_map(|record| record_messages(self.deps.ids.as_ref(), record))
             .collect();
+        // Fork (W9a, 9.53): the held workflow records follow the local ones, in the order they arrived.
+        let turns = std::mem::take(&mut self.held_workflow_turns);
+        messages.extend(
+            turns
+                .into_iter()
+                .map(|(source, text)| workflow_turn_message(self.deps.ids.as_ref(), source, text)),
+        );
+        if messages.is_empty() {
+            return;
+        }
         if let Err(reason) = self.commit_record_messages(None, messages).await {
             tracing::warn!(%reason, "the held local command records could not be stored");
         }
