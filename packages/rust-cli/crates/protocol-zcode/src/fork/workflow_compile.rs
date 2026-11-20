@@ -228,6 +228,17 @@ pub(crate) fn parse_compile(reply: &Value) -> Result<Compiled, RpcError> {
     }
 }
 
+/// A helper diagnostic as the kernel-api analysis carries it: one parse and one conversion, the same fields.
+fn parse_analysis_diagnostic(value: &Value) -> Result<WorkflowDiagnostic, RpcError> {
+    let diagnostic = parse_diagnostic(value)?;
+    Ok(WorkflowDiagnostic {
+        code: diagnostic.code,
+        line: diagnostic.line,
+        column: diagnostic.column,
+        message: diagnostic.message,
+    })
+}
+
 fn parse_diagnostic(value: &Value) -> Result<Diagnostic, RpcError> {
     let code = value
         .get("code")
@@ -312,15 +323,7 @@ pub(crate) fn parse_eval_snippet(reply: &Value) -> Result<SnippetCompiled, RpcEr
                 .and_then(Value::as_array)
                 .ok_or_else(malformed)?
                 .iter()
-                .map(parse_diagnostic)
-                .map(|parsed| {
-                    parsed.map(|diagnostic| WorkflowDiagnostic {
-                        code: diagnostic.code,
-                        line: diagnostic.line,
-                        column: diagnostic.column,
-                        message: diagnostic.message,
-                    })
-                })
+                .map(parse_analysis_diagnostic)
                 .collect::<Result<Vec<_>, _>>()?;
             Ok(SnippetCompiled::Rejected { diagnostics })
         }

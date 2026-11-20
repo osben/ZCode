@@ -367,11 +367,19 @@ fn outcome_of(core: &mut Core) -> Result<SnippetOutcome, WorkflowSnippetError> {
     Ok(match settlement {
         RunSettlement::Completed { .. } => {
             let value = core.returned.take().flatten();
-            match value.as_ref().and_then(oversize) {
-                Some(bytes) => SnippetOutcome::Failed {
+            match value.as_ref().and_then(return_refusal) {
+                Some(ReturnRefusal::TooLarge(bytes)) => SnippetOutcome::Failed {
                     code: ErrorCode::ArtifactTooLarge.as_str().to_owned(),
                     message: format!(
                         "The snippet's return value serializes to {bytes} bytes, over the cap of {MAX_ARTIFACT_BYTES} bytes. Return a summary (a count, the first few items) and leave the full data to log() or to the real run."
+                    ),
+                    logs,
+                    logs_truncated,
+                },
+                Some(ReturnRefusal::Unserializable(error)) => SnippetOutcome::Failed {
+                    code: ErrorCode::DriverError.as_str().to_owned(),
+                    message: format!(
+                        "The snippet's return value could not be serialized: {error}. Return plain data: a count, a string, or an array of plain objects."
                     ),
                     logs,
                     logs_truncated,
@@ -410,10 +418,22 @@ fn outcome_of(core: &mut Core) -> Result<SnippetOutcome, WorkflowSnippetError> {
     })
 }
 
-/// The byte count of a return value whose compact JSON is over the cap; `None` when it fits.
-fn oversize(value: &Value) -> Option<usize> {
-    let bytes = serde_json::to_vec(value).map_or(0, |bytes| bytes.len());
-    (bytes > MAX_ARTIFACT_BYTES).then_some(bytes)
+/// Why a return value cannot be handed back: it is over the cap (its compact JSON size), or it does not serialize, so
+/// its size cannot be checked at all.
+#[derive(Debug, PartialEq, Eq)]
+enum ReturnRefusal {
+    TooLarge(usize),
+    Unserializable(String),
+}
+
+/// The refusal of a return value, or `None` when it fits. A value that does not serialize is refused rather than passed
+/// on as if it were within the cap.
+fn return_refusal<T: serde::Serialize + ?Sized>(value: &T) -> Option<ReturnRefusal> {
+    match serde_json::to_vec(value) {
+        Ok(bytes) if bytes.len() <= MAX_ARTIFACT_BYTES => None,
+        Ok(bytes) => Some(ReturnRefusal::TooLarge(bytes.len())),
+        Err(error) => Some(ReturnRefusal::Unserializable(error.to_string())),
+    }
 }
 
 /// The `code` and `message` of a journal failure object.

@@ -2,6 +2,7 @@
 //! helper and the child: the test plays the child by calling the handler the run gave it, then settles the child's outcome.
 
 use std::path::PathBuf;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 
 use async_trait::async_trait;
@@ -19,7 +20,7 @@ use serde_json::{Value, json};
 use tokio::sync::oneshot;
 use tokio_util::sync::CancellationToken;
 
-use super::SnippetService;
+use super::{ReturnRefusal, SnippetService, return_refusal};
 
 /// The fake world-read port: `read_text` answers "hello"; the other members are not used by these tests.
 struct Reads {
@@ -70,6 +71,8 @@ enum StartMode {
     Run,
     /// The start never returns (a compile or spawn that hangs).
     Hang,
+    /// The start spawns a child (a guard that sets `stopped` when dropped) and then never returns.
+    SpawnThenHang(Arc<AtomicBool>),
     Reject(Vec<WorkflowDiagnostic>),
     Fail(String),
 }
@@ -155,6 +158,10 @@ impl WorkflowSnippetRunner for FakeRunner {
         match &self.mode {
             StartMode::Reject(diagnostics) => Ok(SnippetStart::Rejected(diagnostics.clone())),
             StartMode::Hang => std::future::pending().await,
+            StartMode::SpawnThenHang(stopped) => {
+                let _child = SpawnedChild(stopped.clone());
+                std::future::pending().await
+            }
             StartMode::Fail(message) => Err(WorkflowSnippetError {
                 message: message.clone(),
             }),
@@ -187,6 +194,15 @@ impl WorkflowSnippetRunner for FakeRunner {
                 }))
             }
         }
+    }
+}
+
+/// A stand-in for a spawned child's guard: dropping it is what stops the child.
+struct SpawnedChild(Arc<AtomicBool>);
+
+impl Drop for SpawnedChild {
+    fn drop(&mut self) {
+        self.0.store(true, Ordering::SeqCst);
     }
 }
 
@@ -621,4 +637,40 @@ async fn a_world_read_without_an_op_is_refused_as_a_contract_error() {
     assert!(error.message.contains("no op"), "{}", error.message);
     fake.finish(completed(None));
     let _ = eval.await;
+}
+
+#[tokio::test]
+async fn a_start_dropped_at_the_deadline_stops_the_child_it_spawned() {
+    let stopped = Arc::new(AtomicBool::new(false));
+    let fake = Arc::new(FakeRunner::with_mode(StartMode::SpawnThenHang(
+        stopped.clone(),
+    )));
+    let service = SnippetService::new(fake, reads());
+    let outcome = service.eval(request("return 1;", 50)).await.unwrap();
+    assert!(
+        matches!(&outcome, SnippetOutcome::Failed { code, .. } if code == "Interrupted"),
+        "{outcome:?}"
+    );
+    assert!(
+        stopped.load(Ordering::SeqCst),
+        "the child spawned by the start that the deadline dropped was not stopped"
+    );
+}
+
+/// A value whose serialization fails, as a return value can in principle.
+struct Unserializable;
+
+impl serde::Serialize for Unserializable {
+    fn serialize<S: serde::Serializer>(&self, _serializer: S) -> Result<S::Ok, S::Error> {
+        Err(serde::ser::Error::custom("no bytes for this value"))
+    }
+}
+
+#[test]
+fn a_return_value_that_cannot_be_serialized_is_refused_not_passed_on() {
+    assert!(matches!(
+        return_refusal(&Unserializable),
+        Some(ReturnRefusal::Unserializable(_))
+    ));
+    assert_eq!(return_refusal(&json!({"count": 3})), None);
 }

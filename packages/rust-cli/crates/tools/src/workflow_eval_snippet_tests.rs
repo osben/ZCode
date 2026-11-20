@@ -3,6 +3,7 @@
 //! and run the tool's `validate_input`, `check_permissions` and `call` in the executor's order.
 
 use std::path::PathBuf;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 
 use async_trait::async_trait;
@@ -124,8 +125,7 @@ impl Harness {
     }
 
     fn write(&self, name: &str, text: &str) {
-        rust_cli_fs::write_text(&self.cwd.join(name), text)
-            .expect("write the snippet file");
+        rust_cli_fs::write_text(&self.cwd.join(name), text).expect("write the snippet file");
     }
 }
 
@@ -637,4 +637,82 @@ async fn the_approval_table_evicts_only_the_oldest_approval() {
     oldest.tool_use = ToolUseId::new("toolu_0");
     let (tx, _rx) = mpsc::channel(4);
     assert!(harness.tool.call(input, oldest, tx).await.is_err());
+}
+
+#[tokio::test]
+async fn reading_a_path_leaves_the_executor_free_while_the_file_is_read() {
+    let harness = Harness::new(FakePort::answering(completed(None, &[])));
+    harness.write("snip.ts", READ_ONLY);
+    let ctx = harness.with_skill();
+    let finished = AtomicBool::new(false);
+    let saw_read_in_flight = AtomicBool::new(false);
+    let decide = async {
+        let decision = harness
+            .tool
+            .check_permissions(&json!({"path": "snip.ts"}), &ctx)
+            .await;
+        finished.store(true, Ordering::SeqCst);
+        decision
+    };
+    // Polled on the same single-thread executor as the decision: it runs while the read is still in flight only if the
+    // read does not hold the executor.
+    let probe = async {
+        saw_read_in_flight.store(!finished.load(Ordering::SeqCst), Ordering::SeqCst);
+    };
+    let (decision, ()) = tokio::join!(decide, probe);
+    assert!(
+        saw_read_in_flight.load(Ordering::SeqCst),
+        "the snippet file was read on the executor thread"
+    );
+    assert!(matches!(decision, PermissionDecision::Allow { .. }));
+}
+
+#[tokio::test]
+async fn a_repeated_check_for_one_tool_use_keeps_one_approval() {
+    let port = Arc::new(FakePort {
+        check: Ok(SnippetCheck::Ready { world_run: true }),
+        outcome: Ok(completed(None, &[])),
+        runs: Mutex::new(Vec::new()),
+    });
+    let harness = Harness::new(port);
+    let input = json!({"code": WITH_WORLD_RUN});
+    let mut ctx = harness.with_skill();
+    ctx.tool_use = ToolUseId::new("toolu_repeated");
+    for _ in 0..2 {
+        assert!(matches!(
+            harness.tool.check_permissions(&input, &ctx).await,
+            PermissionDecision::Ask { .. }
+        ));
+    }
+    assert_eq!(harness.tool.pending(), 1);
+}
+
+#[tokio::test]
+async fn an_explicit_null_is_refused_by_the_schema_as_zod_refuses_it() {
+    let harness = Harness::new(FakePort::answering(completed(None, &[])));
+    for input in [
+        json!({"code": null}),
+        json!({"path": null}),
+        json!({"code": "return 1;", "timeoutMs": null}),
+    ] {
+        let (message, code) =
+            invalid_message(&validation_of(&harness, &input, loaded_skill()).await);
+        assert_eq!(code, None, "a schema refusal has no error code: {input}");
+        assert!(message.contains("null"), "{input}: {message}");
+    }
+}
+
+#[tokio::test]
+async fn an_integral_timeout_written_as_a_float_is_accepted_as_zod_accepts_it() {
+    let harness = Harness::new(FakePort::answering(completed(None, &[])));
+    let input = json!({"code": "return 1;", "timeoutMs": 5000.0});
+    assert!(matches!(
+        validation_of(&harness, &input, loaded_skill()).await,
+        Validation::Ok
+    ));
+    let fractional = json!({"code": "return 1;", "timeoutMs": 5000.5});
+    let (message, code) =
+        invalid_message(&validation_of(&harness, &fractional, loaded_skill()).await);
+    assert_eq!(code, None);
+    assert!(message.contains("timeoutMs"), "{message}");
 }

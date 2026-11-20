@@ -63,6 +63,10 @@ pub trait WorkflowSnippetRunner: Send + Sync {
 
     /// Compiles `launch.code`, writes the entry file for `launch.run_id` under `launch.cwd`, and starts the child with
     /// `handler`. A snippet with diagnostics starts nothing.
+    ///
+    /// Dropping the returned future before it resolves stops any child it has already spawned: an implementation holds
+    /// the child's guard from the moment of the spawn, so a drop at any await after it ends the child's process tree.
+    /// The service relies on this when a snippet's deadline passes during the start.
     async fn start(
         &self,
         launch: SnippetLaunch,
@@ -106,6 +110,7 @@ pub trait WorkflowSnippetPort: Send + Sync {
     /// The compile check of `code`, for the permission decision.
     async fn check(&self, code: &str) -> Result<SnippetCheck, WorkflowSnippetError>;
 
-    /// Compiles and runs `request` to its settlement, with an in-memory journal and no world writes.
+    /// Compiles and runs `request` to its settlement on an in-memory journal. A confirmed `world.run` command runs in
+    /// `request.cwd`, the workspace, as a run's would; nothing is written to the run tables.
     async fn eval(&self, request: SnippetRequest) -> Result<SnippetOutcome, WorkflowSnippetError>;
 }

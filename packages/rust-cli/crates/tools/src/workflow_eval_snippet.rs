@@ -6,7 +6,7 @@
 //! asks; any other snippet proceeds. The call runs the approved bytes on the snippet service and turns the outcome into
 //! Node's model text. Nothing persists: the snippet's run is transient.
 
-use std::collections::VecDeque;
+use std::collections::{HashMap, VecDeque};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
@@ -24,7 +24,7 @@ use rust_cli_kernel_api::workflow_analysis::WorkflowDiagnostic;
 use rust_cli_kernel_api::workflow_snippet::{
     SnippetCheck, SnippetOutcome, SnippetRequest, WorkflowSnippetPort,
 };
-use serde::Deserialize;
+use serde::{Deserialize, Deserializer};
 use serde_json::{Value, json};
 use tokio::sync::mpsc;
 
@@ -59,15 +59,40 @@ const NOT_EXECUTED_NOTE: &str =
     "NOTE: The snippet was NOT executed — fix the errors above and call the tool again.";
 
 /// The input (Node `EvalWorkflowSnippetInputSchema`, as the model sends it). `script` is not a model field.
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Clone, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct EvalInput {
-    #[serde(default)]
+    #[serde(default, deserialize_with = "present")]
     code: Option<String>,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "present")]
     path: Option<String>,
-    #[serde(default, rename = "timeoutMs")]
+    #[serde(default, rename = "timeoutMs", deserialize_with = "integral")]
     timeout_ms: Option<i64>,
+}
+
+/// zod's `.optional()`: an absent field is `None`, and an explicit `null` is refused (the schema has no `nullable`).
+fn present<'de, D, T>(deserializer: D) -> Result<Option<T>, D::Error>
+where
+    D: Deserializer<'de>,
+    T: Deserialize<'de>,
+{
+    T::deserialize(deserializer).map(Some)
+}
+
+/// zod's `.int()` on a JavaScript number: an integral value is accepted whether it was written `5000` or `5000.0`.
+fn integral<'de, D>(deserializer: D) -> Result<Option<i64>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    use serde::de::Error;
+    let number = serde_json::Number::deserialize(deserializer)?;
+    if let Some(integer) = number.as_i64() {
+        return Ok(Some(integer));
+    }
+    match number.as_f64() {
+        Some(float) if float.fract() == 0.0 => Ok(Some(float as i64)),
+        _ => Err(D::Error::custom("timeoutMs: the number must be an integer")),
+    }
 }
 
 /// The snippet a call runs: its text, and the path it was read from (as the model reads it), for the diagnostics' location.
@@ -77,11 +102,18 @@ struct Source {
     described: Option<String>,
 }
 
+/// The kept decisions, by tool-use id. A full table evicts its oldest entry, and a taken entry leaves at once.
+#[derive(Default)]
+struct Approvals {
+    by_id: HashMap<ToolUseId, Source>,
+    order: VecDeque<ToolUseId>,
+}
+
 /// What the permission decision approved, keyed by the call's tool-use id: the call runs these bytes, not a fresh read.
 pub struct EvalWorkflowSnippetTool {
     contract: &'static Contract,
     port: Arc<dyn WorkflowSnippetPort>,
-    approvals: Mutex<VecDeque<(ToolUseId, Source)>>,
+    approvals: Mutex<Approvals>,
 }
 
 impl EvalWorkflowSnippetTool {
@@ -89,29 +121,41 @@ impl EvalWorkflowSnippetTool {
         Self {
             contract: contract(tool_names::EVAL_WORKFLOW_SNIPPET),
             port,
-            approvals: Mutex::new(VecDeque::new()),
+            approvals: Mutex::new(Approvals::default()),
         }
     }
 
-    fn remember(&self, tool_use: ToolUseId, source: Source) {
-        let mut approvals = self
-            .approvals
+    fn approvals(&self) -> std::sync::MutexGuard<'_, Approvals> {
+        self.approvals
             .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
-        // The oldest approval goes first, and only that one (the same rule as SaveWorkflow's table).
-        if approvals.len() >= APPROVAL_CAP {
-            approvals.pop_front();
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+    }
+
+    /// Keeps the decision for `tool_use`. A repeated check for the same call replaces its entry rather than adding one.
+    fn remember(&self, tool_use: ToolUseId, source: Source) {
+        let mut approvals = self.approvals();
+        if approvals.by_id.insert(tool_use.clone(), source).is_none() {
+            approvals.order.push_back(tool_use);
         }
-        approvals.push_back((tool_use, source));
+        // The same rule as CreateWorkflow's table: the oldest entry goes, and only that one.
+        while approvals.order.len() > APPROVAL_CAP {
+            if let Some(oldest) = approvals.order.pop_front() {
+                approvals.by_id.remove(&oldest);
+            }
+        }
     }
 
     fn take_approval(&self, tool_use: &ToolUseId) -> Option<Source> {
-        let mut approvals = self
-            .approvals
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
-        let position = approvals.iter().position(|(id, _)| id == tool_use)?;
-        approvals.remove(position).map(|(_, source)| source)
+        let mut approvals = self.approvals();
+        let taken = approvals.by_id.remove(tool_use)?;
+        approvals.order.retain(|id| id != tool_use);
+        Some(taken)
+    }
+
+    /// The number of kept decisions (tests).
+    #[cfg(test)]
+    fn pending(&self) -> usize {
+        self.approvals().by_id.len()
     }
 }
 
@@ -175,6 +219,20 @@ fn resolve_source(input: &EvalInput, cwd: &Path) -> Result<Source, String> {
         (None, Some(path)) => read_path(cwd, path),
         (None, None) => Err(EVAL_SOURCE_MISSING_ERROR.to_owned()),
     }
+}
+
+/// `resolve_source`, off the async executor: a `path` is read from disk, so the read runs on a blocking thread (as
+/// CreateWorkflow's `resolve_off_thread` does).
+async fn resolve_source_off_thread(input: &EvalInput, cwd: &Path) -> Result<Source, String> {
+    let input = input.clone();
+    let cwd = cwd.to_path_buf();
+    tokio::task::spawn_blocking(move || resolve_source(&input, &cwd))
+        .await
+        .unwrap_or_else(|error| {
+            Err(format!(
+                "EvalWorkflowSnippet could not read its script: {error}"
+            ))
+        })
 }
 
 /// Node `formatWorkflowDiagnosticLines`: positioned in the file when the snippet came from one, else in the snippet.
@@ -349,7 +407,9 @@ impl Tool for EvalWorkflowSnippetTool {
             return PermissionDecision::Passthrough;
         };
         let cwd = PathBuf::from(workspace_dir(context));
-        let source = match resolve_source(&input, &cwd) {
+        // A source that cannot be read is denied here without a code. Node refuses it at resolveInput with 400, but a
+        // permission denial carries no code and validate_input has no disk access (divergence 180 of 9.28).
+        let source = match resolve_source_off_thread(&input, &cwd).await {
             Ok(source) => source,
             Err(message) => return PermissionDecision::Deny { message },
         };
@@ -388,8 +448,10 @@ impl Tool for EvalWorkflowSnippetTool {
             Some(source) => source,
             None => {
                 // No confirmation waits for this call. A snippet with world.run is not run on that account: the model
-                // calls again, and the permission decision asks (the same rule as SaveWorkflow's call).
-                let source = resolve_source(&input, &cwd).map_err(failed)?;
+                // calls again, and the permission decision asks (the same rule as CreateWorkflow's call).
+                let source = resolve_source_off_thread(&input, &cwd)
+                    .await
+                    .map_err(failed)?;
                 let check = self
                     .port
                     .check(&source.code)
