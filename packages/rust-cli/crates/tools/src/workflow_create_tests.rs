@@ -8,7 +8,7 @@ use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
 use async_trait::async_trait;
-use rust_cli_kernel_api::ids::{ToolUseId, WorkflowRunId};
+use rust_cli_kernel_api::ids::{SessionId, ToolUseId, WorkflowRunId};
 use rust_cli_kernel_api::message::Message;
 use rust_cli_kernel_api::orchestration::PermissionGate;
 use rust_cli_kernel_api::permission::{
@@ -21,7 +21,7 @@ use rust_cli_kernel_api::workflow_analysis::{
     WorkflowAnalysis, WorkflowAnalysisError, WorkflowAnalyzer, WorkflowDiagnostic,
 };
 use rust_cli_kernel_api::workflow_run::{
-    DynamicWorkflowRunError, DynamicWorkflowRunPort, SubmitRequest,
+    DynamicWorkflowRunError, DynamicWorkflowRunPort, DynamicWorkflowRunSessions, SubmitRequest,
 };
 use rust_cli_policy::PolicyGate;
 use serde_json::{Value, json};
@@ -149,6 +149,83 @@ fn loaded_skill() -> Vec<Message> {
     ]
 }
 
+/// The one-port form the harness uses: every session answers with the same port.
+struct OneSession(Arc<dyn DynamicWorkflowRunPort>);
+
+impl DynamicWorkflowRunSessions for OneSession {
+    fn for_session(&self, _session: &SessionId) -> Arc<dyn DynamicWorkflowRunPort> {
+        self.0.clone()
+    }
+}
+
+/// Sessions that answer each session with its own port, as the run service does: one port per parent session (9.29,
+/// divergence 322). A session with no port answers with a port that fails.
+struct PerSession(Vec<(&'static str, Arc<FakeRun>)>);
+
+impl DynamicWorkflowRunSessions for PerSession {
+    fn for_session(&self, session: &SessionId) -> Arc<dyn DynamicWorkflowRunPort> {
+        match self.0.iter().find(|(id, _)| *id == session.as_str()) {
+            Some((_, port)) => port.clone(),
+            None => FakeRun::new(None, true),
+        }
+    }
+}
+
+#[tokio::test]
+async fn a_create_workflow_call_submits_through_the_port_of_its_own_session() {
+    let first = FakeRun::new(Some(4), false);
+    let second = FakeRun::new(Some(9), false);
+    let sessions: Arc<dyn DynamicWorkflowRunSessions> = Arc::new(PerSession(vec![
+        ("ses_first", first.clone()),
+        ("ses_second", second.clone()),
+    ]));
+    let guard = tempfile::TempDir::new().expect("tempdir");
+    let root = guard.path().to_path_buf();
+    let cwd = root.join("project");
+    let tool = CreateWorkflowTool::new(Arc::new(Checker), Some(sessions), root.join("home"));
+    let mut ctx = Ctx::with_ops(Arc::new(History(loaded_skill()))).build();
+    ctx.workspace.root = rust_cli_kernel_api::env::EnvPath::new(cwd.display().to_string());
+    ctx.session = SessionId::new("ses_second");
+    let input = json!({"name": "pr-review", "script": CLEAN, "max_concurrency": 7});
+    let decision = tool.check_permissions(&input, &ctx).await;
+    assert!(
+        !matches!(decision, PermissionDecision::Deny { .. }),
+        "the clean script is asked, not denied"
+    );
+    let (tx, _rx) = mpsc::channel(4);
+    let output = tool.call(input, ctx, tx).await.expect("the call runs");
+    let text = output_text(&output);
+
+    assert!(
+        first.submits().is_empty(),
+        "the other session's port is not used"
+    );
+    let submits = second.submits();
+    assert_eq!(
+        submits.len(),
+        1,
+        "the calling session's port receives the submit"
+    );
+    assert_eq!(
+        submits[0].parent_session_id,
+        Some(SessionId::new("ses_second")),
+        "the run is parented by the calling session"
+    );
+    assert!(
+        text.contains("with ID: run-1"),
+        "the port's run id is the result: {text}"
+    );
+    assert_eq!(
+        submits[0].max_concurrency,
+        Some(7),
+        "the limit the call gave reaches the calling session's port"
+    );
+    assert!(
+        text.contains("At most 7 subagents run at once."),
+        "a limit that is not the default is said without the default mark: {text}"
+    );
+}
+
 const CLEAN: &str =
     "interface R { done: boolean }\nconst r = await agent(\"a\").ask<R>(\"do\");\nreturn r.done;";
 
@@ -166,10 +243,11 @@ impl Harness {
         let root = guard.path().to_path_buf();
         let cwd = root.join("project");
         let home = root.join("home");
-        let run_port: Option<Arc<dyn DynamicWorkflowRunPort>> = port
-            .clone()
-            .map(|port| port as Arc<dyn DynamicWorkflowRunPort>);
-        let tool = CreateWorkflowTool::new(Arc::new(Checker), run_port, home.clone());
+        let runs = port.clone().map(|port| {
+            Arc::new(OneSession(port as Arc<dyn DynamicWorkflowRunPort>))
+                as Arc<dyn DynamicWorkflowRunSessions>
+        });
+        let tool = CreateWorkflowTool::new(Arc::new(Checker), runs, home.clone());
         Self {
             _guard: guard,
             cwd,

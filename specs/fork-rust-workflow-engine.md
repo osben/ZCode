@@ -3209,6 +3209,128 @@ it is a timing flake in the shell-notice path, not this change.
 **Not done.** The hole notice (353, W7-8); the host that wires the reminder clock (357, 358, 359, 360); the cold replay (363); a composed
 escalation test through a real run; the gate.
 
+### 9.39 W7-8d: CreateWorkflow submit and registration (as built, gate off)
+
+**Scope built.** The run service's `submit` (kernel-api `DynamicWorkflowRunPort::submit`, Node `submitDynamicWorkflowRun`
+and `startNewRun`) over the per-session ports (`DynamicWorkflowRunSessions::for_session`, divergence 322), and CreateWorkflow
+registered in `wired_workflow_tools` when the helper's analyzer exists and the run sessions are wired. Closes 312 and 322.
+Code: `runtime/src/workflow_run_submit.rs` (the submit, the caps, the id, the mode record, the compile check),
+`runtime/src/workflow_run_list.rs` (`SessionRuns::submit` and `default_concurrency`), `runtime/src/workflow_run.rs`
+(`configure_concurrency`, `configure_bindings`), `runtime/src/workflow_run_resume.rs` (`tables_of`: the compile's two tables read
+without the resume's empty refusal), `tools/src/workflow_create.rs` (`with_sessions`: each call submits through the port of its
+own `context.session`), `tools/src/workflow_tools.rs` (`workflow_tools` takes the sessions), `runtime/src/workflow_gate.rs`
+(`wired_workflow_tools(analyzer, home, runs)`: CreateWorkflow first, then SaveWorkflow, the run tools of 9.40, ListSavedWorkflows),
+`cli/src/frontends/workflow_gating.rs` and `app_server.rs` (the one late slot, `kernel-api` `workflow_run::LateRunSessions`, is set
+once the service is built; the run tools of 9.40 read the same slot),
+`cli/src/frontends/workflow_service.rs` (the defaults and the bindings port of the composed service).
+
+**Decisions.**
+
+1. A submit mints `dwfrun-<uuid>` and starts the run through the same `start` as a resume (9.37), with `check` after the child's
+   compile. The check fills `ask_specs`, `site_phases` and `script_hash` from that compile; the run's own engine then has its tables.
+2. The caps are Node's `normalizeRunConcurrency(requested, defaultConcurrency())`: omission is the default, a supplied value is floored
+   to one with no upper limit. The default is the governor's formula, set once by the composition (`configure_concurrency`).
+3. The parent's permission mode is recorded on the launch by `record_parent_mode` (9.35), on the blocking pool, before the child starts.
+   A service with no bindings port refuses the submit, and so does a read error (fail closed).
+4. The tool calls `for_session(&context.session)`. Each session's port is the run service's `SessionRuns`, which holds the parent.
+5. The kernel-api `LateRunSessions` (9.40's slot, merged here; this PR first had its own copy, dropped) is set after `workflow_service::build`. The gate source (and so the tool list) is built before the service, so the
+   tools hold the late holder. Until it is set, a submit answers unsupported, which the tool reports as a failed call.
+6. The tool's result text, the concurrency sentence and the draft handling are 9.27's, unchanged. CreateWorkflow is still unreachable by
+   default: the gate is closed for every session the Host does not open.
+
+**Node divergences (new in W7-8d, numbered from 370).**
+
+370. Closes 312. CreateWorkflow is registered with the analyzer and the run sessions. Without the sessions it is dropped from the wired set, so
+     a session never sees a tool that cannot run (9.36's rule kept).
+371. Closes 322 and 329. The tool holds the sessions port and routes by the calling session. The run service is one per app, and its
+     `SessionRuns` port holds the parent, so a submit is attributed to the port's session. A request that names a different
+     `parentSessionId` is refused (typed `DynamicWorkflowRunError`, nothing started, nothing re-attributed; review round, 9.39 below).
+372. The launch input id is not the parent turn's. Node's `resolveLaunchAnchor` takes the active turn's inputId for a chat CreateWorkflow
+     (the subagent steps attribute to that turn), and a minted UUID v7 otherwise. The Rust submit mints a v4-shaped uuid, so the actors'
+     steps are not attributed to the turn that launched the run. `ToolUseContext.run` is not passed.
+373. The run id is `dwfrun-` plus a v4 uuid from the platform's CSPRNG (`rust_cli_platform::ids::uuid_v4`, the one helper that
+     protocol-zcode's wire ids also use). Node uses `randomUUID()`, also a CSPRNG. The characters, prefix and version bits match.
+374. The compile reports both tables, and an empty pair is accepted (a script with no asks and no phases). Resume still refuses an empty
+     pair (9.37, divergence 333), because a stored script's tables cannot be told from a missing reply there.
+375. Fewer submit fields. `SubmitRequest` has no `trace`, `launchInputId`, `phaseNames`, `phaseAlongside`, `subagentModel`,
+     `modelBindings`, `holes` or `inheritedTokens`. The tool does not fill them (150 of 9.27). A script's phase table is not recorded, so
+     the progress has no phases, and its holes are not opened (holes are not built).
+376. The permission mode is read through the bindings port (9.35) before the child starts, and the submit is refused when the port is not
+     configured or the read fails. Node reads `permissionMode()` with no port to fail. The read is one cold store load (9.35, 304).
+377. Compile refusals. Node's submit never sees a compile refusal (CreateWorkflow checks the script first, 9.27). A child refusal here
+     is a submit error with the helper's diagnostics in `L{line}:C{column}` lines under a header, capped at Node's
+     2000-unit diagnostics bound (`cap_diagnostics_text`, shared with the resume's `boundedResumeDiagnostics`; review round). Node's
+     CreateWorkflow path does not bound its own diagnostics, so the cap is a Rust-side choice for text that reaches the model.
+378. The caps default is set once by the composition (`configure_concurrency`, the governor formula at build), not per launch from
+     `availableParallelism()`. The values are equal (9.34, 293).
+379. `run-launched` carries `scriptPath` (the file the tool named, a draft or a `path` source) through the launch fields. Node writes it
+     there too. The run row has no script path column (as Node's). Whether GetWorkflowRun shows it is 9.40's (W7-9).
+380. The launch fields `toolCallId` and `parentSessionId` are not set on `run-launched`. The row carries both (as the engine writes them from
+     the config), so the journal's read is the same; the event's copy is not checked against Node's payload.
+381. A port that is not configured answers `unsupported` for submit and for `defaultConcurrency`. Node always has the service. The
+     composition sets it after the gate source is built (the late holder, decision 5). Gate off, so no session reaches it.
+382. The default concurrency is the port's `usize` (the governor's count, a whole number). Node's is a number. No difference in value.
+383. A submit's name is the run's `name` (the row's `name`). Node's run label is the registry's description, then the run id. The label
+     derivation for a live run with no row is 9.29's (the `RunMeta` label), unchanged.
+384. A submit with `args` stores them as the row's args and passes them to the child as the launch's args. Node passes the same object through
+     (`args_json`). An inline script has none.
+385. The composed test (`a_submit_through_the_composed_sessions_starts_a_run_under_its_session`) runs the submit through `build` with a fake
+     child that reports the two tables. It does not run the helper's compile, a real child, or the gate.
+386. The tests are at the unit level: a fake child (`FakeChildRunner`), a real session database, the production owner. No test runs the
+     submit from a Host session through the protocol, and no desktop run was made.
+387. No amend. Node's `amend` (the predecessor, the import cache, the supersede) is not built; AmendWorkflow is not registered (314).
+388. The run's usage baseline (`inheritedTokens`) and the imported cache are absent (amend only).
+389. A tool call whose submit fails returns the port's message as a failed call. Node's handler maps `submit` errors the same way as a
+     tool failure; the wording is not verified against Node's handler.
+
+**Tests (red first where the code did not exist).**
+
+- `runtime` `workflow_run_submit_tests.rs` (8): written first, run red (8 of 8 failing: the port answered unsupported), green after.
+  Cover: a submitted run starts on its own row and settles (parent, cwd, name, tool call id, args); the default and the floor of the
+  caps; the parent's mode recorded on `run-launched` as `edit`; an empty table pair accepted; a rejected compile starts nothing and
+  names its diagnostics; no bindings port refused and nothing started; a failed read refused; the session's port submits under that
+  session and reports the default.
+- `tools` `workflow_create_tests.rs`: `a_create_workflow_call_submits_through_the_port_of_its_own_session` (the first run was a compile
+  error on the missing `with_sessions`, the constructor the test names, not a behaviour red; the behaviour run after the constructor
+  was green).
+- `runtime` gate: the wired set is checked in the cli `workflow_gating_tests.rs`: CreateWorkflow is wired only with run sessions; the
+  late holder answers no default until set.
+- `cli` `workflow_service_tests.rs` `a_submit_through_the_composed_sessions_starts_a_run_under_its_session`: red on the default
+  concurrency and on the bindings (the first run failed "the governor's default is the caps default"), green after the composition
+  calls `configure_concurrency` and `configure_bindings`.
+- Clippy `-D warnings` over the workspace, all targets: clean. `cargo fmt --check` clean. Lib suites green: runtime 311, tools 580,
+  workflow 434, kernel-api 439, protocol-zcode 963, node-store 357 (1 ignored); cli bins 561.
+
+**Review round (ocr on #599, head 1e62f87fa; findings checked against 40489b9fe).**
+
+- Medium, the run and launch ids from a non-CSPRNG source: fixed. The ids come from `rust_cli_platform::ids::uuid_v4` (ring's
+  `SystemRandom`, the entry `clippy.toml` reserves for cryptographic randomness). protocol-zcode's wire ids use the same helper, so
+  one copy remains. The helper's layout tests passed on the first run (written with the body, not red first; said so here).
+- Medium, a request that names another parent was silently re-attributed: fixed. `submit_run` refuses it with a typed
+  `DynamicWorkflowRunError` naming both sessions, before anything starts. Red first: the routing test codified re-attribution, and
+  it was changed to name its own parent; `a_submit_that_names_another_parent_is_refused_and_starts_nothing` was written with the
+  refusal (not red first).
+- Medium, the rejection text unbounded: fixed. `cap_diagnostics_text` (resume's bound, 2000 UTF-16 units, one unit reserved for
+  the ellipsis) caps the submit's rejection text, and the resume's diagnostics use the same function. Test:
+  `a_long_compile_rejection_is_capped_at_the_resume_bound` (400 diagnostics; written with the code, not red first).
+- Low, `tables_of` wording: fixed. The shared reader names only what is missing; `compiled_tables` (resume) appends "so the run
+  cannot be resumed", so the resume's messages are unchanged.
+- Low, `configure_concurrency` not validated: fixed. A non-finite value or one below 1 is refused (logged) and nothing is kept.
+  Red first: `an_invalid_default_concurrency_is_refused_and_the_first_valid_one_is_kept` failed on the NaN acceptance.
+- Low, set-once setters silent on a second call: fixed. `configure_concurrency` and `configure_bindings` log a warning on a second
+  set, as `set_store` does; the composition logs when `LateRunSessions::set` returns false.
+- Low, the late-slot test did not cover submit before set: fixed. `a_submit_before_the_late_slot_is_set_is_unsupported_and_a_second_set_is_refused`
+  (cli gating tests) checks the typed unsupported error and that a second set is refused.
+- Low, `with_sessions` as the only constructor: fixed. The constructor is `CreateWorkflowTool::new(analyzer, runs, home)`.
+- Low, the needless clone of `tool_call_id`: fixed (moved).
+- Low, the `CompiledChild` doc block hijacked the W7-5e doc: fixed (the W7-5e doc is back on its test).
+- Obsolete, the `workflow_gate.rs` `LateRunSessions` findings (a doc with a missing `false`, a `set` that returns a bool nobody reads):
+  the type is gone; the one slot is kernel-api's `LateRunSessions` (merged from #597).
+- Rejected: none.
+
+**Not done.** Amend (387), the phase table and holes (375), the turn's input id (372), the trace (375), the Host-session protocol test and the
+live child (386), and the desktop check. Gate stays off.
+
 ### 9.40 W7-9: run tools (as built, gate off)
 
 **Scope built.** Three of the four run tools: ListWorkflowRuns, ResumeWorkflowRun and ResolveWorkflowQuestion. Each reads or acts

@@ -1,0 +1,76 @@
+//! Identifiers that carry identity, minted from the cryptographic random source (the platform crate is the one entry for
+//! such randomness, `clippy.toml`). Node mints the same ids with `crypto.randomUUID()`.
+
+/// A random v4 uuid in its canonical 8-4-4-4-12 lower-case hex form, from the system's CSPRNG (ring's `SystemRandom`).
+///
+/// If the system source fails, this panics rather than returning a predictable id: a run id or a launch input id that
+/// an attacker could guess is a security fault, not a value to fall back from.
+pub fn uuid_v4() -> String {
+    let mut bytes = [0u8; 16];
+    system_random(&mut bytes);
+    uuid_from_bytes(bytes)
+}
+
+#[expect(
+    clippy::disallowed_methods,
+    clippy::expect_used,
+    reason = "platform is the entry for cryptographic randomness (§4): run and launch ids must not be guessable, so a failed source panics rather than falling back"
+)]
+fn system_random(bytes: &mut [u8]) {
+    use ring::rand::SecureRandom;
+    ring::rand::SystemRandom::new()
+        .fill(bytes)
+        .expect("the system's cryptographic random source is available");
+}
+
+/// The v4 layout of 16 random bytes: version nibble 4, RFC 4122 variant bits, then the canonical text form.
+fn uuid_from_bytes(mut bytes: [u8; 16]) -> String {
+    bytes[6] = (bytes[6] & 0x0f) | 0x40;
+    bytes[8] = (bytes[8] & 0x3f) | 0x80;
+    let hex: String = bytes.iter().map(|byte| format!("{byte:02x}")).collect();
+    format!(
+        "{}-{}-{}-{}-{}",
+        &hex[0..8],
+        &hex[8..12],
+        &hex[12..16],
+        &hex[16..20],
+        &hex[20..32]
+    )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_layout_is_a_v4_uuid_in_canonical_text() {
+        let id = uuid_from_bytes([0xff; 16]);
+        assert_eq!(id, "ffffffff-ffff-4fff-bfff-ffffffffffff");
+        let zero = uuid_from_bytes([0; 16]);
+        assert_eq!(zero, "00000000-0000-4000-8000-000000000000");
+    }
+
+    #[test]
+    fn minted_ids_are_canonical_v4_and_differ() {
+        let first = uuid_v4();
+        let second = uuid_v4();
+        assert_ne!(first, second, "two draws from the CSPRNG differ");
+        for id in [&first, &second] {
+            assert_eq!(id.len(), 36, "{id}");
+            let parts: Vec<&str> = id.split('-').collect();
+            assert_eq!(
+                parts.iter().map(|part| part.len()).collect::<Vec<_>>(),
+                [8, 4, 4, 4, 12]
+            );
+            assert!(
+                id.chars()
+                    .all(|c| c == '-' || (c.is_ascii_hexdigit() && !c.is_ascii_uppercase()))
+            );
+            assert_eq!(&parts[2][0..1], "4", "version nibble: {id}");
+            assert!(
+                matches!(&parts[3][0..1], "8" | "9" | "a" | "b"),
+                "variant: {id}"
+            );
+        }
+    }
+}

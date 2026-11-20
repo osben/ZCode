@@ -20,7 +20,7 @@ use rust_cli_kernel_api::ids::{SessionId, WorkflowRunId};
 use rust_cli_kernel_api::workflow_child::LaunchInput;
 use rust_cli_kernel_api::workflow_run::{
     DynamicWorkflowRunError, DynamicWorkflowRunPort, DynamicWorkflowRunSessions, LifecycleStatus,
-    ListQuery, ResolveQuestionRefusalReason, ResolveQuestionResult,
+    ListQuery, ResolveQuestionRefusalReason, ResolveQuestionResult, SubmitRequest,
 };
 use rust_cli_workflow::actor_mailbox::{ActorHandle, MailboxError};
 use rust_cli_workflow::engine::EngineConfig;
@@ -348,6 +348,21 @@ impl DynamicWorkflowRunPort for SessionRuns {
     /// Node `resume` (9.37): the refusals are answers, and the run is resumed on this service.
     async fn resume(&self, run_id: &WorkflowRunId) -> Result<Value, DynamicWorkflowRunError> {
         self.service.resume_port(run_id.as_str()).await
+    }
+
+    /// Node `defaultConcurrency` (9.39): the service's default, whole runs (the port's type is a count).
+    fn default_concurrency(&self) -> Option<usize> {
+        self.service
+            .default_concurrency_value()
+            .map(|value| value as usize)
+    }
+
+    /// Node `submit` (9.39): a new run under this session, the parent Node names (`parentSessionId`).
+    async fn submit(
+        &self,
+        request: SubmitRequest,
+    ) -> Result<WorkflowRunId, DynamicWorkflowRunError> {
+        self.service.submit_run(&self.parent, request).await
     }
 }
 

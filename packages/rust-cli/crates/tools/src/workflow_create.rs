@@ -23,7 +23,7 @@ use rust_cli_kernel_api::tool_names;
 use rust_cli_kernel_api::workflow_analysis::{
     WorkflowAnalysis, WorkflowAnalyzer, WorkflowDiagnostic,
 };
-use rust_cli_kernel_api::workflow_run::{DynamicWorkflowRunPort, SubmitRequest};
+use rust_cli_kernel_api::workflow_run::{DynamicWorkflowRunSessions, SubmitRequest};
 use serde::Deserialize;
 use serde::de::IgnoredAny;
 use serde_json::{Map, Value, json};
@@ -144,21 +144,24 @@ struct Approvals {
 pub struct CreateWorkflowTool {
     contract: &'static Contract,
     analyzer: Arc<dyn WorkflowAnalyzer>,
-    run_port: Option<Arc<dyn DynamicWorkflowRunPort>>,
+    /// The run service's per-session ports (9.39, divergence 322): a submit goes through the calling session's port.
+    runs: Option<Arc<dyn DynamicWorkflowRunSessions>>,
     home: PathBuf,
     approvals: Mutex<Approvals>,
 }
 
 impl CreateWorkflowTool {
+    /// The run service's sessions: each call submits through the port of its own session. Without sessions the tool
+    /// typechecks and says it did not run.
     pub fn new(
         analyzer: Arc<dyn WorkflowAnalyzer>,
-        run_port: Option<Arc<dyn DynamicWorkflowRunPort>>,
+        runs: Option<Arc<dyn DynamicWorkflowRunSessions>>,
         home: PathBuf,
     ) -> Self {
         Self {
             contract: contract(tool_names::CREATE_WORKFLOW),
             analyzer,
-            run_port,
+            runs,
             home,
             approvals: Mutex::new(Approvals::default()),
         }
@@ -915,7 +918,11 @@ impl Tool for CreateWorkflowTool {
                 json!({"diagnostics": diagnostics, "ok": false}),
             ));
         }
-        let Some(port) = self.run_port.clone() else {
+        let Some(port) = self
+            .runs
+            .as_ref()
+            .map(|runs| runs.for_session(&context.session))
+        else {
             return Ok(output_for(
                 format!("The workflow script compiled cleanly.\n\n{EXECUTION_UNAVAILABLE_NOTE}"),
                 json!({"diagnostics": [], "ok": true}),

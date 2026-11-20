@@ -20,6 +20,7 @@ mod consts;
 mod credentials;
 #[cfg(test)]
 mod fake_server_tests;
+pub mod ids;
 pub mod local;
 mod login;
 mod mcp_oauth;
