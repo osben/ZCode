@@ -145,3 +145,61 @@ fn a_shell_request_serializes_without_an_argv_key() {
     assert_eq!(json["argv"]["file"], "git");
     assert_eq!(json["argv"]["args"][0], "status");
 }
+
+#[tokio::test]
+async fn argv_refuses_a_sandbox_and_every_kind_but_a_plain_foreground_command() {
+    use rust_cli_kernel_api::env::CommandKind;
+    use rust_cli_kernel_api::env_shell::{FilesystemPolicy, HookIo, NetworkPolicy, SandboxPolicy};
+    let fixture = fixture(Vec::new());
+    let mut sandboxed = argv_request("/bin/echo", &["x"], &fixture.root);
+    sandboxed.sandbox = Some(SandboxPolicy {
+        filesystem: FilesystemPolicy::default(),
+        network: NetworkPolicy::default(),
+        required: false,
+    });
+    let refused = fixture
+        .shells
+        .start(context("argv-sandbox"), sandboxed)
+        .await;
+    assert!(matches!(refused, Err(EnvError::Unsupported { .. })));
+
+    let mut hook = argv_request("/bin/echo", &["x"], &fixture.root);
+    hook.kind = CommandKind::Hook {
+        hook: HookIo {
+            stdin: String::new(),
+            env: Default::default(),
+        },
+    };
+    let refused = fixture.shells.start(context("argv-hook"), hook).await;
+    assert!(matches!(refused, Err(EnvError::Unsupported { .. })));
+}
+
+#[tokio::test]
+#[expect(
+    clippy::disallowed_methods,
+    reason = "the test prepares a scratch and workspace directory"
+)]
+async fn argv_without_a_configured_shell_inherits_the_snapshot_shell() {
+    // With no bash configured, argv must not write an empty SHELL: the child keeps the snapshot's value (F58).
+    let dir = tempfile::tempdir().unwrap();
+    let base = dir.path().to_path_buf();
+    let root = base.join("work");
+    std::fs::create_dir_all(&root).unwrap();
+    let path = std::env::var("PATH").unwrap_or_default();
+    let shells = Shells::new(ShellConfig {
+        scratch: base.join("scratch"),
+        ledger: base.join("ledger"),
+        bash: None,
+        bwrap: None,
+        embedded: None,
+        env: vec![
+            ("PATH".to_owned(), path),
+            ("SHELL".to_owned(), "/bin/zsh".to_owned()),
+        ]
+        .into(),
+    });
+    let request = argv_request("/bin/sh", &["-c", "printf %s \"$SHELL\""], &root);
+    let events = shells.start(context("argv-shell"), request).await.unwrap();
+    let (out, _, _) = collect_streams(events).await;
+    assert_eq!(String::from_utf8(out).unwrap(), "/bin/zsh");
+}

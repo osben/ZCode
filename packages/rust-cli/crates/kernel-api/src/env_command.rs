@@ -49,6 +49,31 @@ pub struct CommandArgv {
     pub args: Vec<String>,
 }
 
+impl CommandArgv {
+    /// The text that shows this command (the `command` field of an argv request). Node has no display text for argv
+    /// (its only argv join is the Windows cmd shim, `execution-command.ts`), so this is a POSIX shell quoting of
+    /// `file` and `args`: a word is left bare only when it has no shell metacharacter, and the text is never run.
+    pub fn display(&self) -> String {
+        std::iter::once(self.file.as_str())
+            .chain(self.args.iter().map(String::as_str))
+            .map(shell_word)
+            .collect::<Vec<_>>()
+            .join(" ")
+    }
+}
+
+fn shell_word(word: &str) -> String {
+    let bare = !word.is_empty()
+        && word
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || "@%+=:,./-_".contains(c));
+    if bare {
+        word.to_owned()
+    } else {
+        format!("'{}'", word.replace('\'', r"'\''"))
+    }
+}
+
 impl StartCommand {
     /// argv 模式的前台命令：`file` 带 `args` 直接启动（不经 shell），在 `cwd` 里，任务 ID 是 `task`，没有超时。
     pub fn argv(
@@ -57,10 +82,13 @@ impl StartCommand {
         cwd: EnvPath,
         task: ShellTaskId,
     ) -> Self {
-        let file = file.into();
+        let argv = CommandArgv {
+            file: file.into(),
+            args,
+        };
         Self {
-            command: file.clone(),
-            argv: Some(CommandArgv { file, args }),
+            command: argv.display(),
+            argv: Some(argv),
             ..Self::new(String::new(), cwd, task)
         }
     }

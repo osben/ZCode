@@ -17,7 +17,7 @@ use rust_cli_kernel_api::env::{
     StartCommand, WorkspaceRef,
 };
 use rust_cli_kernel_api::env_files::{
-    GlobFiles, GrepFileLines, GrepLineKind, GrepMode, GrepOutcome, GrepSearch, VCS_DIRS,
+    GlobFiles, GrepFileLines, GrepLineKind, GrepMode, GrepOutcome, GrepSearch, StatFile, VCS_DIRS,
 };
 use rust_cli_kernel_api::env_shell::CwdScope;
 use rust_cli_kernel_api::ids::{EnvironmentId, Generation, OperationId, ShellTaskId};
@@ -41,17 +41,25 @@ pub struct WorldPorts {
     env: Arc<LocalEnvironment>,
     root: PathBuf,
     handle: tokio::runtime::Handle,
-    next: AtomicU64,
 }
+
+/// The operation counter of the whole process. A per-instance counter let two ports hand out the same task id, and
+/// the same output file (Finding: two `WorldPorts` in one process share the scratch directory).
+static NEXT_OPERATION: AtomicU64 = AtomicU64::new(1);
+
+/// The cap on one `files.read` (Node has none; this is a divergence in spec 9.19). It is the run stream cap, so a
+/// read and a run are bounded by the same number.
+pub const READ_TEXT_CAP_BYTES: usize = caps::RUN_STREAM_MAX_BYTES;
 
 impl WorldPorts {
     pub fn new(env: Arc<LocalEnvironment>, root: PathBuf, handle: tokio::runtime::Handle) -> Self {
-        Self {
-            env,
-            root,
-            handle,
-            next: AtomicU64::new(1),
-        }
+        Self { env, root, handle }
+    }
+
+    /// The environment under these ports (the tests build a second port over the same one).
+    #[cfg(test)]
+    pub(crate) fn env(&self) -> Arc<LocalEnvironment> {
+        self.env.clone()
     }
 
     fn workspace(&self, root: &Path) -> WorkspaceRef {
@@ -61,10 +69,10 @@ impl WorldPorts {
         }
     }
 
-    /// A fresh operation for one run. The process id keeps the task file names apart between two processes that share
-    /// a scratch directory.
-    fn operation(&self) -> (OperationContext, ShellTaskId) {
-        let n = self.next.fetch_add(1, Ordering::Relaxed);
+    /// A fresh operation for one run. The counter is process-wide and the process id keeps two processes that share a
+    /// scratch directory apart, so no two runs share an output file.
+    pub(crate) fn operation(&self) -> (OperationContext, ShellTaskId) {
+        let n = NEXT_OPERATION.fetch_add(1, Ordering::Relaxed);
         let name = format!("world-{}-{n}", std::process::id());
         let context = OperationContext::new(
             EnvironmentId::new("local"),
@@ -73,6 +81,46 @@ impl WorldPorts {
             Origin::User { session: None },
         );
         (context, ShellTaskId::new(name))
+    }
+}
+
+impl WorldPorts {
+    /// `files.read` with a size guard: the size is taken from a stat first, so an over-cap file is never read; the
+    /// bytes are checked again after the read, for a file that grew in between.
+    pub(crate) fn read_text_capped(&self, path: &str, cap: usize) -> Result<String, String> {
+        let workspace = self.workspace(&self.root);
+        let stat = self
+            .handle
+            .block_on(self.env.stat(
+                &workspace,
+                StatFile {
+                    path: EnvPath::new(path),
+                },
+            ))
+            .map_err(|error| env_text(&error))?;
+        if let Some(stat) = stat
+            && stat.size > cap as u64
+        {
+            return Err(format!(
+                "files.read: {path} is {} bytes, over the {cap}-byte cap. Read a narrower file.",
+                stat.size
+            ));
+        }
+        let content = self
+            .handle
+            .block_on(self.env.read_file(
+                &self.workspace(&self.root),
+                ReadFile {
+                    path: EnvPath::new(path),
+                },
+            ))
+            .map_err(|error| env_text(&error))?;
+        if content.bytes.len() > cap {
+            return Err(format!(
+                "files.read: {path} grew past the {cap}-byte cap while it was read."
+            ));
+        }
+        decode_node_text(&content.bytes, path)
     }
 }
 
@@ -118,16 +166,7 @@ impl WorldReadPorts for WorldPorts {
     }
 
     fn read_text(&self, path: &str) -> Result<String, String> {
-        let content = self
-            .handle
-            .block_on(self.env.read_file(
-                &self.workspace(&self.root),
-                ReadFile {
-                    path: EnvPath::new(path),
-                },
-            ))
-            .map_err(|error| env_text(&error))?;
-        decode_node_text(&content.bytes, path)
+        self.read_text_capped(path, READ_TEXT_CAP_BYTES)
     }
 
     fn grep(
@@ -148,7 +187,7 @@ impl WorldReadPorts for WorldPorts {
             pattern: pattern.to_owned(),
             case_insensitive: false,
             multiline: false,
-            globs: glob.map(split_glob_patterns).unwrap_or_default(),
+            globs: grep_globs(glob),
             file_type: None,
             hidden: true,
             mode: GrepMode::Content {
@@ -270,7 +309,7 @@ fn content_entries(files: Vec<GrepFileLines>) -> Vec<GrepEntry> {
 
 /// How a run ended, as the workflow reads it. A nonzero exit is a `Failed` with no error (a result, not a failure of
 /// the observation). A timeout, a cancel and an output limit are not exits.
-fn run_status(
+pub(crate) fn run_status(
     outcome: rust_cli_kernel_api::env::Outcome,
     exit_code: Option<i32>,
     timed_out: bool,
@@ -284,7 +323,12 @@ fn run_status(
         return (RunStatus::TimedOut, None);
     }
     match outcome {
-        Outcome::Completed if exit_code.unwrap_or(0) == 0 => (RunStatus::Completed, None),
+        Outcome::Completed if exit_code == Some(0) => (RunStatus::Completed, None),
+        // A finished process with no exit code is not a success: the observation did not report one.
+        Outcome::Completed if exit_code.is_none() => (
+            RunStatus::Failed,
+            Some("the command finished without an exit code".to_owned()),
+        ),
         Outcome::Completed => (RunStatus::Failed, None),
         Outcome::Cancelled => (RunStatus::Cancelled, None),
         Outcome::Failed { message, .. } => (RunStatus::Failed, Some(message)),
@@ -353,6 +397,24 @@ impl Collected {
 /// device is refused from its metadata and never opened; it reads at most `max_bytes` and reports `TooLarge` past it.
 pub struct WorldFs;
 
+#[cfg(unix)]
+#[expect(
+    clippy::disallowed_methods,
+    reason = "env-local is the entry for workspace file IO (docs/specs/rust-cli/README.md §4)"
+)]
+fn open_nonblocking(path: &Path) -> io::Result<fs::File> {
+    use std::os::unix::fs::OpenOptionsExt;
+    fs::OpenOptions::new()
+        .read(true)
+        .custom_flags(libc::O_NONBLOCK)
+        .open(path)
+}
+
+#[cfg(not(unix))]
+fn open_nonblocking(path: &Path) -> io::Result<fs::File> {
+    fs::File::open(path)
+}
+
 fn fault(error: &io::Error) -> FsFault {
     if error.kind() == io::ErrorKind::NotFound {
         FsFault::NotFound
@@ -378,7 +440,16 @@ impl ArtifactFsPort for WorldFs {
         if metadata.len() > max_bytes as u64 {
             return Err(FsFault::TooLarge);
         }
-        let file = fs::File::open(path).map_err(|error| fault(&error))?;
+        // Non-blocking open: a fifo that a writer has not opened would otherwise block here forever. The metadata of the
+        // open file (not of the path) is checked again, so a path swapped for a fifo between the two calls is refused.
+        let file = open_nonblocking(path).map_err(|error| fault(&error))?;
+        let opened = file.metadata().map_err(|error| fault(&error))?;
+        if opened.is_dir() {
+            return Err(FsFault::IsDirectory);
+        }
+        if !opened.is_file() {
+            return Err(FsFault::NotFile);
+        }
         // One byte past the limit proves a file that grew between the stat and the read.
         let mut bytes = Vec::new();
         file.take(max_bytes as u64 + 1)
@@ -508,6 +579,17 @@ fn glob_regex(pattern: &str) -> Result<Regex, String> {
     }
     regex.push('$');
     Regex::new(&regex).map_err(|_| format!("Invalid glob pattern: {pattern}"))
+}
+
+/// The globs of one grep, as Node's `createRipgrepSearchPlan` passes them: the version-control directories excluded
+/// (`!dir` and `!**/dir/**`), then the caller's globs.
+fn grep_globs(glob: Option<&str>) -> Vec<String> {
+    let mut globs: Vec<String> = VCS_DIRS
+        .iter()
+        .flat_map(|dir| [format!("!{dir}"), format!("!**/{dir}/**")])
+        .collect();
+    globs.extend(glob.map(split_glob_patterns).unwrap_or_default());
+    globs
 }
 
 /// Node `splitRipgrepGlobPatterns`: split on whitespace, then on commas, unless a token has braces; trim; drop empties.

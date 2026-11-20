@@ -665,3 +665,70 @@ async fn discard_reports_truncated_only_when_output_was_dropped() {
     assert!(outcome.stdout.truncated);
     assert_eq!(outcome.stdout.bytes, 1);
 }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn two_ports_in_one_process_never_share_an_operation_or_task_id() {
+    // Two instances share the scratch directory, so equal task ids would share output files.
+    let fx = fixture();
+    let second = WorldPorts::new(
+        fx.ports.env(),
+        fx.root.clone(),
+        tokio::runtime::Handle::current(),
+    );
+    let (first_context, first_task) = fx.ports.operation();
+    let (second_context, second_task) = second.operation();
+    assert_ne!(first_task, second_task);
+    assert_ne!(first_context.operation, second_context.operation);
+}
+
+#[test]
+fn run_status_treats_a_missing_exit_code_as_a_failure() {
+    use crate::world_ports::run_status;
+    use rust_cli_kernel_api::env::Outcome;
+    let (status, error) = run_status(Outcome::Completed, None, false, None);
+    assert_eq!(status, RunStatus::Failed);
+    assert!(error.is_some());
+    assert_eq!(
+        run_status(Outcome::Completed, Some(0), false, None).0,
+        RunStatus::Completed
+    );
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_text_read_over_the_cap_is_refused() {
+    let fx = fixture();
+    let file = fx.root.join("big.txt");
+    std::fs::write(&file, vec![b'x'; 11]).unwrap();
+    let ports = fx.ports.clone();
+    let path = file.to_str().unwrap().to_owned();
+    let refused = blocking(move || ports.read_text_capped(&path, 10)).await;
+    assert!(refused.unwrap_err().contains("over the 10-byte cap"));
+    let ports = fx.ports.clone();
+    let path = file.to_str().unwrap().to_owned();
+    assert_eq!(
+        blocking(move || ports.read_text_capped(&path, 11))
+            .await
+            .unwrap(),
+        "x".repeat(11)
+    );
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_path_to_a_fifo_is_refused_without_blocking_the_read() {
+    let fx = fixture();
+    let fifo = fx.root.join("pipe-read");
+    let status = Command::new("mkfifo")
+        .arg(&fifo)
+        .status()
+        .expect("mkfifo runs");
+    assert!(status.success());
+    // A blocking open of a fifo with no writer never returns; the bounded open must answer at once.
+    let path = fifo.clone();
+    let answer = tokio::time::timeout(
+        std::time::Duration::from_secs(5),
+        blocking(move || WorldFs.read_file(&path, 1024)),
+    )
+    .await
+    .expect("the read does not block on a fifo");
+    assert_eq!(answer, Err(FsFault::NotFile));
+}

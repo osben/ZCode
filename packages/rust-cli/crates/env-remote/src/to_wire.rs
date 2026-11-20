@@ -11,7 +11,7 @@ use rust_cli_exec_wire::dto::mcp as wm;
 use rust_cli_exec_wire::dto::rewind as wr;
 use rust_cli_exec_wire::dto::shell as ws;
 use rust_cli_kernel_api::env::{
-    CommandKind, OperationContext, Origin, StartCommand, WorkspaceRef, WritePrecondition,
+    CommandKind, EnvError, OperationContext, Origin, StartCommand, WorkspaceRef, WritePrecondition,
 };
 use rust_cli_kernel_api::env_files::{GlobFiles, GrepMode, GrepSearch, PutFile, ReadText};
 use rust_cli_kernel_api::env_pdf::RenderPdfPages;
@@ -192,7 +192,16 @@ fn sandbox(policy: SandboxPolicy) -> wc::SandboxPolicy {
     }
 }
 
-pub(crate) fn start_command(request: StartCommand, body: &mut BodyBuilder) -> wc::StartCommand {
+/// Fails closed on argv: the wire has no argv mode, and dropping the argv would run the display text as shell.
+pub(crate) fn start_command(
+    request: StartCommand,
+    body: &mut BodyBuilder,
+) -> Result<wc::StartCommand, EnvError> {
+    if request.argv.is_some() {
+        return Err(EnvError::Unsupported {
+            what: "argv commands on a remote machine".to_owned(),
+        });
+    }
     let StartCommand {
         command,
         cwd,
@@ -202,7 +211,6 @@ pub(crate) fn start_command(request: StartCommand, body: &mut BodyBuilder) -> wc
         cwd_scope,
         sandbox: policy,
         kind,
-        // Refused by `RemoteEnvironment::start_command` before this point: the wire has no argv mode.
         argv: _,
     } = request;
     // 线上仍是四个可选字段（F128 之前的形状，wire 不随内部 API 变）；服务端的 `convert_in` 拼回种类。
@@ -212,7 +220,7 @@ pub(crate) fn start_command(request: StartCommand, body: &mut BodyBuilder) -> wc
         CommandKind::Hook { hook } => (None, Some(hook), None, None),
         CommandKind::Socket { background, socket } => (Some(background), None, None, Some(socket)),
     };
-    wc::StartCommand {
+    Ok(wc::StartCommand {
         command,
         cwd: cwd.as_str().to_owned(),
         timeout_ms,
@@ -246,7 +254,7 @@ pub(crate) fn start_command(request: StartCommand, body: &mut BodyBuilder) -> wc
             },
         ),
         socket: socket.map(|MonitorSocket { url, protocols }| wc::MonitorSocket { url, protocols }),
-    }
+    })
 }
 
 pub(crate) fn background_task(task: BackgroundTask) -> ws::BackgroundTask {

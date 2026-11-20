@@ -428,13 +428,13 @@ impl Shells {
         let bash = match &request.kind {
             CommandKind::Socket { .. } => PathBuf::new(),
             CommandKind::Hook { .. } => hook_shell(&self.config)?,
-            CommandKind::Foreground { .. } | CommandKind::Background { .. }
-                if request.argv.is_some() =>
-            {
-                self.config.bash.clone().unwrap_or_default()
-            }
             CommandKind::Foreground { .. } | CommandKind::Background { .. } => {
-                self.config.bash.clone().ok_or_else(no_shell)?
+                match self.config.bash.clone() {
+                    Some(bash) => bash,
+                    // argv has no shell to find; its children keep the snapshot's SHELL (F58).
+                    None if request.argv.is_some() => PathBuf::new(),
+                    None => return Err(no_shell()),
+                }
             }
         };
         let session = session_of(&context);
@@ -487,7 +487,11 @@ impl Shells {
             link = Some(tasks.join(format!("{}.output", request.task)));
         }
         let shell_name = bash.to_string_lossy().into_owned();
-        let mut env = environ::project(self.config.env.vars(), Some(&shell_name));
+        // An argv command without a configured shell leaves SHELL to the snapshot (`None`): an empty SHELL would be a
+        // value nothing set (F58).
+        let shell_env =
+            (request.argv.is_none() || self.config.bash.is_some()).then_some(shell_name.as_str());
+        let mut env = environ::project(self.config.env.vars(), shell_env);
         // 执行器的服务端按客户端实例填的变量（远端执行 F96，remote-exec.md §23.5）：加在投影之后，`None` 是去掉。
         environ::apply(&mut env, overrides);
         let hook = match &request.kind {

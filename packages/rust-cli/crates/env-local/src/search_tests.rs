@@ -226,3 +226,23 @@ async fn dropping_the_walk_future_cancels_the_blocking_work() {
     // 期限只用于让失败的测试结束。
     on_stop.recv_timeout(Duration::from_secs(5)).unwrap();
 }
+
+#[test]
+fn glob_does_not_walk_version_control_directories() {
+    // Node's walkFiles skips a version-control directory's whole subtree; the total counts only what was walked.
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    write(root, ".git/objects/pack.ts", "p", 10);
+    write(root, ".git/HEAD.ts", "h", 20);
+    write(root, "src/a.ts", "a", 30);
+    let request = GlobFiles {
+        root: EnvPath::new(root.to_string_lossy()),
+        pattern: "**/*.ts".to_owned(),
+        limit: 10,
+        hidden: true,
+        respect_ignore: false,
+    };
+    let found = glob(&request, &CancellationToken::new()).unwrap();
+    assert_eq!(found.total, 1);
+    assert_eq!(names(root, &found.files), ["src/a.ts"]);
+}
