@@ -3931,6 +3931,20 @@ success-path test covers the parked hole's release and the stored script. `FillR
 helper's copy has tests for the splice and the not-waiting refusal only, so a drift in the compile path is not caught here); the helper's throws reaching the run service as a tool error (Node
 throws the same way, and the hole stays waiting); the duplicated runtime fixture (test-only, the three builders read clearly).
 
+**Review round 2 (ocr on 7d4647acd, 17 findings).** Fixed: the helper's compile is guarded, and a throw is `compile_failed`
+(`message`, no diagnostics); the tool reads a `path` body off the async runtime; empty `script` and `path` are refused by name;
+the tool declares the sibling budget (`CREATE_MODEL_BYTES`); the fill's permit moves into the blocking owner call, so a dropped
+caller does not free the queue while the owner writes; a named parent that is not the port's is a wiring fault, checked before
+the queue (test `a_fill_that_names_another_parent_is_a_wiring_fault`); the codec validates hole indexes, the ask and site tables
+and diagnostic elements, and a non-record `modelBindings` is not sent; the retry test matches the reason; `wall_clock_ms` is
+crate-private; the RunNotFound asymmetry of `from_code` is documented. Tests added: `workflow_fill_hole_tests.rs` (input rules,
+the 428 gate, the no-port refusal, the phase and diagnostic texts, the budget). Rejected: the helper's typed-JSON refactors
+(`FillPrepareOutcome::Ready` carrying typed fields, `Refused` carrying `FillRefusalReason`, and the duplicate reads in the run
+service). The reply stays JSON at the kernel boundary, and the run service reads only the fields it applies, so a typed struct
+is a follow-up that does not change behavior. Rejected: the `LaunchError::Failed` default for an unwired runner (only the tests
+use the default; production always wires the helper). Not done: a test that drops the fill future mid-owner-call (it needs a
+blocking-call harness).
+
 Closed by this row: divergence 124 (the driver refuses holes). Still open: 437 (the journal has no hole type, so `hole-reached` carries
 no type), 224 (a live `hole-reached` has no `reachedAt`), 353 (the hole notice, 518 here), 463 (holes in amend, now a fill exists for a
 run that amend started; the amended run's holes are fillable through this path).

@@ -122,7 +122,9 @@ pub enum FillRefusalReason {
 }
 
 impl FillRefusalReason {
-    /// Node's wire literal for a refusal reason the helper sends. The one table of literals: `None` for any other text.
+    /// Node's wire literal for a refusal reason the compile helper sends. The one table of literals: `None` for any other
+    /// text. `RunNotFound` has no literal here on purpose: the helper never sends it, and the run service builds it from its
+    /// own journal lookup. A tool-level adapter that decodes Node's `run_not_found` result must map that text itself.
     pub fn from_code(code: &str) -> Option<Self> {
         match code {
             "hole_not_waiting" => Some(Self::HoleNotWaiting),

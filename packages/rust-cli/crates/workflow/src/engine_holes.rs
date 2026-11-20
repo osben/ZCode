@@ -24,7 +24,7 @@ use std::collections::HashMap;
 
 /// The wall clock in milliseconds since the Unix epoch, read by the owner for `hole` and `fill_hole` (Node's `Date.now()`
 /// through `EngineConfig.now`). The engine itself reads no clock.
-pub fn wall_clock_ms() -> f64 {
+pub(crate) fn wall_clock_ms() -> f64 {
     use crate::model_failure::RedriveClock;
     crate::model_failure::ThreadClock.now_ms() as f64
 }

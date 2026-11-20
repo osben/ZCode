@@ -85,7 +85,19 @@ export function fillPrepareForRust(raw: unknown): Refusal | Record<string, unkno
       `The compiled effective script renumbered an existing site (${stability.detail}). This is a host fault, not a problem with the body; the hole is still waiting.`,
     );
   }
-  const compiled = compileProgram(spliced.text, effective, after);
+  // The compile throws for gates the analysis does not run (the unsupported ask result types, for one). Like the
+  // CreateWorkflow compile, that is a refusal the caller can read, not an RPC fault: the hole stays waiting.
+  let compiled;
+  try {
+    compiled = compileProgram(spliced.text, effective, after);
+  } catch (error) {
+    return {
+      ok: false,
+      reason: "compile_failed",
+      message: error instanceof Error ? error.message : String(error),
+      diagnostics: [],
+    };
+  }
   const code = compiled.holeBodies[holeId];
   if (code === undefined) {
     return refuse(

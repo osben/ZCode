@@ -25,13 +25,17 @@ use serde_json::{Value, json};
 use tokio::sync::mpsc;
 
 use crate::workflow_amend::read_revision_file;
-use crate::workflow_create::output_for;
+use crate::workflow_create::{CREATE_MODEL_BYTES, output_for};
 use crate::workflow_tools::{
     Contract, DYNAMIC_WORKFLOW_SKILL, contract, skill_loaded, workspace_dir,
 };
 
 /// The skill gate's code, as AmendWorkflow reports it.
 const SKILL_NOT_LOADED_CODE: i32 = 428;
+
+#[cfg(test)]
+#[path = "workflow_fill_hole_tests.rs"]
+mod tests;
 
 /// Node `FILL_WORKFLOW_HOLE_SOURCE_ERROR`: exactly one body source.
 const SOURCE_ERROR: &str = "Provide exactly one body source: `script` for the hole's statements written inline, or `path` for a file holding them (usually the fill file a rejected attempt was saved to). Passing both, or neither, is ambiguous.";
@@ -142,6 +146,12 @@ impl Tool for FillWorkflowHoleTool {
         self.contract.concurrent_safe
     }
 
+    /// The compile refusal lists one line per diagnostic of the whole effective script, so it carries the model budget
+    /// the sibling workflow tools declare.
+    fn result_budget_truncate_bytes(&self) -> Option<usize> {
+        Some(CREATE_MODEL_BYTES)
+    }
+
     /// The input's shape, the one-body-source rule, and the skill gate (a fill always writes a script).
     async fn validate_input(&self, input: &Value, context: &ToolUseContext) -> Validation {
         let input: FillInput = match serde_json::from_value(input.clone()) {
@@ -158,6 +168,13 @@ impl Tool for FillWorkflowHoleTool {
         }
         if input.hole_id.is_empty() {
             return invalid(None, "hole_id: String must contain at least 1 character(s)");
+        }
+        // The contract's `minLength: 1` for both bodies, as the sibling tools check them.
+        if input.script.as_deref() == Some("") {
+            return invalid(None, "script: String must contain at least 1 character(s)");
+        }
+        if input.path.as_deref() == Some("") {
+            return invalid(None, "path: String must contain at least 1 character(s)");
         }
         if input.script.is_some() == input.path.is_some() {
             return invalid(None, SOURCE_ERROR);
@@ -209,8 +226,13 @@ impl Tool for FillWorkflowHoleTool {
         let cwd = PathBuf::from(workspace_dir(&context));
         let body = match (input.script, input.path) {
             (Some(script), None) => script,
+            // The file read is synchronous I/O: it runs off the async runtime, as AmendWorkflow's read does.
             (None, Some(path)) => {
-                read_revision_file(&cwd, &path, None)
+                tokio::task::spawn_blocking(move || read_revision_file(&cwd, &path, None))
+                    .await
+                    .map_err(|error| {
+                        failed(format!("FillWorkflowHole could not read its body: {error}"))
+                    })?
                     .map_err(failed)?
                     .script
             }

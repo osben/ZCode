@@ -113,6 +113,51 @@ fn the_fill_params_send_bindings_only_when_they_are_a_record() {
 }
 
 #[test]
+fn a_ready_fill_reply_with_hole_indexes_keeps_them_and_rejects_other_items() {
+    let mut reply = ready_fill();
+    reply["holes"] = json!([1, 2]);
+    assert_eq!(
+        parse_fill_prepare(&reply).expect("a ready reply with indexes"),
+        FillPrepareOutcome::Ready(reply.clone())
+    );
+    reply["holes"] = json!(["x"]);
+    assert!(parse_fill_prepare(&reply).is_err());
+}
+
+#[test]
+fn a_ready_fill_reply_needs_its_ask_and_site_tables_to_be_objects() {
+    let mut reply = ready_fill();
+    reply["askSpecs"] = json!([]);
+    assert!(parse_fill_prepare(&reply).is_err());
+    let mut reply = ready_fill();
+    reply["sitePhases"] = json!("main");
+    assert!(parse_fill_prepare(&reply).is_err());
+}
+
+#[test]
+fn a_refused_fill_with_a_diagnostic_missing_its_position_is_malformed() {
+    let reply = json!({
+        "ok": false,
+        "reason": "compile_failed",
+        "message": "m",
+        "diagnostics": [{"message": "no position"}],
+    });
+    assert!(parse_fill_prepare(&reply).is_err());
+}
+
+#[test]
+fn a_non_record_model_binding_is_not_sent() {
+    let base = FillPrepareInput {
+        script_text: "s".to_owned(),
+        run_id: "r".to_owned(),
+        hole_id: "hole#1".to_owned(),
+        body: "b".to_owned(),
+        model_bindings: Some(json!("fast")),
+    };
+    assert!(fill_prepare_params(&base).get("modelBindings").is_none());
+}
+
+#[test]
 fn a_ready_compile_keeps_the_hash_the_compiled_facts_and_the_entry() {
     let reply = json!({
         "ok": true,

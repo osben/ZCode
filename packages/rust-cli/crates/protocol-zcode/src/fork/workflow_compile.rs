@@ -316,7 +316,7 @@ pub(crate) fn fill_prepare_params(input: &FillPrepareInput) -> Value {
         input
             .model_bindings
             .as_ref()
-            .filter(|value| !value.is_null()),
+            .filter(|value| value.is_object()),
         params.as_object_mut(),
     ) {
         map.insert("modelBindings".to_owned(), bindings.clone());
@@ -376,7 +376,20 @@ pub(crate) fn parse_fill_prepare(reply: &Value) -> Result<FillPrepareOutcome, Rp
             // An absent or `null` diagnostics list is no diagnostics; anything else must be a list.
             let diagnostics = match reply.get("diagnostics") {
                 None | Some(Value::Null) => None,
-                Some(list @ Value::Array(_)) => Some(list.clone()),
+                Some(list @ Value::Array(items))
+                    if items.iter().all(|item| {
+                        item.get("line").and_then(Value::as_u64).is_some()
+                            && item.get("column").and_then(Value::as_u64).is_some()
+                            && item.get("message").is_some_and(Value::is_string)
+                    }) =>
+                {
+                    Some(list.clone())
+                }
+                Some(Value::Array(_)) => {
+                    return Err(malformed_fill(
+                        "a diagnostic has no line, column or message",
+                    ));
+                }
                 Some(_) => return Err(malformed_fill("diagnostics is not a list")),
             };
             Ok(FillPrepareOutcome::Refused {

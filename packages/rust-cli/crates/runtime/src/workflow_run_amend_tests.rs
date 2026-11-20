@@ -482,6 +482,20 @@ async fn a_fill_of_an_unknown_run_is_refused_as_run_not_found() {
     assert!(fx.fake.launches().is_empty(), "no child is started");
 }
 
+/// W7-12 (9.45): a fill that names another parent session than the port's is a wiring fault, and it changes nothing.
+#[tokio::test]
+async fn a_fill_that_names_another_parent_is_a_wiring_fault() {
+    let fx = fixture(|conn| interrupted(conn, "dwfrun-named", PARENT, "return 1\n"));
+    let mut request = fill_request("dwfrun-named");
+    request.parent_session_id = Some(SessionId::new(OTHER));
+    let answer = fx
+        .service
+        .for_session(&SessionId::new(PARENT))
+        .fill_hole(request)
+        .await;
+    assert!(answer.is_err(), "the mismatch is an error: {answer:?}");
+}
+
 /// W7-12 (9.45): a run of another session is unknown to this session's fill, as it is to amend.
 #[tokio::test]
 async fn a_fill_of_another_sessions_run_is_refused_as_run_not_found() {
@@ -654,8 +668,14 @@ async fn a_fill_applies_the_helper_reply_and_releases_the_parked_hole() {
     // The fill may come before the branch parks; the helper's refusal then says it is not waiting yet, so retry.
     let mut answer = fill(&fx.service, fill_request("dwfrun-fill")).await;
     for _ in 0..400 {
-        if !matches!(&answer, FillHoleOutcome::Refused { message, .. } if message.contains("not waiting at"))
-        {
+        // Retry only while the hole is not waiting yet, matched by the reason, not the wording.
+        if !matches!(
+            &answer,
+            FillHoleOutcome::Refused {
+                reason: FillRefusalReason::HoleNotWaiting,
+                ..
+            }
+        ) {
             break;
         }
         tokio::time::sleep(Duration::from_millis(5)).await;

@@ -8,6 +8,8 @@
 //! fill of this service (Node serializes per run; divergence 510). The draft file is not rewritten and no draft is minted
 //! (divergence 511). The run's model bindings are not carried, so the helper checks no named model (divergence 512).
 
+use std::sync::Arc;
+
 use rust_cli_base::sync::LockUnpoisoned;
 use rust_cli_kernel_api::workflow_child::{FillPrepareInput, FillPrepareOutcome};
 use rust_cli_kernel_api::workflow_run::{
@@ -99,11 +101,21 @@ impl WorkflowRunService {
         parent: &str,
         request: FillHoleRequest,
     ) -> Result<FillHoleOutcome, DynamicWorkflowRunError> {
-        // The permit is held to the end of this call; the semaphore is never closed, so the acquire cannot fail.
-        let _turn = self
-            .inner
-            .fills
-            .acquire()
+        // A named parent must be this port's session, as AmendWorkflow requires (divergence 394). A mismatch is a wiring fault,
+        // checked before the queue is taken, so it cannot write the other session's `filledBy`.
+        if let Some(named) = request.parent_session_id.as_ref()
+            && named.as_str() != parent
+        {
+            return Err(DynamicWorkflowRunError::new(format!(
+                "the fill names the parent session {} but its run port belongs to {parent}, so the hole is not filled",
+                named.as_str()
+            )));
+        }
+        // The permit is held until the owner has applied the fill (or refused it): it moves into the blocking call below, so
+        // a caller that stops waiting here does not free the queue while the owner still writes. The semaphore is never
+        // closed, so the acquire cannot fail.
+        let turn = Arc::clone(&self.inner.fills)
+            .acquire_owned()
             .await
             .map_err(|_| DynamicWorkflowRunError::new("the fill queue is closed"))?;
         let run_id = request.run_id.as_str().to_owned();
@@ -207,14 +219,19 @@ impl WorkflowRunService {
             script_path: None,
         };
         let hole = request.hole_id.clone();
-        let applied = on_blocking_pool(move || match handle.fill_hole(fill) {
-            Ok(result) => Ok(result),
-            // The owner settled the run after the live check and its mailbox is gone: the fill is not applied, which is
-            // the settled answer, not a fault.
-            Err(MailboxError::NotDelivered) => Ok(FillHoleResult::Settled),
-            Err(error) => Err(DynamicWorkflowRunError::new(format!(
-                "the owner refused the fill: {error}"
-            ))),
+        // The permit goes into the blocking call: it is released when that call returns, even if this caller has stopped.
+        let applied = on_blocking_pool(move || {
+            // Held to the end of this closure, after the owner has applied or refused the fill.
+            let _turn = turn;
+            match handle.fill_hole(fill) {
+                Ok(result) => Ok(result),
+                // The owner settled the run after the live check and its mailbox is gone: the fill is not applied, which is
+                // the settled answer, not a fault.
+                Err(MailboxError::NotDelivered) => Ok(FillHoleResult::Settled),
+                Err(error) => Err(DynamicWorkflowRunError::new(format!(
+                    "the owner refused the fill: {error}"
+                ))),
+            }
         })
         .await?;
         Ok(match applied {

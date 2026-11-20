@@ -217,9 +217,9 @@ struct Inner {
     /// Node `defaultConcurrency()` (9.39): the caps default of a submit. Set once by the composition.
     default_concurrency: OnceLock<f64>,
     /// Serializes FillWorkflowHole calls (9.45): a fill reads the run's script, and the next fill must read the one the
-    /// previous fill wrote. One permit, held across the helper's call (a semaphore, since a tokio guard may not be held
-    /// across an await).
-    fills: tokio::sync::Semaphore,
+    /// previous fill wrote. One permit, held across the helper's call and the owner's apply (a semaphore, since a tokio guard
+    /// may not be held across an await).
+    fills: Arc<tokio::sync::Semaphore>,
 }
 
 /// What the composition configures. Each hook is off until its setter runs, so a service without them behaves as 9.25.
@@ -494,7 +494,7 @@ impl WorkflowRunService {
                 before_quota_module: Mutex::new(None),
                 bindings: OnceLock::new(),
                 default_concurrency: OnceLock::new(),
-                fills: tokio::sync::Semaphore::new(1),
+                fills: Arc::new(tokio::sync::Semaphore::new(1)),
             }),
         }
     }
