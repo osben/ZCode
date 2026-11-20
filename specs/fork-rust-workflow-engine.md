@@ -3219,8 +3219,9 @@ Code: `runtime/src/workflow_run_submit.rs` (the submit, the caps, the id, the mo
 (`configure_concurrency`, `configure_bindings`), `runtime/src/workflow_run_resume.rs` (`tables_of`: the compile's two tables read
 without the resume's empty refusal), `tools/src/workflow_create.rs` (`with_sessions`: each call submits through the port of its
 own `context.session`), `tools/src/workflow_tools.rs` (`workflow_tools` takes the sessions), `runtime/src/workflow_gate.rs`
-(`wired_workflow_tools(analyzer, home, runs)`, which drops CreateWorkflow when `runs` is `None`; `LateRunSessions`),
-`cli/src/frontends/workflow_gating.rs` and `app_server.rs` (`LateRunSessions` is set once the service is built),
+(`wired_workflow_tools(analyzer, home, runs)`: CreateWorkflow first, then SaveWorkflow, the run tools of 9.40, ListSavedWorkflows),
+`cli/src/frontends/workflow_gating.rs` and `app_server.rs` (the one late slot, `kernel-api` `workflow_run::LateRunSessions`, is set
+once the service is built; the run tools of 9.40 read the same slot),
 `cli/src/frontends/workflow_service.rs` (the defaults and the bindings port of the composed service).
 
 **Decisions.**
@@ -3232,7 +3233,7 @@ own `context.session`), `tools/src/workflow_tools.rs` (`workflow_tools` takes th
 3. The parent's permission mode is recorded on the launch by `record_parent_mode` (9.35), on the blocking pool, before the child starts.
    A service with no bindings port refuses the submit, and so does a read error (fail closed).
 4. The tool calls `for_session(&context.session)`. Each session's port is the run service's `SessionRuns`, which holds the parent.
-5. `LateRunSessions` is set after `workflow_service::build`. The gate source (and so the tool list) is built before the service, so the
+5. The kernel-api `LateRunSessions` (9.40's slot, merged here; this PR first had its own copy, dropped) is set after `workflow_service::build`. The gate source (and so the tool list) is built before the service, so the
    tools hold the late holder. Until it is set, a submit answers unsupported, which the tool reports as a failed call.
 6. The tool's result text, the concurrency sentence and the draft handling are 9.27's, unchanged. CreateWorkflow is still unreachable by
    default: the gate is closed for every session the Host does not open.
@@ -3301,6 +3302,97 @@ own `context.session`), `tools/src/workflow_tools.rs` (`workflow_tools` takes th
 
 **Not done.** Amend (387), the phase table and holes (375), the turn's input id (372), the trace (375), the Host-session protocol test and the
 live child (386), and the desktop check. Gate stays off.
+
+### 9.40 W7-9: run tools (as built, gate off)
+
+**Scope built.** Three of the four run tools: ListWorkflowRuns, ResumeWorkflowRun and ResolveWorkflowQuestion. Each reads or acts
+through the run port of the calling session (`DynamicWorkflowRunSessions::for_session(context.session)`), registered in
+`wired_workflow_tools` in Node's order (after SaveWorkflow, before ListSavedWorkflows). GetWorkflowRun is not built (divergence 392).
+Nothing user-visible changes: the gate is still closed unless the Host sends the flag.
+
+- **The late slot.** The gate is built before the kernel and the run service (9.36), so the tools cannot take the sessions directly.
+  `kernel-api` `workflow_run::LateRunSessions` is a `OnceLock` that implements `DynamicWorkflowRunSessions`; `cli`'s `app_server`
+  creates it, hands it to `gating(...)`, and sets it where the run service is wired (the same place as the context's
+  `set_dynamic_workflow_runs`). Before it is set, every session's port answers each member with the optional-member fallback
+  (`DynamicWorkflowRunError::unsupported`), and the tools report Node's "this session cannot ..." failure.
+- **Missing capability is told apart from a failed call.** `DynamicWorkflowRunError::is_unsupported` reads the fallback's prefix.
+  A capability gap gets Node's failure text (`workflow_introspection_unavailable`, `workflow_resume_unavailable`,
+  `workflow_question_answering_unavailable`); any other error is a failure with its text.
+- **Port members added on the run service.** `resolve_question` (kernel-api default unsupported, implemented by `SessionRuns` in
+  `runtime/src/workflow_run_list.rs`). `LiveRun` now carries the run's `ActorHandle`, so the answer goes to the owner of the live
+  run that parks the question. The live runs of the session are asked in launch order; the first that holds the question answers
+  it (the owner's `answer` returns `None` for a question it does not hold). A run whose owner is gone (`NotDelivered`: it
+  settled after the snapshot) is skipped, and an error is reported only when no run accepted the answer (`first_answer`;
+  ocr on #597, finding 1, test-first).
+- **Model text is formatted in Rust (decision for Q6, 390).** The three formats are short (one line per run, or one sentence).
+  `ListWorkflowRuns` writes one `<run ... />` line per row with ISO timestamps and `workflowRunAttribute`'s whitespace collapse and
+  XML escape (`prompts::workflow_notice::escape_xml`). The resume and resolve texts are Node's, verbatim. The helper stays I/O-free
+  and is not called for these.
+- **Inputs.** `limit` defaults to 20 and is clamped to [1, 50] (Node's schema preprocess); `statuses` must be one of the five
+  lifecycle names; `run_id`, `question_id` and `answer` must not be empty; unknown keys are rejected.
+- **Contracts.** Names, descriptions, input schemas and the flags (read-only, deferred, concurrency-safe) come from the generated
+  `node_workflow_tools.json`, as ListSavedWorkflows does. Permission is `Allow` for all three, as Node's `needsApproval: false`.
+
+**Node divergences (new in W7-9, numbered from 390).**
+
+390. Model text for the three tools is formatted in Rust, not by the helper (Q6 decided: a Rust port is clearly smaller for these
+     three; GetWorkflowRun, whose formatter is much larger, stays unbuilt, 392). The text is Node's; the timestamps are ISO in UTC
+     with four-digit years only (Node's `toISOString` also writes extended years, which no journal row reaches).
+391. `ResolveWorkflowQuestion` refuses only `unknown_question`. Node's `already_resolved` and `run_not_in_flight` come from a table of
+     retired questions (the registry keeps 256 resolved or withdrawn ids). Rust keeps no such table, so a second answer to a
+     resolved question, and an answer after its ask was withdrawn, both read as unknown. The wording of the unknown refusal is Node's.
+392. GetWorkflowRun is not built. Its detail needs the run's log tail, roster, phases, health, holes, artifacts and pending
+     questions from live state, and its formatter and summary are a large port of Node's `get-workflow-run-*.ts`. Without it the
+     model cannot read a pending question's id except from the escalation notice (Node's fallback is GetWorkflowRun's
+     `pendingQuestions`). `get_run_detail` stays unsupported. Follow-up: a run detail read and its formatter. Until GetWorkflowRun is
+     registered, the `unknown_question` text (391) points the model at a tool it cannot call. Node's text is kept verbatim: the gate
+     is off, and GetWorkflowRun lands before the gate opens (ocr on #597, finding 4).
+393. AmendWorkflow and FillWorkflowHole are not built (W7-10, and the amend port member).
+394. Per-session routing. Node has one run service per app, and its `resolveQuestion` answers any qid in that table. Rust asks only
+     the live runs of the calling session, which is the stricter rule the repository states for enumeration surfaces. A qid of
+     another session is refused as unknown, even when Node would answer it.
+395. The tools reach the sessions through `LateRunSessions`. A build with no run service (no Node helper, so no child runner) answers
+     the unavailable failure, as Node does when its port is absent. Node's `typeof` probe is replaced by `is_unsupported`, which reads
+     the fallback's prefix; a port that failed with that same text would read as absent.
+396. The resume's refusal messages are Node's. The numeric `errorCode` of Node's failure is not carried (the executor projects it as a
+     code string that the model does not read; the message prefix is the discriminator, as in Node).
+397. The success of a resume is text plus `{ok, runId}` in the output's display. Node's output also says `status: "backgrounded"` and
+     `backgroundTaskId`, which the executor's background tracking reads. This PR does not carry those fields; the
+     completion of a resumed run reaches the parent through the run's progress path (9.34), as a launch does. Whether the executor
+     tracks it as a background task is the CreateWorkflow path's question (W7-8d).
+398. The list's display is the port's page as it is (Node projects its output to the contract shape). The fields the port returns
+     are the ones the contract lists, so the projection is the identity here.
+399. Permission metadata is not mirrored: Node's `patternSources` (the tool name and the run id) and `denyPriority: "beforeAsk"` are
+     not carried into these tools, which return `Allow` from `check_permissions`. Whether the Rust permission chain applies project
+     deny rules to the run id before the call is not checked in this PR.
+400. The Node `resolveQuestion` answer writes its resolved event through the owner (as the owner's `answer`), and a journal warning is
+     dropped here (`AnswerOutcome.journal_warning` is not read). Node's `resolve` cannot fail once the entry exists; Rust's owner can, and
+     the delivery is still made, as Node delivers the answer whether or not the write lands (driver_owner.rs, 1381).
+401. A wiring fault on the answer path (the owner is gone) is an error with the mailbox's text, not a refusal. Node has no such path.
+402. The composed set is tested with a fake session port (tools) and with the gate's wiring (cli `workflow_gating_tests`), not through
+     `app_server` with a real run service and a Host session (as 326).
+403. The answer path over a parked question (the `Resolved` branch with a live escalation) is covered only by the owner's own tests
+     in `workflow` (`driver_owner_tests`), not by a run-service or composed test. The runtime test covers the refusal path and the
+     session scope (`resolve_question_is_refused_as_unknown_when_no_live_run_of_the_session_holds_it`).
+404. `ListWorkflowRuns` and `ResumeWorkflowRun` read their session through `context.session`. Node reads `context.dynamicWorkflowRunPort`,
+     which the executor fills per session. The difference is only the source of the session, and it is the same session.
+405. `workflow_run_tools` is a Rust module with a `RunTool` that holds the contract and the sessions. Node has three handler modules
+     with one entry each. The behaviour is the same; the layout follows ListSavedWorkflows.
+406. The text of the capability-gap failures is Node's; the three prefixes are the discriminators the model reads.
+407. Empty and unknown inputs: an empty `run_id` or `question_id` is an invalid input (validation fails before any port call). Node's
+     schema has `minLength: 1`, which fails the same way.
+408. The resume's `compile_failed` detail is appended after a newline, as Node's `resumeFailureFor` does. The detail is the helper's
+     compile list when the port carries one.
+409. Not done in this PR, and carried to the next: GetWorkflowRun (392), AmendWorkflow and FillWorkflowHole (393), the retired-question
+     table (391), the executor's background tracking of a resumed run (397), and the permission pattern sources (399).
+
+**Tests.** Written with the implementation in one pass, so the red step was not captured for the tools' tests: the tool file and its
+tests were written together, and the first compile of the tests was green (19 of 19 in `tools::workflow_run_tools_tests`). The runtime
+test `resolve_question_is_refused_as_unknown_when_no_live_run_of_the_session_holds_it` was written against the new port member and
+passed first time. The cli `workflow_gating_tests` were updated for the new `wired_workflow_tools` and `gating` parameters and pass.
+
+Green: `cargo fmt --all --check`; `cargo clippy --workspace --all-targets --locked -- -D warnings`; lib tests of `rust-cli-kernel-api`
+(440), `rust-cli-runtime` (309, of which five are the answer-selection tests added for ocr finding 1), `rust-cli-tools` (598); the cli binary tests (559).
 
 ## 10. Open questions
 

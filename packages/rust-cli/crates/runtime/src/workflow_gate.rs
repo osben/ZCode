@@ -117,59 +117,27 @@ impl ToolRegistry for GatedRegistry {
     }
 }
 
-/// Fork (W7-7a, 9.36; W7-8d, 9.39): the workflow tools wired in this build, in Node's order. SaveWorkflow needs the analyzer
-/// (the helper's check), and ListSavedWorkflows reads the home's saved store. CreateWorkflow needs the analyzer too and,
-/// with `runs`, it starts its run through the calling session's port; without `runs` it is dropped, so a session never
-/// sees a tool that cannot run. EvalWorkflowSnippet is not offered: its reads are rooted at the process workspace, not at the
-/// session's directory (9.36, divergence 313).
+/// Fork (W7-7a, 9.36; W7-8d, 9.39; W7-9, 9.40): the workflow tools wired in this build, in Node's order: CreateWorkflow
+/// (with the analyzer and the run sessions), SaveWorkflow (with the analyzer), the run tools (ListWorkflowRuns,
+/// ResumeWorkflowRun, ResolveWorkflowQuestion) through `runs`, then ListSavedWorkflows. EvalWorkflowSnippet is not offered:
+/// its reads are rooted at the process workspace, not at the session's directory (9.36, divergence 313).
 pub fn wired_workflow_tools(
     analyzer: Option<Arc<dyn rust_cli_kernel_api::workflow_analysis::WorkflowAnalyzer>>,
     home: &std::path::Path,
-    runs: Option<Arc<dyn rust_cli_kernel_api::workflow_run::DynamicWorkflowRunSessions>>,
+    runs: Arc<dyn rust_cli_kernel_api::workflow_run::DynamicWorkflowRunSessions>,
 ) -> Vec<Arc<dyn Tool>> {
-    let has_runs = runs.is_some();
-    rust_cli_tools::workflow_tools(analyzer, home.to_path_buf(), runs, None)
-        .into_iter()
-        .filter(|tool| has_runs || tool.name() != rust_cli_kernel_api::tool_names::CREATE_WORKFLOW)
-        .collect()
+    let mut tools: Vec<Arc<dyn Tool>> =
+        rust_cli_tools::workflow_tools(analyzer, home.to_path_buf(), Some(runs.clone()), None);
+    let list_saved = tools
+        .iter()
+        .position(|tool| tool.name() == rust_cli_kernel_api::tool_names::LIST_SAVED_WORKFLOWS)
+        .unwrap_or(tools.len());
+    tools.splice(
+        list_saved..list_saved,
+        rust_cli_tools::workflow_run_tools(runs),
+    );
+    tools
 }
-
-/// Fork (W7-8d, 9.39): the run service's per-session ports, set once the composition has built the service. The gate
-/// source's tools hold it from the start (the tool list is fixed at assembly, and the service is built after it). Until
-/// it is set, a call's submit answers unsupported, which the tool reports as a failed call.
-#[derive(Default)]
-pub struct LateRunSessions {
-    cell:
-        std::sync::OnceLock<Arc<dyn rust_cli_kernel_api::workflow_run::DynamicWorkflowRunSessions>>,
-}
-
-impl LateRunSessions {
-    /// Sets the sessions (once). Returns  when they were already set.
-    pub fn set(
-        &self,
-        sessions: Arc<dyn rust_cli_kernel_api::workflow_run::DynamicWorkflowRunSessions>,
-    ) -> bool {
-        self.cell.set(sessions).is_ok()
-    }
-}
-
-impl rust_cli_kernel_api::workflow_run::DynamicWorkflowRunSessions for LateRunSessions {
-    fn for_session(
-        &self,
-        session: &SessionId,
-    ) -> Arc<dyn rust_cli_kernel_api::workflow_run::DynamicWorkflowRunPort> {
-        match self.cell.get() {
-            Some(sessions) => sessions.for_session(session),
-            None => Arc::new(NoRunService),
-        }
-    }
-}
-
-/// The port of a composition whose run service is not built yet: every capability is unsupported.
-struct NoRunService;
-
-#[async_trait]
-impl rust_cli_kernel_api::workflow_run::DynamicWorkflowRunPort for NoRunService {}
 
 /// Fork (W7-7a, divergence 55): the gate source with Node's incognito `automationTools` toggle in it
 /// (`resolveRuntimeDynamicWorkflowToolsIncluded`). A session whose incognito profile excludes automation tools is closed

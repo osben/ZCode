@@ -80,7 +80,7 @@ pub use ext::{DynamicWorkflowGating, ExtConfig, Extensions};
 pub use hook_transcripts::LocalHookTranscripts;
 pub use rust_cli_compact::{AutoCompactAt, CompactConfig, Thresholds as CompactThresholds};
 pub use rust_cli_context::{Attribution, ContextConfig, DesktopContext, OutputStyle, Surface};
-pub use workflow_gate::{LateRunSessions, wired_workflow_tools};
+pub use workflow_gate::wired_workflow_tools;
 // hooks 快照（`LocalKernel::replace_hooks` 的参数）：前端的测试组装它不必依赖 hooks crate（修复线 F37 的 TUI 测试）。
 pub use rust_cli_hooks::{HookSource, HooksConfig, HooksSettings};
 pub use rust_cli_query::{RequestLimits, ThinkingTokens};
