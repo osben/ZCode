@@ -475,7 +475,8 @@ fn completed_detail() -> Value {
         "createdAt": 1_000,
         "updatedAt": 2_000,
         "usage": { "spentTokens": 42 },
-        "result": "done"
+        "result": "done",
+        "health": { "consecutiveFailures": 0, "cachedSteps": 0, "pendingQuestionsKnown": true }
     })
 }
 
@@ -596,7 +597,8 @@ async fn get_of_a_run_another_session_owns_says_so_and_flags_a_live_run_as_uncon
     let detail = json!({
         "runId": "wf_other", "label": "x", "labelSource": "script", "status": "running",
         "ownedByThisSession": false, "possiblyInterrupted": true,
-        "createdAt": 1_000, "updatedAt": 2_000, "usage": { "spentTokens": 0 }
+        "createdAt": 1_000, "updatedAt": 2_000, "usage": { "spentTokens": 0 },
+        "health": { "consecutiveFailures": 0, "cachedSteps": 0, "pendingQuestionsKnown": true }
     });
     let (sessions, _) = sessions(FakePort {
         detail: Some(Some(detail)),

@@ -1425,6 +1425,19 @@ impl rust_cli_workflow::run_store::RunStore for DetailStore {
         else {
             return Ok(None);
         };
+        // The situation snapshot (9.46) of the same events: no node or actor rows, and no clock on the events.
+        let stored: Vec<rust_cli_node_store::dwf::StoredEvent> = self
+            .events
+            .iter()
+            .filter(|(id, _)| id == run_id)
+            .flat_map(|(_, events)| events.iter().cloned())
+            .enumerate()
+            .map(|(index, event)| rust_cli_node_store::dwf::StoredEvent {
+                sequence: i64::try_from(index + 1).unwrap_or(i64::MAX),
+                event,
+                time_created: 0,
+            })
+            .collect();
         // The state is the real reducer's replay of the run's events, as the SQLite store folds them.
         let state = default_concurrency.and_then(|default| {
             let record = rust_cli_node_store::dwf::RunRecord {
@@ -1432,21 +1445,9 @@ impl rust_cli_workflow::run_store::RunStore for DetailStore {
                 parent_session_id: row.parent_session_id.clone(),
                 ..Default::default()
             };
-            let events: Vec<rust_cli_node_store::dwf::StoredEvent> = self
-                .events
-                .iter()
-                .filter(|(id, _)| id == run_id)
-                .flat_map(|(_, events)| events.iter().cloned())
-                .enumerate()
-                .map(|(index, event)| rust_cli_node_store::dwf::StoredEvent {
-                    sequence: i64::try_from(index + 1).unwrap_or(i64::MAX),
-                    event,
-                    time_created: 0,
-                })
-                .collect();
             rust_cli_node_store::replay_run_state(
                 &record,
-                &events,
+                &stored,
                 default,
                 &rust_cli_node_store::WORKFLOW_RUN_LIMITS,
             )?
@@ -1454,6 +1455,20 @@ impl rust_cli_workflow::run_store::RunStore for DetailStore {
             .into_iter()
             .find(|run| run.get("runId").and_then(serde_json::Value::as_str) == Some(run_id))
         });
+        let roster = rust_cli_workflow::run_roster::build_roster(
+            &rust_cli_workflow::run_roster::RosterFacts {
+                state: state.as_ref(),
+                events: &stored,
+                nodes: &[],
+                actors: &[],
+                terminal: matches!(
+                    row.status,
+                    rust_cli_workflow::model::RunStatus::Completed
+                        | rust_cli_workflow::model::RunStatus::Errored
+                        | rust_cli_workflow::model::RunStatus::Stopped
+                ),
+            },
+        );
         Ok(Some(rust_cli_workflow::run_store::RunDetail {
             run: rust_cli_workflow::run_store::RunListRow {
                 run: row.clone(),
@@ -1461,6 +1476,7 @@ impl rust_cli_workflow::run_store::RunStore for DetailStore {
                 time_updated: *updated,
             },
             state,
+            roster,
         }))
     }
 }
@@ -1563,6 +1579,10 @@ async fn get_run_detail_reads_the_journal_row_for_the_owner_and_another_session(
     assert_eq!(detail["usage"]["nodesRunning"], 1);
     assert_eq!(detail["usage"]["nodesCompleted"], 1);
     assert_eq!(detail["usage"]["nodesFailed"], 1);
+    // 9.46: the situation snapshot reaches the detail: the parked questions are known (the replay ran), and the log tail
+    // of this journal is empty.
+    assert_eq!(detail["health"]["pendingQuestionsKnown"], true);
+    assert_eq!(detail["logTail"], json!([]));
     // The replay keeps the subagent model on the progress path, not in the run entry, so the detail does not show it yet
     // (divergence 436).
     assert!(detail.get("subagentModel").is_none());

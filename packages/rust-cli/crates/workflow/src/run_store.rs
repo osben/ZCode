@@ -20,6 +20,7 @@ use crate::import_build::{
 };
 use crate::journal_dwf::{DwfJournal, row_from_dwf, status_to_dwf};
 use crate::model::{RunRow, RunStatus};
+use crate::run_roster::{RosterFacts, build_roster};
 use rust_cli_node_store::dwf::codecs::INTERRUPTED_CODE;
 
 /// The message an orphan settlement writes (Node `interruptedRunFailure`, copied byte for byte).
@@ -93,6 +94,9 @@ pub struct RunDetail {
     pub run: RunListRow,
     /// The run's entry of the journal's replay, as `RunStore::run_detail` documents it.
     pub state: Option<serde_json::Map<String, serde_json::Value>>,
+    /// The situation snapshot (9.46): the phases, subagents, health, log tail, actors and the launch's script path and model
+    /// bindings, built by `run_roster::build_roster` from the same snapshot's events, node and actor rows and `state`.
+    pub roster: serde_json::Map<String, serde_json::Value>,
 }
 
 /// The `RunStore` over one session database. `clock` stamps the rows a settlement writes.
@@ -196,11 +200,11 @@ impl RunStore for SqliteRunStore {
         run_id: &str,
         default_concurrency: Option<f64>,
     ) -> Result<Option<RunDetail>> {
-        // The row, its timestamps and its events are read in one read transaction, so they share one WAL snapshot: the
-        // engine writes the journal through its own connection, and an autocommit read per query could see a settlement
-        // land between two of them. The events are read only when a replay will use them. The replay folds the events
-        // after the lock is released.
-        let (record, time_created, time_updated, events) = {
+        // The row, its timestamps, its events, its node rows and its actor rows are read in one read transaction, so they share
+        // one WAL snapshot: the engine writes the journal through its own connection, and an autocommit read per query could
+        // see a settlement land between two of them. The replay and the roster fold them after the lock is released. The
+        // roster takes the non-report node rows (Node `NON_REPORT_NODE_KINDS`).
+        let (record, time_created, time_updated, events, nodes, actors) = {
             let conn = self.conn.lock_unpoisoned();
             let tx = conn.unchecked_transaction()?;
             let Some(record) = dwf::get_run(&tx, run_id)? else {
@@ -209,11 +213,13 @@ impl RunStore for SqliteRunStore {
             let Some((created, updated)) = dwf::run_times(&tx, run_id)? else {
                 anyhow::bail!("the run {run_id} has a row without timestamps");
             };
-            let events = match default_concurrency {
-                Some(_) => dwf::list_events(&tx, run_id)?,
-                None => Vec::new(),
-            };
-            (record, created, updated, events)
+            let events = dwf::list_events(&tx, run_id)?;
+            let nodes: Vec<_> = dwf::list_nodes(&tx, run_id)?
+                .into_iter()
+                .filter(|node| node.kind != dwf::NodeKind::Report)
+                .collect();
+            let actors = dwf::list_actors(&tx, run_id)?;
+            (record, created, updated, events, nodes, actors)
         };
         let state = default_concurrency.and_then(|default| {
             let replayed = rust_cli_node_store::replay_run_state(
@@ -227,6 +233,17 @@ impl RunStore for SqliteRunStore {
                 .into_iter()
                 .find(|run| run.get("runId").and_then(serde_json::Value::as_str) == Some(run_id))
         });
+        let terminal = matches!(
+            record.status,
+            dwf::RunStatus::Completed | dwf::RunStatus::Errored | dwf::RunStatus::Stopped
+        );
+        let roster = build_roster(&RosterFacts {
+            state: state.as_ref(),
+            events: &events,
+            nodes: &nodes,
+            actors: &actors,
+            terminal,
+        });
         Ok(Some(RunDetail {
             run: RunListRow {
                 run: row_from_dwf(record),
@@ -234,6 +251,7 @@ impl RunStore for SqliteRunStore {
                 time_updated,
             },
             state,
+            roster,
         }))
     }
 }
