@@ -630,6 +630,11 @@ pub fn put_actor(conn: &Connection, actor: &ActorRecord, now: i64) -> Result<()>
 const ACTOR_COLUMNS: &str =
     "run_id, site_id, ordinal, name, persona_json, session_id, resolved_model";
 
+/// The actor columns the run detail reads (9.50): `persona_json` is written as null, Node's `withPersona: false`. Spelled out,
+/// so a column change to `ACTOR_COLUMNS` cannot silently null the wrong column.
+const ROSTER_ACTOR_COLUMNS: &str =
+    "run_id, site_id, ordinal, name, null as persona_json, session_id, resolved_model";
+
 fn actor_from_row(row: &Row<'_>) -> rusqlite::Result<ActorRecord> {
     Ok(ActorRecord {
         run_id: row.get("run_id")?,
@@ -714,6 +719,11 @@ pub fn put_node(conn: &Connection, node: &NodeRecord, now: i64) -> Result<()> {
 
 const NODE_COLUMNS: &str = "run_id, site_id, ordinal, kind, actor_site_id, actor_ordinal, actor_seq, \
      input_hash, status, result_json, error_json, stats_json, message_boundary, artifact_id, input_json";
+
+/// The node columns the run detail's roster reads (9.50): `result_json` is written as null, Node's `withResult: false`.
+/// Spelled out, so a column change to `NODE_COLUMNS` cannot silently null the wrong column.
+const ROSTER_NODE_COLUMNS: &str = "run_id, site_id, ordinal, kind, actor_site_id, actor_ordinal, actor_seq, \
+     input_hash, status, null as result_json, error_json, stats_json, message_boundary, artifact_id, input_json";
 
 fn node_kind_from_column(row: &Row<'_>, value: &str) -> rusqlite::Result<NodeKind> {
     Ok(match value {
@@ -860,24 +870,21 @@ pub fn list_events_with_report_cap(
     run_id: &str,
     keep: usize,
 ) -> Result<Vec<StoredEvent>> {
-    let cutoff: i64 = if keep == 0 {
-        -1
-    } else {
-        conn.query_row(
-            "select sequence from dwf_event where run_id = ?1 and type = 'report' order by sequence limit 1 offset ?2",
-            params![run_id, i64::try_from(keep - 1)?],
-            |row| row.get(0),
-        )
-        .optional()?
-        .unwrap_or(i64::MAX)
-    };
+    // The cutoff is a subquery of the same statement, so the ranking and the scan read one snapshot. A cap of zero gives
+    // -1 (every item goes); fewer reports than the cap leaves the cutoff at the maximum (none goes).
+    let keep = i64::try_from(keep)?;
     let mut statement = conn.prepare(
         "select sequence,
-                case when type = 'report' and sequence > ?2 then json_remove(payload_json, '$.item') else payload_json end,
+                case when type = 'report' and sequence > (
+                    case when ?2 = 0 then -1 else coalesce(
+                        (select sequence from dwf_event where run_id = ?1 and type = 'report'
+                         order by sequence limit 1 offset ?2 - 1),
+                        9223372036854775807) end
+                ) then json_remove(payload_json, '$.item') else payload_json end,
                 time_created
          from dwf_event where run_id = ?1 order by sequence",
     )?;
-    let rows = statement.query_map(params![run_id, cutoff], |row| {
+    let rows = statement.query_map(params![run_id, keep], |row| {
         let payload: String = row.get(1)?;
         let event = serde_json::from_str(&payload).map_err(|error| {
             rusqlite::Error::FromSqlConversionFailure(
@@ -899,9 +906,8 @@ pub fn list_events_with_report_cap(
 /// Node `listNodes({kinds: NON_REPORT_NODE_KINDS, withResult: false})` (9.50, divergence 564): the run's non-report rows in
 /// insertion order, with `result_json` read as null. `input_json` is kept, as Node keeps it.
 pub fn list_roster_nodes(conn: &Connection, run_id: &str) -> Result<Vec<NodeRecord>> {
-    let columns = NODE_COLUMNS.replace("result_json", "null as result_json");
     let mut statement = conn.prepare(&format!(
-        "select {columns} from dwf_node where run_id = ?1 and kind <> 'report' order by id"
+        "select {ROSTER_NODE_COLUMNS} from dwf_node where run_id = ?1 and kind <> 'report' order by id"
     ))?;
     let rows = statement.query_map(params![run_id], node_from_row)?;
     rows.collect::<rusqlite::Result<Vec<_>>>()
@@ -911,9 +917,8 @@ pub fn list_roster_nodes(conn: &Connection, run_id: &str) -> Result<Vec<NodeReco
 /// Node `listActors(runId, {withPersona: false})` (9.50, divergence 564): the run's actor rows in insertion order, with
 /// `persona_json` read as null (the full system prompt has no reader in the run detail).
 pub fn list_actors_without_persona(conn: &Connection, run_id: &str) -> Result<Vec<ActorRecord>> {
-    let columns = ACTOR_COLUMNS.replace("persona_json", "null as persona_json");
     let mut statement = conn.prepare(&format!(
-        "select {columns} from dwf_actor where run_id = ?1 order by id"
+        "select {ROSTER_ACTOR_COLUMNS} from dwf_actor where run_id = ?1 order by id"
     ))?;
     let rows = statement.query_map(params![run_id], actor_from_row)?;
     rows.collect::<rusqlite::Result<Vec<_>>>()

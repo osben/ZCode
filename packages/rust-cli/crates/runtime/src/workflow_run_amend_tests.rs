@@ -1247,3 +1247,47 @@ async fn a_successor_script_that_does_not_compile_leaves_a_live_predecessor_runn
         "only the resume launched a child"
     );
 }
+
+/// ocr finding (medium, 9.50): the compile probe compiles the successor's script with the same arguments the successor's start
+/// receives, so a compile that depends on the arguments is judged the same way before the predecessor is stopped.
+#[tokio::test]
+async fn the_compile_probe_sees_the_arguments_the_successor_starts_with() {
+    let fx = fixture(|conn| {
+        interrupted_with_args(conn, "dwfrun-probe-args", PARENT, json!({ "topic": "x" }))
+    });
+    let mut request = amend_request("dwfrun-probe-args", "return 2\n");
+    request.inherit_args = true;
+    let answer = amend(&fx.service, request).await;
+    assert!(matches!(answer, AmendResult::Started { .. }), "{answer:?}");
+
+    let expected = json!({ "topic": "x" }).as_object().cloned();
+    let launches = fx.fake.launches();
+    assert_eq!(launches.len(), 2, "the probe, then the successor");
+    assert_eq!(
+        launches[0].input.args, expected,
+        "the probe compiles with the inherited arguments"
+    );
+    assert_eq!(
+        launches[1].input.args, expected,
+        "the successor starts with them"
+    );
+}
+
+/// ocr finding (low, 9.50): a closed service spawns no child, the probe included. An amend after close is refused before the
+/// probe starts, and nothing is stopped.
+#[tokio::test]
+async fn an_amend_after_the_service_closed_starts_no_probe_child() {
+    let fx = fixture(|conn| interrupted(conn, "dwfrun-closed", PARENT, "return 1\n"));
+    fx.service.close().await;
+    let result = fx
+        .service
+        .for_session(&SessionId::new(PARENT))
+        .amend(amend_request("dwfrun-closed", "return 2\n"))
+        .await;
+    assert!(
+        result.is_err(),
+        "a closed service refuses the amend: {result:?}"
+    );
+    assert!(fx.fake.launches().is_empty(), "no probe child was started");
+    assert_eq!(row(&fx, "dwfrun-closed").superseded_by, None);
+}

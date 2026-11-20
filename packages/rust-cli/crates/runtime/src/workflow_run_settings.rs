@@ -74,7 +74,9 @@ pub trait RunSettingsSink: Send + Sync {
     fn settings_turn(&self, parent: &SessionId, turn: SettingsTurn);
 }
 
-/// The answer of a settings change. A refusal changes nothing.
+/// The answer of a settings change. A refusal changes nothing, with one exception: `Refused(StartFailed)` can follow an
+/// amend that already stopped and superseded a live predecessor (the amend's message says so). The caller cannot tell
+/// the two apart from the variant alone, so it must read the message as well.
 #[derive(Debug, Clone, PartialEq)]
 pub enum SettingsOutcome {
     /// Applied in place: the same run, with no stop and no successor.

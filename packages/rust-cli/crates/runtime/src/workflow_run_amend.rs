@@ -134,10 +134,15 @@ impl WorkflowRunService {
         // 2. The successor's id. 2b. The successor's script compiles before anything is stopped (divergence 667, closed by
         // 9.50): a script that does not compile refuses with the predecessor untouched, as Node compiles before its stop.
         let successor = mint_run_id();
+        // The probe takes the arguments the successor's start will take (ocr, 9.50): the preflight row holds the stored ones.
+        let probe_args = request
+            .inherit_args
+            .then(|| row.args.as_ref().and_then(Value::as_object).cloned())
+            .flatten();
         self.precompile(LaunchInput {
             script_text: request.script_text.clone(),
             run_id: successor.clone(),
-            args: None,
+            args: probe_args,
             resumed_from: Some(predecessor.clone()),
             cwd: PathBuf::from(&request.cwd),
         })
@@ -236,6 +241,10 @@ impl WorkflowRunService {
     /// and the start's own compile check runs on it; the probe child is stopped again, and nothing is registered. The
     /// script compiles a second time at the successor's start (divergence 683 records the cost).
     async fn precompile(&self, input: LaunchInput) -> Result<(), DynamicWorkflowRunError> {
+        // A closed service spawns no child, as `start` refuses one (ocr, 9.50): the probe is a spawn too.
+        if self.inner.state.lock_unpoisoned().closed {
+            return Err(start_failure(LaunchFailure::Closed));
+        }
         let run_id = input.run_id.clone();
         // The mailbox stays alive for the probe: a compile sends no request, and a dropped mailbox would fail any that did.
         let (_mailbox, handle) = ActorMailbox::new();

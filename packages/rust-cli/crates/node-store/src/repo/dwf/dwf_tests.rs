@@ -777,6 +777,13 @@ fn report_items_after_the_keepth_report_are_removed_and_nothing_else_changes() {
     let full = list_events(&conn, "run_1").unwrap();
 
     let capped = list_events_with_report_cap(&conn, "run_1", 2).unwrap();
+    // The boundary is the second report's sequence (the last kept one), named here rather than read off a fixed index.
+    let last_kept = capped
+        .iter()
+        .filter(|entry| entry.event["type"] == "report")
+        .nth(1)
+        .expect("two reports are kept")
+        .sequence;
     assert_eq!(capped.len(), full.len());
     let items: Vec<Option<Value>> = capped
         .iter()
@@ -797,7 +804,7 @@ fn report_items_after_the_keepth_report_are_removed_and_nothing_else_changes() {
             assert_eq!(bounded.event, whole.event, "non-report events are verbatim");
         } else {
             let mut expected = whole.event.clone();
-            if bounded.sequence > capped[2].sequence {
+            if bounded.sequence > last_kept {
                 expected.as_object_mut().unwrap().remove("item");
             }
             assert_eq!(bounded.event, expected);

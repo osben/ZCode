@@ -55,7 +55,7 @@ impl WorkflowRunService {
             // The owner settled the run after the liveness check, and its mailbox is gone: not live, the settled answer.
             Err(MailboxError::NotDelivered) => Ok(RetuneAnswer::NotLive),
             Err(error) => Err(DynamicWorkflowRunError::new(format!(
-                "the owner refused the retune: {error}"
+                "the owner failed the retune: {error}"
             ))),
         })
         .await?;
