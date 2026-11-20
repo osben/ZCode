@@ -213,6 +213,7 @@ pub(crate) fn check(
                 .find_map(|(value, raw)| removal.target(value, raw))
         })?;
     Some(Check::Ask {
+        independent: false,
         message,
         kind: AskKind::Immune,
         suggestions: Vec::new(),

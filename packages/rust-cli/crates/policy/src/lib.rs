@@ -253,7 +253,10 @@ impl PolicyGate {
             && tool.name() == rust_cli_kernel_api::tool_names::WEB_SEARCH
             && matches!(
                 own,
-                PermissionDecision::Ask { .. } | PermissionDecision::Passthrough
+                PermissionDecision::Ask {
+                    always_ask: false,
+                    ..
+                } | PermissionDecision::Passthrough
             );
         if needs_no_approval {
             return PermissionDecision::Allow {
@@ -433,17 +436,19 @@ impl PermissionGate for PolicyGate {
         match chain::inner(tool.name(), check, updated, &inputs) {
             chain::Inner::Allow { .. } => None,
             chain::Inner::Deny { message } => Some(PermissionDecision::Deny { message }),
+            // A hook's allow never removes an always-ask (Node `applyPreToolPermissionDecision` keeps `alwaysAsk`).
             chain::Inner::Ask {
                 message,
                 suggestions,
                 once,
                 independent,
-                kind: _,
+                kind,
             } => Some(PermissionDecision::Ask {
                 message,
                 suggestions,
                 once,
                 independent,
+                always_ask: kind.is_always(),
             }),
         }
     }

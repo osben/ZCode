@@ -282,5 +282,8 @@ mod allowed;
 #[path = "lib_tests_plan_mcp.rs"]
 mod plan_mcp;
 
+#[path = "lib_tests_always_ask.rs"]
+mod always_ask;
+
 #[path = "lib_tests_generic.rs"]
 mod generic_contents;

@@ -18,6 +18,11 @@ use tokio::sync::mpsc;
 
 use super::*;
 use crate::test_more::{Ctx, output_text};
+use rust_cli_kernel_api::orchestration::PermissionGate;
+use rust_cli_kernel_api::permission::{
+    PermissionMode, PermissionRules, RuleBehavior, RuleSource, SourcedRule, syntax::parse_rule,
+};
+use rust_cli_policy::PolicyGate;
 
 /// Test file IO through the fs crate's helpers (std::fs is disallowed in this crate); a missing parent is created on write.
 mod fs {
@@ -158,6 +163,103 @@ fn source_input(name: &str, script: &str) -> Value {
 
 const CLEAN: &str =
     "interface R { done: boolean }\nconst r = await agent(\"a\").ask<R>(\"do\");\nreturn r.done;";
+
+/// The policy chain's decision for SaveWorkflow in `mode`, under `rules`: `PolicyGate::decide`, the same path the
+/// executor takes, not the tool's own check.
+async fn chain_decision(
+    harness: &Harness,
+    rules: PermissionRules,
+    mode: PermissionMode,
+    input: &Value,
+) -> PermissionDecision {
+    let gate = PolicyGate::new(rules);
+    let mut ctx = harness.with_skill();
+    ctx.mode = mode;
+    ctx.base_mode = mode;
+    gate.decide(&harness.tool, input, &ctx).await
+}
+
+fn rule_set(source: RuleSource, behavior: RuleBehavior) -> PermissionRules {
+    PermissionRules {
+        version: 1,
+        rules: vec![SourcedRule {
+            source,
+            behavior,
+            rule: parse_rule("SaveWorkflow"),
+        }],
+        ..PermissionRules::default()
+    }
+}
+
+/// Node `alwaysAsk` (checkAlwaysAsk): a compiling save asks through the chain in every mode and under an allow rule;
+/// a session allow rule skips the ask; a deny rule still denies.
+#[tokio::test]
+async fn save_workflow_asks_through_the_policy_chain_and_only_a_session_rule_skips_it() {
+    let harness = Harness::new("chain");
+    let input = source_input("pr-review", CLEAN);
+    let modes = [
+        PermissionMode::Default,
+        PermissionMode::AcceptEdits,
+        PermissionMode::Plan,
+        PermissionMode::Guarded,
+        PermissionMode::BypassPermissions,
+    ];
+    for mode in modes {
+        let decision = chain_decision(&harness, PermissionRules::default(), mode, &input).await;
+        assert!(
+            matches!(
+                decision,
+                PermissionDecision::Ask {
+                    always_ask: true,
+                    independent: true,
+                    ..
+                }
+            ),
+            "{mode:?} without rules: {decision:?}"
+        );
+        for source in [RuleSource::UserSettings, RuleSource::ProjectSettings] {
+            let decision = chain_decision(
+                &harness,
+                rule_set(source, RuleBehavior::Allow),
+                mode,
+                &input,
+            )
+            .await;
+            assert!(
+                matches!(
+                    decision,
+                    PermissionDecision::Ask {
+                        always_ask: true,
+                        ..
+                    }
+                ),
+                "{mode:?} under {source:?} allow: {decision:?}"
+            );
+        }
+    }
+    let session = chain_decision(
+        &harness,
+        rule_set(RuleSource::Session, RuleBehavior::Allow),
+        PermissionMode::BypassPermissions,
+        &input,
+    )
+    .await;
+    assert!(
+        matches!(session, PermissionDecision::Allow { .. }),
+        "session allow skips the ask: {session:?}"
+    );
+    let denied = chain_decision(
+        &harness,
+        rule_set(RuleSource::UserSettings, RuleBehavior::Deny),
+        PermissionMode::Default,
+        &input,
+    )
+    .await;
+    assert!(
+        matches!(denied, PermissionDecision::Deny { .. }),
+        "deny still denies: {denied:?}"
+    );
+}
 
 #[test]
 fn the_tool_is_named_deferred_and_gated_by_an_ask_that_is_not_always_allowed() {

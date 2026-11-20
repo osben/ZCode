@@ -134,6 +134,7 @@ pub fn check(access: FileAccess, path: Option<&str>, inputs: &Inputs<'_>) -> Che
 
 fn ask(message: String, kind: AskKind) -> Check {
     Check::Ask {
+        independent: false,
         message,
         kind,
         suggestions: Vec::new(),

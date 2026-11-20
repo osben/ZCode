@@ -350,6 +350,7 @@ impl Pipeline {
                 suggestions,
                 once,
                 independent,
+                always_ask: _,
             } => {
                 let asking = Asking {
                     message,
@@ -480,6 +481,7 @@ impl Pipeline {
                 suggestions,
                 once,
                 independent,
+                always_ask: _,
             }) => match self.gate.check_rules(tool, &input, context).await {
                 Some(PermissionDecision::Deny { message }) => Err(other(error(message))),
                 Some(PermissionDecision::Ask { .. }) => self

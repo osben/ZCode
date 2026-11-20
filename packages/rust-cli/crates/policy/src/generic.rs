@@ -88,6 +88,7 @@ pub(crate) fn check(tool: &str, input: &Value, inputs: &Inputs<'_>) -> Check {
     }
     if hit(RuleBehavior::Ask) {
         return Check::Ask {
+            independent: false,
             message: texts::request_message(tool, None),
             kind: AskKind::Rule,
             suggestions: Vec::new(),
