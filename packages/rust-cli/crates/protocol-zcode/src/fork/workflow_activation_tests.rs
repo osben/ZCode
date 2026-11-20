@@ -8,8 +8,23 @@ use rust_cli_kernel_api::message::{
 
 use super::{
     KIND, Source, activation_plan, entry_key, history_shows_workflow, is_workflow_command,
-    on_command, on_resume, restore_plan,
+    on_command, on_resume, restore_plan_for,
 };
+
+/// The decision over a history, read as its fact (the snapshot path of a resume reads it the same way).
+fn restore_plan(
+    on_demand: bool,
+    activated: bool,
+    has_entry: bool,
+    messages: &[Message],
+) -> Option<(Source, bool)> {
+    restore_plan_for(
+        on_demand,
+        activated,
+        has_entry,
+        history_shows_workflow(messages),
+    )
+}
 use rust_cli_kernel_api::dynamic_workflow::DynamicWorkflowGate;
 use rust_cli_kernel_api::ids::SessionId;
 use rust_cli_kernel_api::store::FrontendRecord;

@@ -3882,7 +3882,8 @@ progress path wrote it (now awaited) and five redundant clones in the reminder h
 
 **Status.** Built with its composed tests. The gate stays off: no session records it open unless the Host's cached fact
 says so, and nothing user-visible changes. `cargo fmt --all --check`, `cargo clippy --workspace --all-targets --locked -- -D
-warnings` pass. Lib suites: protocol-zcode 998, kernel-api 443, runtime 338, cli bin `workflow` filter 20 (all green).
+warnings` pass. Lib suites: protocol-zcode 1000, kernel-api 443, runtime 338, cli bin `workflow` filter 20 (all green).
+The PR #603 review round is in divergences 583-593.
 
 **Scope built.**
 
@@ -3921,11 +3922,12 @@ a restart simulated as a new server over the same store (empty gate table, no op
      Open: a rebuild on every reopen would also overwrite the create's params, so the record must remember whether its
      source was the params (or the fact) before a reopen may replace it.
 582. A prepared session that is not active yet takes no gate record on its open (the 9.36 pin). Its activation records it.
-583. On-demand activation runs on every cold open of a session, not only one with history: `on_resume` reads the entry, and
-     reads the session snapshot only when there is no entry. A fresh on-demand create therefore reads its snapshot once. A
-     failed read is logged, and the history decides nothing.
-584. The legacy resume keeps its explicit `record` and `on_resume` after the open. A cold legacy resume of an on-demand session
-     without an entry and without a workflow in its history still reads the snapshot twice (divergence 506, not closed).
+583. On-demand activation runs on every cold open of a session, not only one with history. The open reads the history it
+     already loaded (the view in the bridge's open closure, `history_shows_workflow`), so no snapshot is read on the open path.
+     The entry is read first, as before. A failed entry read is logged and the history decides.
+584. The legacy resume calls `on_resume` only when the session was open before the resume. A cold legacy resume is restored by
+     its open, so it reads the entry and the history once, not twice (PR #603 finding, closes the legacy half of 506). Divergence
+     506 is otherwise unchanged: `legacy::read` still reads the snapshot itself.
 585. Closes 501. A plain close (`session/close`, the draft branch and the bridge branch) and the lifecycle stop and restart stop
      the session's reminder clock, as Node's `beginShutdown` does. The next turn edge makes a clock again.
 586. Closes 482 for the first input. A create whose first input is the `/workflow` command activates the session through the
@@ -3941,6 +3943,15 @@ a restart simulated as a new server over the same store (empty gate table, no op
      parameters reach a record only through `createSession`. Not checked against Node's legacy create.
 590. `Server::stop_workflow_reminders` drops the session's clock and its entry in one step, as a deletion does. A reminder that
      is due at the close does not fire, and a run of a closed session gets no reminder until the session's next turn edge.
+591. (PR #603 review) A submission reservation that is not active yet is skipped on its cold open like a prepared worktree
+     (`restored.preparation`). `activate_submission` opens the session before its frozen-incognito refusal point, so a refused
+     activation must leave no record. Red test: `a_cold_open_of_a_reserved_submission_takes_no_gate_record_until_its_activation`.
+592. (PR #603 review) The release unload (`session/releaseUnderDirectory`) stops the released session's clock, as a close does
+     (the last unload route without it). Red test: `a_released_session_loses_its_reminder_clock`.
+593. (PR #603 review) The test harness: the restart reuses `legacy_session::tests::server_over`, which keeps the model
+     directory (`Levels`), so the restart matches a real one. Sharing the builder with the first server removes the drift.
+     Not changed: `session/tree` delete (`session_tree.rs`) closes bridges without stopping the clock. It is a deletion path
+     with no forget of its gate either (divergence 501 for deletes, not closed here).
 
 ## 10. Open questions
 

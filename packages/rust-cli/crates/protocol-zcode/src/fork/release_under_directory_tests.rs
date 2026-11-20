@@ -569,3 +569,37 @@ async fn the_method_is_routed_to_the_handler() {
     assert!(matches!(reply, Some(Ok(_))), "the method is handled");
     assert_eq!(closes(&handles, "s"), vec![EndReason::Other]);
 }
+
+/// Fork (W7-14, 9.47, divergence 501): an unload by release stops the released session's reminder clock, as a close does.
+#[tokio::test]
+async fn a_released_session_loses_its_reminder_clock() {
+    use crate::fork::workflow_cold_open_tests::{QuietTimers, SilentNotices};
+    use crate::fork::workflow_reminder_host::WorkflowReminders;
+    use rust_cli_kernel_api::dynamic_workflow::DynamicWorkflowGate;
+
+    let (_scope, server, _handles) =
+        fixture(vec![idle("inside", &format!("{WORKTREE}/packages/ui"))]).await;
+    server.record_dynamic_workflow_gate(
+        &SessionId::new("inside"),
+        DynamicWorkflowGate {
+            enabled: true,
+            tools_on_demand: true,
+        },
+    );
+    let reminders = Arc::new(WorkflowReminders::new(
+        server.context.dynamic_workflow_gates().clone(),
+        Arc::new(QuietTimers),
+        Arc::new(SilentNotices),
+    ));
+    server.context.set_workflow_reminders(reminders.clone());
+    reminders.turn_finished("inside");
+    assert!(reminders.has_session("inside"));
+    assert_eq!(
+        release(&server, WORKTREE).await,
+        json!({"released": ["inside"], "busy": []})
+    );
+    assert!(
+        !reminders.has_session("inside"),
+        "the release unloads the session, so its clock stops as it does for a close"
+    );
+}

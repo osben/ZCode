@@ -277,6 +277,9 @@ pub(crate) async fn resume(server: &Server, params: &Value) -> Result<Value, Rpc
     let params: ResumeParams = parse(params)?;
     check_tool_lists(&params.tool_allowlist, &params.tool_denylist)?;
     let id = SessionId::new(params.session_id);
+    // Fork (W7-14, 9.47): the open that loads a cold session already rebuilt its gate and restored its activation (from the
+    // history it loaded), so only a session that was open before this resume needs the restore here.
+    let cold = server.bridge.get(&id).is_none();
     server
         .live(&id)
         .await
@@ -284,7 +287,9 @@ pub(crate) async fn resume(server: &Server, params: &Value) -> Result<Value, Rpc
     // Fork (W7-1, spec 9.2): a resumed record is rebuilt from the Host's cached fact alone, as Node's cold recovery does.
     crate::commands::record_workflow_gate(server, &id, None, None);
     // Fork (W7-11, 9.44): a cold-recovered on-demand session activates from its entry or its history.
-    crate::fork::workflow_activation::on_resume(server, &id).await;
+    if !cold {
+        crate::fork::workflow_activation::on_resume(server, &id).await;
+    }
     crate::legacy::read(server, &snapshot_params(&id)).await
 }
 

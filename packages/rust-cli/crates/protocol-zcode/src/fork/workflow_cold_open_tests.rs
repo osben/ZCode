@@ -6,20 +6,18 @@ use std::sync::Arc;
 
 use rust_cli_base::TaskScope;
 use rust_cli_kernel_api::dynamic_workflow::DynamicWorkflowGate;
-use rust_cli_kernel_api::ids::{EnvironmentId, SessionId};
-use rust_cli_kernel_api::permission::PermissionMode;
+use rust_cli_kernel_api::ids::SessionId;
 use rust_cli_kernel_api::session_api::Kernel;
 use rust_cli_kernel_api::store::FrontendRecord;
-use rust_cli_kernel_api::testing::{FixedClock, selection};
-use rust_cli_protocol_core::connection::{self, Options};
 use serde_json::json;
 
-use super::legacy_session::tests::{TestKernel, automation_create, call, server};
+use super::legacy_session::tests::{
+    Levels, TestKernel, automation_create, call, server, server_over,
+};
 use super::workflow_activation::{KIND, entry_key};
 use super::workflow_progress::WorkflowNotices;
 use super::workflow_reminder_host::{ReminderTimers, WorkflowReminders};
-use crate::context::Context;
-use crate::server::{Defaults, Server};
+use crate::server::Server;
 
 /// The session's stored row (persisted at once, so its records can be written), made by the create the Host sends.
 async fn stored_session(server: &Server, id: &str) -> SessionId {
@@ -34,20 +32,8 @@ async fn stored_session(server: &Server, id: &str) -> SessionId {
 /// A process restart over the same store: a new server, so an empty gate table and no open session. Every session it opens
 /// is a cold open.
 fn restarted(kernel: &Arc<TestKernel>) -> (TaskScope, Arc<Server>) {
-    let scope = TaskScope::root("restart", |_| {});
-    let (out, _reader) = tokio::io::duplex(1 << 16);
-    let (peer, _writer) = connection::start(out, &scope.spawner(), Options::default());
-    let context = Arc::new(Context::new(peer, Arc::new(FixedClock(5))));
-    let server = Arc::new(Server::new(
-        context,
-        kernel.clone(),
-        scope.spawner(),
-        Defaults {
-            selection: selection().into(),
-            mode: PermissionMode::Default,
-            environment: EnvironmentId::new("local"),
-        },
-    ));
+    let (scope, server) = server_over(kernel.clone());
+    server.context.set_models(Arc::new(Levels));
     (scope, server)
 }
 
@@ -143,7 +129,7 @@ async fn a_cold_v4_open_of_an_on_demand_session_activates_from_its_entry_and_lea
 }
 
 /// A timer that never fires: the close test reads the clock map, not the reminders.
-struct QuietTimers;
+pub(crate) struct QuietTimers;
 
 impl ReminderTimers for QuietTimers {
     fn now_ms(&self) -> u64 {
@@ -159,10 +145,33 @@ impl ReminderTimers for QuietTimers {
     }
 }
 
-struct SilentNotices;
+pub(crate) struct SilentNotices;
 
 impl WorkflowNotices for SilentNotices {
     fn post(&self, _parent_session_id: &str, _text: String) {}
+}
+
+/// Fork (W7-14, 9.47, finding on PR #603): a submission reservation that is not active yet takes no gate record on its cold
+/// open, as a prepared worktree does. Its activation records the gate, past its refusal points (9.2).
+#[tokio::test]
+async fn a_cold_open_of_a_reserved_submission_takes_no_gate_record_until_its_activation() {
+    let (_scope, first, kernel) = server();
+    let session = stored_session(&first, "ses_reserved").await;
+    crate::preparation::save(
+        &first,
+        &session,
+        &crate::preparation::Marker::preparing("sub-1", 1),
+    )
+    .await
+    .expect("the reservation is stored");
+    let (_restart, server) = restarted(&kernel);
+    host_fact(&server, true, Some("onDemand")).await;
+    server.live(&session).await.expect("the session opens cold");
+    assert_eq!(
+        server.dynamic_workflow_gate(&session),
+        None,
+        "a reserved session has no record until its activation records the gate"
+    );
 }
 
 #[tokio::test]

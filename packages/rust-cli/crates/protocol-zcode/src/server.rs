@@ -271,12 +271,12 @@ impl Server {
         // Fork: a prepared worktree that is not active yet (an agent restart before the activation) keeps SessionStart
         // held, as the live session did, so the hook never runs in the parent checkout. The kernel opens it here; the
         // bridge's own open below finds it open.
+        // Fork (W7-14, 9.47): a prepared session that is not active yet, a worktree or a submission reservation, takes no gate
+        // record on its open; its activation records the gate past its refusal points (9.2, 9.36).
+        let preparing = restored.worktree.preparing.is_some() || restored.preparation.is_some();
         if restored.worktree.preparing.is_some() {
             self.kernel.open_prepared_session(session).await?;
         }
-        // Fork (W7-14, 9.47): a prepared session that is not active yet takes no gate record on its open; its activation
-        // records the gate before its first turn (9.36).
-        let preparing = restored.worktree.preparing.is_some();
         // Set by the one open that makes the projection: only it starts the session's watchers.
         let made = std::sync::atomic::AtomicBool::new(false);
         let made_here = &made;
@@ -284,6 +284,9 @@ impl Server {
         // session opened in a side tab has no trust banners.
         let resumed = std::sync::atomic::AtomicBool::new(false);
         let resumed_here = &resumed;
+        // Fork (W7-14, 9.47): whether the loaded history shows a workflow, read once from the view the open loads.
+        let history = std::sync::atomic::AtomicBool::new(false);
+        let history_here = &history;
         let live = self
             .bridge
             .open(session, move |handle, view| {
@@ -291,6 +294,10 @@ impl Server {
                 resumed_here.store(
                     view.meta.kind == rust_cli_kernel_api::store::SessionKind::Interactive
                         && !view.messages.is_empty(),
+                    std::sync::atomic::Ordering::Relaxed,
+                );
+                history_here.store(
+                    crate::fork::workflow_activation::history_shows_workflow(&view.messages),
                     std::sync::atomic::Ordering::Relaxed,
                 );
                 Live::new(
@@ -308,7 +315,8 @@ impl Server {
             // Fork (W7-14, 9.47, closes 496): every cold open rebuilds the session's gate record and restores its on-demand
             // activation, on the v4 path as on the legacy resume.
             if !preparing {
-                crate::fork::workflow_activation::on_cold_open(self, session).await;
+                let shows = history.load(std::sync::atomic::Ordering::Relaxed);
+                crate::fork::workflow_activation::on_cold_open(self, session, shows).await;
             }
             // Fork (9.30 item 212, 9.31 divergence 233): only the open that made the projection runs the parent's run
             // sweep and quota scan, once per cold open. Background: the open does not wait on the journal, and a failure
