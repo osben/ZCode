@@ -237,6 +237,11 @@ pub enum PermissionDecision {
         /// `once`, PermissionRequest hooks still run for it. Only the decision chain gives it.
         #[serde(default, skip_serializing_if = "std::ops::Not::not")]
         independent: bool,
+        /// 工具自报的“总是询问”（Node `alwaysAsk`，core `permission/service.ts` `checkAlwaysAsk`）：每个模式都询问，
+        /// 整个工具的允许规则与模式（yolo、guarded、bypass）都盖不过它；只有会话的允许规则跳过它，拒绝规则照常拒绝。
+        /// 普通的询问为 false。只有工具的 `check_permissions` 给出（[`PermissionDecision::always_ask`]）。
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        always_ask: bool,
     },
     Deny {
         message: String,
@@ -253,6 +258,22 @@ impl PermissionDecision {
             suggestions,
             once: false,
             independent: false,
+            always_ask: false,
+        }
+    }
+
+    /// 工具自报的“总是询问”（Node `alwaysAsk`）。`independent` 为真时也不提供“总是允许”（Node `no-always-allow`）。
+    pub fn always_ask(
+        message: impl Into<String>,
+        suggestions: Vec<PermissionRule>,
+        independent: bool,
+    ) -> Self {
+        Self::Ask {
+            message: message.into(),
+            suggestions,
+            once: false,
+            independent,
+            always_ask: true,
         }
     }
 }

@@ -435,8 +435,8 @@ impl Tool for SaveWorkflowTool {
         }
     }
 
-    /// Node `prepareSaveWorkflowApproval`: the source is read here and checked. A script that checks asks, with
-    /// `independent` (no always-allow), and the bytes asked about are kept for the call. A script that does not check
+    /// Node `prepareSaveWorkflowApproval`: the source is read here and checked. A script that checks asks, as an
+    /// always-ask with `independent` (no always-allow), and the bytes asked about are kept for the call. A script that does not check
     /// proceeds to the call, which returns its diagnostics without writing.
     async fn check_permissions(
         &self,
@@ -484,12 +484,12 @@ impl Tool for SaveWorkflowTool {
             };
         };
         self.remember(context.tool_use.clone(), script);
-        PermissionDecision::Ask {
-            message: confirmation_message(&input.name, &path, overwrite, shadowing),
-            suggestions: Vec::new(),
-            once: false,
-            independent: true,
-        }
+        // Node `alwaysAsk` with `allowAlways: false`: asked in every mode, and no always-allow is offered.
+        PermissionDecision::always_ask(
+            confirmation_message(&input.name, &path, overwrite, shadowing),
+            Vec::new(),
+            true,
+        )
     }
 
     /// Writes the approved bytes. Without an approval for this call, a script that checks clean is not written: the

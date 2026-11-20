@@ -60,6 +60,7 @@ async fn guarded_asks_once_for_a_dangerous_monitor_command() {
         suggestions: Vec::new(),
         once: true,
         independent: false,
+        always_ask: false,
     };
     // allow 规则不盖过它。
     assert_eq!(

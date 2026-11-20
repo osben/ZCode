@@ -413,6 +413,7 @@ pub fn check(invocation: &Invocation, compound_has_cd: bool, inputs: &Inputs<'_>
     {
         return PathVerdict {
             check: Check::Ask {
+                independent: false,
                 message: texts::CD_WITH_WRITE.to_owned(),
                 kind: AskKind::Other,
                 suggestions: Vec::new(),
@@ -574,6 +575,7 @@ fn input_verdict(
 fn asked(message: String, overridable: bool) -> PathVerdict {
     PathVerdict {
         check: Check::Ask {
+            independent: false,
             message,
             kind: AskKind::Other,
             suggestions: Vec::new(),

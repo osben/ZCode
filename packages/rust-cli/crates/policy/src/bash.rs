@@ -46,6 +46,7 @@ fn found_rule<'a>(
 fn ask_rule(inputs: &Inputs<'_>, subject: Subject<'_>, mode: Mode) -> Option<Check> {
     let found = found_rule(inputs, RuleBehavior::Ask, subject, mode)?;
     Some(Check::Ask {
+        independent: false,
         message: texts::request_message(TOOL, Some(&Reason::Rule(found.text(), found.source))),
         kind: AskKind::Rule,
         suggestions: Vec::new(),
@@ -220,10 +221,16 @@ pub(crate) fn subcommand_count(command: &str) -> usize {
 /// 去掉建议规则（§4.10 里不给建议的命令）。
 fn without_suggestions(check: Check) -> Check {
     match check {
-        Check::Ask { message, kind, .. } => Check::Ask {
+        Check::Ask {
+            message,
+            kind,
+            independent,
+            ..
+        } => Check::Ask {
             message,
             kind,
             suggestions: Vec::new(),
+            independent,
         },
         Check::Passthrough { reason, .. } => Check::Passthrough {
             reason,
@@ -380,6 +387,7 @@ fn decide(
             )
         });
         return Check::Ask {
+            independent: false,
             message: SHELL_OPERATORS.to_owned(),
             kind: if rule { AskKind::Rule } else { AskKind::Other },
             suggestions: Vec::new(),
@@ -398,6 +406,7 @@ fn decide(
         // 工作线 F80（用户决定 2026-10-24“同 Node”）：guarded 不问（Node 的 guarded 只因危险命令询问）；F76 问过。
         return if background && inputs.mode != PermissionMode::Guarded {
             Check::Ask {
+                independent: false,
                 message: BACKGROUND.to_owned(),
                 kind: AskKind::Safety,
                 suggestions: Vec::new(),
@@ -448,6 +457,7 @@ fn decide(
     let reason = Reason::Subcommands(needs);
     if any_ask {
         Check::Ask {
+            independent: false,
             message: texts::request_message(TOOL, Some(&reason)),
             kind: kind.unwrap_or(AskKind::Other),
             suggestions,
@@ -555,6 +565,7 @@ fn too_complex(
     }
     if matches_any(inputs, RuleBehavior::Ask, whole, Mode::Prefix) {
         return Check::Ask {
+            independent: false,
             message: texts::request_message(TOOL, None),
             kind: AskKind::Rule,
             suggestions: Vec::new(),
@@ -583,6 +594,7 @@ fn too_complex(
         return Check::Allow;
     }
     Check::Ask {
+        independent: false,
         message: reason.to_owned(),
         kind: AskKind::Other,
         suggestions: Vec::new(),

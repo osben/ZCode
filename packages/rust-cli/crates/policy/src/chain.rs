@@ -73,6 +73,7 @@ fn web_fetch(url: &str, inputs: &Inputs<'_>) -> Check {
             message: texts::request_message(WEB_FETCH, None),
             kind: AskKind::Rule,
             suggestions: Vec::new(),
+            independent: false,
         };
     }
     if hit(RuleBehavior::Allow) {
@@ -140,16 +141,38 @@ pub fn own(
             | None => (Check::Allow, updated_input),
         },
         PermissionDecision::Deny { message } => (Check::deny(message), None),
+        // Node `checkAlwaysAsk`: the tool's own deny (the built-in check's deny, such as a content deny rule) still denies;
+        // anything else is the always-ask ask, which no allow rule or mode passes (see [`inner`]).
+        PermissionDecision::Ask {
+            message,
+            suggestions,
+            once: _,
+            independent,
+            always_ask: true,
+        } => match builtin(subject, called, inputs) {
+            deny @ Check::Deny { .. } => (deny, None),
+            _ => (
+                Check::Ask {
+                    message,
+                    kind: AskKind::Always,
+                    suggestions,
+                    independent,
+                },
+                None,
+            ),
+        },
         PermissionDecision::Ask {
             message,
             suggestions,
             once: _,
             independent: _,
+            always_ask: false,
         } => (
             Check::Ask {
                 message,
                 kind: AskKind::Other,
                 suggestions,
+                independent: false,
             },
             None,
         ),
@@ -163,6 +186,16 @@ pub fn inner(tool: &str, check: Check, updated_input: Option<Value>, inputs: &In
             message: texts::tool_denied(tool),
         };
     }
+    // Node `checkAlwaysAsk` runs before every allow branch (yolo, guarded, plan, allow rules), so it returns here.
+    let check = match check {
+        Check::Ask {
+            message,
+            kind: AskKind::Always,
+            suggestions,
+            independent,
+        } => return always(tool, message, suggestions, independent, inputs),
+        other => other,
+    };
     // 工作线 F76（用户决定 2026-10-23“如果是 yolo 啥也不问”，shell-permissions.md §4.6.2）：yolo 下只有拒绝留下，
     // ask 规则、危险删除、安全检查与工具自身的询问都放行（F68 起 ask 规则与危险删除 bypass 也问，D21）。
     if inputs.full_access {
@@ -202,6 +235,7 @@ pub fn inner(tool: &str, check: Check, updated_input: Option<Value>, inputs: &In
             message,
             kind: kind @ (AskKind::Rule | AskKind::Safety | AskKind::Immune),
             suggestions,
+            ..
         } => {
             return Inner::Ask {
                 message,
@@ -215,6 +249,7 @@ pub fn inner(tool: &str, check: Check, updated_input: Option<Value>, inputs: &In
             message,
             kind,
             suggestions,
+            ..
         } => (Some(message), None, kind, suggestions),
         Check::Passthrough {
             reason,
@@ -231,6 +266,34 @@ pub fn inner(tool: &str, check: Check, updated_input: Option<Value>, inputs: &In
         suggestions,
         once: false,
         independent: false,
+    }
+}
+
+/// Node `checkAlwaysAsk` after the deny checks: auto mode denies (`mode.auto.unimplemented`), a session allow rule for the
+/// whole tool allows, and anything else asks. Every mode and every other allow rule is passed over, as in Node.
+fn always(
+    tool: &str,
+    message: String,
+    suggestions: Vec<PermissionRule>,
+    independent: bool,
+    inputs: &Inputs<'_>,
+) -> Inner {
+    if inputs.mode == PermissionMode::Auto {
+        return Inner::Deny {
+            message: texts::AUTO_UNIMPLEMENTED.to_owned(),
+        };
+    }
+    if inputs.rules.session_whole_tool_allow(tool) {
+        return Inner::Allow {
+            updated_input: None,
+        };
+    }
+    Inner::Ask {
+        message,
+        kind: AskKind::Always,
+        suggestions,
+        once: false,
+        independent,
     }
 }
 
@@ -262,7 +325,7 @@ pub fn plan_mcp(tool: &str, mcp: PlanMcp, base_bypass: bool, result: Inner) -> I
     match result {
         Inner::Deny { .. }
         | Inner::Ask {
-            kind: AskKind::Rule,
+            kind: AskKind::Rule | AskKind::Always,
             ..
         } => result,
         _ if mcp.destructive => Inner::Deny {
@@ -336,7 +399,9 @@ pub async fn outer(
             message: texts::dont_ask_rejected(tool),
         };
     }
-    if mode == PermissionMode::Plan && options.node_plan {
+    // Node `checkAlwaysAsk` comes before the plan gate, so under Node's plan mode an always-ask still asks.
+    let always_ask = kind.is_always();
+    if mode == PermissionMode::Plan && options.node_plan && !always_ask {
         if !options.plan_ask {
             return PermissionDecision::Deny {
                 message: texts::PLAN_MODE_READ_ONLY.to_owned(),
@@ -350,11 +415,13 @@ pub async fn outer(
             suggestions,
             once,
             independent,
+            always_ask: false,
         };
     }
     let automatic =
         mode == PermissionMode::Auto || (mode == PermissionMode::Plan && options.auto_in_plan);
-    if automatic && !kind.is_safety() {
+    // The classifier never decides an always-ask: the user is asked (Node has no classifier here).
+    if automatic && !kind.is_safety() && !always_ask {
         if mode == PermissionMode::Auto
             && let Inner::Allow { updated_input } = accept_edits()
         {
@@ -385,6 +452,7 @@ pub async fn outer(
         suggestions,
         once,
         independent,
+        always_ask,
     }
 }
 
