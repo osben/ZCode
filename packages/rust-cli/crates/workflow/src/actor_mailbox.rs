@@ -15,7 +15,9 @@
 //!   have been applied. A retry must not assume it was not.
 //! - An owner error crosses unchanged as an `anyhow::Error` (`MailboxError::Owner`), so its context chain survives.
 use crate::actor_feed::FeedEvent;
-use crate::driver_owner::{ActorDriverOwner, ActorSessions, SubmitReply, TurnEndReply};
+use crate::driver_owner::{
+    ActorDriverOwner, ActorSessions, SubmitReply, TicketSettlement, TurnEndReply,
+};
 use crate::escalation::{AnswerOutcome, EscalateOutcome, EscalationRequest};
 use crate::journal::JournalPort;
 use crate::model::{ConcurrencyChange, Ref};
@@ -127,6 +129,51 @@ pub(crate) enum ActorRequest {
     Feed { session: String, event: FeedEvent },
     /// The run's stop from the residency ledger (W6b part 6, `LiveRun`). No answer goes back.
     StopInterrupted,
+    /// The child's `create-actor` (W7-5a-2). The answer is the engine's actor id, which the child's later requests name.
+    CreateActor {
+        site_id: String,
+        name: Option<String>,
+        persona: Option<Value>,
+        reply: Sender<Result<String>>,
+    },
+    /// The child's `ask` (W7-5a-2). The reply waits for the ask's settlement, not for its ticket.
+    Ask {
+        site_id: String,
+        actor: String,
+        instructions: String,
+        reply: Sender<Result<TicketSettlement>>,
+    },
+    /// The child's world read (W7-5a-2). The reply waits for the worker's settlement.
+    WorldRead {
+        site_id: String,
+        op: String,
+        args: Vec<Value>,
+        reply: Sender<Result<TicketSettlement>>,
+    },
+    /// The child's content artifact publish (W7-5a-2). The reply waits for the store's settlement.
+    PublishArtifact {
+        site_id: String,
+        op: String,
+        args: Vec<Value>,
+        reply: Sender<Result<TicketSettlement>>,
+    },
+    /// The child's `complete`: the script's end (W7-5a-2).
+    Complete {
+        artifact: Value,
+        reply: Sender<Result<()>>,
+    },
+    /// The host's drain after a slice of child calls (W7-5a-2). Starts the turns the calls queued.
+    Drain { reply: Sender<Result<()>> },
+    /// The child's `log` event (W7-5a-2). No answer goes back.
+    Log { message: String },
+    /// The child's `report` event (W7-5a-2). No answer goes back.
+    Report {
+        site_id: String,
+        item: Value,
+        artifact_id: Option<String>,
+    },
+    /// The child's `phase-entered` event (W7-5a-2). No answer goes back.
+    EnterPhase { name: String },
 }
 
 impl ActorHandle {
@@ -183,7 +230,76 @@ fn dispatch<J: JournalPort, S: ActorSessions>(
     request: ActorRequest,
     owner: &mut ActorDriverOwner<J, S>,
 ) {
+    dispatch_request(request, owner);
+    // Every settlement this request produced reaches its ticket's reply, or is kept for `take_outcomes`.
+    owner.route_outcomes();
+}
+
+fn dispatch_request<J: JournalPort, S: ActorSessions>(
+    request: ActorRequest,
+    owner: &mut ActorDriverOwner<J, S>,
+) {
     match request {
+        ActorRequest::CreateActor {
+            site_id,
+            name,
+            persona,
+            reply,
+        } => {
+            let _ = reply.send(owner.create_actor(&site_id, name.as_deref(), persona.as_ref()));
+        }
+        ActorRequest::Ask {
+            site_id,
+            actor,
+            instructions,
+            reply,
+        } => {
+            let ticket = owner.ask(&site_id, &actor, &instructions);
+            answer_with_ticket(owner, ticket, reply);
+        }
+        ActorRequest::WorldRead {
+            site_id,
+            op,
+            args,
+            reply,
+        } => {
+            let ticket = owner.world_read(&site_id, &op, args);
+            answer_with_ticket(owner, ticket, reply);
+        }
+        ActorRequest::PublishArtifact {
+            site_id,
+            op,
+            args,
+            reply,
+        } => {
+            let ticket = owner.publish_artifact(&site_id, &op, &args);
+            answer_with_ticket(owner, ticket, reply);
+        }
+        ActorRequest::Complete { artifact, reply } => {
+            let _ = reply.send(owner.complete(artifact));
+        }
+        ActorRequest::Drain { reply } => {
+            let _ = reply.send(owner.drain());
+        }
+        ActorRequest::Log { message } => {
+            if let Err(error) = owner.log(&message) {
+                tracing::warn!("the owner failed to record a workflow log: {error:#}");
+            }
+        }
+        ActorRequest::Report {
+            site_id,
+            item,
+            artifact_id,
+        } => {
+            if let Err(error) = owner.report(&site_id, item, artifact_id.as_deref()) {
+                tracing::warn!("the owner failed to record a workflow report: {error:#}");
+            }
+        }
+        ActorRequest::EnterPhase { name } => {
+            if let Err(error) = owner.enter_phase(&name) {
+                tracing::warn!("the owner failed to enter a workflow phase: {error:#}");
+            }
+        }
         ActorRequest::Submit {
             session,
             payload,
@@ -266,6 +382,21 @@ fn dispatch<J: JournalPort, S: ActorSessions>(
             if let Err(error) = owner.stop_interrupted() {
                 tracing::warn!("the owner failed to settle an interrupted run: {error:#}");
             }
+        }
+    }
+}
+
+/// A ticketed call's reply: the owner's own error (outer), or the ticket's settlement (inner). The ticket is answered
+/// when it settles; a stop or shutdown answers it with an error.
+fn answer_with_ticket<J: JournalPort, S: ActorSessions>(
+    owner: &mut ActorDriverOwner<J, S>,
+    ticket: Result<u64>,
+    reply: Sender<Result<TicketSettlement>>,
+) {
+    match ticket {
+        Ok(ticket) => owner.await_ticket(ticket, reply),
+        Err(error) => {
+            let _ = reply.send(Err(error));
         }
     }
 }
@@ -363,6 +494,100 @@ impl ActorHandle {
     /// Asks the owner to settle its run as interrupted (W6b part 6). Posted without an answer.
     pub fn stop_interrupted(&self) -> bool {
         self.post(ActorRequest::StopInterrupted)
+    }
+
+    /// The child's `create-actor` (W7-5a-2): the engine's id for the new actor.
+    pub fn create_actor(
+        &self,
+        site_id: &str,
+        name: Option<&str>,
+        persona: Option<&Value>,
+    ) -> Result<String, MailboxError> {
+        self.call(|reply| ActorRequest::CreateActor {
+            site_id: site_id.to_owned(),
+            name: name.map(str::to_owned),
+            persona: persona.cloned(),
+            reply,
+        })
+    }
+
+    /// The child's `ask` (W7-5a-2). Blocks until the ask settles: `Ok` carries the ask's value, and an `Err` inside it
+    /// is the ask's own error (a refusal, a failure, or the run's stop).
+    pub fn ask(
+        &self,
+        site_id: &str,
+        actor: &str,
+        instructions: &str,
+    ) -> Result<TicketSettlement, MailboxError> {
+        self.call(|reply| ActorRequest::Ask {
+            site_id: site_id.to_owned(),
+            actor: actor.to_owned(),
+            instructions: instructions.to_owned(),
+            reply,
+        })
+    }
+
+    /// The child's world read (W7-5a-2). Blocks until the worker settles the read.
+    pub fn world_read(
+        &self,
+        site_id: &str,
+        op: &str,
+        args: Vec<Value>,
+    ) -> Result<TicketSettlement, MailboxError> {
+        self.call(|reply| ActorRequest::WorldRead {
+            site_id: site_id.to_owned(),
+            op: op.to_owned(),
+            args,
+            reply,
+        })
+    }
+
+    /// The child's content artifact publish (W7-5a-2). Blocks until the publish settles.
+    pub fn publish_artifact(
+        &self,
+        site_id: &str,
+        op: &str,
+        args: Vec<Value>,
+    ) -> Result<TicketSettlement, MailboxError> {
+        self.call(|reply| ActorRequest::PublishArtifact {
+            site_id: site_id.to_owned(),
+            op: op.to_owned(),
+            args,
+            reply,
+        })
+    }
+
+    /// The child's `complete` (W7-5a-2): the script's end.
+    pub fn complete(&self, artifact: Value) -> Result<(), MailboxError> {
+        self.call(|reply| ActorRequest::Complete { artifact, reply })
+    }
+
+    /// The host's drain after a slice of child calls (W7-5a-2): starts the turns the calls queued.
+    pub fn drain(&self) -> Result<(), MailboxError> {
+        self.call(|reply| ActorRequest::Drain { reply })
+    }
+
+    /// The child's `log` event (W7-5a-2). Posted without an answer: false only when the owner is gone.
+    pub fn log(&self, message: &str) -> bool {
+        self.post(ActorRequest::Log {
+            message: message.to_owned(),
+        })
+    }
+
+    /// The child's `report` event (W7-5a-2). Posted without an answer.
+    pub fn report(&self, site_id: &str, item: Value, artifact_id: Option<&str>) -> bool {
+        self.post(ActorRequest::Report {
+            site_id: site_id.to_owned(),
+            item,
+            artifact_id: artifact_id.map(str::to_owned),
+        })
+    }
+
+    /// The child's `phase-entered` event (W7-5a-2). Posted without an answer.
+    pub fn enter_phase(&self, name: &str) -> bool {
+        self.post(ActorRequest::EnterPhase {
+            name: name.to_owned(),
+        })
     }
 
     /// One turn's ask stats, before the turn's end. The owner writes them to the ask's node.
