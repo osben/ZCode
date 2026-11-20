@@ -18,10 +18,16 @@ use super::workflow_progress::WorkflowNotices;
 use super::workflow_reminder::{BlockedReminderClock, OpenDecisions, Reminder, ReminderHost};
 
 /// The clock's time and timers. Production: the tokio runtime ([`TokioTimers`]); tests: a fake clock.
+///
+/// `now_ms` and `schedule` share one time base: `schedule(delay)` means "`delay` after the `now_ms` I report now". The
+/// clock computes its waits from `now_ms` (the idle start plus the delay, minus now), so both must come from the same clock.
+/// [`TokioTimers`] pairs with a wall clock (`SystemClock`), whose `now_ms` can step backwards; a backward step lengthens a
+/// wait, a forward step shortens it. The tokio sleep itself is monotonic.
 pub trait ReminderTimers: Send + Sync {
     /// Epoch milliseconds now.
     fn now_ms(&self) -> u64;
-    /// Runs `fire` after `delay_ms` and returns the cancel of that timer (a cancelled timer never fires).
+    /// Runs `fire` after `delay_ms` (on the `now_ms` base above) and returns the cancel of that timer (a cancelled timer never
+    /// fires).
     fn schedule(&self, delay_ms: u64, fire: Box<dyn FnOnce() + Send>) -> Box<dyn FnOnce() + Send>;
 }
 
@@ -180,12 +186,16 @@ impl SessionReminders {
     }
 
     /// A turn started (any origin): the session is busy and the clock stops.
+    ///
+    /// The two edges must arrive serially and in order, from the session's actor. The idle flag and the clock are two
+    /// writes, and they are not atomic together: a concurrent edge could leave them disagreeing. A lock around both is not
+    /// used, because the clock may call `turn_started` back from inside `remind` (a reminder that starts a turn).
     pub fn turn_started(&self) {
         self.host.idle.store(false, Ordering::SeqCst);
         self.clock.session_busy();
     }
 
-    /// The session's queue drained: the session is idle and the idle clock starts.
+    /// The session's queue drained: the session is idle and the idle clock starts. Serial with `turn_started`, as above.
     pub fn turn_finished(&self) {
         self.host.idle.store(true, Ordering::SeqCst);
         self.clock.session_idle();

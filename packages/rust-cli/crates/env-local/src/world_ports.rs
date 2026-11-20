@@ -28,7 +28,7 @@ use rust_cli_workflow::artifact_publish::{
 };
 use rust_cli_workflow::world_read::{
     GlobHits, GrepEntry, GrepHits, RunOutcome, RunRequest, RunStatus, RunStream, WorldReadPorts,
-    caps,
+    WorldReadRoots, caps,
 };
 
 use regex::Regex;
@@ -64,7 +64,7 @@ impl WorldRoots {
     }
 }
 
-impl rust_cli_workflow::world_read::WorldReadRoots for WorldRoots {
+impl WorldReadRoots for WorldRoots {
     fn at(&self, root: &Path) -> Arc<dyn WorldReadPorts> {
         Arc::new(WorldPorts::new(
             self.env.clone(),

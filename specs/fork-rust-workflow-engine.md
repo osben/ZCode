@@ -3270,6 +3270,10 @@ The hole notice (353) and the cold replay (363) are still open, as in 9.38.
 419. The reminder is posted through `WorkflowNotices` (the signal channel), not Node's command queue (as 9.38 divergence 350).
 420. The tokio timer test uses real delays (10 ms and 50 ms), not paused time, so it can be slow on a loaded machine. It does not
      assert timing beyond "fires" and "does not fire after a cancel".
+421. A snippet whose cwd is empty or relative is refused before any start or read (ocr on #598). Confinement is lexical against the
+     cwd, and an empty root contains every path. Node's snippet has no such refusal (its cwd is always a session's directory).
+422. The read ports for a snippet are resolved once per eval, for its cwd, and reused for every child read (ocr on #598). Node does not
+     cache them, but the cwd does not change within a snippet, so the result is the same.
 
 ## 10. Open questions
 

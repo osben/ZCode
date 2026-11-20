@@ -19,6 +19,7 @@ use crate::world_git::{
 use rust_cli_base::js::json::stringify;
 use serde_json::{Value, json};
 use std::path::{Component, Path, PathBuf};
+use std::sync::Arc;
 
 /// The caps of Node's `WORLD_READ_CAPS`. Every limit is named here; nothing is clamped silently.
 pub mod caps {
@@ -123,8 +124,10 @@ pub trait WorldReadPorts: Send + Sync {
 /// at its cwd (specs/fork-rust-workflow-engine.md, 9.41, divergence 313), so the ports are made per call, not once per
 /// process.
 pub trait WorldReadRoots: Send + Sync {
-    /// The ports whose glob, grep and run are rooted at `root`.
-    fn at(&self, root: &std::path::Path) -> std::sync::Arc<dyn WorldReadPorts>;
+    /// The ports for `root`. `glob` and `grep` search under `root`. `files.read` reaches `read_text` with an absolute path
+    /// that the engine has already confined to the cwd it was given, so the port does not check containment itself. `run`
+    /// takes its cwd per request, so it is not rooted here.
+    fn at(&self, root: &Path) -> Arc<dyn WorldReadPorts>;
 }
 
 /// Execute one world read or run. `cwd` is the workspace root (the base of every relative path).

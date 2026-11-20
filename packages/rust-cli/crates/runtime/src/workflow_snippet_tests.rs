@@ -445,6 +445,46 @@ async fn a_snippet_reads_under_its_own_cwd_not_the_process_cwd() {
     assert_eq!(asked, vec![session_cwd]);
 }
 
+/// ocr on #598 (medium): the reads are confined to the snippet's cwd. An empty cwd is an empty root, which contains every
+/// path, and a relative cwd roots the reads at the process directory. Both are refused before anything starts or reads.
+#[tokio::test]
+async fn a_snippet_without_an_absolute_cwd_is_refused_before_any_start_or_read() {
+    for cwd in ["", "rel/dir"] {
+        let fake = Arc::new(FakeRunner::running());
+        let roots = Arc::new(Recording {
+            asked: Mutex::new(Vec::new()),
+            port: Arc::new(Reads {
+                read: Ok("hello".to_owned()),
+                delay: std::time::Duration::ZERO,
+            }),
+        });
+        let service = SnippetService::new(fake.clone(), roots.clone());
+        let outcome = service
+            .eval(SnippetRequest {
+                code: "return await files.read('../../secret');".to_owned(),
+                cwd: PathBuf::from(cwd),
+                timeout_ms: 5_000,
+            })
+            .await;
+        assert!(outcome.is_err(), "a cwd of {cwd:?} is refused");
+        assert!(
+            fake.launch
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .is_none(),
+            "nothing started for a cwd of {cwd:?}"
+        );
+        assert!(
+            roots
+                .asked
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .is_empty(),
+            "no read port was resolved for a cwd of {cwd:?}"
+        );
+    }
+}
+
 #[tokio::test]
 async fn a_world_read_that_escapes_the_workspace_is_refused_to_the_child() {
     let fake = Arc::new(FakeRunner::running());

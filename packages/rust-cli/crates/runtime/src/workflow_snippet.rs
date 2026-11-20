@@ -158,7 +158,8 @@ impl Core {
 /// send).
 struct SnippetHandler {
     core: Arc<Mutex<Core>>,
-    reads: Arc<dyn WorldReadRoots>,
+    /// The snippet's read ports, resolved once for its cwd by `eval`.
+    reads: Arc<dyn WorldReadPorts>,
     cwd: PathBuf,
 }
 
@@ -186,7 +187,7 @@ impl ChildHandler for SnippetHandler {
                 };
                 Box::pin(world_read(
                     self.core.clone(),
-                    self.reads.at(&self.cwd),
+                    self.reads.clone(),
                     self.cwd.clone(),
                     request.site_id,
                     op,
@@ -468,6 +469,16 @@ impl WorkflowSnippetPort for SnippetService {
     }
 
     async fn eval(&self, request: SnippetRequest) -> Result<SnippetOutcome, WorkflowSnippetError> {
+        // Confinement needs a real root. An empty cwd is an empty root, which contains every path, and a relative cwd would
+        // root the reads at the process directory. Refused before anything starts or reads (ocr on #598).
+        if !request.cwd.is_absolute() {
+            return Err(WorkflowSnippetError {
+                message: format!(
+                    "the snippet's working directory '{}' is not an absolute path, so its reads cannot be confined to the workspace.",
+                    request.cwd.display()
+                ),
+            });
+        }
         // One deadline for the whole snippet: the start (compile, entry, spawn), the run, and the child's world reads.
         let deadline = tokio::time::Instant::now() + Duration::from_millis(request.timeout_ms);
         let sink = Arc::new(Mutex::new(Sink::default()));
@@ -489,10 +500,9 @@ impl WorkflowSnippetPort for SnippetService {
         }));
         let handler: Arc<dyn ChildHandler> = Arc::new(SnippetHandler {
             core: core.clone(),
-            reads: self.reads.clone(),
+            reads: self.reads.at(&request.cwd),
             cwd: request.cwd.clone(),
         });
-        // The reads of this snippet are rooted at its cwd (the handler asks the roots port for it per read).
         let launch = SnippetLaunch {
             code: request.code,
             run_id,

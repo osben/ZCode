@@ -24,7 +24,7 @@ use rust_cli_workflow::artifact_publish::{
 use rust_cli_workflow::engine_artifacts::ArtifactPublishRequest;
 use rust_cli_workflow::error::ErrorCode;
 use rust_cli_workflow::world_read::{
-    RunRequest, RunStatus, WorldReadPorts, WorldReadRoots, execute_world_read,
+    GlobHits, RunRequest, RunStatus, WorldReadPorts, WorldReadRoots, execute_world_read,
 };
 use serde_json::{Value, json};
 
@@ -754,7 +754,7 @@ async fn the_roots_port_globs_under_the_root_it_is_asked_for() {
         )
     })
     .await;
-    let names = |hits: rust_cli_workflow::world_read::GlobHits| -> Vec<String> {
+    let names = |hits: GlobHits| -> Vec<String> {
         hits.files
             .iter()
             .map(|path| path.rsplit('/').next().unwrap_or_default().to_owned())
