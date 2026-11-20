@@ -92,9 +92,9 @@ impl WorkflowRunService {
                 "the concurrency limit must be a finite number, so the run is not amended",
             ));
         }
-        let Some(default) = self.default_concurrency_value() else {
+        if self.default_concurrency_value().is_none() {
             return Err(DynamicWorkflowRunError::unsupported("amend"));
-        };
+        }
         let Some(store) = self.inner.store.get().cloned() else {
             return Err(DynamicWorkflowRunError::unsupported("amend"));
         };
@@ -133,49 +133,54 @@ impl WorkflowRunService {
 
         // 2. The successor's id, then 3. the stop of a live predecessor, awaited through its own settlement.
         let successor = mint_run_id();
-        self.stop_superseded_if_live(&predecessor, &successor)
+        let stopped = self
+            .stop_superseded_if_live(&predecessor, &successor)
             .await?;
 
-        // 4. The import cache, built from the settled predecessor. The preflight passed, so a refusal here means the
+        // 4. The settled row, re-read after the stop: the tokens, the limit and the name are its final values. Read before
+        // the import, so every failure from here on is reported with the stop when this amend made it. Whether the stop
+        // took effect is read from the row: a run that settled on its own keeps its own stop reason and has no successor.
+        let settled_store = store.clone();
+        let settled_id = predecessor.clone();
+        let settled =
+            on_blocking_pool(move || settled_store.get_run(&settled_id).map_err(store_failure))
+                .await
+                .and_then(|row| {
+                    row.ok_or_else(|| {
+                DynamicWorkflowRunError::new(format!(
+                    "run {predecessor} has no row after its settlement, so the amend cannot read it"
+                ))
+            })
+                })
+                .map_err(|error| stopped_before(&predecessor, stopped, error))?;
+        let superseded = settled.superseded_by.as_deref() == Some(successor.as_str());
+
+        // 5. The import cache, built from the settled predecessor. The preflight passed, so a refusal here means the
         // predecessor is not terminal (owned by another process): a host fault, not an answer.
         let import_store = store.clone();
         let import_id = predecessor.clone();
-        let cache = match on_blocking_pool(move || {
-            import_store.amend_import(&import_id).map_err(store_failure)
-        })
-        .await?
-        {
+        let built =
+            on_blocking_pool(move || import_store.amend_import(&import_id).map_err(store_failure))
+                .await
+                .map_err(|error| stopped_before(&predecessor, stopped, error))?;
+        let cache = match built {
             BuildOutcome::Built { cache, .. } => cache,
             BuildOutcome::Refused(reason) => {
-                return Err(DynamicWorkflowRunError::new(format!(
-                    "dynamic workflow amend could not import from run {predecessor} after preflight: {}",
-                    reason.as_str()
-                )));
+                return Err(stopped_before(
+                    &predecessor,
+                    stopped,
+                    DynamicWorkflowRunError::new(format!(
+                        "dynamic workflow amend could not import from run {predecessor} after preflight: {}",
+                        reason.as_str()
+                    )),
+                ));
             }
         };
 
-        // 5. The settled row, re-read after the stop: the tokens, the limit and the name are its final values. Whether
-        // this amend stopped the predecessor is read from the row too: a run that settled on its own before the stop
-        // reached it keeps its own stop reason and has no successor.
-        let settled_store = store.clone();
-        let settled_id = predecessor.clone();
-        let settled = on_blocking_pool(move || {
-            settled_store.get_run(&settled_id).map_err(store_failure)
-        })
-        .await?
-        .ok_or_else(|| {
-            DynamicWorkflowRunError::new(format!(
-                "run {predecessor} has no row after its settlement, so the amend cannot read it"
-            ))
-        })?;
-        let superseded = settled.superseded_by.as_deref() == Some(successor.as_str());
-
         // Node: an omitted limit keeps the predecessor's, which the snapshot reports only when it differs from the default.
-        let max_concurrency = match request.max_concurrency {
-            Some(value) => value.floor().max(1.0),
-            None if settled.caps.max_concurrency == default => default,
-            None => settled.caps.max_concurrency,
-        };
+        let max_concurrency = request
+            .max_concurrency
+            .map_or(settled.caps.max_concurrency, |value| value.floor().max(1.0));
 
         // 6. The launch, as a submit does, with the predecessor as `resumedFrom`.
         let input = LaunchInput {
@@ -210,13 +215,7 @@ impl WorkflowRunService {
                 run_id: WorkflowRunId::new(successor),
                 superseded_run_id: superseded.then(|| WorkflowRunId::new(predecessor)),
             }),
-            // The predecessor is already stopped when the start fails. Say so, so the caller does not assume nothing changed:
-            // its finished work stays importable by a new amend.
-            Err(error) if superseded => Err(DynamicWorkflowRunError::new(format!(
-                "{} Run {predecessor} was already stopped as superseded before this start failed, so its finished work stays importable: amend it again to retry.",
-                error.message
-            ))),
-            Err(error) => Err(error),
+            Err(error) => Err(stopped_before(&predecessor, superseded, error)),
         }
     }
 
@@ -234,14 +233,15 @@ impl WorkflowRunService {
     }
 
     /// Stops the predecessor as superseded by `successor` if it is live in this process, and waits for its settlement.
-    /// A predecessor that is not live (settled, or unknown here) is left alone. A predecessor that is still starting
-    /// cannot be stopped yet, and a second stop of one that is already being stopped is refused, both as host faults.
+    /// Returns whether the stop was delivered to the owner: false for a predecessor that is not live (settled, or unknown
+    /// here), and for one whose owner had already settled on its own. A predecessor that is still starting cannot be
+    /// stopped yet, and a second stop of one that is already being stopped is refused, both as host faults.
     async fn stop_superseded_if_live(
         &self,
         run_id: &str,
         successor: &str,
-    ) -> Result<(), DynamicWorkflowRunError> {
-        let serve = {
+    ) -> Result<bool, DynamicWorkflowRunError> {
+        let (serve, delivered) = {
             let mut state = self.inner.state.lock_unpoisoned();
             if state.starting.contains(run_id) {
                 return Err(DynamicWorkflowRunError::new(format!(
@@ -249,22 +249,37 @@ impl WorkflowRunService {
                 )));
             }
             let Some(entry) = state.runs.get_mut(run_id) else {
-                return Ok(());
+                return Ok(false);
             };
             let Some(serve) = entry.serve.take() else {
                 return Err(DynamicWorkflowRunError::new(format!(
                     "run {run_id} is already being stopped, so it cannot be superseded again"
                 )));
             };
-            // The stop is posted under the lock. If the owner already settled the run on its own, the post is not
-            // delivered and the join below ends at once; the caller reads the settled row and so sees no successor.
-            entry.handle.stop_superseded(successor);
-            serve
+            // The stop is posted under the lock. If the owner already settled the run on its own, its mailbox is gone and
+            // the post is not delivered; the join below then ends at once.
+            (serve, entry.handle.stop_superseded(successor))
         };
         let failures = join_owner(serve).await;
         if !failures.is_empty() {
             buffer_failures(&mut self.inner.state.lock_unpoisoned().failures, failures);
         }
-        Ok(())
+        Ok(delivered)
     }
+}
+
+/// A failure after this amend stopped the predecessor says so: the caller must not assume nothing changed, since the
+/// predecessor's finished work stays importable by a new amend. Without a stop the error is returned as it is.
+fn stopped_before(
+    predecessor: &str,
+    stopped: bool,
+    error: DynamicWorkflowRunError,
+) -> DynamicWorkflowRunError {
+    if !stopped {
+        return error;
+    }
+    DynamicWorkflowRunError::new(format!(
+        "{} Run {predecessor} was already stopped as superseded before this failed, so its finished work stays importable: amend it again to retry.",
+        error.message
+    ))
 }

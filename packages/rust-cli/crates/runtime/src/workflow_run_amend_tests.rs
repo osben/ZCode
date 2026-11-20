@@ -140,6 +140,22 @@ impl ActorBindingsPort for FailingMode {
     }
 }
 
+/// A parent whose first mode read fails and whose later reads succeed: the first amend fails after the stop, a retry starts.
+struct FlakyMode(std::sync::atomic::AtomicBool);
+
+impl ActorBindingsPort for FlakyMode {
+    fn parent_bindings(&self, _parent: &str) -> Result<Option<ParentBindings>, String> {
+        Ok(None)
+    }
+
+    fn parent_permission_mode(&self, _parent: &str) -> Result<Option<PermissionMode>, String> {
+        if self.0.swap(false, std::sync::atomic::Ordering::SeqCst) {
+            return Err("the store is busy".to_owned());
+        }
+        Ok(Some(PermissionMode::Default))
+    }
+}
+
 fn fixture_with_bindings(
     seed: impl FnOnce(&rusqlite::Connection),
     bindings: Arc<dyn ActorBindingsPort>,
@@ -459,6 +475,57 @@ async fn a_failure_after_the_stop_names_the_superseded_predecessor() {
     assert_eq!(
         row(&fx, "dwfrun-after").stop_reason,
         Some(DwfStop::Superseded)
+    );
+}
+
+#[tokio::test]
+async fn a_failed_amend_can_be_retried_from_the_stopped_predecessor() {
+    let fx = fixture_with_bindings(
+        |conn| interrupted(conn, "dwfrun-retry", PARENT, "return 1\n"),
+        Arc::new(FlakyMode(std::sync::atomic::AtomicBool::new(true))),
+    );
+    fx.service
+        .for_session(&SessionId::new(PARENT))
+        .resume(&WorkflowRunId::new("dwfrun-retry"))
+        .await
+        .expect("the resume answers");
+    let error = fx
+        .service
+        .for_session(&SessionId::new(PARENT))
+        .amend(amend_request("dwfrun-retry", "return 2\n"))
+        .await
+        .expect_err("the first mode read fails after the stop");
+    assert!(
+        error.message.contains("amend it again to retry"),
+        "{}",
+        error.message
+    );
+    assert_eq!(
+        row(&fx, "dwfrun-retry").stop_reason,
+        Some(DwfStop::Superseded)
+    );
+
+    // The retry: the predecessor is settled now, so it is not stopped again and its import reads the superseded row.
+    let answer = amend(&fx.service, amend_request("dwfrun-retry", "return 2\n")).await;
+    let AmendResult::Started {
+        run_id,
+        superseded_run_id,
+    } = answer
+    else {
+        panic!("the retry starts a successor: {answer:?}");
+    };
+    assert_eq!(
+        superseded_run_id, None,
+        "the predecessor had already settled"
+    );
+    let launches = fx.fake.launches();
+    let last = launches.last().expect("the retry launched a child");
+    assert_eq!(last.input.run_id, run_id.as_str());
+    assert_eq!(last.input.resumed_from.as_deref(), Some("dwfrun-retry"));
+    assert_eq!(
+        launches.len(),
+        2,
+        "the resume and the retry; the failed amend launched nothing"
     );
 }
 

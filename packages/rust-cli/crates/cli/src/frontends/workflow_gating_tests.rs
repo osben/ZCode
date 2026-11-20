@@ -43,6 +43,7 @@ fn without_an_analyzer_the_run_tools_and_list_saved_are_wired() {
         names(&tools),
         [
             "ListWorkflowRuns",
+            "GetWorkflowRun",
             "ResumeWorkflowRun",
             "ResolveWorkflowQuestion",
             "ListSavedWorkflows"
@@ -61,6 +62,7 @@ fn with_an_analyzer_create_amend_and_save_are_wired_before_the_run_tools_and_lis
             "AmendWorkflow",
             "SaveWorkflow",
             "ListWorkflowRuns",
+            "GetWorkflowRun",
             "ResumeWorkflowRun",
             "ResolveWorkflowQuestion",
             "ListSavedWorkflows"
@@ -107,6 +109,7 @@ fn the_gate_source_reads_the_shared_table_the_server_records_into() {
         names(&source.tools),
         [
             "ListWorkflowRuns",
+            "GetWorkflowRun",
             "ResumeWorkflowRun",
             "ResolveWorkflowQuestion",
             "ListSavedWorkflows"

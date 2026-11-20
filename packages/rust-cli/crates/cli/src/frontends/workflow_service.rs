@@ -155,6 +155,14 @@ impl RunStore for LazyRunStore {
     fn amend_import(&self, predecessor_run_id: &str) -> Result<BuildOutcome> {
         self.get()?.amend_import(predecessor_run_id)
     }
+
+    fn run_detail(
+        &self,
+        run_id: &str,
+        default_concurrency: Option<f64>,
+    ) -> Result<Option<rust_cli_workflow::run_store::RunDetail>> {
+        self.get()?.run_detail(run_id, default_concurrency)
+    }
 }
 
 /// The row timestamp, in milliseconds, from the process's one business clock.
