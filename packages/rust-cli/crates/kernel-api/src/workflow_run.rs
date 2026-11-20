@@ -7,7 +7,7 @@
 //! PR that owns a tool types its own fields (the spec's W7 split).
 
 use async_trait::async_trait;
-use serde_json::Value;
+use serde_json::{Map, Value};
 
 use crate::ids::{QuestionId, SessionId, WorkflowRunId};
 
@@ -156,6 +156,26 @@ pub enum ResolveQuestionResult {
     },
 }
 
+/// Node `DynamicWorkflowRunSubmitRequest`, for the fields CreateWorkflow (W7-8a) can fill. The trace, the launch input,
+/// the phase table and the model selections are not here yet: the run service (W7-5) and the model catalog own them, and
+/// each adds its field with its own PR.
+#[derive(Debug, Clone, PartialEq)]
+pub struct SubmitRequest {
+    /// The script body that runs (the metadata block of a saved file is not part of it).
+    pub script_text: String,
+    pub cwd: String,
+    /// Display label only; omitted means unnamed.
+    pub name: Option<String>,
+    /// Declared arguments, already validated and filled with defaults. Inline scripts pass none.
+    pub args: Option<Map<String, Value>>,
+    pub parent_session_id: Option<SessionId>,
+    /// The CreateWorkflow tool call that started the run.
+    pub tool_call_id: Option<String>,
+    pub max_concurrency: Option<u64>,
+    /// Absolute path of the file the script came from (a draft or a `path` source), when there is one.
+    pub script_path: Option<String>,
+}
+
 /// A failed port call that is not a business refusal (a wiring fault, or a missing optional member).
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 #[error("{message}")]
@@ -176,7 +196,7 @@ impl DynamicWorkflowRunError {
     }
 }
 
-/// Node `DynamicWorkflowRunPort`, minus the submit surface (the Host's run start and the engine land in W7-5).
+/// Node `DynamicWorkflowRunPort`. `submit` (W7-8a) is the start; the run service (W7-5) implements it.
 #[async_trait]
 pub trait DynamicWorkflowRunPort: Send + Sync {
     /// Node `defaultConcurrency`: the starting point, not a cap. `None` when the port cannot report it.
@@ -188,6 +208,16 @@ pub trait DynamicWorkflowRunPort: Send + Sync {
     async fn amend(&self, request: AmendRequest) -> Result<AmendResult, DynamicWorkflowRunError> {
         let _ = request;
         Err(DynamicWorkflowRunError::unsupported("amend"))
+    }
+
+    /// Node `submit`: starts a new run in the background and returns its run id (also its background task id). A
+    /// wiring failure is an error; a new run has no business refusal.
+    async fn submit(
+        &self,
+        request: SubmitRequest,
+    ) -> Result<WorkflowRunId, DynamicWorkflowRunError> {
+        let _ = request;
+        Err(DynamicWorkflowRunError::unsupported("submit"))
     }
 
     /// Node `cancel`: `false` for an unknown run id.

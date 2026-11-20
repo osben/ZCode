@@ -98,10 +98,16 @@ pub fn production_owner_factory<R: ActorSessionRelease>(
 /// Opens one connection to the session database. The app opened it first, so the migrations are already applied; the
 /// open here checks them again and does not change them.
 fn open(stores: &OwnerStores) -> Result<rusqlite::Connection> {
-    let now = u64::try_from((stores.clock)()).unwrap_or(0);
+    let now = ledger_ms((stores.clock)());
     let (conn, _) = open_session_database(&stores.database, MIGRATION_LOCK_WAIT, now)
         .map_err(|error| anyhow!("the session database did not open for the run: {error}"))?;
     Ok(conn)
+}
+
+/// The ledger's timestamp from a clock reading: a reading before the epoch is read as zero, so the ledger never gets a
+/// negative time. The same rule as the app side's `now_ms`, which saturates into the range it can hold.
+pub fn ledger_ms(reading: i64) -> u64 {
+    u64::try_from(reading.max(0)).unwrap_or(0)
 }
 
 #[cfg(test)]

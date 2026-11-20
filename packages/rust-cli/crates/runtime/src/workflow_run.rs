@@ -245,12 +245,24 @@ impl WorkflowRunService {
             .map_err(|error| LaunchFailure::Child(Box::new(error)))?;
         let RunningChild { stop, outcome, .. } = running;
 
-        // The owner is built outside the lock, since the factory may read the service (M1).
-        let mut hosted = match (inner.owners)(config, mailbox, handle.clone()) {
-            Ok(hosted) => hosted,
-            Err(error) => {
+        // The owner is built outside the lock, since the factory may read the service (M1). It runs on the blocking pool:
+        // a factory may block on the database (a migration check waiting on a busy writer), and that must not hold the
+        // executor (9.30 review). The id stays reserved until this launch returns, so a failure releases it.
+        let owners = inner.owners.clone();
+        let factory_handle = handle.clone();
+        let built =
+            tokio::task::spawn_blocking(move || (owners)(config, mailbox, factory_handle)).await;
+        let mut hosted = match built {
+            Ok(Ok(hosted)) => hosted,
+            Ok(Err(error)) => {
                 stop.stop();
                 return Err(LaunchFailure::Attach(format!("{error:#}")));
+            }
+            Err(join) => {
+                stop.stop();
+                return Err(LaunchFailure::Attach(format!(
+                    "the owner factory did not finish: {join}"
+                )));
             }
         };
 

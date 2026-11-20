@@ -49,7 +49,7 @@ fn every_contract_carries_a_provider_description_and_an_object_schema() {
 
 #[test]
 fn without_an_analyzer_only_list_saved_workflows_is_registered() {
-    let names: Vec<String> = workflow_tools(None, std::path::PathBuf::from("/home"))
+    let names: Vec<String> = workflow_tools(None, std::path::PathBuf::from("/home"), None)
         .iter()
         .map(|tool| tool.name().to_owned())
         .collect();
@@ -57,12 +57,15 @@ fn without_an_analyzer_only_list_saved_workflows_is_registered() {
 }
 
 #[test]
-fn with_an_analyzer_save_workflow_is_registered_before_list_saved_workflows() {
+fn with_an_analyzer_create_and_save_workflow_are_registered_before_list_saved_workflows() {
     let analyzer: std::sync::Arc<dyn rust_cli_kernel_api::workflow_analysis::WorkflowAnalyzer> =
         std::sync::Arc::new(NoAnalyzer);
-    let tools = workflow_tools(Some(analyzer), std::path::PathBuf::from("/home"));
+    let tools = workflow_tools(Some(analyzer), std::path::PathBuf::from("/home"), None);
     let names: Vec<&str> = tools.iter().map(|tool| tool.name()).collect();
-    assert_eq!(names, ["SaveWorkflow", "ListSavedWorkflows"]);
+    assert_eq!(
+        names,
+        ["CreateWorkflow", "SaveWorkflow", "ListSavedWorkflows"]
+    );
     for tool in &tools {
         assert!(tool.should_defer(), "{} is deferred", tool.name());
         let contract = contract(tool.name());

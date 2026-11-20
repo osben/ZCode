@@ -717,3 +717,41 @@ async fn a_declare_artifact_fails_the_run_before_a_later_complete_can_settle_it(
         );
     }
 }
+
+/// Review of #586 (ocr, finding 1): the owner factory runs on the blocking pool. A slow factory (a migration check that
+/// waits on a busy database) must not hold the executor: a task ticking on the same current-thread runtime keeps running
+/// while the factory blocks.
+#[tokio::test]
+async fn a_slow_owner_factory_does_not_stall_the_executor() {
+    use std::sync::atomic::{AtomicU64, Ordering};
+    let ticks = Arc::new(AtomicU64::new(0));
+    let observed = Arc::new(AtomicU64::new(0));
+    let factory_ticks = ticks.clone();
+    let factory_observed = observed.clone();
+    let base = plain_factory();
+    let factory: OwnerFactory = Arc::new(move |config, mailbox, handle| {
+        let before = factory_ticks.load(Ordering::SeqCst);
+        std::thread::sleep(Duration::from_millis(300));
+        let after = factory_ticks.load(Ordering::SeqCst);
+        factory_observed.store(after - before, Ordering::SeqCst);
+        base(config, mailbox, handle)
+    });
+    let h = harness_with(factory, SessionResidency::new());
+    let ticker_ticks = ticks.clone();
+    let ticker = tokio::spawn(async move {
+        loop {
+            ticker_ticks.fetch_add(1, Ordering::SeqCst);
+            tokio::time::sleep(Duration::from_millis(5)).await;
+        }
+    });
+    h.service
+        .launch(input("wf_slow"), config("wf_slow", Some("ses_p")))
+        .await
+        .expect("launched");
+    ticker.abort();
+    let during = observed.load(Ordering::SeqCst);
+    assert!(
+        during >= 5,
+        "the executor ticked {during} times while the factory blocked; it must keep running"
+    );
+}

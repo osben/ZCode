@@ -13,8 +13,17 @@ use rust_cli_workflow::residency::SessionResidency;
 use rust_cli_workflow::run_concurrency::{ConcurrencyListener, RunConcurrency};
 use serde_json::{Map, json};
 
-use super::{OwnerStores, UnwiredRelease, UnwiredTurns, production_owner_factory};
+use super::{OwnerStores, UnwiredRelease, UnwiredTurns, ledger_ms, production_owner_factory};
 use crate::workflow_run::WorkflowRunService;
+
+/// Review of #586 (ocr, finding 2): one clock convention. A reading before the epoch is zero in the ledger; a positive
+/// reading is itself.
+#[test]
+fn a_clock_reading_before_the_epoch_is_read_as_zero_in_the_ledger() {
+    assert_eq!(ledger_ms(-5), 0);
+    assert_eq!(ledger_ms(0), 0);
+    assert_eq!(ledger_ms(1_700_000_000_000), 1_700_000_000_000);
+}
 
 /// The governor is not part of the owner assembly; the run's bound is a no-op here.
 struct NoGovernor;

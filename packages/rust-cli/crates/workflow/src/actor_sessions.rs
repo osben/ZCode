@@ -71,6 +71,10 @@ impl<C: Borrow<rusqlite::Connection>, T: ActorTurns> NodeActorSessions<C, T> {
     pub fn into_turns(self) -> T {
         self.turns
     }
+
+    fn conn(&self) -> &rusqlite::Connection {
+        self.conn.borrow()
+    }
 }
 
 impl<C: Borrow<rusqlite::Connection>, T: ActorTurns> ActorSessions for NodeActorSessions<C, T> {
@@ -87,7 +91,7 @@ impl<C: Borrow<rusqlite::Connection>, T: ActorTurns> ActorSessions for NodeActor
         );
         let now = (self.clock)();
         create_workflow_actor_session(
-            self.conn.borrow(),
+            self.conn(),
             &WorkflowActorSession {
                 id: &id,
                 parent_session_id: parent,
@@ -100,7 +104,7 @@ impl<C: Borrow<rusqlite::Connection>, T: ActorTurns> ActorSessions for NodeActor
         )?;
         let link_id = format!("tasklink_{id}");
         insert_workflow_actor_link(
-            self.conn.borrow(),
+            self.conn(),
             &WorkflowActorLink {
                 id: &link_id,
                 child_session_id: &id,
