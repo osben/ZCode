@@ -476,7 +476,7 @@ Classification to do in PR W9 (before the gate flips): each spec is marked "reus
 Each PR is independently mergeable and keeps the gate off (W4) until PR W9. Sizes are estimates in lines of Rust including tests, not measurements. The TypeScript measures are in section 2.1.
 
 | PR  | Scope                                                                                                                                                                                                                                                                                                          | Size (estimate)              | Gate |
-| --- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------- | ---- |
+| --- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------- | ---- | -------------------------------------------------------------------------------------- |
 | W1  | Gate plumbing: record reads `dynamicWorkflowEnabled` and mode (`resolveDynamicWorkflowRuntimeGate` rules); policy answer stays `false` until W9; tool set defined but not registered                                                                                                                           | 300                          | off  |
 | W2  | `dwf_*` repository in `node-store` with Node codecs; checksum pin for `0019`; cross-runtime goldens both ways; `session_task_link` role writer                                                                                                                                                                 | 1,500                        | off  |
 | W3  | Reducer and diff port (`workflow-runs-reducer.ts`, `workflow-runs-delta.ts` and the helpers they need) with the property test; cold replay from `dwf_event`; projection hook for `workflowRuns` and the two deltas, returning the empty snapshot as today when no run exists                                   | 1,200                        | off  |
@@ -485,14 +485,14 @@ Each PR is independently mergeable and keeps the gate off (W4) until PR W9. Size
 | W5b | Engine resume and amend: import cache (`imported-cache.ts`, `dynamic-workflow-import.ts` preflight), `import-cache-closed`, `superseded`                                                                                                                                                                       | 2,000                        | off  |
 | W5c | Engine holes, artifacts and reports (spec 9.6): `engine-holes.ts`, `engine-artifacts.ts` and `-primary.ts`, `engine-report.ts`, the artifact spec validator and the report tally on resume; `hole-reached`, `hole-filled`, `report`, `artifact-published`, `artifact-failed`                                   | 2,400                        | off  |
 | W6a | Driver for actors: `ActorRuntime` child session, per-ask turns, `submit_result` validation budgets, repair and nudge, `escalate`, permission origin for subagents, session grants                                                                                                                              | 3,000                        | off  |
-| W6b | Driver for the rest: governor (process-level, admission per attempt), model failure policy, world reads, artifact publish, stall clock, quota timer, `LiveRunGuard` and session residency                                                                                                                      | 3,000                        | off  |
-| W7  | The tools: `CreateWorkflow`, `AmendWorkflow`, `FillWorkflowHole`, `SaveWorkflow`, `ListSavedWorkflows`, `EvalWorkflowSnippet`, `ListWorkflowRuns`, `GetWorkflowRun`, `ResumeWorkflowRun`, `ResolveWorkflowQuestion`; window display from helper; owner exemption; child denylist; registration behind the gate | ~21,000 (re-estimated, 9.15) | off  |
+| W6b | Driver for the rest: governor (process-level, admission per attempt), model failure policy, world reads, artifact publish, stall clock, quota timer, `LiveRunGuard` and session residency                                                                                                                      | 3,000                        | off  | Status: done, parts 1 to 6 (sections 9.9 to 9.15); the gate stays off until W7 and W9. |
+| W7  | The tools: `CreateWorkflow`, `AmendWorkflow`, `FillWorkflowHole`, `SaveWorkflow`, `ListSavedWorkflows`, `EvalWorkflowSnippet`, `ListWorkflowRuns`, `GetWorkflowRun`, `ResumeWorkflowRun`, `ResolveWorkflowQuestion`; window display from helper; owner exemption; child denylist; registration behind the gate | ~21,000 (re-estimated, 9.18) | off  |
 | W8  | Cancel for runs in the background registry; `cancelBackgroundWork` routing; terminal, escalation, hole and stall notifications with `workflowNotification`; reminder; orphan reconciliation at session open; settings turn writer                                                                              | 1,800                        | off  |
 | W9  | Hub start (`startSavedWorkflow`), `amendWorkflowRunSettings`, launch turn and provenance; policy answer driven by the gate; E2E classification and enabling (section 7.1); parent doc updates                                                                                                                  | 800 Rust, E2E                | on   |
 
-Total: about 40,500 lines of Rust including tests and about 400 of JavaScript, estimated (22,000 before the W7 re-estimate of 9.15: 2,500 became about 21,000). Versus Node: the engine core is 6,636 TypeScript lines, the bootstrap workflow and run files about 17,290 (these include some non-engine code), and the tools 6,152. A Rust port of this size usually runs about 1.2 to 1.5 times the TypeScript for the same behaviour, so the estimate is in the expected range; it should be re-checked after W5a.
+Total: about 40,500 lines of Rust including tests and about 400 of JavaScript, estimated (22,000 before the W7 re-estimate of 9.18: 2,500 became about 21,000). Versus Node: the engine core is 6,636 TypeScript lines, the bootstrap workflow and run files about 17,290 (these include some non-engine code), and the tools 6,152. A Rust port of this size usually runs about 1.2 to 1.5 times the TypeScript for the same behaviour, so the estimate is in the expected range; it should be re-checked after W5a.
 
-Order and dependencies: W1 and W2 can run in parallel. W3 needs W2. W4 is independent of W2 and W3. W5a needs W2. W5b needs W5a. W6a needs W5a and W4. W6b needs W6a. W7 needs W6a, W3, and W6b parts 2b, 3, 5 and 6 (added with the W7 re-estimate, 9.15). W8 needs W7. W9 needs everything.
+Order and dependencies: W1 and W2 can run in parallel. W3 needs W2. W4 is independent of W2 and W3. W5a needs W2. W5b needs W5a. W6a needs W5a and W4. W6b needs W6a. W7 needs W6a, W3, and W6b parts 2b, 3, 5 and 6 (added with the W7 re-estimate, 9.18). W8 needs W7. W9 needs everything.
 
 Each PR updates the F5 row and D1 in `specs/fork-rust-node-helper.md` and the "Out of scope" section of `specs/fork-rust-agent-parity.md` with its status.
 
@@ -1187,7 +1187,7 @@ Scope. The Node cases that need a session or the driver's ask path: `bootstrap/t
 
 Ported tests: `crates/workflow/src/driver_node_parity_tests.rs` (wired in `lib.rs`). They run the owner's real submit, turn-end, escalation and session-id paths on the `Recording` double of `driver_owner_tests`. `owner`, `running_ask`, `request` and `Recording` are reused, not edited. The turn runtime is not involved; the runtime-level tests (`actor_turns_tests`) already cover the bridge.
 
-Counts: 69 cases. Ported: 10, all passing (row 15 was the resume identity gap, fixed in 4e5bfec98). Covered by a named Rust test: 35. W6b: 7 (world reads, row 11, moved here by review; the session close chain, rows 31-36, is W6b part 6). Owned by a later part or wave: 17 (W5b seed copy, 5; W6a follow-up, 1; W3 projection, 2; W7 tools and registry, 8; W8 cancel, 1). Truly not applicable: 0. Total 69 (10 + 35 + 7 + 17).
+Counts: 69 cases. Ported: 16, all passing (row 15 was the resume identity gap, fixed in 4e5bfec98; rows 31-36, the session close chain, are ported in W6b part 6, section 9.15). Covered by a named Rust test: 35. W6b: 1 (world reads, row 11, moved here by review, part 4). Owned by a later part or wave: 17 (W5b seed copy, 5; W6a follow-up, 1; W3 projection, 2; W7 tools and registry, 8; W8 cancel, 1). Truly not applicable: 0. Total 69 (16 + 35 + 1 + 17).
 
 Translation of Node's model-level assertions. Node counts model requests and reads the prompt that reaches the model. The Rust owner has no model: it sees turn starts (`Recording.inputs`, `submit_schemas`, `interactions`) and reply sequences. A repair that Node sees as two requests in one turn is, in Rust, a second `submit_result` on the same turn. A nudge is a `TurnEndReply::Verdict(Nudge)`, and the nudged turn's text is built by the turn runner (`workflow` `actor_turns.rs`), so it is checked there. Node's `epilogueStart` on the persisted message is checked in Rust as the run's `epilogue_start` (runtime `a_scripted_actor_turn_runs_through_the_workflow_and_settles_after_the_nudge`); the persisted metadata is not asserted in Rust.
 
@@ -1223,12 +1223,12 @@ Translation of Node's model-level assertions. Node counts model requests and rea
 | 28  | workflow-driver        | a schema declaring `evidence` and `confidence` adds their two lines                                | ported          | `a_schema_declaring_evidence_and_confidence_gets_their_standard_lines`                                                                                                                                                                                                           |
 | 29  | workflow-driver        | nudge prompt carries no epilogue; inputHash is the original                                        | covered         | workflow `actor_turns_tests::a_turn_without_a_submit_is_nudged_and_the_nudged_turn_runs_with_the_nudge_prompt` (the text, epilogue start 0); the hash is in `driver_golden_tests`                                                                                                |
 | 30  | workflow-driver        | the epilogue start is marked on the persisted user message                                         | covered         | runtime `a_scripted_actor_turn_runs_through_the_workflow_and_settles_after_the_nudge` (the run's `epilogue_start`); the persisted metadata is not asserted in Rust                                                                                                               |
-| 31  | workflow-driver        | dispose: an idle session is closed at once                                                         | W6b part 6      | Session close chain (`closeBrowserSession` after settlement). Owner W6b part 6, `LiveRunGuard` and session residency (section 9.9 of PR #560). `ActorSessions` has no close port yet.                                                                                            |
-| 32  | workflow-driver        | dispose: a session with an in-flight turn waits for it to land                                     | W6b part 6      | Close chain: wait for an in-flight turn before closing. Owner W6b part 6 (as row 31).                                                                                                                                                                                            |
-| 33  | workflow-driver        | dispose during creation: a late instance is closed and nothing new is accepted                     | W6b part 6      | Close chain: a late instance is closed and nothing new is accepted. Owner W6b part 6 (as row 31).                                                                                                                                                                                |
-| 34  | workflow-driver        | dispose twice closes each runtime once                                                             | W6b part 6      | Close chain: dispose twice closes each runtime once. Owner W6b part 6 (as row 31).                                                                                                                                                                                               |
-| 35  | workflow-driver        | a failed close only warns; settlement does not throw                                               | W6b part 6      | Close chain: a failed close only warns. Owner W6b part 6 (as row 31).                                                                                                                                                                                                            |
-| 36  | workflow-driver        | real pipeline: each runtime closed exactly once; GC collectable                                    | W6b part 6      | Close chain: real pipeline, each runtime closed once. Owner W6b part 6 (as row 31). The GC half has no Rust counterpart and is not carried.                                                                                                                                      |
+| 31  | workflow-driver        | dispose: an idle session is closed at once                                                         | ported          | Ported (9.15). `driver_close_tests::row_31_an_idle_session_is_closed_at_once_when_the_run_settles`; turn side `actor_turns_close_tests::row_31_turn_side_an_idle_session_is_closed_at_once`.                                                                                     |
+| 32  | workflow-driver        | dispose: a session with an in-flight turn waits for it to land                                     | ported          | Ported (9.15). Owner `driver_close_tests::row_32_a_session_with_a_turn_in_flight_is_handed_to_the_close_port_after_its_cancel`; the wait is on the turn side, `actor_turns_close_tests::row_32_turn_side_a_session_closed_mid_turn_is_closed_when_the_turn_lands`.               |
+| 33  | workflow-driver        | dispose during creation: a late instance is closed and nothing new is accepted                     | ported          | Ported as a refusal (9.15, divergence 44). `driver_close_tests::row_33_a_disposed_driver_refuses_a_session_and_creates_nothing`. A late instance cannot exist in Rust.                                                                                                           |
+| 34  | workflow-driver        | dispose twice closes each runtime once                                                             | ported          | Ported (9.15). `driver_close_tests::row_34_disposing_twice_closes_each_session_once`; turn side `actor_turns_close_tests::row_34_turn_side_two_close_requests_close_the_session_once`.                                                                                           |
+| 35  | workflow-driver        | a failed close only warns; settlement does not throw                                               | ported          | Ported (9.15). `driver_close_tests::row_35_a_failed_close_is_recorded_and_the_settlement_does_not_throw`; turn side `actor_turns_close_tests::row_35_turn_side_a_refused_idle_close_is_returned_to_the_caller`.                                                                  |
+| 36  | workflow-driver        | real pipeline: each runtime closed exactly once; GC collectable                                    | ported          | Ported, GC half not carried (9.15, divergence 47). `driver_close_tests::row_36_the_pipeline_closes_each_actor_session_exactly_once`.                                                                                                                                             |
 | 37  | submit-profile         | mono: `{ result: schema }` declared, strict, epilogue shrinks                                      | covered         | `driver_owner::a_mono_turn_carries_its_submit_schema_and_a_generic_turn_carries_none`; `driver_owner::a_mono_profile_that_fits_the_ask_ends_its_input_with_the_tool_epilogue`; agents `submit_tests::a_mono_session_declares_its_schema_under_result_and_a_generic_one_does_not` |
 | 38  | submit-profile         | mono still repairs in-session against the validator                                                | covered         | `driver_owner::an_invalid_submit_is_rejected_with_its_violations_and_the_ask_stays_live`; runtime `a_mono_session_hands_its_submit_schema_to_every_turn_of_its_ask`                                                                                                              |
 | 39  | submit-profile         | two result types: generic tool, full schema epilogue                                               | covered         | `driver_owner::a_mono_profile_that_misses_falls_back_to_generic_and_the_input_carries_the_schema_epilogue`                                                                                                                                                                       |
@@ -1273,7 +1273,7 @@ Divergences recorded (not fixed here).
 - The structured refusal codes for escalation (`run_not_in_flight`, `already_resolved`) are service-level; the Rust book returns `None`.
 - The escalation payload clip (2048 characters) is a protocol projection (W7).
 - World reads and artifact publish are wired in the owner, with a worker per job (W6b part 4, section 9.11). No production host port exists yet: the machine-backed `WorldReadPorts`, `ArtifactFsPort` and `ArtifactStorePort` are W7/W8 wiring.
-- No session close port: Node's close chain is owned by W6b part 6.
+- The session close port exists since W6b part 6 (section 9.15): `ActorSessions::close_session`, called from the driver's dispose.
 - The seed is dropped at the driver (`_seed`). Owner W5b (the amend import; countSource blocked).
 
 Verification (this part).
@@ -1337,7 +1337,7 @@ This is Node's mapping of its status events to the same four results, except tha
 - **W6b part 3: model failure policy (done, section 9.13).** `resolveWorkflowModelFailurePolicy` and the driver's reading of its Stop set, shared with the governor, so divergence 3 closes.
 - **W6b part 4: world reads and artifact publish (done, section 9.11).** `workflow-world-read.ts`, `workflow-git-world-read.ts` and `workflow-artifact-publish.ts`, with the fault cases.
 - **W6b part 5: stall clock and quota timer (done, section 9.14).** `askProgress`, `runStalled`, and `dynamic-workflow-quota-resume.ts` (resume after `resetAt + 1 min`, once). The scripted-provider test through the owner is in; the desktop E2E waits for W7 and W9.
-- **W6b part 6: `LiveRunGuard` and session residency.** The guard and the residency rules of the run service.
+- **W6b part 6: `LiveRunGuard`, residency and the close chain (done, section 9.15).** The guard, the residency ledger, the close port and the dispose rules are ported. The run service that creates guards and the production closer are W7 (9.15, "What W7 must wire").
 
 ### 9.10 W6b part 2: run admission, bounds and fan-out (as built, part 2a)
 
@@ -1666,7 +1666,159 @@ After the fix in the first review round: crate lib tests 342 of 342. The timer n
 - Implement `QuotaResumePort` over the run journal and the session's run list (limit 64). `resume` goes through the session's execution boundary, as the app's Resume does, and then re-arms tracking; refusals map to `ResumeAnswer::Refused` with Node's reason text. The port must be `Send + Sync`. Call `QuotaAutoResume::on_run_settled` when a run settles, `scan` when the parent session opens, and `dispose` before the run service closes.
 - The scripted-provider desktop E2E of section 8 item 10 (gate on, run service, fake provider process) is W9, after the gate flips. The driver-level test in this part covers the rule without it.
 
-### 9.15 W7: decisions, PR split and W7-1 (as built)
+### 9.15 W6b part 6: LiveRunGuard, residency and the close chain (as built)
+
+Scope: the guard and the residency rules, the session close port, and the dispose rules of the driver (Node driver tests rows 31 to 36). What is left for the run service (W7) is listed at the end.
+
+**Where it lives.**
+
+- `crates/workflow/src/residency.rs`: `SessionResidency` (the process ledger), `LiveRunGuard` (one live run; dropping it is the run's settlement) and the `LiveRun` port (`stop_interrupted`).
+- `crates/workflow/src/driver_owner.rs`: `ActorSessions::close_session` (the close port); `ActorPort`'s `WorkflowDriver::dispose` (once per settlement, each session closed once, failures recorded); the refusal of a session after dispose; `ActorDriverOwner::attach_residency` (the launch registration). The owner releases the guard in `pump` at settlement, next to the governor link.
+- `crates/workflow/src/actor_sessions.rs`: `ActorTurns::close_session`; `NodeActorSessions` forwards it to the turn side.
+- `crates/workflow/src/actor_turns.rs`: `SessionCloser` (the runtime's close; `NoCloser` is the default), `MailboxTurns::with_closer`, and the turn side's ledger (`TurnLedger`, `TurnGuard`). A close asked while a turn runs is held, and runs on the thread of the session's last turn.
+- Tests: `residency_tests.rs` (10), `driver_close_tests.rs` (6, rows 31 to 36), `actor_turns_close_tests.rs` (4, the turn-side cases of rows 31, 32, 34 and 35). Test doubles that gained `close_session`: `driver_owner_tests::Recording`, `actor_sessions_tests::Turns`, `actor_turns_tests::TestSessions`, and the runtime's `Sessions` in `crates/runtime/src/actor_turns_tests.rs`.
+
+**The eviction path in `crates/session` (checked).** Rust has no idle eviction. The only removal of an open session is an explicit close. `runtime/src/table.rs` (`Closer`) moves the slot from Open to Closing when the close starts (`closing`), and clears the per-session state and removes the slot when the close is done (`released`), after the session's actor has exited. Deletion (`protocol-zcode/src/fork/session_tree.rs`, `session_deletion.rs`) closes idle runtimes; it asks `residency_busy` (a running turn, a pending interaction, a queue) first. No path consults a run's guard today. The guard rule is enforced by the ledger, so W7 must put the ledger on these paths (see below). Node's idle deactivation (`session-idle-deactivation.md`, `hasResidencyBlockingWork`) has no Rust counterpart.
+
+**Rules.**
+
+1. A live guard blocks eviction. `try_evict` refuses while any guard is held on the session.
+2. Each run holds one guard on its parent session, from the launch (`attach_residency`) to its settlement. A run that has already settled takes no guard. A run with no parent session is refused, since nothing would keep it resident.
+3. `SessionResidency::close(session)` refuses new guards on the session, calls `stop_interrupted` on every live run that has not been stopped yet (outside the ledger's lock, since a stop may settle the run at once), and waits on a condition variable until every guard has been dropped. The wait is bounded (`DEFAULT_CLOSE_WAIT`, 60 seconds, or `with_close_wait`). A close that cannot finish returns an error naming the session and the runs still live. An idle session returns at once and stops nothing.
+   3a. A run is stopped at most once, whatever the number of closes: the ledger marks each guard as stopped under its lock. A stop cannot close its own session: a close requested from inside `stop_interrupted` on the same thread is refused at once, with a thread-local flag.
+4. A closed or evicted session refuses a new guard. A launch after close is a wiring error.
+5. Settlement: the engine calls the driver's `dispose` once per settlement (`finish_run`). Each session the run created is handed to the close port once, in session-id order (`disposed` makes it run once per driver). The owner does not wait. The turn side holds the close while the session's turn runs, and closes it on the thread of the last turn. Once a close is requested, `start_turn` refuses the session ("is closing"): a turn begun after the request would outlive the close.
+   5a. A refused close leaves the session's request, so a later close request tries again. This holds for an idle close (returned to the caller) and for a deferred close (recorded in the turn side's failure ledger, which the owner drains).
+6. A disposed driver refuses a new session with `Workflow driver is closed`, and creates nothing.
+7. A failed close does not fail the settlement. The owner records it in `close_failures` as (session, message) and logs `dynamic_workflow.actor_runtime.close_failed` with the session id. The messages keep the anyhow chain (`{:#}`). `ActorDriverOwner::take_close_failures` is the read point: it drains the port's failures, then the deferred ones the turn side recorded. On the turn side, an idle close's error is returned to the caller; a deferred close's error goes to the failure ledger and a warning.
+8. `MailboxTurns::new` has no closer, and its close is an error ("no runtime closer is wired"), never a silent success. Production uses `with_closer`.
+
+**Red, then green.** Recorded in this order.
+
+- Compile, before any behaviour: `file not found for module residency`; `no SessionCloser in actor_turns`; `method close_session is not a member of trait ActorTurns` (actor_sessions_tests) and of `ActorSessions` (actor_turns_tests, driver_owner_tests). After the API was stubbed, `LiveRunGuard` needed `Debug` (`expect_err`).
+- With inert bodies: 17 failed and 3 passed. The three that passed are the idle close, a close that does not wait for another session's runs, and a run that settled before attaching. Their bodies hold without any behaviour, so they stay as regression tests of their rules and are not evidence of the feature. Of the 17, the six owner tests failed on the harness (`session_of` was None before any ask, so the rows had no session); they were fixed by asking and draining first, and then failed on their assertions (`closed` empty; row 33 created `sess_2` after dispose; row 35 recorded no failure).
+- Green: the 20 new tests (residency 10, owner rows 6, turn side 4) pass.
+
+**Review round (ocr on #570, ten findings).** Each behaviour change had a red test first. Recorded in order: (a) the compile red for the new API (`no function or associated item named with_close_wait`, `no method named take_close_failures` on `MailboxTurns`, `ActorDriverOwner`); (b) with inert stubs, the turn-side and owner tests failed on their assertions: a refused close could not be requested again (closer called once), `start_turn` on a closing session succeeded, `MailboxTurns::new` closed silently, and the row 35 cause read `runtime close failed` without `close refused`; (c) the three bounded-wait residency tests hung on the unbounded stub (killed by a 120-second timeout). After the fixes all 370 pass. Findings: 1 retry after refusal (rule 5a); 2 deferred failure ledger (rule 7); 3 start refused while closing (`start_turn` invariant); 4 bounded wait with a named error (rule 3); 5 stop at most once and no re-entrant close (rule 3a); 6 `NodeActorSessions::close_session` delegation asserted in the existing delegation test; 7 `MailboxTurns::new` refuses to close (rule 8); 8 `ActorDriverOwner::take_close_failures` (rule 7); 9 the owner's `closed` set dropped (the `disposed` flag already guarantees once; row 34 still passes); 10 `{:#}` keeps the chain (rule 7).
+
+**Test counts.** `cargo test -p rust-cli-workflow --lib --locked`: 370 passed, 0 failed (343 before this part, plus 27: 20 for the part and 7 from the review round). `cargo test -p rust-cli-runtime --lib --locked`: 159 passed (the runtime test double changed, no new test). `cargo fmt --all --check` and `cargo clippy --workspace --all-targets --locked -- -D warnings` are clean.
+
+**Node divergences (continued from 9.14).**
+
+43. Row 32 is split. The owner hands the session over at once after the settlement cancels its turn, the way Node's `dispose` returns synchronously. The wait is on the turn side: the runtime close is held until the ask's thread ends. A Rust "turn" is the life of an ask's thread, so the nudged turns of one ask count as one.
+44. Row 33 is a refusal only. Rust's `create_actor_session` runs on the owner's thread, and `dispose` runs on the same thread, so no late instance can exist. Node's release of a late instance (its `catch` in `createActorSession`) has no counterpart.
+45. Row 34's once-rule: the owner's `disposed` flag runs the dispose loop once per driver, and the turn side's `requested` set makes a second close request a no-op. The owner keeps no set of its own (the review round dropped it as dead state).
+46. Row 35: an idle close's error is returned by the turn side and recorded by the owner. A deferred close's error is only logged, on the ask thread, since there is no caller left. Node logs both cases.
+47. Row 36: the GC half is not carried. Rust has no GC-collectable runtime check; a runtime is released when its last owner drops it.
+48. Sessions are closed in session-id order. Node closes them in map order.
+49. The quiescence ledger (Node `workflow-driver-quiescence.ts`: `noteDisposed`, `quietSessions`, the bounded wait that amend uses) is not ported. Node's dispose records each session's in-flight turn into it. Amend's continuation is not ported yet (W5b), so nothing reads it.
+50. The residency ledger is a counted record of live runs per session, not a callback into a residency pool. Node's `hasResidencyBlockingWork` poll does not exist here. `SessionResidency::close` blocks on a condition variable, so an async caller must run it on the blocking pool (W7).
+51. The guard is the only residency fact. Node's pool also counts a session's own in-flight requests (`residencyFinalizationCount`). Rust has no idle eviction, so there is no caller that needs that count yet.
+
+**What W7 must wire.**
+
+1. A `LiveRun` for each run. `stop_interrupted` posts a stop to the owner's mailbox, and the owner's thread calls `engine.stop(Interrupted)`. Without it, `SessionResidency::close` waits on a live run that nothing stops.
+2. The launch calls `ActorDriverOwner::attach_residency(&residency, run)` in the same synchronous step as the launch (Node's invariant 6), with one process-wide `SessionResidency` shared with the session table. A failed attach fails the launch before any run starts.
+3. A production `SessionCloser` over the agents' child session (Node `closeBrowserSession`: `beginShutdown`, release of the node_repl session, then the browser session close), passed to `MailboxTurns::with_closer`. There is no production `ActorSessions` yet (`NodeActorSessions` is built only in tests), so W7 also builds the production assembly.
+4. The session close path (`runtime/src/table.rs` `Closer::closing`, the close entry of `crates/session`): call `SessionResidency::close(session)` on the blocking pool before the session's state is released, and keep the session retired while it closes. Deletion (`session_deletion.rs`) treats a session with a live guard as busy, in `residency_busy` or next to it.
+5. Any future idle eviction calls `try_evict` first and skips a session it refuses.
+6. Shutdown closes every resident parent session through `SessionResidency::close` and waits (Node's `App.close` drain). An owner dropped before its run settles never runs `dispose`, so its runtimes stay open. Shutdown must stop and settle every live run first.
+7. Settlement is the only dispose point (the engine's `finish_run`). The run service does not call `dispose` itself.
+
+### 9.16 W7-0: incremental reducer (as built)
+
+Status: built on `feat/rust-workflow-incremental-reducer-w7-0`, from `origin/fork` (ddee7f6fc). The gate stays off. Nothing outside `node-store` calls the new holder yet; W7-5 (the run service) feeds it.
+
+**Where it lives** (`packages/rust-cli/crates/node-store/src/workflow_runs/`):
+
+- `mod.rs`: `reduce(state: &mut State, envelope, limits) -> Option<Vec<Value>>`. It mutates the state in place and returns the delta ops that `delta::diff(prior, state)` would return. On `None` (a no-op) the state is untouched.
+- `delta.rs`: `diff` (now the test oracle; the production path no longer calls it), and `RunDiff`, `diff_run`, `removed_op` and `whole_key`. The reducer and `diff` share the last three, so key order cannot drift between them.
+- `js.rs`: `obj_equal`, the no-op check on two run objects without wrapping them in a `Value`.
+- `projection.rs`: `LiveProjection` (`new`, `from_state`, `state`, `snapshot`, `apply`), the per-session holder. `on_progress` is removed; its only caller was the test.
+- `replay.rs`: `replay_state` folds in place and still returns `None` when no envelope changed anything.
+- `publish.rs` (new): `clamp_for_legacy`, `encode_for_legacy`, `growth_upper_bound`, `LEGACY_MAX_ENTRIES` (256), `ENVELOPE_SLACK_BYTES` (64). Pure ports of Node's `workflow-runs-legacy.ts` and the two rules in `conversation-workflow-run-deltas.ts`.
+
+**Rules.**
+
+1. A no-op (an invalid envelope, or a replay with identical content) returns `None`, leaves the state byte-identical, and bumps no revision.
+2. Only the run the event touches is cloned and diffed. Eviction (the entry budget and the run-count cut) removes whole runs and never edits a survivor, so the other runs need no diff. The ops are, in order: one `workflowRun.removed` per run whose id vanished, in prior order, carrying the new revision; then the event run's op (birth, or `diff_run` against the run as it was). If that op is `WholeKey`, the result is the whole key alone. If the op list is empty after a real change, the result is the whole key. This is exactly `diff`'s ordering and fallbacks.
+3. The run-count cut stays at `PRODUCTION.max_runs` (8). The entry budget comes from `limits`.
+4. `LiveProjection` takes its deltas from `reduce`. It never calls `diff`.
+5. Legacy encoding (`encode_for_legacy`): a batch with no run delta is returned as the same slice (`Cow::Borrowed`). Otherwise every run delta is dropped and one whole-key `state.updated{workflowRuns}` goes at the position of the last dropped op, carrying the clamped current state. With no state, the deltas are dropped and nothing is inserted.
+6. Growth bound (`growth_upper_bound`): the byte length of the batch plus 64, when every op is `workflowRun.updated` or `workflowRun.removed`. Otherwise `None`. A whole-key patch is never on the fast path.
+
+**Tests.** Red first, then green. The red change is the new API in the tests: `reduce` takes `&mut State` and returns the ops, the goldens and the property test compare the returned ops with the Node ops string and with `diff`, the no-op byte-identity checks, a pointer-identity test that another run's buffer survives an event, `LiveProjection`, and the ported Node cases.
+
+- Red: `cargo test -p rust-cli-node-store --lib --no-run` failed to compile with 28 errors: 25 `E0308` (the old `reduce(Option<&State>) -> Option<State>` signature), `E0432` for `projection::LiveProjection`, `E0432` for `publish`, and one `E0277` (`for op in &ops` over an `Option`).
+- Green: `cargo test -p rust-cli-node-store --lib workflow_runs`: 29 passed, 0 failed. The count was 16 `#[test]` functions at `origin/fork`; 13 are new. The full `rust-cli-node-store` run: 348 passed, 0 failed, 1 ignored. `cargo fmt --all --check` is clean, and `cargo clippy --workspace --all-targets --locked -- -D warnings` is clean.
+- Goldens: `fixtures/workflow-runs/goldens.json` is unchanged. The golden test now compares the ops that `reduce` returns, which are checked byte for byte against Node's, and the property test reproduces the next state from the returned ops.
+
+**Node tests ported.** `apps/zcode-cli/packages/bootstrap/tests/conversation-workflow-run-deltas.test.ts`, all nine cases:
+
+| Node case                                                                                 | Rust test                                                                           |
+| ----------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------- |
+| legacy: a batch with no key-level delta comes back as the same array                      | `a_batch_without_run_deltas_comes_back_as_the_same_slice`                           |
+| legacy: a batch of run deltas folds into one whole-key patch at the last dropped position | `a_batch_of_run_deltas_folds_into_one_whole_key_patch_at_the_last_dropped_position` |
+| legacy: a table over 256 is cut to 256 and marked `truncated`                             | `an_over_legacy_table_is_cut_to_256_and_marked_truncated`                           |
+| legacy: no `workflowRuns` key means the deltas are dropped and nothing is inserted        | `without_a_workflow_runs_key_the_run_deltas_are_dropped_and_nothing_is_inserted`    |
+| growth: an all-key-level batch has a bound above its own bytes                            | `an_all_key_level_batch_has_a_growth_bound_above_its_own_bytes`                     |
+| growth: any other op forces an exact measurement                                          | `any_other_op_in_the_batch_forces_an_exact_measurement`                             |
+| growth: an empty batch takes the fast path with room for a wider `seq`                    | `an_empty_batch_takes_the_fast_path_with_room_for_a_wider_seq`                      |
+| growth: a whole-key `workflowRuns` patch is never on the fast path                        | `a_whole_key_workflow_runs_patch_is_never_on_the_fast_path`                         |
+| growth: the eviction stream is key-level at every step and within the bound               | `node_eviction_stream_every_step_is_key_level_and_within_the_growth_bound`          |
+
+Also added, with no Node counterpart: `a_state_within_the_legacy_bound_is_returned_as_it_is` (the Node "same object" rule), `an_event_for_one_run_does_not_rebuild_the_other_runs`, `live_projection_deltas_keep_a_consumer_equal_to_the_holder` (the entry budget, and ten runs for the run-count cut), and `a_live_projection_seeded_from_replay_continues_the_fold`.
+
+Not ported here. Four other Node tests use `reduceWorkflowRunsState` only as a fold inside larger scenarios: `dynamic-workflow-run-service.test.ts`, `dynamic-workflow-run-roster.test.ts`, `dynamic-workflow-report-reads.test.ts`, and `dynamic-workflow-run-replay.test.ts`. Their assertions are about the run service, the roster, report reads and the cold replay as a whole. The run service, roster and reads are W7 and W9 surfaces; the cold replay is section 9.4. Their reducer calls are not separately ported.
+
+Also not ported, with owner W7-5 (the Host publisher). `conversation-topic-publisher-workflow-runs.test.ts` drives `ConversationTopicPublisher`, the subscription registry, the retained log and `ProductProjection`, so it needs the publisher shell first. Coalescing is not ported: `mergeWorkflowRunUpdates` and `workflowRunUpdateWithinWireBounds` (`workflow-runs-delta.ts`) stay with the publisher. `publish.rs` ports only the two per-batch rules (`encodeConversationDeltasForLegacy` and `workflowRunDeltaGrowthUpperBound`). Section 9.8i rows 58 (the escalation payload clip at 2048 characters) and 65 (raised and resolved on the live track and in event paging) stay open with owner W7-5. `LiveProjection` adds neither the clip nor the event paging.
+
+**Divergences.**
+
+1. The signature changed. Node's reducer returns a new state. The Rust reducer returns the ops and mutates the state. A caller that needs the prior value clones it first.
+2. Cost per event is one clone of the affected run, which the reducer rebuilds, plus a comparison against the stored run without a clone. The other runs are untouched; the pointer test pins that. A reducer that edits the affected run in place would need the table functions to take `&mut Obj`, which this part does not do.
+3. `LEGACY_MAX_ENTRIES` is a local constant equal to Node's `WORKFLOW_RUNS_LEGACY_LIMITS.maxActors` and `maxNodes` (256). There is no shared port of that constant yet. W7-5 should read this one.
+4. Byte lengths are the compact `serde_json` text. That matches `JSON.stringify` for these ops, which hold integers and strings only. Non-integer floats are not checked.
+5. Node's `workflowRuns` being `undefined` is `None` in Rust. A `LiveProjection` always holds a state, so the Host passes `None` only when no holder exists.
+6. The growth bound and the legacy encoder are pure functions. The Host wiring and the 16 MiB gate are W7-5, not this part.
+7. The count in section 9.4 said 14 `workflow_runs` tests. `origin/fork` had 16 `#[test]` functions in `tests.rs`. The count is now 31.
+8. The seed is normalised in `LiveProjection::from_state`: at most `max_runs` runs, each with a unique string `runId` (the first occurrence wins; the most recent runs are kept, as the run-count cut keeps them). `reduce` now documents this precondition. Red first: `a_seed_over_the_run_limit_is_brought_within_it_before_the_first_event` and `a_seed_run_without_a_string_run_id_is_dropped_before_the_first_event` failed against the un-normalised holder (an over-limit seed kept 10 runs; an id-less run survived). Both compare the next event's ops with `diff`. Green after the fix. The full `rust-cli-node-store` run is then 350 passed, 1 ignored.
+
+### 9.17 W7-2: helper format and window display (as built)
+
+Status: built on branch `feat/rust-workflow-helper-format-w7-2`, cut from `origin/fork` (ddee7f6fc). Gate off: nothing calls these from a turn. Decision Q6 = (b): the text and the window come from the helper.
+
+**How the text is reused.** The formatters and the window display live in `core/src/tool/handlers/`, and only `builtInTools` is exported from the core index. Nothing re-implements them: the helper finds Node's own tool entries in `builtInTools` by name and calls them. `listWorkflowRunsToolEntry` and `getWorkflowRunToolEntry` run their handler on a stub run port that returns the port data Rust sent, then their `formatModelContent`. The window display is `createWorkflowToolEntry.prepareApproval({script})`, the same `displayOfAnalysis` path the confirmation dialog uses. Exporting the formatters from core would have been the other route; it touches core, which W7-2 does not, so it is not done here.
+
+**Correction to the brief's wording.** The GetWorkflowRun text does not carry graph bounds or fold. Its `<summary>` is built by Node's handler (`buildWorkflowRunSummary`), which `runDetail` reaches through the entry. The causal graph bounds (`boundCausalityGraph`) and the phase fold (`foldPhaseEdges`) are part of the window display, through `displayOfAnalysis`.
+
+**Helper wire** (`helper/workflow/format`, `workflow-protocol.ts`, a discriminated union on `kind`; any other kind is -32602):
+
+- `analysis` (W4, unchanged): `{scriptText}` returns `{analysis}`.
+- `display` (W7-2): `{scriptText, modelBindings?}` returns `{display}`, the CreateWorkflow window, or `{display: null}` when Node opens no window (the script does not analyze, or a script that names a model has no binding for it). `modelBindings` is the script's model table as `resolveInput` writes it (`model_bindings`); Node opens the window for a model-naming script only with it.
+- `runList` (W7-2): `{input, listed, workingDirectory}` returns `{text}`. `input` is parsed by Node's ListWorkflowRuns input schema (a bad query is -32602). `listed` must have a `runs` array; `truncated` is optional.
+- `runDetail` (W7-2): `{runId, detail, workingDirectory}` returns `{text}`. `detail` is the run port's `DynamicWorkflowRunDetail`, or `null` for an unknown run; the text is then Node's not-found failure message. The members Node dereferences without a guard are pinned (`runId`, `label`, `labelSource`, `status`, `ownedByThisSession`, `createdAt`, `updatedAt`, `usage`, `actors`, `logTail`, `subagents`, `health`), so drift is -32602.
+
+The helper is stateless: it reads no storage, session or journal.
+
+**Not done: `helper/workflow/evalSnippet`.** Whether a snippet may do workspace I/O is an open user decision (section 10). No method is added, and the text is not invented.
+
+**Rust client** (`protocol-zcode/src/fork/workflow_compile.rs`): `display`, `run_list_text` and `run_detail_text` send the requests above over the existing `FORMAT` method and parse the replies strictly (`display` must be an object or null; `text` must be a string). The request builders are `run_list_params` and `run_detail_params`.
+
+**Tests.**
+
+- Helper (`bootstrap/tests/fork-rust-helper/workflow-compile.test.ts`, already in `scripts/fork-test-files.json`). Five new cases: the run list and run detail equal Node's handler and formatter on the same input (run under fake timers, so the ages are fixed); the window equals `prepareApproval`; a non-analysing script answers `display: null`; a `runList` without `listed` is -32602. The red run before the implementation: four failing (the list, detail, display and null cases, all -32602), and the detail case first failed in the fixture until `health` was added. Green after: the file is 12 of 12, and the whole `tests/fork-rust-helper` set is 16 files and 133 tests.
+- Rust (`workflow_compile_tests.rs`): five new cases for the reply parsers and the request builders. Protocol-zcode is 913 of 913 green, and clippy `-D warnings` is clean. The Rust tests were written with the functions, not before them, so no Rust red run was recorded.
+
+**Gap.** The client is not round-tripped through `NodeHelper::forward` with the fake helper. The fake helper rig is private to `node_helper_tests.rs`, which is outside W7-2's file list. The round trip belongs with the run service (W7 proper) or in a follow-up that may touch that file.
+
+**Errors.** The `runList` input is parsed with Node's own schema before the handler runs, so a bad query is -32602. Drift in `listed` or `detail` is -32602 from the params schema, so the formatter never sees it.
+
+**ocr review round 1 on PR #571 (fixed).** HIGH: `display` dropped the model bindings, so every script that names a model got no window; now `modelBindings` is threaded through. MEDIUM: an unknown run was refused by the schema, so Node's not-found text was unreachable; `detail` is now nullable. LOW: unguarded members are pinned, so drift is -32602 and not a TypeError.
+
+**Left for the run service (W7 proper).** The Rust run service must build `listed` from its list port and `detail` from its detail port, and call these methods on the GetWorkflowRun and ListWorkflowRuns paths. Until it does, the window and the text have no caller.
+
+### 9.18 W7: decisions, PR split and W7-1 (as built)
 
 **Decisions (binding, from the user).**
 
@@ -1689,21 +1841,21 @@ The W7 estimate is about 21,000 lines (it was 2,500). The W6b parts 2b, 3, 5 and
 - Missed routes (9.2): `commands::record_workflow_gate` is the one place a record is written from the create parameters and the Host's cached fact. The direct create route, the activation of a prepared session, the submission reservation, and legacy `session/resume` call it. The legacy `session/create` goes through the same `createSession` command and was already recorded.
 - Tests (red first, then green): `tools::workflow_tools_tests` (5), `runtime::workflow_gate_tests` (6), `agents::toolset_tests::workflow_denylists` (4). The full suites of kernel-api, tools, runtime, agents and protocol-zcode pass; clippy `-D warnings` passes on those crates.
 
-**Node divergences (new in W7-1, numbered from 47).**
+**Node divergences (new in W7-1, numbered from 52).**
 
-47. A session with no gate record sees no workflow tool. Node reads an absent `dynamicWorkflowEnabled` on a protocol session as enabled, and it fails closed only in `appRuntimePreferences`. The Rust record is fail-closed at every layer (W1 `resolve_gate` and this filter), so the Host must send the flag for every session that should have the tools.
-48. The session-less views (`tools()`, `find()`) never list or find a workflow tool. Node has one registry per runtime and no session-less view, so the split is structural: it keeps a tool from reaching a session whose gate is unknown.
-49. On-demand defers every workflow tool for every on-demand session, and nothing activates it. Node's `dynamic-workflow-activation.ts` (DWG-09 and DWG-10) activates on the `/workflow` turn and on cold-recovery history, and persists an entry. Rust has none of that yet, so an on-demand session finds the tools only through ToolSearch. The activation port is a W7 follow-up, before the first tool registers.
-50. The incognito `automationTools` exclusion (Node `resolveRuntimeDynamicWorkflowToolsIncluded`) is not in the gate yet. `IncognitoProfiles` is not reachable from `Server`, so the gate source cannot read it. This is a gap to close before any tool registers (W7-7 wires the source with the first tool).
-51. `Extensions.dynamic_workflow` is set by no entry point. `Server` is built from a kernel that already holds the extensions, so a shared gate table, created before the kernel and held by both, is the wiring. It is inert in W7-1 because `workflow_tools()` returns nothing, and W7-7 adds it with the first tool.
-52. The generated asset and the registration use Node's `handlers/index.ts` order (create, amend, save, eval, list runs, get run, resume, resolve, fill, list saved). The W1 constant `tool_names::DYNAMIC_WORKFLOW_TOOLS` keeps the W1 order (list saved after save). Tests compare the set, not the order of that constant.
-53. The port trait carries JSON values for the snapshot, detail, list items and resume result, and the scaffold types only what the tools' inputs and refusals need. Each owning PR types its own fields. Model selections in an amendment stay `serde_json::Value` until W7-8a.
+52. A session with no gate record sees no workflow tool. Node reads an absent `dynamicWorkflowEnabled` on a protocol session as enabled, and it fails closed only in `appRuntimePreferences`. The Rust record is fail-closed at every layer (W1 `resolve_gate` and this filter), so the Host must send the flag for every session that should have the tools.
+53. The session-less views (`tools()`, `find()`) never list or find a workflow tool. Node has one registry per runtime and no session-less view, so the split is structural: it keeps a tool from reaching a session whose gate is unknown.
+54. On-demand defers every workflow tool for every on-demand session, and nothing activates it. Node's `dynamic-workflow-activation.ts` (DWG-09 and DWG-10) activates on the `/workflow` turn and on cold-recovery history, and persists an entry. Rust has none of that yet, so an on-demand session finds the tools only through ToolSearch. The activation port is a W7 follow-up, before the first tool registers.
+55. The incognito `automationTools` exclusion (Node `resolveRuntimeDynamicWorkflowToolsIncluded`) is not in the gate yet. `IncognitoProfiles` is not reachable from `Server`, so the gate source cannot read it. This is a gap to close before any tool registers (W7-7 wires the source with the first tool).
+56. `Extensions.dynamic_workflow` is set by no entry point. `Server` is built from a kernel that already holds the extensions, so a shared gate table, created before the kernel and held by both, is the wiring. It is inert in W7-1 because `workflow_tools()` returns nothing, and W7-7 adds it with the first tool.
+57. The generated asset and the registration use Node's `handlers/index.ts` order (create, amend, save, eval, list runs, get run, resume, resolve, fill, list saved). The W1 constant `tool_names::DYNAMIC_WORKFLOW_TOOLS` keeps the W1 order (list saved after save). Tests compare the set, not the order of that constant.
+58. The port trait carries JSON values for the snapshot, detail, list items and resume result, and the scaffold types only what the tools' inputs and refusals need. Each owning PR types its own fields. Model selections in an amendment stay `serde_json::Value` until W7-8a.
 
 **Left out of W7-1.**
 
 - `ChildHandler` (W7-5), the run service and the engine (W5a to W6b are already in their crates), the tools themselves (W7-7 to W7-10), and the helper format (W7-2).
 - `prepare_worktree` (the worktree preparation that creates a prepared session) does not record a gate. Its session is the prepared one that the activation records before its first turn, so no tool is offered before the record exists. W7-7 confirms this.
-- The incognito gate (divergence 50) and the shared gate table (divergence 51).
+- The incognito gate (divergence 55) and the shared gate table (divergence 56).
 
 ## 10. Open questions
 

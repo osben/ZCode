@@ -44,6 +44,10 @@ pub(crate) struct Log {
     pub(crate) fail_next_deliver: bool,
     /// When set, the next `reject_parked` fails. Only that one withdrawal fails; the rest of the queue still applies.
     pub(crate) fail_next_reject: bool,
+    /// The sessions the close port was asked to close, in order.
+    pub(crate) closed: Vec<String>,
+    /// When set, the next `close_session` fails, as a runtime whose cleanup fails does.
+    pub(crate) fail_next_close: bool,
     pub(crate) next: u64,
 }
 
@@ -97,6 +101,17 @@ impl ActorSessions for Recording {
         }
         log.answered
             .push((session.to_owned(), qid.to_owned(), answer.to_owned()));
+        Ok(())
+    }
+
+    fn close_session(&mut self, session: &str) -> Result<()> {
+        let mut log = self.0.borrow_mut();
+        if log.fail_next_close {
+            log.fail_next_close = false;
+            // A chained error, as a runtime's close reports it: the cause is only visible with the `{:#}` form.
+            return Err(anyhow::anyhow!("close refused").context("runtime close failed"));
+        }
+        log.closed.push(session.to_owned());
         Ok(())
     }
 

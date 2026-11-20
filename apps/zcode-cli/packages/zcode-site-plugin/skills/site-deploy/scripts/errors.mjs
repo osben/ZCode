@@ -33,8 +33,8 @@ const MESSAGES = {
   ],
   // MaaS JWT 过期时 zcode-server 不按 free 放行，以免付费用户被降级（契约 0.13.0）。
   3101: [
-    "The ZCode coding plan sign-in has expired",
-    "Ask the user to sign in to ZCode again, then retry.",
+    "The coding plan sign-in has expired",
+    "Ask the user to sign in again, then retry.",
   ],
   3601: ["Site not found", "Run `zcode-site list` to see your sites, then pass --site <id>."],
   3602: [
@@ -51,7 +51,7 @@ const MESSAGES = {
   ],
   3605: [
     "Account quota exceeded",
-    "New deployments are paused until the next period. Tell the user that upgrading their ZCode plan raises the limits; the Sites panel in ZCode desktop shows the usage.",
+    "New deployments are paused until the next period. Tell the user that upgrading their plan raises the limits; `zcode-site usage` shows the usage.",
   ],
   3607: [
     "The package is larger than 200MB",
@@ -59,7 +59,7 @@ const MESSAGES = {
   ],
   3608: [
     "The current plan cannot hide the ZCode badge",
-    "Free plans always show the badge; tell the user to upgrade to a paid ZCode plan, then run `zcode-site badge hide` again.",
+    "Free plans always show the badge; tell the user to upgrade to a paid plan, then run `zcode-site badge hide` again.",
   ],
   3609: ["This ZCode version is too old for Sites", "Ask the user to update ZCode."],
   3610: [
@@ -102,8 +102,8 @@ export function apiError(status, body) {
   if (status === 401) {
     return new CliError(
       "UNAUTHENTICATED",
-      "Not signed in to ZCode",
-      "Ask the user to sign in to ZCode, then retry.",
+      "The Sites credentials were rejected",
+      "Ask the user to sign in again (or start a new session), then retry once.",
       2,
     );
   }

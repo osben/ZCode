@@ -97,11 +97,15 @@ const OFFICIAL_PLUGIN_CACHE_PATH = join(
   "ios-simulator",
   "0.1.0",
 );
+const OFFICIAL_ANDROID_VERSION = OFFICIAL_PLUGIN_DEFINITIONS.find(
+  ({ name }) => name === "android-emulator",
+)?.version;
+if (!OFFICIAL_ANDROID_VERSION) throw new Error("android-emulator official plugin definition is missing");
 const OFFICIAL_ANDROID_PLUGIN_CACHE_PATH = join(
   "cache",
   "zcode-plugins-official",
   "android-emulator",
-  "0.1.1",
+  OFFICIAL_ANDROID_VERSION,
 );
 const OFFICIAL_RESTORE_LEGACY_SESSIONS_PLUGIN_CACHE_PATH = join(
   "cache",
@@ -2115,7 +2119,7 @@ describe("ZCode plugins", () => {
           "cache",
           "zcode-plugins-official",
           "android-emulator",
-          "0.1.1",
+          OFFICIAL_ANDROID_VERSION,
           "dist",
           "mcp",
           "server.js",
