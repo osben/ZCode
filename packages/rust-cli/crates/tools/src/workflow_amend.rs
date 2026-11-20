@@ -3,8 +3,12 @@
 //!
 //! A revision checks its script the way CreateWorkflow does, asks, and then goes to the run port, which stops the live
 //! predecessor (as superseded by the new run) and starts the successor. The script comes from `script`, from `path`, or,
-//! when both are omitted, from the predecessor's stored script. A script that does not check stops nothing. The
-//! concurrency-only route, the subagent model, script-named models and the GUI window are not built (divergences 455 to 459).
+//! when both are omitted, from the predecessor's stored script. A script that does not check stops nothing.
+//!
+//! A call that changes only `max_concurrency` retunes a live run in place (9.52, divergence 455, Node
+//! `amend-workflow-retune.ts`): no script, no window, no successor. A run that settles in the race falls back to a
+//! revision, which the owner exemption lets through without a window (Node's `isAmendWorkflowOwnedPredecessor`). The
+//! subagent model, script-named models and the GUI window are not built (divergences 456 to 459).
 
 use std::collections::{HashMap, VecDeque};
 use std::path::{Path, PathBuf};
@@ -20,7 +24,7 @@ use rust_cli_kernel_api::tool_names;
 use rust_cli_kernel_api::workflow_analysis::{WorkflowAnalysis, WorkflowAnalyzer};
 use rust_cli_kernel_api::workflow_run::{
     AmendRefusalReason, AmendRequest, AmendResult, DynamicWorkflowRunPort,
-    DynamicWorkflowRunSessions,
+    DynamicWorkflowRunSessions, RetuneOutcome, RetuneRefusal, RetuneRequest,
 };
 use serde::Deserialize;
 use serde_json::{Value, json};
@@ -50,7 +54,7 @@ const DEFAULT_DRAFT_NAME: &str = "workflow";
 const SUBAGENT_MODEL_UNAVAILABLE: &str =
     "This host cannot choose a subagent model; omit subagent_model.";
 const SOURCE_CONFLICT: &str = "Provide at most one script source: `script` for the whole revised script inline, or `path` for its file. Passing both is ambiguous.";
-const RETUNE_UNAVAILABLE: &str = "workflow_retune_unavailable: this host cannot change the parallelism of a live run in place yet, so this call has nothing to amend. Pass a revised `script` or `path` to amend the run, or omit `max_concurrency`. Nothing was stopped, created or changed.";
+const RETUNE_UNAVAILABLE: &str = "workflow_retune_unavailable: this host cannot change the parallelism of a live run in place, so this call has nothing to change. Nothing was stopped, created or changed.";
 
 /// The input (Node `AmendWorkflowInputSchema`, as the model sends it).
 #[derive(Debug, Clone, Deserialize)]
@@ -395,9 +399,6 @@ impl Tool for AmendWorkflowTool {
         if input.script.is_some() && input.path.is_some() {
             return invalid(Some(FAILURE_CODE), SOURCE_CONFLICT);
         }
-        if input.is_concurrency_only() {
-            return invalid(Some(FAILURE_CODE), RETUNE_UNAVAILABLE);
-        }
         if input.carries_script() && !skill_loaded(context).await {
             return Validation::Invalid {
                 message: format!(
@@ -419,6 +420,12 @@ impl Tool for AmendWorkflowTool {
         let Ok(input) = serde_json::from_value::<AmendInput>(input.clone()) else {
             return PermissionDecision::Passthrough;
         };
+        // Node's prepareApproval: a retune has no script to show, so it opens no window, for any owner.
+        if input.is_concurrency_only() {
+            return PermissionDecision::Allow {
+                updated_input: None,
+            };
+        }
         let cwd = PathBuf::from(workspace_dir(context));
         let port = self.port(context);
         let Ok((resolved, inherited)) = self.resolve(&input, &cwd, port.as_ref()).await else {
@@ -476,6 +483,12 @@ impl Tool for AmendWorkflowTool {
             })?;
         let cwd = PathBuf::from(workspace_dir(&context));
         let port = self.port(&context);
+        if input.is_concurrency_only() {
+            let Some(port) = port else {
+                return Err(failed(RETUNE_UNAVAILABLE.to_owned()));
+            };
+            return self.retune(&input, &context, &cwd, port).await;
+        }
         let pending = match self.take_approval(&context.tool_use) {
             Some(pending) => pending,
             None => {
@@ -501,6 +514,175 @@ impl Tool for AmendWorkflowTool {
                 }
             }
         };
+        self.finish_revision(&input, &context, &cwd, port, pending)
+            .await
+    }
+}
+
+/// The model-facing text of an in-place retune (Node `retuneResponse`). It must stand alone: it is the only fact the
+/// model and the card receive, and the wording is kept exactly as Node's.
+fn retune_text(run_id: &str, max_concurrency: f64, default_concurrency: f64) -> String {
+    let count = if max_concurrency == 1.0 {
+        "at most 1 subagent runs at once".to_owned()
+    } else {
+        format!("at most {max_concurrency} subagents run at once")
+    };
+    let bound = if max_concurrency == default_concurrency {
+        format!("{count} (the default)")
+    } else {
+        count
+    };
+    format!(
+        "Applied to the running run {run_id}; {bound}. Run {run_id} keeps running under it: nothing was stopped and no new run was started."
+    )
+}
+
+/// Node `describeBoundInForce` and `retuneUnchangedFailure`: the limit in force is named, and nothing changed.
+fn unchanged_text(run_id: &str, current: f64, default: Option<usize>) -> String {
+    let in_force = match default {
+        Some(default) if current == default as f64 => {
+            format!("already runs at the default parallelism (at most {default} subagents at once)")
+        }
+        _ if current == 1.0 => "already runs at most 1 subagent at once".to_owned(),
+        _ => format!("already runs at most {current} subagents at once"),
+    };
+    format!(
+        "workflow_retune_unchanged: run {run_id} {in_force}, so there is nothing to change. Nothing was stopped, created or changed — pass a different `max_concurrency`, or a revised script if you meant to amend the run."
+    )
+}
+
+/// Node `runSettledFailure` and `notRetunableFailure`: the run is not live, so nothing is retuned.
+fn settled_text(run_id: &str) -> String {
+    format!(
+        "workflow_run_settled: run {run_id} settled before the new parallelism limit could take hold, so there is nothing running to retune. Nothing was stopped, created or changed — call AmendWorkflow again if you want a new run of it under that limit."
+    )
+}
+
+fn not_retunable_text(run_id: &str) -> String {
+    format!(
+        "workflow_run_not_retunable: run {run_id} is not being executed by this agent, so its parallelism cannot be changed in place. Nothing was stopped, created or changed — call AmendWorkflow again if you want a new run of it under that limit."
+    )
+}
+
+impl AmendWorkflowTool {
+    /// Node `runConcurrencyRetune`: a concurrency-only call changes a live run's limit in place. A refusal for an unchanged
+    /// limit is a failure; a run that is not live falls back to a revision (`retune_fallback`).
+    async fn retune(
+        &self,
+        input: &AmendInput,
+        context: &ToolUseContext,
+        cwd: &Path,
+        port: Arc<dyn DynamicWorkflowRunPort>,
+    ) -> Result<ToolOutput, ToolError> {
+        let max_concurrency = match input.limit().map_err(failed)? {
+            Some(Some(number)) => Some(number as f64),
+            // `null` is the default: the port resolves it to its own default.
+            _ => None,
+        };
+        let request = RetuneRequest {
+            run_id: rust_cli_kernel_api::ids::WorkflowRunId::new(input.run_id.clone()),
+            max_concurrency,
+        };
+        let outcome = match port.retune_concurrency(request).await {
+            Ok(outcome) => outcome,
+            Err(error) if error.is_unsupported() => {
+                return Err(failed(RETUNE_UNAVAILABLE.to_owned()));
+            }
+            Err(error) => return Err(failed(error.message)),
+        };
+        match outcome {
+            RetuneOutcome::Retuned {
+                previous,
+                max_concurrency,
+                default_concurrency,
+            } => Ok(output_for(
+                retune_text(&input.run_id, max_concurrency, default_concurrency),
+                json!({
+                    "diagnostics": [],
+                    "ok": true,
+                    "retuned": {
+                        "runId": input.run_id,
+                        "maxConcurrency": max_concurrency,
+                        "previous": previous,
+                        "defaultConcurrency": default_concurrency,
+                    },
+                }),
+            )),
+            RetuneOutcome::Refused(RetuneRefusal::Unchanged { current }) => Err(failed(
+                unchanged_text(&input.run_id, current, port.default_concurrency()),
+            )),
+            RetuneOutcome::Refused(RetuneRefusal::NotLive) => {
+                self.retune_fallback(input, context, cwd, port).await
+            }
+        }
+    }
+
+    /// Node `resolveRetuneFallbackAmend`: the run settled between the liveness check and the retune. A run this session
+    /// owns and the user did not stop is revised with its stored script and no window (the owner exemption). Any other
+    /// run is refused with the text for how it stands.
+    async fn retune_fallback(
+        &self,
+        input: &AmendInput,
+        context: &ToolUseContext,
+        cwd: &Path,
+        port: Arc<dyn DynamicWorkflowRunPort>,
+    ) -> Result<ToolOutput, ToolError> {
+        let run = rust_cli_kernel_api::ids::WorkflowRunId::new(input.run_id.clone());
+        let detail = port
+            .get_run_detail(&run)
+            .await
+            .map_err(|error| failed(error.message))?;
+        let Some(detail) = detail else {
+            return Err(failed(refusal_text(
+                AmendRefusalReason::RunNotFound,
+                &input.run_id,
+            )));
+        };
+        let owned = detail["ownedByThisSession"].as_bool() == Some(true);
+        let user_stopped = detail["stopReason"].as_str() == Some("user");
+        if !owned || user_stopped {
+            let live = matches!(detail["status"].as_str(), Some("pending" | "running"));
+            return Err(failed(if live {
+                not_retunable_text(&input.run_id)
+            } else {
+                settled_text(&input.run_id)
+            }));
+        }
+        // The owner exemption: no window for this session's own run. The script is the predecessor's, read as an amend
+        // reads an omitted script, then checked, and the revision starts.
+        let (resolved, inherited) = self
+            .resolve(input, cwd, Some(&port))
+            .await
+            .map_err(failed)?;
+        let analysis = self
+            .analyzer
+            .analyze(&resolved.script)
+            .await
+            .map_err(|error| failed(error.message))?;
+        self.finish_revision(
+            input,
+            context,
+            cwd,
+            Some(port),
+            Pending {
+                resolved,
+                analysis,
+                inherited,
+            },
+        )
+        .await
+    }
+
+    /// The revision after its script is read and checked: the draft, the compile failure, and the amend. Shared by the
+    /// AmendWorkflow call (after its approval) and the retune fallback (after the owner exemption).
+    async fn finish_revision(
+        &self,
+        input: &AmendInput,
+        context: &ToolUseContext,
+        cwd: &Path,
+        port: Option<Arc<dyn DynamicWorkflowRunPort>>,
+        pending: Pending,
+    ) -> Result<ToolOutput, ToolError> {
         let Pending {
             resolved,
             analysis,
@@ -531,7 +713,7 @@ impl Tool for AmendWorkflowTool {
         };
         let location = script_file.as_ref().map(|(file, path_source)| Location {
             path_source: *path_source,
-            described: describe_script_path(file, &cwd),
+            described: describe_script_path(file, cwd),
             line_offset: if *path_source {
                 resolved.body_offset
             } else {
@@ -541,12 +723,12 @@ impl Tool for AmendWorkflowTool {
 
         if !analysis.ok {
             return Ok(compile_failure(
-                &input,
+                input,
                 &resolved,
                 &analysis,
                 location.as_ref(),
                 inherited,
-                &cwd,
+                cwd,
             ));
         }
         let Some(port) = port else {

@@ -4319,6 +4319,75 @@ coordinator reversed that for parity with Node, which always reads the events. 6
 of each erased id once the rows are gone. A refused erase keeps the gates. A clock stopped before a file-failure refusal restarts
 at the session's next turn edge (9.47's note on 501). 682. The erase test checks the clock and the gate of both sessions of a tree (root and subagent), with the rules of `session_delete`.
 
+### 9.52 W8e: runs in the background list and concurrency-only amend (as built, gate off)
+
+**Scope built.**
+
+- The AmendWorkflow tool retunes a concurrency-only call in place (divergence 455, closed at the tool). `tools/src/workflow_amend.rs`:
+  a call with only `max_concurrency` passes validation and asks for nothing (Node's `prepareApproval`: no script, no window, for any
+  owner). It calls the port's `retune_concurrency` (9.50): `Retuned` answers Node's `retuneResponse` text, `Unchanged` answers
+  `workflow_retune_unchanged` with the limit in force, `NotLive` falls back to a revision. The fallback reads the run's detail
+  (`get_run_detail`). A run this session owns and the user did not stop is revised with its stored script and no window (the owner
+  exemption, Node's `isAmendWorkflowOwnedPredecessor`); any other run answers `workflow_run_not_retunable` or `workflow_run_settled`,
+  or `run_not_found` for a run the session does not hold. The revision's post-approval body is `finish_revision`, shared by both.
+- Runs in `backgroundWorks` (divergence 609, closed for the snapshot). `kernel-api` `DynamicWorkflowRunPort::background_runs` (default
+  empty) returns `BackgroundRunWork` for the session's live runs. `runtime` answers it from the live table, in start order. The
+  protocol's `Projection::background_table` lists them after the shell commands as `{workId, kind: "workflow", title, status:
+"running", startedAt, cancellable: true, anchorRowId: null}`. `Live::shell_deltas` reads them on the same refresh as the commands.
+
+**Not built.**
+
+- The TUI `/tasks` entries. The kernel's `BackgroundKind` has no workflow variant, and 55 match sites in `tui`, `agents`, `tools` and
+  `executor-host` depend on its shape. A new variant is a shared-enum change for a separate PR (divergence 741).
+- Terminal notification and GUI notice payloads (W8d), the v4 settings and start commands (W9a): not in this row.
+
+**Node divergences (new in W8e, numbered from 730).**
+
+730. The unchanged check. Node refuses an unchanged limit before the port call, from the snapshot's limit (`refuseUnchangedBound`). Rust
+     asks the port, which answers `unchanged` from the engine's cap. The text is the same. The difference is a settled run whose limit
+     equals the request: Node answers `workflow_retune_unchanged` from the snapshot, Rust falls to the not-live answer.
+731. The owner exemption is applied only to the retune race (the fallback). A revision that is not a retune still asks its window
+     (454 stays open for the revision route).
+732. The fallback amends an owned run that settled, whatever its status, as Node does (owned and not user-stopped is the rule).
+733. The retune's failure has no error code. The text carries Node's code (`workflow_retune_unchanged`, `workflow_run_settled`,
+     `workflow_run_not_retunable`, `run_not_found`), as the tool's other refusals do (465).
+734. A host whose port has no retune (unsupported) answers `workflow_retune_unavailable`, a Rust-only text. Node falls through to a
+     revision, which needs a stored script the host may not have.
+735. The retuned display is `{diagnostics, ok, retuned: {runId, maxConcurrency, previous, defaultConcurrency}}`, as Node's `retuned`.
+     It carries no `status` (no backgrounded run), as Node.
+736. The unchanged text names the limit in force from the engine's cap. Node names the snapshot's limit. Both read the same value for a
+     live run.
+737. The background entry's title is the run's name, else its id. Node's `workflowTaskSubject` falls back to the script path, which the
+     run's launch metadata does not keep here.
+738. Only live runs are listed (pending or running here), in start order; a settled run leaves the list. Node's tracker drops a run at
+     its settlement.
+739. The list refreshes on the same flush as the commands: a tool result, a turn end or a background notice. A run that settles with none
+     of these events stays listed until the next one. Node's tracker removes it at settlement.
+740. `cancellable` is true for every listed run. Node's `canCancelBackgroundTask` for the run's tool is not checked against a live
+     Node session.
+741. The TUI `/tasks` list does not show runs (see Not built).
+742. The snapshot row has no `childSessionId`, `blocked` or `endedAt`. A run has no child session in this host, and the run's blocked
+     state is not projected here.
+743. The `startedAt` is the run's launch time (`RunMeta.started_at_ms`), kept across refreshes. Node's tracker start time is not compared.
+744. Divergence 609 is closed for the snapshot only. The run is cancelled by its id through TaskStop (9.48), as before.
+745. Divergence 610, checked. Node's subagent runtimes receive the parent's `runtimeTaskRegistry` (`runtime/methods/subagent.ts:99`), so
+     Node's TaskStop and `cancelBackgroundWork` see the runs of the whole session tree from the top session. Rust keeps the exact session
+     (9.48). Not changed: tree membership needs a lookup in the run path that the run service does not hold, and it is a separate PR.
+746. Not verified against a live Node run. The checks are source reads and the Rust tests.
+
+**Tests.**
+
+- `tools` `workflow_amend_tests` (ten new, plus the concurrency-only validation): red observed for the ten behavioural cases before the
+  implementation (the call refused `workflow_amend_script_unavailable` or the old `workflow_retune_unavailable`). Green after: the amend
+  tests 26, the workflow filter 200.
+- `protocol-zcode` `projection::background_shells_tests::a_live_workflow_run_is_a_running_work_until_it_settles`: the run appears after
+  the shell command, keeps its start time, gives no patch when unchanged, and leaves when not live. Red was a compile error (the
+  `background_table` method and `BackgroundRunWork` did not exist), not a behaviour red.
+- `runtime` `workflow_run_tests::a_session_lists_its_live_runs_as_background_works_only`: written with the implementation, green on the first
+  run. No behavioural red was captured for it.
+- `cargo fmt --all --check` and `cargo clippy --workspace --all-targets --locked -- -D warnings` clean. Lib tests green for runtime,
+  workflow, kernel-api, protocol-zcode, node-store and tools (no failures). CLI bin filter `workflow` 20.
+
 ## 10. Open questions
 
 Each has a recommendation. The user decides. Until decided, the recommendation is the default.

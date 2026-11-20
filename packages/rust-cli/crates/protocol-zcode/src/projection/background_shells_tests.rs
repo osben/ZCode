@@ -66,6 +66,73 @@ fn a_background_command_is_a_running_work_until_it_ends() {
     assert_eq!(ended[0]["patch"]["backgroundWorks"], json!([]));
 }
 
+/// Fork (9.52, divergence 609): a live dynamic workflow run is a running `workflow` work, listed after the shell commands
+/// (Node's tracker entry for a run: `kind` `workflow`, the subject as its title, cancellable). It leaves the list when it
+/// is no longer live, and an unchanged list is no patch.
+#[test]
+fn a_live_workflow_run_is_a_running_work_until_it_settles() {
+    use rust_cli_kernel_api::ids::WorkflowRunId;
+    use rust_cli_kernel_api::workflow_run::BackgroundRunWork;
+
+    let mut feed = Feed::new();
+    let run = BackgroundRunWork {
+        run_id: WorkflowRunId::new("wf_1"),
+        title: "Audit the tests".into(),
+        started_at_ms: 4000,
+    };
+    let started = feed.projection.background_table(
+        &[shell("b1", BackgroundStatus::Running)],
+        std::slice::from_ref(&run),
+        5000,
+    );
+    let expected = json!([
+        {
+            "workId": "b1",
+            "kind": "bash",
+            "title": "sleep 120",
+            "status": "running",
+            "startedAt": 5000,
+            "cancellable": true,
+            "anchorRowId": null,
+        },
+        {
+            "workId": "wf_1",
+            "kind": "workflow",
+            "title": "Audit the tests",
+            "status": "running",
+            "startedAt": 4000,
+            "cancellable": true,
+            "anchorRowId": null,
+        },
+    ]);
+    assert_eq!(started[0]["patch"]["backgroundWorks"], expected);
+    assert_eq!(
+        feed.projection.snapshot(feed.seq, "e")["backgroundWorks"],
+        expected
+    );
+    assert!(
+        feed.projection
+            .background_table(
+                &[shell("b1", BackgroundStatus::Running)],
+                std::slice::from_ref(&run),
+                6000,
+            )
+            .is_empty(),
+        "an unchanged list is no patch, and the start times are kept"
+    );
+    let settled =
+        feed.projection
+            .background_table(&[shell("b1", BackgroundStatus::Running)], &[], 7000);
+    assert_eq!(
+        settled[0]["patch"]["backgroundWorks"]
+            .as_array()
+            .unwrap()
+            .len(),
+        1
+    );
+    assert_eq!(settled[0]["patch"]["backgroundWorks"][0]["workId"], "b1");
+}
+
 /// A command without a known Bash description is titled by its command line; subagents are not shells.
 #[test]
 fn an_unknown_command_is_titled_by_its_command_line() {

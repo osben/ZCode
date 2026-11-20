@@ -860,8 +860,27 @@ impl Live {
                 return Vec::new();
             }
         };
+        // Fork (9.52): the session's live workflow runs are background works too (Node's tracker entries for runs).
+        let runs = match self.context.dynamic_workflow_runs() {
+            Some(sessions) => match sessions
+                .for_session(&rust_cli_kernel_api::ids::SessionId::new(
+                    self.session.as_str(),
+                ))
+                .background_runs()
+                .await
+            {
+                Ok(runs) => runs,
+                Err(error) => {
+                    tracing::debug!(event = "protocol.background.runs_read_failed", error = %error.message, "reading the workflow runs failed");
+                    Vec::new()
+                }
+            },
+            None => Vec::new(),
+        };
         let now = self.context.now();
-        self.state().projection.shell_table(&entries, now)
+        self.state()
+            .projection
+            .background_table(&entries, &runs, now)
     }
 
     /// Fork: the watcher of the kernel's subagent table; it ends with this session.

@@ -1678,6 +1678,40 @@ async fn a_cancel_stops_a_live_run_of_its_own_session_only() {
     assert_eq!(h.residency.live_runs("ses_p"), 0, "the guard is released");
 }
 
+/// Fork (9.52, divergence 609): a session's background works are its live runs only. Another session sees none, a run
+/// without a name is titled by its id, and a run that settles leaves the list.
+#[tokio::test]
+async fn a_session_lists_its_live_runs_as_background_works_only() {
+    use rust_cli_kernel_api::ids::{SessionId, WorkflowRunId};
+    use rust_cli_kernel_api::workflow_run::{CancelInitiator, DynamicWorkflowRunSessions};
+    let h = harness();
+    h.service
+        .launch(input("wf_1"), config("wf_1", Some("ses_p")))
+        .await
+        .expect("launched");
+    let own = h.service.for_session(&SessionId::new("ses_p"));
+    let other = h.service.for_session(&SessionId::new("ses_other"));
+    let listed = own.background_runs().await.expect("listed");
+    assert_eq!(listed.len(), 1, "the live run is a background work");
+    assert_eq!(listed[0].run_id.as_str(), "wf_1");
+    assert_eq!(
+        listed[0].title, "wf_1",
+        "an unnamed run is titled by its id"
+    );
+    assert!(
+        other.background_runs().await.expect("listed").is_empty(),
+        "another session's runs are not its works"
+    );
+    own.cancel(&WorkflowRunId::new("wf_1"), CancelInitiator::User)
+        .await
+        .expect("cancel");
+    wait_until("the stopped run to settle", || h.service.run_count() == 0).await;
+    assert!(
+        own.background_runs().await.expect("listed").is_empty(),
+        "a settled run is no longer a work"
+    );
+}
+
 /// Node's retired-question table (W8a, 9.48, divergence 391): a question withdrawn with its run is `run_not_in_flight`, an
 /// answered one is `already_resolved`, and an id it never held is `unknown_question`.
 #[tokio::test]
