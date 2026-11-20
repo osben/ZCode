@@ -5,13 +5,11 @@
 //! The entry file is self-contained, so the child takes no bundle argument. The process itself comes from the
 //! injected [`ChildLauncher`]: this crate spawns nothing, as the helper's launcher is injected too.
 
-use std::io;
 use std::path::Path;
 
-use async_trait::async_trait;
-use tokio::io::{AsyncBufRead, AsyncRead, AsyncWrite};
-
-use super::workflow_host::ChildIo;
+// The launcher port lives in kernel-api since W7-5 (specs/fork-rust-workflow-engine.md, 9.22): the run service reaches it
+// there, and this crate builds the invocation it is given.
+pub use rust_cli_kernel_api::workflow_child::{ChildLauncher, ChildStreams, LaunchedChild};
 
 /// The V8 heap cap of a sandbox child, in MB (Node's `harness.ts` default).
 pub const MAX_OLD_SPACE_MB: u32 = 256;
@@ -76,26 +74,6 @@ pub fn invocation(command: &ChildCommand, entry: &Path) -> Invocation {
         ],
         env,
     }
-}
-
-/// The three stdio ends of a started child, boxed so the host is not generic over the launcher.
-pub type ChildStreams = ChildIo<
-    Box<dyn AsyncBufRead + Send + Unpin>,
-    Box<dyn AsyncWrite + Send + Unpin>,
-    Box<dyn AsyncRead + Send + Unpin>,
->;
-
-/// A started child: its stdio, and a guard whose drop ends the process tree.
-pub struct LaunchedChild {
-    pub streams: ChildStreams,
-    pub guard: Box<dyn Send>,
-}
-
-/// Starts sandbox children for an entry file. The implementation owns the child's process tree, and builds its
-/// invocation with [`invocation`] from the helper command it was given.
-#[async_trait]
-pub trait ChildLauncher: Send + Sync {
-    async fn launch(&self, entry: &Path) -> io::Result<LaunchedChild>;
 }
 
 #[cfg(test)]

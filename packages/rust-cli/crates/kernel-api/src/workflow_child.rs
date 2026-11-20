@@ -9,9 +9,56 @@
 //! added here. Unknown fields are ignored, so a newer child with extra fields still reads; a missing required field, or a
 //! `kind`/`type` this module does not know, is a malformed line.
 
+use std::io;
+use std::path::Path;
+
+use async_trait::async_trait;
 use futures_util::future::BoxFuture;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
+use tokio::io::{AsyncBufRead, AsyncRead, AsyncWrite};
+
+/// The child's three stdio ends, as the launcher hands them over.
+pub struct ChildIo<R, W, E> {
+    pub stdout: R,
+    pub stdin: W,
+    pub stderr: E,
+}
+
+/// How a run's stream ended.
+#[derive(Debug, Clone, PartialEq)]
+pub enum Outcome {
+    /// The child sent `complete`.
+    Completed(Completion),
+    /// The stream stopped before `complete`.
+    Stopped { reason: StopReason, cause: String },
+}
+
+/// The only stop reason the transport produces; the engine maps the others (`user`, `model`, ...) itself.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum StopReason {
+    Interrupted,
+}
+
+/// The boxed stdio of a started child, so the host is not generic over the launcher.
+pub type ChildStreams = ChildIo<
+    Box<dyn AsyncBufRead + Send + Unpin>,
+    Box<dyn AsyncWrite + Send + Unpin>,
+    Box<dyn AsyncRead + Send + Unpin>,
+>;
+
+/// A started child: its stdio, and a guard whose drop ends the process tree.
+pub struct LaunchedChild {
+    pub streams: ChildStreams,
+    pub guard: Box<dyn Send>,
+}
+
+/// Starts sandbox children for an entry file (the W7-5 port the run service reaches through `kernel-api`). The
+/// implementation owns the child's process tree. The protocol side builds the invocation.
+#[async_trait]
+pub trait ChildLauncher: Send + Sync {
+    async fn launch(&self, entry: &Path) -> io::Result<LaunchedChild>;
+}
 
 /// The engine side of Boundary A. Methods are synchronous except the request's future, which runs while the host
 /// keeps reading lines, so asks in flight do not hold up the child's next message.

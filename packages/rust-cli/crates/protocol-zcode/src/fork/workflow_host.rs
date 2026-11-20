@@ -21,27 +21,8 @@ use super::workflow_lines::{Line, NdjsonLines};
 pub use rust_cli_kernel_api::workflow_child::ChildHandler;
 use super::workflow_wire::{ChildMessage, Completion, WireError, response_line};
 
-/// The child's three stdio ends, as the launcher hands them over.
-pub struct ChildIo<R, W, E> {
-    pub stdout: R,
-    pub stdin: W,
-    pub stderr: E,
-}
-
-/// How a run's stream ended.
-#[derive(Debug, Clone, PartialEq)]
-pub enum Outcome {
-    /// The child sent `complete`.
-    Completed(Completion),
-    /// The stream stopped before `complete`.
-    Stopped { reason: StopReason, cause: String },
-}
-
-/// The only stop reason the transport produces; the engine maps the others (`user`, `model`, ...) itself.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum StopReason {
-    Interrupted,
-}
+// The stdio ends, the outcome and the stop reason live in kernel-api since W7-5 (specs/fork-rust-workflow-engine.md, 9.22).
+pub use rust_cli_kernel_api::workflow_child::{ChildIo, Outcome, StopReason};
 
 /// The stderr kept for a cause: its last bytes, so a long crash log cannot grow a cause.
 const STDERR_TAIL_BYTES: usize = 4096;
