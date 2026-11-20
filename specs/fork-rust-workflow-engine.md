@@ -3243,13 +3243,13 @@ once the service is built; the run tools of 9.40 read the same slot),
 370. Closes 312. CreateWorkflow is registered with the analyzer and the run sessions. Without the sessions it is dropped from the wired set, so
      a session never sees a tool that cannot run (9.36's rule kept).
 371. Closes 322 and 329. The tool holds the sessions port and routes by the calling session. The run service is one per app, and its
-     `SessionRuns` port holds the parent, so a submit records the calling session as the run's parent (Node's request field
-     `parentSessionId` is the same value here; the port uses its own session, not the request's).
+     `SessionRuns` port holds the parent, so a submit is attributed to the port's session. A request that names a different
+     `parentSessionId` is refused (typed `DynamicWorkflowRunError`, nothing started, nothing re-attributed; review round, 9.39 below).
 372. The launch input id is not the parent turn's. Node's `resolveLaunchAnchor` takes the active turn's inputId for a chat CreateWorkflow
      (the subagent steps attribute to that turn), and a minted UUID v7 otherwise. The Rust submit mints a v4-shaped uuid, so the actors'
      steps are not attributed to the turn that launched the run. `ToolUseContext.run` is not passed.
-373. The run id is `dwfrun-` plus a v4-shaped uuid from the process random source (clippy forbids `Uuid::new_v4`). Node uses
-     `randomUUID()`. The characters and the prefix match; the uuid version nibble is the same.
+373. The run id is `dwfrun-` plus a v4 uuid from the platform's CSPRNG (`rust_cli_platform::ids::uuid_v4`, the one helper that
+     protocol-zcode's wire ids also use). Node uses `randomUUID()`, also a CSPRNG. The characters, prefix and version bits match.
 374. The compile reports both tables, and an empty pair is accepted (a script with no asks and no phases). Resume still refuses an empty
      pair (9.37, divergence 333), because a stored script's tables cannot be told from a missing reply there.
 375. Fewer submit fields. `SubmitRequest` has no `trace`, `launchInputId`, `phaseNames`, `phaseAlongside`, `subagentModel`,
@@ -3258,8 +3258,9 @@ once the service is built; the run tools of 9.40 read the same slot),
 376. The permission mode is read through the bindings port (9.35) before the child starts, and the submit is refused when the port is not
      configured or the read fails. Node reads `permissionMode()` with no port to fail. The read is one cold store load (9.35, 304).
 377. Compile refusals. Node's submit never sees a compile refusal (CreateWorkflow checks the script first, 9.27). A child refusal here
-     is a submit error with the helper's diagnostics in `L{line}:C{column}` lines under a header. Node's text for that case is not
-     verified (no Node path produces it).
+     is a submit error with the helper's diagnostics in `L{line}:C{column}` lines under a header, capped at Node's
+     2000-unit diagnostics bound (`cap_diagnostics_text`, shared with the resume's `boundedResumeDiagnostics`; review round). Node's
+     CreateWorkflow path does not bound its own diagnostics, so the cap is a Rust-side choice for text that reaches the model.
 378. The caps default is set once by the composition (`configure_concurrency`, the governor formula at build), not per launch from
      `availableParallelism()`. The values are equal (9.34, 293).
 379. `run-launched` carries `scriptPath` (the file the tool named, a draft or a `path` source) through the launch fields. Node writes it
@@ -3299,6 +3300,33 @@ once the service is built; the run tools of 9.40 read the same slot),
   calls `configure_concurrency` and `configure_bindings`.
 - Clippy `-D warnings` over the workspace, all targets: clean. `cargo fmt --check` clean. Lib suites green: runtime 311, tools 580,
   workflow 434, kernel-api 439, protocol-zcode 963, node-store 357 (1 ignored); cli bins 561.
+
+**Review round (ocr on #599, head 1e62f87fa; findings checked against 40489b9fe).**
+
+- Medium, the run and launch ids from a non-CSPRNG source: fixed. The ids come from `rust_cli_platform::ids::uuid_v4` (ring's
+  `SystemRandom`, the entry `clippy.toml` reserves for cryptographic randomness). protocol-zcode's wire ids use the same helper, so
+  one copy remains. The helper's layout tests passed on the first run (written with the body, not red first; said so here).
+- Medium, a request that names another parent was silently re-attributed: fixed. `submit_run` refuses it with a typed
+  `DynamicWorkflowRunError` naming both sessions, before anything starts. Red first: the routing test codified re-attribution, and
+  it was changed to name its own parent; `a_submit_that_names_another_parent_is_refused_and_starts_nothing` was written with the
+  refusal (not red first).
+- Medium, the rejection text unbounded: fixed. `cap_diagnostics_text` (resume's bound, 2000 UTF-16 units, one unit reserved for
+  the ellipsis) caps the submit's rejection text, and the resume's diagnostics use the same function. Test:
+  `a_long_compile_rejection_is_capped_at_the_resume_bound` (400 diagnostics; written with the code, not red first).
+- Low, `tables_of` wording: fixed. The shared reader names only what is missing; `compiled_tables` (resume) appends "so the run
+  cannot be resumed", so the resume's messages are unchanged.
+- Low, `configure_concurrency` not validated: fixed. A non-finite value or one below 1 is refused (logged) and nothing is kept.
+  Red first: `an_invalid_default_concurrency_is_refused_and_the_first_valid_one_is_kept` failed on the NaN acceptance.
+- Low, set-once setters silent on a second call: fixed. `configure_concurrency` and `configure_bindings` log a warning on a second
+  set, as `set_store` does; the composition logs when `LateRunSessions::set` returns false.
+- Low, the late-slot test did not cover submit before set: fixed. `a_submit_before_the_late_slot_is_set_is_unsupported_and_a_second_set_is_refused`
+  (cli gating tests) checks the typed unsupported error and that a second set is refused.
+- Low, `with_sessions` as the only constructor: fixed. The constructor is `CreateWorkflowTool::new(analyzer, runs, home)`.
+- Low, the needless clone of `tool_call_id`: fixed (moved).
+- Low, the `CompiledChild` doc block hijacked the W7-5e doc: fixed (the W7-5e doc is back on its test).
+- Obsolete, the `workflow_gate.rs` `LateRunSessions` findings (a doc with a missing `false`, a `set` that returns a bool nobody reads):
+  the type is gone; the one slot is kernel-api's `LateRunSessions` (merged from #597).
+- Rejected: none.
 
 **Not done.** Amend (387), the phase table and holes (375), the turn's input id (372), the trace (375), the Host-session protocol test and the
 live child (386), and the desktop check. Gate stays off.

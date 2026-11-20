@@ -491,18 +491,42 @@ impl WorkflowRunService {
     }
 
     /// Node `defaultConcurrency()` (9.39): the caps default of a submit, and the port's `default_concurrency`. Set once by
-    /// the composition root (the governor's formula over the process's cores). Returns `false` when already set.
+    /// the composition root (the governor's formula over the process's cores). Returns `false` when the value is not
+    /// finite or below one (refused, nothing kept), or when a value is already set (the first one stays, logged).
     pub fn configure_concurrency(&self, default_concurrency: f64) -> bool {
-        self.inner
+        if !default_concurrency.is_finite() || default_concurrency < 1.0 {
+            tracing::warn!(
+                event = "workflow.run.default_concurrency_invalid",
+                value = default_concurrency,
+                "the default concurrency must be a finite number of at least one; it is not set"
+            );
+            return false;
+        }
+        let first = self
+            .inner
             .default_concurrency
             .set(default_concurrency)
-            .is_ok()
+            .is_ok();
+        if !first {
+            tracing::warn!(
+                event = "workflow.run.default_concurrency_set_twice",
+                "the default concurrency was set twice; the first one stays"
+            );
+        }
+        first
     }
 
     /// The parent's permission mode port a submit reads before its launch (9.39). Set once by the composition root; a
-    /// submit without it is refused, so no run starts with its mode unrecorded.
+    /// submit without it is refused, so no run starts with its mode unrecorded. Returns `false` (logged) on a second set.
     pub fn configure_bindings(&self, bindings: Arc<dyn ActorBindingsPort>) -> bool {
-        self.inner.bindings.set(bindings).is_ok()
+        let first = self.inner.bindings.set(bindings).is_ok();
+        if !first {
+            tracing::warn!(
+                event = "workflow.run.bindings_set_twice",
+                "the actor bindings were set twice; the first one stays"
+            );
+        }
+        first
     }
 
     /// Sets the journal's run store (set once, by the composition root that owns the session database).

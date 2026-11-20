@@ -182,8 +182,7 @@ async fn a_create_workflow_call_submits_through_the_port_of_its_own_session() {
     let guard = tempfile::TempDir::new().expect("tempdir");
     let root = guard.path().to_path_buf();
     let cwd = root.join("project");
-    let tool =
-        CreateWorkflowTool::with_sessions(Arc::new(Checker), Some(sessions), root.join("home"));
+    let tool = CreateWorkflowTool::new(Arc::new(Checker), Some(sessions), root.join("home"));
     let mut ctx = Ctx::with_ops(Arc::new(History(loaded_skill()))).build();
     ctx.workspace.root = rust_cli_kernel_api::env::EnvPath::new(cwd.display().to_string());
     ctx.session = SessionId::new("ses_second");
@@ -248,7 +247,7 @@ impl Harness {
             Arc::new(OneSession(port as Arc<dyn DynamicWorkflowRunPort>))
                 as Arc<dyn DynamicWorkflowRunSessions>
         });
-        let tool = CreateWorkflowTool::with_sessions(Arc::new(Checker), runs, home.clone());
+        let tool = CreateWorkflowTool::new(Arc::new(Checker), runs, home.clone());
         Self {
             _guard: guard,
             cwd,

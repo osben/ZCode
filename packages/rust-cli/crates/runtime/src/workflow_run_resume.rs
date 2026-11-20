@@ -28,8 +28,17 @@ use crate::workflow_quota::{QuotaRunResumer, RESUME_NOT_WIRED};
 /// generous; past it the timer gets an error, which the module retries.
 pub(crate) const RESUME_ANSWER_TIMEOUT: Duration = Duration::from_secs(120);
 
-/// Node's `boundedResumeDiagnostics` cap, in UTF-16 units (`RESUME_DIAGNOSTICS_MAX_CHARS`).
+/// Node's `boundedResumeDiagnostics` cap, in UTF-16 units (`RESUME_DIAGNOSTICS_MAX_CHARS`). A submit's rejection text uses
+/// the same cap (9.39, divergence 377): its diagnostics reach the model verbatim, as a resume's do.
 const RESUME_DIAGNOSTICS_MAX_UNITS: usize = 2000;
+
+/// Caps a diagnostics text at Node's bound: a cut at the cap minus one unit, with an ellipsis.
+pub(crate) fn cap_diagnostics_text(body: String) -> String {
+    if utf16_len(&body) <= RESUME_DIAGNOSTICS_MAX_UNITS {
+        return body;
+    }
+    format!("{}…", utf16_prefix(&body, RESUME_DIAGNOSTICS_MAX_UNITS - 1))
+}
 
 /// What a resume answered: resumed (with the run's tool call id), or refused with Node's reason.
 #[derive(Debug, Clone, PartialEq)]
@@ -61,11 +70,7 @@ fn bounded_resume_diagnostics(run_id: &str, diagnostics: &[WorkflowDiagnostic]) 
             diagnostic.line, diagnostic.column, diagnostic.message
         )
     }));
-    let body = lines.join("\n");
-    if utf16_len(&body) <= RESUME_DIAGNOSTICS_MAX_UNITS {
-        return body;
-    }
-    format!("{}…", utf16_prefix(&body, RESUME_DIAGNOSTICS_MAX_UNITS - 1))
+    cap_diagnostics_text(lines.join("\n"))
 }
 
 /// The ask specs and the site phases of one compile.
@@ -77,7 +82,8 @@ type CompiledTables = (HashMap<String, AskSpec>, HashMap<String, String>);
 /// with both tables empty is refused as the compile's missing tables: a run with no asks cannot be told from that, and
 /// the refusal is the safe side (9.37, divergence 333).
 pub(crate) fn compiled_tables(compiled: &Value) -> Result<CompiledTables, String> {
-    let tables = tables_of(compiled)?;
+    let tables =
+        tables_of(compiled).map_err(|error| format!("{error}, so the run cannot be resumed"))?;
     if tables.0.is_empty() && tables.1.is_empty() {
         return Err(
             "the compile reported no ask table (askSpecs and sitePhases are both empty), so the run cannot be resumed"
@@ -88,27 +94,21 @@ pub(crate) fn compiled_tables(compiled: &Value) -> Result<CompiledTables, String
 }
 
 /// The compile's two tables as they are, empty or not: both must be present (Node reads both off the compile, 9.39). A
-/// submit takes an empty pair as the answer for a script with no asks and no phases; a resume refuses it (above).
+/// submit takes an empty pair as the answer for a script with no asks and no phases; a resume refuses it
+/// (`compiled_tables`). The messages name only what is missing; each caller adds its own context.
 pub(crate) fn tables_of(compiled: &Value) -> Result<CompiledTables, String> {
     let asks = compiled.get("askSpecs").and_then(Value::as_object);
     let phases = compiled.get("sitePhases").and_then(Value::as_object);
     let (asks, phases) = match (asks, phases) {
         (Some(asks), Some(phases)) => (asks, phases),
         (None, None) => {
-            return Err(
-                "the compile reported no askSpecs or sitePhases table, so the run cannot be resumed"
-                    .to_owned(),
-            );
+            return Err("the compile reported no askSpecs or sitePhases table".to_owned());
         }
         (None, Some(_)) => {
-            return Err(
-                "the compile reported no askSpecs table, so the run cannot be resumed".to_owned(),
-            );
+            return Err("the compile reported no askSpecs table".to_owned());
         }
         (Some(_), None) => {
-            return Err(
-                "the compile reported no sitePhases table, so the run cannot be resumed".to_owned(),
-            );
+            return Err("the compile reported no sitePhases table".to_owned());
         }
     };
     let mut specs = HashMap::new();

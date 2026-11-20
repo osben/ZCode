@@ -28,6 +28,7 @@ rust-cli-acp.workspace = true
 rust-cli-base.workspace = true
 rust-cli-fs.workspace = true
 rust-cli-kernel-api.workspace = true
+rust-cli-platform.workspace = true
 rust-cli-node-store.workspace = true
 rusqlite.workspace = true
 rust-cli-proc.workspace = true

@@ -11,7 +11,6 @@
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use rust_cli_base::random;
 use rust_cli_kernel_api::ids::WorkflowRunId;
 use rust_cli_kernel_api::workflow_child::{LaunchError, LaunchInput, RunningChild};
 use rust_cli_kernel_api::workflow_run::{DynamicWorkflowRunError, SubmitRequest};
@@ -20,7 +19,9 @@ use rust_cli_workflow::event::LaunchFields;
 use rust_cli_workflow::model::Caps;
 use serde_json::Value;
 
-use super::resume::tables_of;
+use rust_cli_platform::ids::uuid_v4;
+
+use super::resume::{cap_diagnostics_text, tables_of};
 use super::{CompileCheck, LaunchFailure, WorkflowRunService};
 use crate::workflow_owner::{ActorBindingsPort, record_parent_mode};
 
@@ -33,27 +34,10 @@ pub(crate) fn normalized_limit(requested: Option<u64>, default: f64) -> f64 {
     }
 }
 
-/// Node `mintRunId`: `dwfrun-<uuid>`, with only `[A-Za-z0-9-]` (the id appears in session ids, URLs and file paths).
+/// Node `mintRunId`: `dwfrun-<uuid>`, with only `[A-Za-z0-9-]` (the id appears in session ids, URLs and file paths). The
+/// uuid comes from the platform's CSPRNG, as Node's `randomUUID()` does (divergence 373).
 fn mint_run_id() -> String {
-    format!("dwfrun-{}", uuid())
-}
-
-/// A random v4-shaped uuid from the process's random source (clippy forbids `uuid::Uuid::new_v4`, as in protocol-zcode).
-fn uuid() -> String {
-    let mut bytes = [0u8; 16];
-    bytes[..8].copy_from_slice(&random::u64().to_be_bytes());
-    bytes[8..].copy_from_slice(&random::u64().to_be_bytes());
-    bytes[6] = (bytes[6] & 0x0f) | 0x40;
-    bytes[8] = (bytes[8] & 0x3f) | 0x80;
-    let hex: String = bytes.iter().map(|byte| format!("{byte:02x}")).collect();
-    format!(
-        "{}-{}-{}-{}-{}",
-        &hex[0..8],
-        &hex[8..12],
-        &hex[12..16],
-        &hex[16..20],
-        &hex[20..32]
-    )
+    format!("dwfrun-{}", uuid_v4())
 }
 
 /// The text of a compile that rejected the script: its diagnostics in Node's `L{line}:C{column}` form.
@@ -62,10 +46,10 @@ fn rejected_text(
     message: Option<&str>,
 ) -> String {
     if diagnostics.is_empty() {
-        return match message {
+        return cap_diagnostics_text(match message {
             Some(message) => format!("the workflow script did not compile: {message}"),
             None => "the workflow script did not compile".to_owned(),
-        };
+        });
     }
     let mut lines = vec!["The workflow script did not compile:".to_owned()];
     lines.extend(diagnostics.iter().map(|diagnostic| {
@@ -74,7 +58,7 @@ fn rejected_text(
             diagnostic.line, diagnostic.column, diagnostic.message
         )
     }));
-    lines.join("\n")
+    cap_diagnostics_text(lines.join("\n"))
 }
 
 /// Records the parent's permission mode on the config (9.35), on the blocking pool: the port blocks on the store. A read
@@ -119,6 +103,16 @@ impl WorkflowRunService {
                 "the run service cannot read the parent's permission mode, so the run is not started",
             ));
         };
+        // The port is bound to one parent (`SessionRuns`). A request that names another parent is a wiring fault: the run
+        // and its recorded mode would follow the port, not the request, so the submit is refused instead (9.39, 380).
+        if let Some(named) = request.parent_session_id.as_ref()
+            && named.as_str() != parent
+        {
+            return Err(DynamicWorkflowRunError::new(format!(
+                "the submit names the parent session {} but its run port belongs to {parent}, so no run is started",
+                named.as_str()
+            )));
+        }
         let run_id = mint_run_id();
         let input = LaunchInput {
             script_text: request.script_text.clone(),
@@ -137,11 +131,11 @@ impl WorkflowRunService {
             args: request.args.map(Value::Object),
             parent_session_id: Some(parent.to_owned()),
             cwd: Some(request.cwd),
-            tool_call_id: request.tool_call_id.clone(),
+            tool_call_id: request.tool_call_id,
             // Node's launch anchor: the inputId of the turn that launched the run. Until the tool passes its turn, a
             // direct launch mints one (divergence 371). The script file is recorded on `run-launched` (Node).
             launch: Some(LaunchFields {
-                input_id: uuid(),
+                input_id: uuid_v4(),
                 script_path: request.script_path,
                 ..LaunchFields::default()
             }),

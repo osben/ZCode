@@ -199,6 +199,51 @@ async fn wait_until(what: &str, mut done: impl FnMut() -> bool) {
 
 // ---- The submit itself, over the real journal and the production owner.
 
+#[test]
+fn an_invalid_default_concurrency_is_refused_and_the_first_valid_one_is_kept() {
+    // The default is the caps default of every submit: a non-finite or sub-one value is refused, and a second set keeps the
+    // first (review finding: validate the set-once value, and say so when a second set is ignored).
+    let fx = fixture(compiled_facts(), mode(Ok(None)));
+    let service = WorkflowRunService::new(
+        Arc::new(SessionResidency::new()),
+        Arc::new(NoConcurrency),
+        Arc::new(FakeChildRunner::new()),
+        production_owner_factory(
+            OwnerStores {
+                database: fx.path,
+                directory: "project".to_owned(),
+                version: "test".to_owned(),
+                clock: || 1,
+            },
+            Arc::new(UnwiredTurns),
+            Arc::new(UnwiredRelease),
+        ),
+    );
+    assert!(!service.configure_concurrency(f64::NAN), "NaN is refused");
+    assert!(
+        !service.configure_concurrency(0.5),
+        "a default below one is refused"
+    );
+    assert_eq!(
+        service.default_concurrency_value(),
+        None,
+        "nothing was kept"
+    );
+    assert!(
+        service.configure_concurrency(3.0),
+        "a valid default is kept"
+    );
+    assert!(
+        !service.configure_concurrency(9.0),
+        "a second set is refused"
+    );
+    assert_eq!(
+        service.default_concurrency_value(),
+        Some(3.0),
+        "the first value stays"
+    );
+}
+
 #[tokio::test]
 async fn a_submitted_run_starts_on_a_new_row_and_settles() {
     let fx = fixture(compiled_facts(), mode(Ok(None)));
@@ -382,14 +427,66 @@ async fn the_port_for_a_session_submits_under_that_session() {
         "the session's port reports the service's default"
     );
 
-    let run = port
-        .submit(request("return 1\n"))
-        .await
-        .expect("the submit starts the run");
+    let mut own = request("return 1\n");
+    own.parent_session_id = Some(SessionId::new(OTHER));
+    let run = port.submit(own).await.expect("the submit starts the run");
 
     let conn = open(&fx.path);
     let row = dwf::get_run(&conn, &run.to_string())
         .expect("the row read")
         .expect("the row");
     assert_eq!(row.parent_session_id.as_deref(), Some(OTHER));
+}
+
+#[tokio::test]
+async fn a_submit_that_names_another_parent_is_refused_and_starts_nothing() {
+    // The port is bound to one parent. A request naming a different one is a wiring fault: refused, not re-attributed
+    // (divergence 380). The run and its recorded mode would otherwise follow the port, not the request.
+    let fx = fixture(compiled_facts(), mode(Ok(None)));
+    let sessions: &dyn DynamicWorkflowRunSessions = &fx.service;
+    let port = sessions.for_session(&SessionId::new(PARENT));
+    let mut misnamed = request("return 1\n");
+    misnamed.parent_session_id = Some(SessionId::new(OTHER));
+
+    let error = port
+        .submit(misnamed)
+        .await
+        .expect_err("a mismatched parent is refused");
+    assert!(
+        error.message.contains(OTHER) && error.message.contains(PARENT),
+        "{}",
+        error.message
+    );
+    assert!(fx.fake.launches().is_empty(), "no child started");
+    assert_eq!(fx.service.run_count(), 0, "nothing is kept");
+}
+
+#[tokio::test]
+async fn a_long_compile_rejection_is_capped_at_the_resume_bound() {
+    // A submit's rejection reaches the model verbatim, so it is cut at Node's 2000-unit diagnostics cap (divergence 377).
+    let fx = fixture(compiled_facts(), mode(Ok(None)));
+    let diagnostics: Vec<WorkflowDiagnostic> = (0..400)
+        .map(|line| WorkflowDiagnostic {
+            code: 2304,
+            line,
+            column: 1,
+            message: "Cannot find name 'a-long-identifier-that-repeats'.".to_owned(),
+        })
+        .collect();
+    fx.fake.refuse_next(LaunchError::Rejected {
+        diagnostics,
+        message: None,
+    });
+
+    let error = submit(&fx.service, PARENT, request("x\n"))
+        .await
+        .expect_err("the compile refuses the script");
+    let units: usize = error.message.encode_utf16().count();
+    assert!(units <= 2000, "{units} units");
+    assert!(error.message.ends_with('…'), "the cut is marked");
+    assert!(
+        error
+            .message
+            .starts_with("The workflow script did not compile:\nL0:C1")
+    );
 }

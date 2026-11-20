@@ -153,7 +153,7 @@ pub struct CreateWorkflowTool {
 impl CreateWorkflowTool {
     /// The run service's sessions: each call submits through the port of its own session. Without sessions the tool
     /// typechecks and says it did not run.
-    pub fn with_sessions(
+    pub fn new(
         analyzer: Arc<dyn WorkflowAnalyzer>,
         runs: Option<Arc<dyn DynamicWorkflowRunSessions>>,
         home: PathBuf,

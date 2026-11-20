@@ -969,7 +969,7 @@ async fn a_create_workflow_ask_offers_the_session_option() {
     let mut context = context(PermissionAnswer::Unavailable);
     context.interactions = asked.clone();
     let (progress, _updates) = mpsc::channel(4);
-    let tool = Arc::new(crate::workflow_create::CreateWorkflowTool::with_sessions(
+    let tool = Arc::new(crate::workflow_create::CreateWorkflowTool::new(
         Arc::new(PassingChecker),
         None,
         std::path::PathBuf::from("/home"),

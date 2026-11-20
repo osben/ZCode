@@ -115,7 +115,7 @@ pub fn workflow_tools(
 ) -> Vec<Arc<dyn Tool>> {
     let mut tools: Vec<Arc<dyn Tool>> = Vec::new();
     if let Some(analyzer) = analyzer {
-        tools.push(Arc::new(CreateWorkflowTool::with_sessions(
+        tools.push(Arc::new(CreateWorkflowTool::new(
             analyzer.clone(),
             runs,
             home.clone(),

@@ -419,8 +419,6 @@ async fn a_built_run_service_is_idle_and_opens_nothing_until_a_launch() {
     );
 }
 
-/// W7-5e (9.34): a run launched through the composed service records its progress to its parent session, through the
-/// port the composition was given. Node's sink appends each run event to the parent; the first is `run-started`.
 /// The fake child, compiled as the helper compiles a script with no asks and no phases.
 struct CompiledChild(Arc<FakeChildRunner>);
 
@@ -521,6 +519,8 @@ async fn a_submit_through_the_composed_sessions_starts_a_run_under_its_session()
     assert_eq!(row.status, RunStatus::Completed);
 }
 
+/// W7-5e (9.34): a run launched through the composed service records its progress to its parent session, through the
+/// port the composition was given. Node's sink appends each run event to the parent; the first is `run-started`.
 #[tokio::test]
 async fn a_run_launched_in_the_composed_service_records_its_progress_to_its_parent() {
     let dir = tempfile::tempdir().expect("temp dir");

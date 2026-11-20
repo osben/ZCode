@@ -307,7 +307,12 @@ async fn serve(
     if let Some(service) = &workflow_service {
         let sessions: Arc<dyn rust_cli_kernel_api::workflow_run::DynamicWorkflowRunSessions> =
             service.clone();
-        run_sessions.set(sessions.clone());
+        if !run_sessions.set(sessions.clone()) {
+            tracing::warn!(
+                event = "workflow.run.sessions_set_twice",
+                "the run sessions were set twice; the first one stays"
+            );
+        }
         context.set_dynamic_workflow_runs(sessions);
     }
     let workflow_runs: Option<Arc<dyn WorkflowRunHost>> =

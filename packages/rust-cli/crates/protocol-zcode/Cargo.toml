@@ -18,6 +18,7 @@ async-trait.workspace = true
 # wire v3 的分片（dataBase64）。
 base64.workspace = true
 rust-cli-base.workspace = true
+rust-cli-platform.workspace = true
 # Fork: GBK / GB18030 detection of desktop text attachments (Node `text-metadata.ts`).
 encoding_rs.workspace = true
 # Fork: attached images are prepared for the model like Node's Jimp adapter.
