@@ -3300,6 +3300,81 @@ passed first time. The cli `workflow_gating_tests` were updated for the new `wir
 Green: `cargo fmt --all --check`; `cargo clippy --workspace --all-targets --locked -- -D warnings`; lib tests of `rust-cli-kernel-api`
 (440), `rust-cli-runtime` (309, of which five are the answer-selection tests added for ocr finding 1), `rust-cli-tools` (598); the cli binary tests (559).
 
+### 9.42 W7-9b: GetWorkflowRun (as built, gate off, partial)
+
+**Scope built.** The run-detail read on the run service (`get_run_detail`, the port member of 9.40's family) and the tool.
+The tool is registered in `wired_workflow_tools` after ListWorkflowRuns (Node's order). Its text has the journal-row facts:
+summary (partial), identity, usage (spent tokens), result or error, and the routing of a stopped or superseded run. The
+roster-family blocks (phases, subagents, health, log tail, holes, artifacts, the pending-question ids, the node counts and the
+script-named settings) are not read by this build, and the text says so where it matters (433 to 436). This closes the
+GetWorkflowRun note of 9.40 (divergence 392) for the detail read; the roster family is the follow-up that remains.
+
+- **Read.** `runtime/src/workflow_run_list.rs` `run_detail_of`: the journal row (`get_run`) and its timestamps (`run_times`, a
+  new `RunStore` method; the default fails the read rather than reporting zero). The row's list item (`list_item`) is extended
+  with `usage.spentTokens`, `result` and `error` (the failure's `code`, `message` and `providerStop`). Any journal row is
+  readable, as in Node; ownership is the row's parent or a live entry of this session. A run this session launched whose row is
+  not written yet is reported from its registry entry (the gap form, `detail_with_usage`). No store: the optional-member
+  fallback, which the tool reports as the introspection-unavailable failure.
+- **Text.** `tools/src/workflow_run_detail.rs` `format_detail(detail, now)` is a pure function of the detail and one clock
+  reading (the tool reads `SystemClock::utc()` once per call). Node's order is kept: summary, identity, pending questions,
+  usage, result, error, routing.
+- **Routing in the tool.** `Kind::Get` with `run_id` (non-empty). An unknown run is `run_not_found`, the text ResumeWorkflowRun
+  already gives. A missing capability is `workflow_introspection_unavailable`, as Node's.
+
+**Node divergences (new in 9.42, numbered from 430).**
+
+430. Built vs deferred. Built: the journal row, the timestamps, the usage (spent tokens), the result, the error, the registry gap
+     form, and the routing text. Not built: 433 to 436. Node's detail has all of them.
+431. The summary is partial. Node's summary has step, phase, progress, question, hole and deliverable clauses; here only the status,
+     the failure, the unknown-questions clause of a non-terminal run and the ownership clause are written. The text is not Node's for a
+     run that has steps.
+432. The usage block has the spent tokens only. Node's `nodes_observed`, `nodes_running`, `nodes_completed` and `nodes_failed` need the
+     node rows, which the run store does not read; they are omitted rather than shown as zero.
+433. The roster family is absent: phases, subagents (and their states), health (stall, last progress, leftover running steps), the log
+     tail, and the actors. The summary's step and phase clauses, and the `<phases>`, `<subagents>` and `<health>` blocks, depend on them.
+434. Pending questions: this build does not list the ids. For a non-terminal run the text says so (`<pending_questions>Unknown: ...`),
+     which is true, but Node names each question with its ID and its wait. A model that needs an ID takes it from the escalation
+     notice (ResolveWorkflowQuestion says so). The gap form of Node's detail does not carry the ids either.
+435. Holes and artifacts are not read, so `<holes>` and the artifact list are absent. A pending hole is not reported, and no artifact is
+     named (the summary's deliverable clause is absent with it).
+436. The script-named settings are not read: `maxConcurrency`, `subagentModel`, `modelBindings` and `scriptPath` are absent. The row's
+     `resumedFrom` is shown in the identity block.
+437. `result` is shown verbatim when it is a string. A non-string result is written as compact JSON. Node uses its artifact
+     serializer (`serializeWorkflowArtifact`), whose text for a structured value may differ.
+438. The `error` body is the escaped message. Node writes a provider stop through `formatWorkflowProviderStopError` (cause, action,
+     facts, original text). This build writes the message only, so a provider stop reads less than in Node.
+439. The `<amendable>` block is not written, but the `<resumable>` text points to it. AmendWorkflow is not built (393), so the pointer
+     names a block that is not in the output. Node's text is kept, as for the `unknown_question` text (391).
+440. The `<superseded>` text and the `<resumable>` reason sentences are Node's, verbatim. A superseded run gets only the superseded block.
+441. Routing order: the superseded block alone, else the resumable block for a stopped run. Node also writes the amendable block for a
+     running or stopped run, which this build does not (439).
+442. Reads of other sessions' runs. Node's detail reads any journal row. This build does the same: a row of another session reads
+     with `ownedByThisSession: false`, and a live run of another session reads with `possiblyInterrupted: true` (Node's rule).
+443. The registry gap form is read only for this session's own launched run (Node's registry is per service; the port is per session).
+     Another session's run before its row exists is not found.
+444. The detail's `display` is the port's object as it is. Node projects it to the contract shape. The fields are the ones the
+     formatter reads, and the port returns no others.
+445. Times. The `createdAt` and `updatedAt` are the row's `time_created` and `time_updated`. The ISO form has four-digit years only
+     (as in 9.40, divergence 390).
+446. The port's `resume` and `list_runs` are not changed. `get_run_detail` returns `Option<Value>`: `None` is an unknown run, and an
+     error is a failed read or a store without run times.
+447. The clock. The tool reads `SystemClock::utc()` once per call, as the other run tools' Node clock does. The formatter is pure, so
+     its tests pass a fixed `now`.
+448. Red steps. The runtime tests (`get_run_detail_reads_the_journal_row_for_the_owner_and_another_session`,
+     `get_run_detail_reports_a_launched_run_before_its_row_and_refuses_without_a_store`) and the store test
+     (`run_times_read_the_row_timestamps_and_none_for_an_unknown_run`) were red first (the stub and the default member). The tool and
+     formatter tests were written before the formatter and passed in one run; their red step was not captured.
+449. Follow-up order: the roster family (433), the pending-question ids (434) and the holes and artifacts (435) need the owner's
+     live state, through a mailbox request on the run's handle (the escalation book's pending ids and the engine's open holes). The
+     node counts (432) need a count read in the run store. Then the summary and the amendable block (439) come with AmendWorkflow.
+
+**Tests.** `runtime`: the two `get_run_detail` tests and the store test above. `tools`: `workflow_run_tools_tests` (26, of which seven
+are GetWorkflowRun's: the ask and the facts, unknown run, unavailable, stopped, superseded, another session, and the escaped
+error). `cli`: the gating lists now name four run tools.
+
+Green: `cargo fmt --all --check`; `cargo clippy --workspace --all-targets --locked -- -D warnings`; lib tests of `rust-cli-kernel-api`
+(440), `rust-cli-runtime` (311), `rust-cli-tools` (605), `rust-cli-workflow` (435); the cli binary tests (559).
+
 ## 10. Open questions
 
 Each has a recommendation. The user decides. Until decided, the recommendation is the default.

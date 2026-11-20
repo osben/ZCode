@@ -11,6 +11,7 @@ use std::sync::Arc;
 
 use async_trait::async_trait;
 use rust_cli_base::civil::civil_from_days;
+use rust_cli_base::clock::SystemClock;
 use rust_cli_kernel_api::ids::{QuestionId, WorkflowRunId};
 use rust_cli_kernel_api::permission::PermissionDecision;
 use rust_cli_kernel_api::tool::{
@@ -27,6 +28,7 @@ use serde::Deserialize;
 use serde_json::{Value, json};
 use tokio::sync::mpsc;
 
+use crate::workflow_run_detail::format_detail;
 use crate::workflow_tools::{Contract, contract, workspace_dir};
 
 /// Node: the model text of each run tool is one short container, so 24 000 bytes is ample (ListWorkflowRuns allows 50 rows).
@@ -48,6 +50,7 @@ const RESUMED_TEXT: &str = " has been resumed and is running in the background. 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Kind {
     List,
+    Get,
     Resume,
     Resolve,
 }
@@ -56,6 +59,7 @@ impl Kind {
     fn name(self) -> &'static str {
         match self {
             Self::List => tool_names::LIST_WORKFLOW_RUNS,
+            Self::Get => tool_names::GET_WORKFLOW_RUN,
             Self::Resume => tool_names::RESUME_WORKFLOW_RUN,
             Self::Resolve => tool_names::RESOLVE_WORKFLOW_QUESTION,
         }
@@ -64,7 +68,7 @@ impl Kind {
 
 /// The three run tools, in Node's order (ListWorkflowRuns, ResumeWorkflowRun, ResolveWorkflowQuestion).
 pub fn run_tools(runs: Arc<dyn DynamicWorkflowRunSessions>) -> Vec<Arc<dyn Tool>> {
-    [Kind::List, Kind::Resume, Kind::Resolve]
+    [Kind::List, Kind::Get, Kind::Resume, Kind::Resolve]
         .into_iter()
         .map(|kind| {
             Arc::new(RunTool {
@@ -107,6 +111,7 @@ struct ResolveInput {
 /// A checked input, one per tool.
 enum Parsed {
     List(ListQuery),
+    Get(String),
     Resume(String),
     Resolve { qid: String, answer: String },
 }
@@ -156,6 +161,11 @@ fn parse(kind: Kind, input: Value) -> Result<Parsed, String> {
                 statuses,
             }))
         }
+        Kind::Get => {
+            let parsed: ResumeInput = serde_json::from_value(input).map_err(|e| e.to_string())?;
+            non_empty("run_id", &parsed.run_id)?;
+            Ok(Parsed::Get(parsed.run_id))
+        }
         Kind::Resume => {
             let parsed: ResumeInput = serde_json::from_value(input).map_err(|e| e.to_string())?;
             non_empty("run_id", &parsed.run_id)?;
@@ -183,7 +193,14 @@ fn port_failure(error: DynamicWorkflowRunError, unavailable: &str, what: &str) -
 }
 
 /// Node `formatWorkflowRunTimestamp`: ISO 8601 in UTC, from epoch milliseconds.
-fn iso_from_ms(ms: i64) -> String {
+/// Node `run_not_found`: the failure of an unknown run id (the same text ResumeWorkflowRun gives).
+fn run_not_found(run_id: &str) -> String {
+    format!(
+        "run_not_found: no workflow run with ID {run_id} exists for this project. Use ListWorkflowRuns to see the runs that do."
+    )
+}
+
+pub(crate) fn iso_from_ms(ms: i64) -> String {
     let days = ms.div_euclid(MS_PER_DAY);
     let within = ms.rem_euclid(MS_PER_DAY);
     let (year, month, day) = civil_from_days(days);
@@ -195,13 +212,13 @@ fn iso_from_ms(ms: i64) -> String {
 }
 
 /// Node `workflowRunAttribute`: whitespace collapsed to single spaces, then the XML escape.
-fn attribute(name: &str, value: &str) -> String {
+pub(crate) fn attribute(name: &str, value: &str) -> String {
     let collapsed = value.split_whitespace().collect::<Vec<_>>().join(" ");
     format!("{name}=\"{}\"", escape_xml(&collapsed))
 }
 
 /// A JSON field as the text an attribute carries (integers without a fraction, as Node prints them).
-fn field_text(value: &Value) -> String {
+pub(crate) fn field_text(value: &Value) -> String {
     match value {
         Value::String(text) => text.clone(),
         Value::Bool(flag) => flag.to_string(),
@@ -383,6 +400,19 @@ impl Tool for RunTool {
                     .map_err(|error| port_failure(error, LIST_UNAVAILABLE, "ListWorkflowRuns"))?;
                 let mut output = text(format_list(&page));
                 output.display = page;
+                Ok(output)
+            }
+            Parsed::Get(run_id) => {
+                let detail = port
+                    .get_run_detail(&WorkflowRunId::new(run_id.clone()))
+                    .await
+                    .map_err(|error| port_failure(error, LIST_UNAVAILABLE, "GetWorkflowRun"))?;
+                let Some(detail) = detail else {
+                    return Err(failed(run_not_found(&run_id)));
+                };
+                let now = i64::try_from(SystemClock::utc().now_ms()).unwrap_or(i64::MAX);
+                let mut output = text(format_detail(&detail, now));
+                output.display = detail;
                 Ok(output)
             }
             Parsed::Resume(run_id) => {

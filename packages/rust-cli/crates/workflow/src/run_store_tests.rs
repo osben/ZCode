@@ -127,6 +127,19 @@ fn list_rows_carry_the_journal_timestamps_and_the_failure_of_an_interrupted_run(
     assert!(rows[0].run.failure.is_some());
 }
 
+/// 9.42: the run row's own timestamps (the detail read needs them; the row read leaves them out).
+#[test]
+fn run_times_read_the_row_timestamps_and_none_for_an_unknown_run() {
+    let conn = database();
+    add_session(&conn, "ses_p");
+    dwf::create_run(&conn, &run("run_1", "ses_p", "/w", DwfStatus::Running), 7).unwrap();
+    let store = store(conn);
+    store.interrupt_run("run_1").unwrap();
+
+    assert_eq!(store.run_times("run_1").unwrap(), Some((7, 500)));
+    assert_eq!(store.run_times("run_9").unwrap(), None);
+}
+
 #[test]
 fn list_runs_applies_cwd_and_the_logical_status_filter() {
     let conn = database();

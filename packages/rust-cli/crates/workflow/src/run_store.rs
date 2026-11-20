@@ -61,6 +61,12 @@ pub trait RunStore: Send + Sync {
     fn list_runs(&self, query: &RunListQuery) -> Result<Vec<RunListRow>>;
     /// Node `getRun(runId)`.
     fn get_run(&self, run_id: &str) -> Result<Option<RunRow>>;
+    /// The row's `(time_created, time_updated)` (9.42): the detail read's timestamps. A store that does not read them
+    /// fails the read rather than reporting zero.
+    fn run_times(&self, run_id: &str) -> Result<Option<(i64, i64)>> {
+        let _ = run_id;
+        Err(anyhow::anyhow!("this run store does not read run times"))
+    }
 }
 
 /// The `RunStore` over one session database. `clock` stamps the rows a settlement writes.
@@ -145,5 +151,10 @@ impl RunStore for SqliteRunStore {
     fn get_run(&self, run_id: &str) -> Result<Option<RunRow>> {
         let conn = self.conn.lock_unpoisoned();
         Ok(dwf::get_run(&conn, run_id)?.map(row_from_dwf))
+    }
+
+    fn run_times(&self, run_id: &str) -> Result<Option<(i64, i64)>> {
+        let conn = self.conn.lock_unpoisoned();
+        dwf::run_times(&conn, run_id)
     }
 }

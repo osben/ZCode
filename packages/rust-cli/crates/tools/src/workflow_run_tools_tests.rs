@@ -22,9 +22,12 @@ struct FakePort {
     list: Option<Value>,
     resume: Option<Value>,
     resolve: Option<ResolveQuestionResult>,
+    /// `Some(None)`: the run is unknown. `Some(Some(detail))`: the detail. `None`: the member is absent.
+    detail: Option<Option<Value>>,
     broken: bool,
     queries: Mutex<Vec<ListQuery>>,
     resumed: Mutex<Vec<String>>,
+    detailed: Mutex<Vec<String>>,
     answered: Mutex<Vec<(String, String)>>,
 }
 
@@ -48,6 +51,20 @@ impl DynamicWorkflowRunPort for FakePort {
         self.resume
             .clone()
             .ok_or_else(|| DynamicWorkflowRunError::unsupported("resume"))
+    }
+
+    async fn get_run_detail(
+        &self,
+        run_id: &WorkflowRunId,
+    ) -> Result<Option<Value>, DynamicWorkflowRunError> {
+        self.detailed
+            .lock()
+            .unwrap()
+            .push(run_id.as_str().to_owned());
+        match &self.detail {
+            Some(answer) => Ok(answer.clone()),
+            None => Err(DynamicWorkflowRunError::unsupported("getRunDetail")),
+        }
     }
 
     async fn resolve_question(
@@ -444,10 +461,189 @@ async fn resolve_without_a_run_service_says_this_session_cannot_answer() {
     );
 }
 
+// --- GetWorkflowRun (9.42) -------------------------------------------------------------------------------------------
+
+/// A completed run as the detail read answers it, and the clock the formatter reads: 1 minute after it settled.
+fn completed_detail() -> Value {
+    json!({
+        "runId": "wf_done",
+        "label": "nightly",
+        "labelSource": "name",
+        "status": "completed",
+        "ownedByThisSession": true,
+        "createdAt": 1_000,
+        "updatedAt": 2_000,
+        "usage": { "spentTokens": 42 },
+        "result": "done"
+    })
+}
+
+fn stopped_detail(reason: &str) -> Value {
+    json!({
+        "runId": "wf_stop",
+        "label": "nightly",
+        "labelSource": "name",
+        "status": "stopped",
+        "stopReason": reason,
+        "ownedByThisSession": true,
+        "createdAt": 1_000,
+        "updatedAt": 2_000,
+        "usage": { "spentTokens": 7 }
+    })
+}
+
+#[tokio::test]
+async fn get_asks_the_calling_sessions_port_for_the_run_and_formats_its_facts() {
+    let (sessions, port) = sessions(FakePort {
+        detail: Some(Some(completed_detail())),
+        ..FakePort::default()
+    });
+    let tool = tool(tool_names::GET_WORKFLOW_RUN, sessions.clone());
+    let text = run(&tool, json!({"run_id": "wf_done"}), context("/w"))
+        .await
+        .expect("answers");
+    assert_eq!(port.detailed.lock().unwrap().as_slice(), ["wf_done"]);
+    assert_eq!(sessions.asked.lock().unwrap().as_slice(), ["ses_runs"]);
+    assert!(
+        text.starts_with("<summary>Completed in 1s.</summary>"),
+        "{text}"
+    );
+    assert!(text.contains("<run_id>wf_done</run_id>"), "{text}");
+    assert!(
+        text.contains(r#"<label source="name">nightly</label>"#),
+        "{text}"
+    );
+    assert!(text.contains("<status>completed</status>"), "{text}");
+    assert!(text.contains("<usage>spent_tokens=42</usage>"), "{text}");
+    assert!(text.contains("<result>\ndone\n</result>"), "{text}");
+}
+
+#[tokio::test]
+async fn get_of_an_unknown_run_is_the_shared_run_not_found_failure() {
+    let (sessions, _) = sessions(FakePort {
+        detail: Some(None),
+        ..FakePort::default()
+    });
+    let tool = tool(tool_names::GET_WORKFLOW_RUN, sessions);
+    let message = failure(run(&tool, json!({"run_id": "wf_9"}), context("/w")).await);
+    assert_eq!(
+        message,
+        "run_not_found: no workflow run with ID wf_9 exists for this project. Use ListWorkflowRuns to see the runs that do."
+    );
+}
+
+#[tokio::test]
+async fn get_without_a_run_service_is_the_introspection_unavailable_failure() {
+    let tool = tool(tool_names::GET_WORKFLOW_RUN, no_service());
+    let message = failure(run(&tool, json!({"run_id": "wf_1"}), context("/w")).await);
+    assert!(
+        message.starts_with("workflow_introspection_unavailable:"),
+        "{message}"
+    );
+}
+
+#[tokio::test]
+async fn get_of_a_stopped_run_names_the_reason_and_says_how_to_continue_it() {
+    let (sessions, _) = sessions(FakePort {
+        detail: Some(Some(stopped_detail("user"))),
+        ..FakePort::default()
+    });
+    let tool = tool(tool_names::GET_WORKFLOW_RUN, sessions);
+    let text = run(&tool, json!({"run_id": "wf_stop"}), context("/w"))
+        .await
+        .expect("answers");
+    assert!(text.contains("<stop_reason>user</stop_reason>"), "{text}");
+    assert!(
+        text.contains(
+            "This run was stopped on purpose by the user: resume it only when the user asks."
+        ),
+        "{text}"
+    );
+    assert!(
+        text.contains("<resumable>This run can be continued with ResumeWorkflowRun"),
+        "{text}"
+    );
+}
+
+#[tokio::test]
+async fn get_of_a_superseded_run_points_at_its_successor_and_offers_no_resume() {
+    let mut detail = stopped_detail("superseded");
+    detail["supersededBy"] = json!("wf_new");
+    let (sessions, _) = sessions(FakePort {
+        detail: Some(Some(detail)),
+        ..FakePort::default()
+    });
+    let tool = tool(tool_names::GET_WORKFLOW_RUN, sessions);
+    let text = run(&tool, json!({"run_id": "wf_stop"}), context("/w"))
+        .await
+        .expect("answers");
+    assert!(
+        text.contains("<superseded_by>wf_new</superseded_by>"),
+        "{text}"
+    );
+    assert!(
+        text.contains(
+            "<superseded>This run was stopped by an AmendWorkflow and superseded by run wf_new"
+        ),
+        "{text}"
+    );
+    assert!(!text.contains("<resumable>"), "{text}");
+}
+
+#[tokio::test]
+async fn get_of_a_run_another_session_owns_says_so_and_flags_a_live_run_as_unconfirmed() {
+    let detail = json!({
+        "runId": "wf_other", "label": "x", "labelSource": "script", "status": "running",
+        "ownedByThisSession": false, "possiblyInterrupted": true,
+        "createdAt": 1_000, "updatedAt": 2_000, "usage": { "spentTokens": 0 }
+    });
+    let (sessions, _) = sessions(FakePort {
+        detail: Some(Some(detail)),
+        ..FakePort::default()
+    });
+    let tool = tool(tool_names::GET_WORKFLOW_RUN, sessions);
+    let text = run(&tool, json!({"run_id": "wf_other"}), context("/w"))
+        .await
+        .expect("answers");
+    assert!(text.contains("Owned by another session."), "{text}");
+    assert!(
+        text.contains("<owned_by_this_session>false</owned_by_this_session>"),
+        "{text}"
+    );
+    assert!(text.contains("<possibly_interrupted>true"), "{text}");
+    assert!(
+        text.contains("Pending questions are unknown from this session."),
+        "{text}"
+    );
+}
+
+#[tokio::test]
+async fn get_escapes_a_failure_message_and_names_its_code() {
+    let mut detail = stopped_detail("provider");
+    detail["status"] = json!("errored");
+    detail["stopReason"] = Value::Null;
+    detail["error"] = json!({"code": "ScriptError", "message": "bad <tag> & \"quote\""});
+    let (sessions, _) = sessions(FakePort {
+        detail: Some(Some(detail)),
+        ..FakePort::default()
+    });
+    let tool = tool(tool_names::GET_WORKFLOW_RUN, sessions);
+    let text = run(&tool, json!({"run_id": "wf_stop"}), context("/w"))
+        .await
+        .expect("answers");
+    assert!(text.contains("Errored after 1s."), "{text}");
+    assert!(
+        text.contains(
+            r#"<error code="ScriptError">bad &lt;tag&gt; &amp; &quot;quote&quot;</error>"#
+        ),
+        "{text}"
+    );
+}
+
 // --- the set and the declarations -----------------------------------------------------------------------------------
 
 #[test]
-fn the_three_tools_come_in_node_order() {
+fn the_four_tools_come_in_node_order() {
     let names: Vec<String> = run_tools(no_service())
         .iter()
         .map(|tool| tool.name().to_owned())
@@ -456,6 +652,7 @@ fn the_three_tools_come_in_node_order() {
         names,
         [
             "ListWorkflowRuns",
+            "GetWorkflowRun",
             "ResumeWorkflowRun",
             "ResolveWorkflowQuestion"
         ]

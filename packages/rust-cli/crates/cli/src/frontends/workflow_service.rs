@@ -143,6 +143,10 @@ impl RunStore for LazyRunStore {
     fn get_run(&self, run_id: &str) -> Result<Option<RunRow>> {
         self.get()?.get_run(run_id)
     }
+
+    fn run_times(&self, run_id: &str) -> Result<Option<(i64, i64)>> {
+        self.get()?.run_times(run_id)
+    }
 }
 
 /// The row timestamp, in milliseconds, from the process's one business clock.

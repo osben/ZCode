@@ -287,6 +287,13 @@ fn session_item(row: &RunListRow, live: bool) -> Value {
     Value::Object(item)
 }
 
+/// The gap form's detail: the list item plus the usage object (the registry has the spent tokens, and no node counts).
+fn detail_with_usage(mut item: Value) -> Value {
+    let spent = item["spentTokens"].clone();
+    item["usage"] = json!({ "spentTokens": spent });
+    item
+}
+
 fn to_run_status(status: LifecycleStatus) -> RunStatus {
     match status {
         LifecycleStatus::Pending => RunStatus::Pending,
@@ -343,6 +350,18 @@ impl DynamicWorkflowRunPort for SessionRuns {
         let qid = qid.clone();
         let answer = answer.to_owned();
         on_blocking_pool(move || service.resolve_question_of(&parent, &qid, &answer)).await
+    }
+
+    /// Node `getRunDetail` (9.42): the run's journal row, or this session's registry entry before its row exists. Any
+    /// journal row is readable, as in Node; the registry is this session's only.
+    async fn get_run_detail(
+        &self,
+        run_id: &WorkflowRunId,
+    ) -> Result<Option<Value>, DynamicWorkflowRunError> {
+        let service = self.service.clone();
+        let parent = self.parent.clone();
+        let run_id = run_id.as_str().to_owned();
+        on_blocking_pool(move || service.run_detail_of(&parent, &run_id)).await
     }
 
     /// Node `resume` (9.37): the refusals are answers, and the run is resumed on this service.
@@ -464,6 +483,60 @@ impl WorkflowRunService {
                 "the answer to question {qid} did not reach its run: {error}"
             ))),
         }
+    }
+
+    /// Node `getRunDetail` for one parent session (9.42). The row's fields are the list item's, plus the usage, the
+    /// result and the error. Node's roster, phases, log tail, holes, artifacts, actors and pending-question ids are not
+    /// read here (divergence 433).
+    pub(crate) fn run_detail_of(
+        &self,
+        parent: &str,
+        run_id: &str,
+    ) -> Result<Option<Value>, DynamicWorkflowRunError> {
+        let Some(store) = self.inner.store.get() else {
+            return Err(DynamicWorkflowRunError::unsupported("getRunDetail"));
+        };
+        let live = self
+            .live_runs_of(parent)
+            .into_iter()
+            .find(|run| run.run_id == run_id);
+        let Some(row) = store.get_run(run_id).map_err(store_error)? else {
+            // The gap form: this session's launched run whose row is not written yet (Node's registry gap copy).
+            return Ok(live.map(|run| detail_with_usage(gap_item(&run.run_id, &run.meta))));
+        };
+        let (time_created, time_updated) = store
+            .run_times(run_id)
+            .map_err(store_error)?
+            .ok_or_else(|| {
+                DynamicWorkflowRunError::new(format!("the run {run_id} has no row timestamps"))
+            })?;
+        let live_here = live.is_some();
+        let spent = js_number(row.spent_tokens);
+        let failure = row.failure.clone();
+        let result = row.result.clone();
+        let listed = RunListRow {
+            run: row,
+            time_created,
+            time_updated,
+        };
+        let mut item = list_item(&listed, live_here, parent);
+        item["usage"] = json!({ "spentTokens": spent });
+        if let Some(result) = result {
+            item["result"] = result;
+        }
+        if let Some(failure) = failure {
+            // Node's `error` is the failure's code and message, and its provider stop when there is one.
+            let mut error = Map::new();
+            for key in ["code", "message", "providerStop"] {
+                if let Some(value) = failure.get(key) {
+                    error.insert(key.into(), value.clone());
+                }
+            }
+            if !error.is_empty() {
+                item["error"] = Value::Object(error);
+            }
+        }
+        Ok(Some(item))
     }
 
     /// Node `listRunsForSession`: the session's newest rows, each summarized with the session's live precedence.

@@ -1325,3 +1325,165 @@ async fn resolve_question_is_refused_as_unknown_when_no_live_run_of_the_session_
     h.runner.finish(0, completed(json!("done")));
     wait_until("the run to settle", || h.residency.live_runs("ses_p") == 0).await;
 }
+
+/// 9.42: a store of settled rows with their timestamps, for the detail read. The other reads are not used here.
+#[derive(Default)]
+struct DetailStore {
+    rows: Vec<(rust_cli_workflow::model::RunRow, i64, i64)>,
+}
+
+impl rust_cli_workflow::run_store::RunStore for DetailStore {
+    fn non_terminal_runs(
+        &self,
+        _parent: &str,
+    ) -> anyhow::Result<Vec<rust_cli_workflow::model::RunRow>> {
+        Ok(Vec::new())
+    }
+    fn interrupt_run(&self, _run_id: &str) -> anyhow::Result<bool> {
+        Ok(false)
+    }
+    fn runs_of_session(
+        &self,
+        _parent: &str,
+        _limit: usize,
+    ) -> anyhow::Result<Vec<rust_cli_workflow::run_store::RunListRow>> {
+        Ok(Vec::new())
+    }
+    fn list_runs(
+        &self,
+        _query: &rust_cli_workflow::run_store::RunListQuery,
+    ) -> anyhow::Result<Vec<rust_cli_workflow::run_store::RunListRow>> {
+        Ok(Vec::new())
+    }
+    fn get_run(&self, run_id: &str) -> anyhow::Result<Option<rust_cli_workflow::model::RunRow>> {
+        Ok(self
+            .rows
+            .iter()
+            .find(|(row, _, _)| row.run_id == run_id)
+            .map(|(row, _, _)| row.clone()))
+    }
+    fn run_times(&self, run_id: &str) -> anyhow::Result<Option<(i64, i64)>> {
+        Ok(self
+            .rows
+            .iter()
+            .find(|(row, _, _)| row.run_id == run_id)
+            .map(|(_, created, updated)| (*created, *updated)))
+    }
+}
+
+fn settled_row(
+    run: &str,
+    parent: &str,
+    status: rust_cli_workflow::model::RunStatus,
+) -> rust_cli_workflow::model::RunRow {
+    use rust_cli_workflow::model::{Caps, RunRow};
+    RunRow {
+        run_id: run.to_owned(),
+        parent_session_id: Some(parent.to_owned()),
+        cwd: Some("project".to_owned()),
+        name: Some("nightly".to_owned()),
+        tool_call_id: None,
+        script_text: Some("return 1".to_owned()),
+        script_hash: None,
+        args: None,
+        resumed_from: None,
+        caps: Caps::default(),
+        spent_tokens: 42.0,
+        status,
+        stop_reason: None,
+        superseded_by: None,
+        failure: None,
+        result: Some(json!("done")),
+    }
+}
+
+/// 9.42: the detail read answers from the journal row with its timestamps and result, for the parent that owns it and
+/// for another session (Node reads any journal row). An unknown id is an answer (`None`), not an error.
+#[tokio::test]
+async fn get_run_detail_reads_the_journal_row_for_the_owner_and_another_session() {
+    use rust_cli_kernel_api::ids::{SessionId, WorkflowRunId};
+    use rust_cli_kernel_api::workflow_run::DynamicWorkflowRunSessions;
+    use rust_cli_workflow::model::RunStatus;
+    let h = harness();
+    let store = DetailStore {
+        rows: vec![
+            (
+                settled_row("wf_done", "ses_p", RunStatus::Completed),
+                1_000,
+                2_000,
+            ),
+            (
+                settled_row("wf_live", "ses_p", RunStatus::Running),
+                3_000,
+                4_000,
+            ),
+        ],
+    };
+    assert!(h.service.set_store(Arc::new(store)));
+    let owner = h.service.for_session(&SessionId::new("ses_p"));
+    let detail = owner
+        .get_run_detail(&WorkflowRunId::new("wf_done"))
+        .await
+        .expect("answered")
+        .expect("found");
+    assert_eq!(detail["runId"], "wf_done");
+    assert_eq!(detail["label"], "nightly");
+    assert_eq!(detail["labelSource"], "name");
+    assert_eq!(detail["status"], "completed");
+    assert_eq!(detail["createdAt"], 1_000);
+    assert_eq!(detail["updatedAt"], 2_000);
+    assert_eq!(detail["ownedByThisSession"], true);
+    assert_eq!(detail["usage"]["spentTokens"], 42);
+    assert_eq!(detail["result"], "done");
+    assert!(detail.get("possiblyInterrupted").is_none());
+
+    let other = h.service.for_session(&SessionId::new("ses_q"));
+    let seen = other
+        .get_run_detail(&WorkflowRunId::new("wf_live"))
+        .await
+        .expect("answered")
+        .expect("found");
+    assert_eq!(seen["ownedByThisSession"], false);
+    assert_eq!(
+        seen["possiblyInterrupted"], true,
+        "a live run another session owns is not confirmed alive"
+    );
+
+    assert!(
+        owner
+            .get_run_detail(&WorkflowRunId::new("wf_missing"))
+            .await
+            .expect("answered")
+            .is_none()
+    );
+}
+
+/// 9.42: a run this session has launched but whose row is not written yet is reported from its registry entry, as Node's
+/// gap form does. A build with no store cannot read the journal, so the detail read is the optional-member fallback.
+#[tokio::test]
+async fn get_run_detail_reports_a_launched_run_before_its_row_and_refuses_without_a_store() {
+    use rust_cli_kernel_api::ids::{SessionId, WorkflowRunId};
+    use rust_cli_kernel_api::workflow_run::DynamicWorkflowRunSessions;
+    let h = harness();
+    let owner = h.service.for_session(&SessionId::new("ses_p"));
+    let no_store = owner.get_run_detail(&WorkflowRunId::new("wf_1")).await;
+    assert!(
+        matches!(&no_store, Err(error) if error.is_unsupported()),
+        "{no_store:?}"
+    );
+
+    assert!(h.service.set_store(Arc::new(DetailStore::default())));
+    h.service
+        .launch(input("wf_1"), config("wf_1", Some("ses_p")))
+        .await
+        .expect("launched");
+    let gap = owner
+        .get_run_detail(&WorkflowRunId::new("wf_1"))
+        .await
+        .expect("answered")
+        .expect("found");
+    assert_eq!(gap["status"], "pending");
+    assert_eq!(gap["ownedByThisSession"], true);
+    h.runner.finish(0, completed(json!("done")));
+    wait_until("the run to settle", || h.residency.live_runs("ses_p") == 0).await;
+}
