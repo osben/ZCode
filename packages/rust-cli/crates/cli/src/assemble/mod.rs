@@ -183,6 +183,9 @@ pub(crate) struct Controller {
     /// Fork (F7 PR 3): the app-provided tools router (the Node helper's set and the Rust panels' set), installed by the
     /// app-server before assembly.
     pub(crate) app_tools: Option<Arc<rust_cli_protocol_zcode::AppToolRouter>>,
+    /// Fork (W7-7a, specs/fork-rust-workflow-engine.md 9.36): the dynamic-workflow gate source and its tools; only the
+    /// app-server sets it. None registers no workflow tool.
+    pub(crate) dynamic_workflow: Option<rust_cli_runtime::DynamicWorkflowGating>,
     pub(crate) cli: CliInputs,
 }
 
@@ -209,6 +212,7 @@ impl Controller {
             topic_resources: None,
             code_intelligence: None,
             node_helper: None,
+            dynamic_workflow: None,
             app_tools: None,
             cli,
         }
@@ -241,6 +245,7 @@ impl Controller {
             topic_resources: None,
             code_intelligence: None,
             node_helper: None,
+            dynamic_workflow: None,
             app_tools: None,
             cli,
         }
@@ -277,6 +282,7 @@ impl Controller {
             topic_resources: Some(topic_resources),
             code_intelligence: None,
             node_helper: None,
+            dynamic_workflow: None,
             app_tools: None,
             cli: CliInputs::default(),
         }
@@ -766,6 +772,8 @@ pub(crate) async fn kernel(
         });
     }
     extensions.code_intelligence = spec.code_intelligence.clone();
+    // Fork (W7-7a, 9.36): the workflow gate source and its tools (the app-server's table, shared with the protocol server).
+    extensions.dynamic_workflow = spec.dynamic_workflow.clone();
     let mut opened = opened;
     // 绑定到远端机器的 MCP 服务器（R5，remote-exec.md §22.5、§22.8）：连上机器时的期望集合，TUI 的标记。
     let machines = opened

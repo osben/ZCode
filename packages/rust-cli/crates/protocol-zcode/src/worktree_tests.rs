@@ -2246,6 +2246,20 @@ fn profile(mcp: bool) -> Value {
     })
 }
 
+/// W7-7a (specs/fork-rust-workflow-engine.md 9.36): preparing a worktree records no dynamic-workflow gate. The prepared
+/// session has no tools until its activation records the gate before its first turn (9.2, divergence 53 of 9.18).
+#[tokio::test]
+async fn preparing_a_worktree_records_no_dynamic_workflow_gate() {
+    let (_scope, server, _kernel) = server();
+    let parent = tempfile::tempdir().unwrap();
+    let (session, _, _) = prepared(&server, parent.path()).await;
+    assert_eq!(
+        server.dynamic_workflow_gate(&SessionId::new(&session)),
+        None,
+        "a prepared session has no record until its activation"
+    );
+}
+
 /// Prepares a worktree session under a temporary parent; its id, the parent and the worktree path.
 async fn prepared(server: &Server, parent: &std::path::Path) -> (String, String, String) {
     let worktree = parent.join("wt-i");

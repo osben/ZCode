@@ -1,7 +1,11 @@
 //! Fork: the dynamic-workflow gate rules (Node `resolveDynamicWorkflowRuntimeGate`, `updateDynamicWorkflowPolicy`) and
 //! the ten workflow tool names (Node `DYNAMIC_WORKFLOW_TOOL_NAMES`, `core/src/tool/handlers/index.ts`).
 
-use super::{DynamicWorkflowMode, DynamicWorkflowPreferences, resolve_gate};
+use super::{
+    DynamicWorkflowGate, DynamicWorkflowGates, DynamicWorkflowMode, DynamicWorkflowPreferences,
+    SessionGates, resolve_gate,
+};
+use crate::ids::SessionId;
 use crate::tool_names::DYNAMIC_WORKFLOW_TOOLS;
 
 const ON_DEMAND: DynamicWorkflowMode = DynamicWorkflowMode::OnDemand;
@@ -102,6 +106,50 @@ fn the_mode_takes_only_the_three_wire_values() {
         DynamicWorkflowMode::Disabled
     );
     assert!(serde_json::from_str::<DynamicWorkflowMode>("\"sometimes\"").is_err());
+}
+
+// W7-7a (specs/fork-rust-workflow-engine.md 9.36, divergence 56): the one table of the sessions' recorded gates.
+
+const OPEN: DynamicWorkflowGate = DynamicWorkflowGate {
+    enabled: true,
+    tools_on_demand: false,
+};
+
+#[test]
+fn a_session_with_no_record_has_no_gate() {
+    let table = SessionGates::default();
+    assert_eq!(table.gate(&SessionId::new("ses_a")), None);
+}
+
+#[test]
+fn a_recorded_gate_is_read_back_for_its_session_only() {
+    let table = SessionGates::default();
+    table.record(&SessionId::new("ses_a"), OPEN);
+    assert_eq!(table.gate(&SessionId::new("ses_a")), Some(OPEN));
+    assert_eq!(table.gate(&SessionId::new("ses_b")), None);
+}
+
+#[test]
+fn a_later_record_replaces_the_earlier_one_and_forget_removes_it() {
+    let table = SessionGates::default();
+    let id = SessionId::new("ses_a");
+    table.record(&id, OPEN);
+    let closed = DynamicWorkflowGate {
+        enabled: false,
+        tools_on_demand: false,
+    };
+    table.record(&id, closed);
+    assert_eq!(table.gate(&id), Some(closed));
+    table.forget(&id);
+    assert_eq!(table.gate(&id), None);
+}
+
+#[test]
+fn a_shared_table_is_one_source_for_every_holder() {
+    let table = std::sync::Arc::new(SessionGates::default());
+    let source: std::sync::Arc<dyn DynamicWorkflowGates> = table.clone();
+    table.record(&SessionId::new("ses_a"), OPEN);
+    assert_eq!(source.gate(&SessionId::new("ses_a")), Some(OPEN));
 }
 
 #[test]

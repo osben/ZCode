@@ -80,9 +80,6 @@ pub struct Server {
     /// never carries the choice (Node `persistPreparedWorktreeStatus`).
     pub(crate) prepared_incognito:
         Mutex<HashMap<SessionId, Option<rust_cli_kernel_api::incognito::IncognitoProfile>>>,
-    /// Fork: the dynamic-workflow gate each session was created with (specs/fork-rust-workflow-engine.md 9.2). Memory
-    /// only, as Node's `runtimeConfig`: a create or resume resolves it again, so nothing is stored in a row.
-    pub(crate) dynamic_workflow_gates: Mutex<HashMap<SessionId, DynamicWorkflowGate>>,
     /// Fork: session lifecycle revisions (crate::lifecycle).
     pub(crate) lifecycles: crate::lifecycle::Lifecycles,
     /// Fork: running `workspace/generateText` calls by operation id (crate::fork::WorkspaceOperations).
@@ -164,7 +161,6 @@ impl Server {
             reservations: crate::preparation::ReservationGate::default(),
             unreceipted: Mutex::new(std::collections::HashSet::new()),
             prepared_incognito: Mutex::new(HashMap::new()),
-            dynamic_workflow_gates: Mutex::new(HashMap::new()),
             lifecycles: crate::lifecycle::Lifecycles::default(),
             workspace_operations: crate::fork::WorkspaceOperations::default(),
         }
@@ -434,21 +430,17 @@ impl Server {
     /// Fork: the gate a session was recorded with, `None` for a session with no record (fail closed). The tool
     /// registry reads it through [`DynamicWorkflowGates`] (`runtime::workflow_gate`).
     pub(crate) fn dynamic_workflow_gate(&self, session: &SessionId) -> Option<DynamicWorkflowGate> {
-        self.dynamic_workflow_gates
-            .lock_unpoisoned()
-            .get(session)
-            .copied()
+        self.context.dynamic_workflow_gates().gate(session)
     }
 
-    /// Fork: records the gate a new session was created with (Node `createRecord` writing `runtimeConfig`).
+    /// Fork: records the gate a new session was created with (Node `createRecord` writing `runtimeConfig`). The table is
+    /// the context's, shared with the kernel's gate source (specs/fork-rust-workflow-engine.md, 9.36, divergence 56).
     pub(crate) fn record_dynamic_workflow_gate(
         &self,
         session: &SessionId,
         gate: DynamicWorkflowGate,
     ) {
-        self.dynamic_workflow_gates
-            .lock_unpoisoned()
-            .insert(session.clone(), gate);
+        self.context.dynamic_workflow_gates().record(session, gate);
     }
 
     async fn read_presentation(&self, params: &Value) -> Value {
