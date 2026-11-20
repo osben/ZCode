@@ -287,6 +287,115 @@ fn session_item(row: &RunListRow, live: bool) -> Value {
     Value::Object(item)
 }
 
+/// Node's detail fields from the run's projected state (9.42): the pending questions with their ids, the holes, the artifacts
+/// (as the reducer keeps them), the node counts, and the launch settings the journal carries. `maxConcurrency` is written only
+/// when the run's limit differs from the default (Node `runConcurrencyField`); without a configured default it is not written.
+fn merge_run_state(
+    item: &mut Value,
+    state: &Map<String, Value>,
+    max_concurrency: f64,
+    default: Option<f64>,
+) {
+    let questions: Vec<Value> = state
+        .get("pendingQuestions")
+        .and_then(Value::as_array)
+        .map(|list| list.iter().map(pending_question).collect())
+        .unwrap_or_default();
+    if !questions.is_empty() {
+        item["pendingQuestions"] = Value::Array(questions);
+    }
+    for (key, keys) in [
+        (
+            "holes",
+            &[
+                "siteId", "ordinal", "name", "type", "state", "since", "filledAt", "filledBy",
+            ][..],
+        ),
+        (
+            "artifacts",
+            &["id", "kind", "title", "contentType", "itemCount", "primary"][..],
+        ),
+    ] {
+        let copied: Vec<Value> = state
+            .get(key)
+            .and_then(Value::as_array)
+            .map(|list| list.iter().map(|entry| copy_keys(entry, keys)).collect())
+            .unwrap_or_default();
+        if !copied.is_empty() {
+            item[key] = Value::Array(copied);
+        }
+    }
+    let (running, completed, failed) = node_counts(state.get("nodes"));
+    item["usage"]["nodesObserved"] = json!(running + completed + failed);
+    item["usage"]["nodesRunning"] = json!(running);
+    item["usage"]["nodesCompleted"] = json!(completed);
+    item["usage"]["nodesFailed"] = json!(failed);
+    if let Some(model) = state.get("subagentModel").and_then(Value::as_str) {
+        item["subagentModel"] = json!(model);
+    }
+    if let Some(default) = default
+        && max_concurrency != default
+    {
+        item["maxConcurrency"] = json!(max_concurrency);
+    }
+}
+
+/// Node's node counts from the reducer's node entries (9.42). The reducer writes `phase` (`queued`, `dispatched`,
+/// `executing`, `waiting`, `repairing`, `nudged`, `settled`) and, once settled, an `outcome` (`ok`, `failed`, `cancelled`),
+/// never a `status`. A queued node has no row yet, so it is not counted. A settled node is `completed` when its outcome is
+/// `ok` and `failed` otherwise (`cancelled` counts as failed, as `eviction.rs` counts it). Any other phase is `running`.
+/// Returns `(running, completed, failed)`.
+fn node_counts(nodes: Option<&Value>) -> (usize, usize, usize) {
+    let mut counts = (0, 0, 0);
+    for node in nodes.and_then(Value::as_array).into_iter().flatten() {
+        match node.get("phase").and_then(Value::as_str) {
+            None | Some("queued") => {}
+            Some("settled") => {
+                if node.get("outcome").and_then(Value::as_str) == Some("ok") {
+                    counts.1 += 1;
+                } else {
+                    counts.2 += 1;
+                }
+            }
+            Some(_) => counts.0 += 1,
+        }
+    }
+    counts
+}
+
+/// The keys of one entry that the detail carries (a reducer entry has more, which Node's detail does not show).
+fn copy_keys(entry: &Value, keys: &[&str]) -> Value {
+    let mut copied = Map::new();
+    for key in keys {
+        if let Some(value) = entry.get(*key) {
+            copied.insert((*key).to_owned(), value.clone());
+        }
+    }
+    Value::Object(copied)
+}
+
+/// A reducer pending question as Node's detail shows it: `actor` is the actor's reference (site and ordinal), with its name.
+fn pending_question(question: &Value) -> Value {
+    let mut out = copy_keys(
+        question,
+        &["qid", "actorName", "question", "context", "askedAt"],
+    );
+    if let (Some(site), Some(ordinal)) = (
+        question.get("actorSiteId").and_then(Value::as_str),
+        question.get("actorOrdinal").and_then(Value::as_i64),
+    ) {
+        out["actor"] = json!(format!("{site}@{ordinal}"));
+    }
+    out
+}
+
+/// The gap form's detail: the list item plus the usage object (the registry has the spent tokens, and no node counts).
+fn detail_with_usage(mut item: Value) -> Value {
+    let spent = item["spentTokens"].clone();
+    item["usage"] = json!({ "spentTokens": spent });
+    item
+}
+
 fn to_run_status(status: LifecycleStatus) -> RunStatus {
     match status {
         LifecycleStatus::Pending => RunStatus::Pending,
@@ -343,6 +452,18 @@ impl DynamicWorkflowRunPort for SessionRuns {
         let qid = qid.clone();
         let answer = answer.to_owned();
         on_blocking_pool(move || service.resolve_question_of(&parent, &qid, &answer)).await
+    }
+
+    /// Node `getRunDetail` (9.42): the run's journal row, or this session's registry entry before its row exists. Any
+    /// journal row is readable, as in Node; the registry is this session's only.
+    async fn get_run_detail(
+        &self,
+        run_id: &WorkflowRunId,
+    ) -> Result<Option<Value>, DynamicWorkflowRunError> {
+        let service = self.service.clone();
+        let parent = self.parent.clone();
+        let run_id = run_id.as_str().to_owned();
+        on_blocking_pool(move || service.run_detail_of(&parent, &run_id)).await
     }
 
     /// Node `resume` (9.37): the refusals are answers, and the run is resumed on this service.
@@ -479,6 +600,66 @@ impl WorkflowRunService {
                 "the answer to question {qid} did not reach its run: {error}"
             ))),
         }
+    }
+
+    /// Node `getRunDetail` for one parent session (9.42). The row's fields are the list item's, plus the usage, the result
+    /// and the error, all from one read of the journal (`RunStore::run_detail`). The projected state adds the pending
+    /// questions, holes, artifacts, node counts and launch settings (`merge_run_state`). The roster, phases, log tail and
+    /// actors are not read (divergence 433).
+    pub(crate) fn run_detail_of(
+        &self,
+        parent: &str,
+        run_id: &str,
+    ) -> Result<Option<Value>, DynamicWorkflowRunError> {
+        let Some(store) = self.inner.store.get() else {
+            return Err(DynamicWorkflowRunError::unsupported("getRunDetail"));
+        };
+        let live = self
+            .live_runs_of(parent)
+            .into_iter()
+            .find(|run| run.run_id == run_id);
+        // The configured default concurrency is what the replay needs; without one the state is not read (no default is
+        // invented here).
+        let default = self
+            .inner
+            .setup
+            .lock_unpoisoned()
+            .progress
+            .as_ref()
+            .map(|progress| progress.default_concurrency);
+        let Some(detail) = store.run_detail(run_id, default).map_err(store_error)? else {
+            // The gap form: this session's launched run whose row is not written yet (Node's registry gap copy).
+            return Ok(live.map(|run| detail_with_usage(gap_item(&run.run_id, &run.meta))));
+        };
+        let live_here = live.is_some();
+        let mut listed = detail.run;
+        let spent = js_number(listed.run.spent_tokens);
+        let max_concurrency = listed.run.caps.max_concurrency;
+        // The result and the failure are taken out of the row, not cloned: the list item reads neither.
+        let result = listed.run.result.take();
+        let failure = listed.run.failure.take();
+        let mut item = list_item(&listed, live_here, parent);
+        item["usage"] = json!({ "spentTokens": spent });
+        if let Some(result) = result {
+            item["result"] = result;
+        }
+        if let Some(failure) = failure {
+            // Node's `error` is the failure's code and message, and its provider stop when there is one.
+            let mut error = Map::new();
+            for key in ["code", "message", "providerStop"] {
+                if let Some(value) = failure.get(key) {
+                    error.insert(key.into(), value.clone());
+                }
+            }
+            if !error.is_empty() {
+                item["error"] = Value::Object(error);
+            }
+        }
+        // The journal's projected state (9.42): pending questions, holes, node counts, the launch settings.
+        if let Some(state) = detail.state {
+            merge_run_state(&mut item, &state, max_concurrency, default);
+        }
+        Ok(Some(item))
     }
 
     /// Node `listRunsForSession`: the session's newest rows, each summarized with the session's live precedence.

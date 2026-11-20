@@ -436,6 +436,17 @@ pub fn create_run(conn: &Connection, run: &RunRecord, now: i64) -> Result<()> {
     }
 }
 
+/// The row's `(time_created, time_updated)` (Node's `dwf_run` columns), for a detail read (9.42).
+pub fn run_times(conn: &Connection, run_id: &str) -> Result<Option<(i64, i64)>> {
+    conn.query_row(
+        "select time_created, time_updated from dwf_run where id = ?1",
+        params![run_id],
+        |row| Ok((row.get(0)?, row.get(1)?)),
+    )
+    .optional()
+    .context("read dwf_run times")
+}
+
 pub fn get_run(conn: &Connection, run_id: &str) -> Result<Option<RunRecord>> {
     conn.query_row(
         &format!("select {RUN_COLUMNS} from dwf_run where id = ?1"),

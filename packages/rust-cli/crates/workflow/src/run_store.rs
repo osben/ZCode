@@ -61,6 +61,29 @@ pub trait RunStore: Send + Sync {
     fn list_runs(&self, query: &RunListQuery) -> Result<Vec<RunListRow>>;
     /// Node `getRun(runId)`.
     fn get_run(&self, run_id: &str) -> Result<Option<RunRow>>;
+    /// One run's detail read (9.42): the row with its timestamps, and the run's entry of the journal's replay (the
+    /// run-panel fields: pending questions, holes, artifacts, phases, node entries, the launch settings).
+    ///
+    /// `Ok(None)` means the journal does not hold the run. `state` is `None` when `default_concurrency` is `None` (the
+    /// replay needs the configured default, and none is fabricated here) and when the journal holds no event for the run
+    /// yet, which is a row written before its first event. A store that cannot read details fails the read.
+    fn run_detail(
+        &self,
+        run_id: &str,
+        default_concurrency: Option<f64>,
+    ) -> Result<Option<RunDetail>> {
+        let _ = (run_id, default_concurrency);
+        Err(anyhow::anyhow!("this run store does not read run details"))
+    }
+}
+
+/// What one detail read holds, all from one snapshot of the journal (9.42).
+#[derive(Debug, Clone)]
+pub struct RunDetail {
+    /// The row, with its timestamps.
+    pub run: RunListRow,
+    /// The run's entry of the journal's replay, as `RunStore::run_detail` documents it.
+    pub state: Option<serde_json::Map<String, serde_json::Value>>,
 }
 
 /// The `RunStore` over one session database. `clock` stamps the rows a settlement writes.
@@ -145,5 +168,51 @@ impl RunStore for SqliteRunStore {
     fn get_run(&self, run_id: &str) -> Result<Option<RunRow>> {
         let conn = self.conn.lock_unpoisoned();
         Ok(dwf::get_run(&conn, run_id)?.map(row_from_dwf))
+    }
+
+    fn run_detail(
+        &self,
+        run_id: &str,
+        default_concurrency: Option<f64>,
+    ) -> Result<Option<RunDetail>> {
+        // The row, its timestamps and its events are read in one read transaction, so they share one WAL snapshot: the
+        // engine writes the journal through its own connection, and an autocommit read per query could see a settlement
+        // land between two of them. The events are read only when a replay will use them. The replay folds the events
+        // after the lock is released.
+        let (record, time_created, time_updated, events) = {
+            let conn = self.conn.lock_unpoisoned();
+            let tx = conn.unchecked_transaction()?;
+            let Some(record) = dwf::get_run(&tx, run_id)? else {
+                return Ok(None);
+            };
+            let Some((created, updated)) = dwf::run_times(&tx, run_id)? else {
+                anyhow::bail!("the run {run_id} has a row without timestamps");
+            };
+            let events = match default_concurrency {
+                Some(_) => dwf::list_events(&tx, run_id)?,
+                None => Vec::new(),
+            };
+            (record, created, updated, events)
+        };
+        let state = default_concurrency.and_then(|default| {
+            let replayed = rust_cli_node_store::replay_run_state(
+                &record,
+                &events,
+                default,
+                &rust_cli_node_store::WORKFLOW_RUN_LIMITS,
+            )?;
+            replayed
+                .runs
+                .into_iter()
+                .find(|run| run.get("runId").and_then(serde_json::Value::as_str) == Some(run_id))
+        });
+        Ok(Some(RunDetail {
+            run: RunListRow {
+                run: row_from_dwf(record),
+                time_created,
+                time_updated,
+            },
+            state,
+        }))
     }
 }
