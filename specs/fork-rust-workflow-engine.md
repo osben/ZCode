@@ -2826,8 +2826,10 @@ attach failure (9.33, item 276).
 301. The interactions channel is the open parent's session-level ask entry. A closed parent gives none, so an actor's ask
      then fails with "no channel", not through Node's detached ask path (the process-level entry of 9.33 / agents §4.1.2).
      A run whose parent closes mid-run is therefore not followed by its user prompts. Unverified against Node for that case.
-302. A store read error is None, the same as an unknown session. Node's session store throws, and the submit fails with that
-     error. The launch's refusal text is therefore "not known" for both.
+302. A store read error refuses. Node's session store throws, and the submit fails with that error. Here a read error (any
+     store error but NotFound) is returned to the launch: the bound factory refuses the launch, and `record_parent_mode`
+     refuses it too, so nothing is recorded as absent (review finding 1). An unknown session is refused the same way.
+     The refusal texts are "not known" for an unknown session and the store's text for a read error.
 303. `record_parent_mode` is the seam, not a caller. Node's submit is the caller, and the tools that would start a run (the
      CreateWorkflow path, 9.27) are behind the gate and do not call `launch` yet. The tools PR must call `record_parent_mode`
      on each launch it makes. Divergence 273 is closed for the seam and open for the caller.
@@ -2844,6 +2846,30 @@ attach failure (9.33, item 276).
 307. The browser port is still absent (9.33, item 272): an actor's browser is not available and is not closed at dispose.
 308. The progress sink, the draft writer, the task-link and artifact stores, and the launch input-id resolver (9.30 item 213)
      are still absent. The launch seam records only the mode.
+
+**Review round (ocr on #593, head fa76c6e71, ten findings; all addressed).**
+
+- Finding 1 (fail open on a read error): fixed. The port's reads return `Result`; a store error other than NotFound is
+  logged (`workflow.bindings.read_failed`) and returned, and an unknown session is an error for the mode. Red first:
+  against the old logic (errors mapped to absent), `a_store_that_cannot_read_refuses_the_reads_and_the_mode_record` failed
+  ("the launch is refused: Ok(())"), `an_unknown_parent_is_not_known_and_its_mode_read_refuses` failed, and the bindings
+  read did not refuse. Green after. Both reads still go through separate loads (finding 4).
+- Finding 2 (hardcoded default mode): fixed. `SessionBindings` takes the app's `Defaults::mode` and reads it for a stored
+  session with no mode, as the session's own cold read does (`ExecutionState::from`). Red first:
+  `a_session_with_no_stored_mode_reads_the_apps_default_mode` on the hardcoded default ("left Some(Default), right
+  Some(AcceptEdits)"). Green after.
+- Finding 3 (no interactions test): a parent that is not open has no channel (test green on both, a coverage test). The
+  open path is not covered: it needs a running session, and no unit test builds one here.
+- Finding 4 (two loads per launch): not shared. The mode read at the launch, the bindings read in the bound factory, and
+  the selection read per actor are three cold loads. Noted; a single launch-scoped read would need the port to return both.
+- Finding 5 (blocking): documented on the port, `record_parent_mode` and the kernel accessor: call off the async workers.
+- Finding 6: `config.parent_session_id.as_deref()`, no clone.
+- Finding 7 (`Handle::current()` in `build`): the handle is a parameter of `build` and of `workflow_bindings`; the app
+  server takes it once in its async body.
+- Finding 8: one `Arc<FixedParent>` serves the build and the launch's mode record in both composed tests.
+- Finding 9: the refusal test asserts its close result.
+- Finding 10: grammar fixed in the session crate's doc.
+- A test that builds a sync `#[test]` around `build` now runs as `#[tokio::test]`, since `build` takes a runtime handle.
 
 **Not done.** A production caller of `launch` (the tools, gated, W9); the browser port (272); the progress sink (5b, 9.31);
 the models below the parent's selection beyond the run and persona models of 9.33 (already done there); a live-mode read

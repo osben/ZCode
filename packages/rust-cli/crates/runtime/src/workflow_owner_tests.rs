@@ -321,15 +321,15 @@ impl ParentFixture {
 }
 
 impl ActorBindingsPort for ParentFixture {
-    fn parent_bindings(&self, parent: &str) -> Option<ParentBindings> {
-        (parent == "ses_p").then(|| ParentBindings {
+    fn parent_bindings(&self, parent: &str) -> Result<Option<ParentBindings>, String> {
+        Ok((parent == "ses_p").then(|| ParentBindings {
             selection: self.selection.lock().expect("selection").clone(),
             workspace: WorkspaceRef {
                 environment: EnvironmentId::new("local"),
                 root: EnvPath::new("/work"),
             },
             interactions: None,
-        })
+        }))
     }
 }
 

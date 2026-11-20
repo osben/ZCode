@@ -32,6 +32,7 @@ pub(crate) fn build<A: ActorAgents + ActorSessionRelease>(
     directory: &str,
     agents: Arc<A>,
     bindings: Arc<dyn ActorBindingsPort>,
+    handle: tokio::runtime::Handle,
 ) -> Option<WorkflowRunService> {
     let runner = runner?;
     let stores = OwnerStores {
@@ -44,7 +45,7 @@ pub(crate) fn build<A: ActorAgents + ActorSessionRelease>(
     let factory = bound_owner_factory(
         stores,
         agents,
-        tokio::runtime::Handle::current(),
+        handle,
         bindings,
         Arc::new(SystemClock::utc()),
     );

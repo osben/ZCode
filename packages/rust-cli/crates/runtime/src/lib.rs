@@ -559,13 +559,18 @@ impl LocalKernel {
         self.workflow_agents.clone()
     }
 
-    /// Fork (9.35): the production actor bindings, over the app's session store and its open sessions. Call it from a
-    /// runtime thread: the port blocks on the store through that runtime's handle.
-    pub fn workflow_bindings(&self) -> Arc<dyn workflow_owner::ActorBindingsPort> {
+    /// Fork (9.35): the production actor bindings, over the app's session store and its open sessions. `handle` is the
+    /// runtime the store is awaited on (the caller passes its own, so no construction depends on the calling thread). The
+    /// port blocks on the store (`Handle::block_on`), so it is called off that runtime's worker threads.
+    pub fn workflow_bindings(
+        &self,
+        handle: tokio::runtime::Handle,
+    ) -> Arc<dyn workflow_owner::ActorBindingsPort> {
         Arc::new(workflow_bindings::SessionBindings::new(
             self.ports.store.clone(),
             self.sessions.clone(),
-            tokio::runtime::Handle::current(),
+            handle,
+            self.defaults.mode,
         ))
     }
 

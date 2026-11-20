@@ -411,7 +411,7 @@ impl Session {
     }
 
     /// Fork (9.35): the session-level ask entry of this open session, for a workflow run's actors. Its asks are not part of
-    /// a turn: they wait on the session's user, and a close moves them to the process's detached entry (as an App call's do).
+    /// a turn: they wait on the session's user, and a close moves them to the process's detached entry (as an App call's asks do).
     pub fn session_asks(&self) -> Arc<dyn rust_cli_kernel_api::orchestration::Interactions> {
         Arc::new(sink::SessionAsks::new(
             self.requests.downgrade(),

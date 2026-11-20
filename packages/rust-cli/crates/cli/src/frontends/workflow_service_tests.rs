@@ -74,19 +74,19 @@ struct FixedParent {
 }
 
 impl ActorBindingsPort for FixedParent {
-    fn parent_bindings(&self, parent: &str) -> Option<ParentBindings> {
-        (parent == "ses_p").then(|| ParentBindings {
+    fn parent_bindings(&self, parent: &str) -> Result<Option<ParentBindings>, String> {
+        Ok((parent == "ses_p").then(|| ParentBindings {
             selection: self.selection.clone(),
             workspace: WorkspaceRef {
                 environment: EnvironmentId::new("local"),
                 root: EnvPath::new("/work"),
             },
             interactions: None,
-        })
+        }))
     }
 
-    fn parent_permission_mode(&self, parent: &str) -> Option<PermissionMode> {
-        (parent == "ses_p").then_some(self.mode).flatten()
+    fn parent_permission_mode(&self, parent: &str) -> Result<Option<PermissionMode>, String> {
+        Ok((parent == "ses_p").then_some(self.mode).flatten())
     }
 }
 
@@ -116,7 +116,7 @@ fn launch_config(run_id: &str, parent: &dyn ActorBindingsPort) -> EngineConfig {
             schema: None,
         },
     );
-    record_parent_mode(&mut config, parent);
+    record_parent_mode(&mut config, parent).expect("the parent's mode is read");
     config
 }
 
@@ -167,10 +167,10 @@ async fn a_launched_run_actor_completes_its_turn_under_the_parents_selection_and
     let database = dir.path().join("sessions.db");
     add_parent(&database);
     let agents = Arc::new(FakeAgents::default());
-    let parent = FixedParent {
+    let parent = Arc::new(FixedParent {
         selection: Some(ModelSelection::new("acct-a", "ma")),
         mode: Some(PermissionMode::AcceptEdits),
-    };
+    });
     let runner = Arc::new(FakeChildRunner::new());
     let service = build(
         Some(runner.clone()),
@@ -178,15 +178,12 @@ async fn a_launched_run_actor_completes_its_turn_under_the_parents_selection_and
         &database,
         "/work",
         agents.clone(),
-        Arc::new(parent),
+        parent.clone(),
+        tokio::runtime::Handle::current(),
     )
     .expect("the service is built over the runner");
-    let parent_again = FixedParent {
-        selection: Some(ModelSelection::new("acct-a", "ma")),
-        mode: Some(PermissionMode::AcceptEdits),
-    };
     service
-        .launch(launch_input("wf_1"), launch_config("wf_1", &parent_again))
+        .launch(launch_input("wf_1"), launch_config("wf_1", parent.as_ref()))
         .await
         .expect("the run is launched");
 
@@ -228,25 +225,22 @@ async fn a_parent_with_no_selection_refuses_its_actor_at_the_ask() {
     add_parent(&database);
     let agents = Arc::new(FakeAgents::default());
     let runner = Arc::new(FakeChildRunner::new());
-    let parent = FixedParent {
+    let parent = Arc::new(FixedParent {
         selection: None,
         mode: Some(PermissionMode::Default),
-    };
+    });
     let service = build(
         Some(runner.clone()),
         Arc::new(SessionResidency::new()),
         &database,
         "/work",
         agents.clone(),
-        Arc::new(parent),
+        parent.clone(),
+        tokio::runtime::Handle::current(),
     )
     .expect("the service is built over the runner");
-    let parent_again = FixedParent {
-        selection: None,
-        mode: Some(PermissionMode::Default),
-    };
     service
-        .launch(launch_input("wf_2"), launch_config("wf_2", &parent_again))
+        .launch(launch_input("wf_2"), launch_config("wf_2", parent.as_ref()))
         .await
         .expect("the run is launched");
 
@@ -270,7 +264,8 @@ async fn a_parent_with_no_selection_refuses_its_actor_at_the_ask() {
             error: None,
         }),
     );
-    let _ = WorkflowRunHost::close(&service).await;
+    let lines = WorkflowRunHost::close(&service).await;
+    assert!(lines.is_empty(), "a clean close: {lines:?}");
 }
 
 /// A session row the run's parent points at (the test database has no sessions otherwise).
@@ -314,6 +309,7 @@ async fn a_session_open_settles_the_parents_orphan_in_the_composed_service() {
             selection: None,
             mode: None,
         }),
+        tokio::runtime::Handle::current(),
     )
     .expect("the service is built over the runner");
 
@@ -328,12 +324,12 @@ async fn a_session_open_settles_the_parents_orphan_in_the_composed_service() {
 }
 
 /// Without a helper there is no child runner, so no run service is built: the families stay as they were.
-#[test]
+#[tokio::test]
 #[expect(
     clippy::disallowed_methods,
     reason = "the test checks that no database file was created, which is a file-system fact"
 )]
-fn without_a_child_runner_no_run_service_is_built() {
+async fn without_a_child_runner_no_run_service_is_built() {
     let dir = tempfile::tempdir().expect("temp dir");
     let database = dir.path().join("sessions.db");
     let service = build(
@@ -346,6 +342,7 @@ fn without_a_child_runner_no_run_service_is_built() {
             selection: None,
             mode: None,
         }),
+        tokio::runtime::Handle::current(),
     );
     assert!(service.is_none(), "no child runner, no run service");
     assert!(!database.exists(), "nothing is opened");
@@ -372,6 +369,7 @@ async fn a_built_run_service_is_idle_and_opens_nothing_until_a_launch() {
             selection: None,
             mode: None,
         }),
+        tokio::runtime::Handle::current(),
     )
     .expect("the service is built over the runner");
 

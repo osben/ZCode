@@ -267,13 +267,15 @@ async fn serve(
     }
     // Fork (9.30): the workflow run service, over the kernel's residency ledger and the helper's child runner. Nothing
     // starts a run yet (the gate is off), so building it opens no database and starts no child.
+    let workflow_handle = tokio::runtime::Handle::current();
     let workflow_service = workflow_service::build(
         context.workflow_runner().cloned(),
         built.kernel.workflow_residency(),
         opened.paths.database().as_path(),
         opened.workspace.root.as_str(),
         built.kernel.workflow_agents(),
-        built.kernel.workflow_bindings(),
+        built.kernel.workflow_bindings(workflow_handle.clone()),
+        workflow_handle,
     );
     // Fork (9.29, W7-5c): the per-session run reads (`workflowRuns`, the run list) answer from the service too.
     if let Some(service) = &workflow_service {
