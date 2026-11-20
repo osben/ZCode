@@ -281,6 +281,8 @@ pub(crate) async fn resume(server: &Server, params: &Value) -> Result<Value, Rpc
         .live(&id)
         .await
         .map_err(|error| kernel_error(&error))?;
+    // Fork (W7-1, spec 9.2): a resumed record is rebuilt from the Host's cached fact alone, as Node's cold recovery does.
+    crate::commands::record_workflow_gate(server, &id, None, None);
     crate::legacy::read(server, &snapshot_params(&id)).await
 }
 

@@ -11,7 +11,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::clock::Ids;
 pub use crate::env_command::{
-    BackgroundReason, CommandEvent, CommandKind, OutputStream, StartCommand,
+    BackgroundReason, CommandArgv, CommandEvent, CommandKind, OutputStream, StartCommand,
 };
 use crate::ids::{EnvironmentId, Generation, OperationId, OwnerEpoch, RunId, SessionId};
 

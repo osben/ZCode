@@ -336,11 +336,10 @@ pub fn replay_state(
     default_concurrency: f64,
     limits: &Limits,
 ) -> Option<State> {
-    let mut state: Option<State> = None;
+    let mut state = State::default();
+    let mut changed = false;
     for envelope in replay_envelopes(run, events, default_concurrency) {
-        if let Some(next) = reduce(state.as_ref(), &envelope, limits) {
-            state = Some(next);
-        }
+        changed |= reduce(&mut state, &envelope, limits).is_some();
     }
-    state
+    changed.then_some(state)
 }
