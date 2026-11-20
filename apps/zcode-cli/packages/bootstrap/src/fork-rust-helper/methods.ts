@@ -69,4 +69,5 @@ export const FORK_RUST_HELPER_METHODS = [
   // W4: stateless compile and format for the Rust workflow engine (specs/fork-rust-workflow-engine.md, 4.1).
   FORK_RUST_HELPER_WORKFLOW.compile,
   FORK_RUST_HELPER_WORKFLOW.format,
+  FORK_RUST_HELPER_WORKFLOW.evalSnippet,
 ] as const;

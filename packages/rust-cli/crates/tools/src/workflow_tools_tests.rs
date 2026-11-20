@@ -49,7 +49,7 @@ fn every_contract_carries_a_provider_description_and_an_object_schema() {
 
 #[test]
 fn without_an_analyzer_only_list_saved_workflows_is_registered() {
-    let names: Vec<String> = workflow_tools(None, std::path::PathBuf::from("/home"))
+    let names: Vec<String> = workflow_tools(None, std::path::PathBuf::from("/home"), None)
         .iter()
         .map(|tool| tool.name().to_owned())
         .collect();
@@ -60,7 +60,7 @@ fn without_an_analyzer_only_list_saved_workflows_is_registered() {
 fn with_an_analyzer_save_workflow_is_registered_before_list_saved_workflows() {
     let analyzer: std::sync::Arc<dyn rust_cli_kernel_api::workflow_analysis::WorkflowAnalyzer> =
         std::sync::Arc::new(NoAnalyzer);
-    let tools = workflow_tools(Some(analyzer), std::path::PathBuf::from("/home"));
+    let tools = workflow_tools(Some(analyzer), std::path::PathBuf::from("/home"), None);
     let names: Vec<&str> = tools.iter().map(|tool| tool.name()).collect();
     assert_eq!(names, ["SaveWorkflow", "ListSavedWorkflows"]);
     for tool in &tools {
@@ -68,6 +68,60 @@ fn with_an_analyzer_save_workflow_is_registered_before_list_saved_workflows() {
         let contract = contract(tool.name());
         assert_eq!(tool.description(&prompt()), contract.description);
         assert_eq!(tool.input_schema(), contract.input_schema);
+    }
+}
+
+// W7-8c: EvalWorkflowSnippet is registered only with a snippet port, between SaveWorkflow and ListSavedWorkflows (Node's
+// order in `handlers/index.ts`).
+#[test]
+fn with_a_snippet_port_eval_workflow_snippet_is_registered_after_save_and_before_list_saved() {
+    let analyzer: std::sync::Arc<dyn rust_cli_kernel_api::workflow_analysis::WorkflowAnalyzer> =
+        std::sync::Arc::new(NoAnalyzer);
+    let snippets: std::sync::Arc<dyn rust_cli_kernel_api::workflow_snippet::WorkflowSnippetPort> =
+        std::sync::Arc::new(NoSnippets);
+    let tools = workflow_tools(
+        Some(analyzer),
+        std::path::PathBuf::from("/home"),
+        Some(snippets.clone()),
+    );
+    let names: Vec<&str> = tools.iter().map(|tool| tool.name()).collect();
+    assert_eq!(
+        names,
+        ["SaveWorkflow", "EvalWorkflowSnippet", "ListSavedWorkflows"]
+    );
+    for tool in &tools {
+        assert!(tool.should_defer(), "{} is deferred", tool.name());
+        let contract = contract(tool.name());
+        assert_eq!(tool.description(&prompt()), contract.description);
+        assert_eq!(tool.input_schema(), contract.input_schema);
+    }
+    let alone = workflow_tools(None, std::path::PathBuf::from("/home"), Some(snippets));
+    let names: Vec<&str> = alone.iter().map(|tool| tool.name()).collect();
+    assert_eq!(names, ["EvalWorkflowSnippet", "ListSavedWorkflows"]);
+}
+
+struct NoSnippets;
+
+#[async_trait::async_trait]
+impl rust_cli_kernel_api::workflow_snippet::WorkflowSnippetPort for NoSnippets {
+    async fn check(
+        &self,
+        _code: &str,
+    ) -> Result<
+        rust_cli_kernel_api::workflow_snippet::SnippetCheck,
+        rust_cli_kernel_api::workflow_snippet::WorkflowSnippetError,
+    > {
+        unreachable!("registration does not check")
+    }
+
+    async fn eval(
+        &self,
+        _request: rust_cli_kernel_api::workflow_snippet::SnippetRequest,
+    ) -> Result<
+        rust_cli_kernel_api::workflow_snippet::SnippetOutcome,
+        rust_cli_kernel_api::workflow_snippet::WorkflowSnippetError,
+    > {
+        unreachable!("registration does not run")
     }
 }
 

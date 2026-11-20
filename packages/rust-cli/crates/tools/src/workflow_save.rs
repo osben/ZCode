@@ -160,7 +160,7 @@ fn invalid_with(code: i32, message: String) -> Validation {
 }
 
 /// Lexical normalization of `.` and `..` (no disk access).
-fn normalize(path: &Path) -> PathBuf {
+pub(crate) fn normalize(path: &Path) -> PathBuf {
     let mut out = PathBuf::new();
     for component in path.components() {
         match component {
@@ -215,7 +215,7 @@ fn read_script_path(cwd: &Path, input_path: &str) -> Result<String, String> {
 }
 
 /// Node `describeWorkflowScriptPath`: relative to the working directory when the file is inside it.
-fn describe(absolute: &Path, cwd: &Path) -> String {
+pub(crate) fn describe(absolute: &Path, cwd: &Path) -> String {
     match absolute.strip_prefix(cwd) {
         Ok(relative) if !relative.as_os_str().is_empty() => relative.display().to_string(),
         _ => absolute.display().to_string(),

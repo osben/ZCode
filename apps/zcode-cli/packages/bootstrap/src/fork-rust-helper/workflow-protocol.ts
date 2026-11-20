@@ -7,7 +7,20 @@ import { z } from "zod";
 export const FORK_RUST_HELPER_WORKFLOW = {
   compile: "helper/workflow/compile",
   format: "helper/workflow/format",
+  evalSnippet: "helper/workflow/evalSnippet",
 } as const;
+
+/**
+ * `helper/workflow/evalSnippet` (W7-8c, specs/fork-rust-workflow-engine.md, 9.28): the snippet compile of EvalWorkflowSnippet.
+ * It compiles under the snippet facade (no agent()), refuses non-literal world.run commands, and renders the child entry for
+ * `runId`. It runs nothing and reads no storage.
+ */
+export const workflowEvalSnippetParamsSchema = z
+  .object({
+    scriptText: z.string(),
+    runId: z.string().trim().min(1),
+  })
+  .strict();
 
 /** `helper/workflow/compile`: the script, the identity of the run it will start, and the run's frozen args. */
 export const workflowCompileParamsSchema = z

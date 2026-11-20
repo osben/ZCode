@@ -15,9 +15,11 @@ use rust_cli_kernel_api::message::{ContentBlock, Message};
 use rust_cli_kernel_api::tool::{Tool, ToolUseContext};
 use rust_cli_kernel_api::tool_names;
 use rust_cli_kernel_api::workflow_analysis::WorkflowAnalyzer;
+use rust_cli_kernel_api::workflow_snippet::WorkflowSnippetPort;
 use serde::Deserialize;
 use serde_json::Value;
 
+use crate::workflow_eval_snippet::EvalWorkflowSnippetTool;
 use crate::workflow_list::ListSavedWorkflowsTool;
 use crate::workflow_save::SaveWorkflowTool;
 
@@ -98,16 +100,21 @@ pub async fn skill_loaded(context: &ToolUseContext) -> bool {
     })
 }
 
-/// The dynamic-workflow tools to register, in Node's registration order (SaveWorkflow, then ListSavedWorkflows).
-/// SaveWorkflow checks scripts, so it exists only with an analyzer; without one, no SaveWorkflow is offered. Both
-/// reach a session only through the gate (`runtime::workflow_gate`), whose source no entry point sets yet.
+/// The dynamic-workflow tools to register, in Node's registration order (SaveWorkflow, EvalWorkflowSnippet, then
+/// ListSavedWorkflows). SaveWorkflow checks scripts, so it exists only with an analyzer, and EvalWorkflowSnippet runs
+/// them, so it exists only with a snippet port. Both reach a session only through the gate (`runtime::workflow_gate`),
+/// whose source no entry point sets yet.
 pub fn workflow_tools(
     analyzer: Option<Arc<dyn WorkflowAnalyzer>>,
     home: PathBuf,
+    snippets: Option<Arc<dyn WorkflowSnippetPort>>,
 ) -> Vec<Arc<dyn Tool>> {
     let mut tools: Vec<Arc<dyn Tool>> = Vec::new();
     if let Some(analyzer) = analyzer {
         tools.push(Arc::new(SaveWorkflowTool::new(analyzer, home.clone())));
+    }
+    if let Some(snippets) = snippets {
+        tools.push(Arc::new(EvalWorkflowSnippetTool::new(snippets)));
     }
     tools.push(Arc::new(ListSavedWorkflowsTool::new(home)));
     tools

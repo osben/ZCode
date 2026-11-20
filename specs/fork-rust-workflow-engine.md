@@ -2125,6 +2125,55 @@ Divergence 103 (recorded in 9.24, from PR #580) is closed here. Its numbering st
 - Tests: `policy/src/lib_tests_always_ask.rs`, through `PolicyGate::decide` and `check_rules`. Red before the chain change: an always-ask tool was an ordinary ask (Default) and an Allow under guarded, bypass, and a user, project, local or CLI allow rule. Green after.
 - SaveWorkflow (#580, merged as 49687cfd8) is the first user: its `check_permissions` returns `PermissionDecision::always_ask(…, independent: true)` (`tools/src/workflow_save.rs`, the `always_ask(..., true)` call). This is the Node check: `apps/zcode-cli/packages/core/src/tool/handlers/save-workflow.ts:289,292` sets `alwaysAsk` true and `allowAlways` false, so the prompt is asked in every mode with no always-allow offered. Its test `save_workflow_asks_through_the_policy_chain_and_only_a_session_rule_skips_it` (`tools/src/workflow_save_tests.rs`) runs through `PolicyGate::decide`. A PreToolUse allow is covered by `a_hook_allow_does_not_skip_an_always_ask_in_the_pipeline` (`tools/src/pipeline_hook_tests.rs`), which runs the real policy gate and asks again.
 
+### 9.28 W7-8c EvalWorkflowSnippet (as built)
+
+**Decision (binding, from the user).** A snippet runs on the Rust workflow engine with an in-memory journal. The helper stays I/O-free: it compiles and renders the child entry, and runs nothing.
+
+**Compile path.** There was no helper method for a snippet (W7-2 shipped only `format`). The smallest correct path is a new stateless method, `helper/workflow/evalSnippet` `{scriptText, runId}` (`bootstrap/src/fork-rust-helper/workflow-compile.ts`, `evalSnippetForRust`). It compiles under the snippet facade (`SNIPPET_FACADE_DTS`, so no `agent()`), refuses a non-literal `world.run` command, lowers, and renders the child entry for `runId`. It answers `{ok: false, diagnostics}` or `{ok: true, worldRun, entrySource}`. Node's `dynamic-workflow-snippet-service.ts` does the same steps in process; the helper does them for Rust.
+
+**Run path (Rust).**
+
+- `kernel-api/src/workflow_snippet.rs`: `WorkflowSnippetPort` (what the tool reaches: `check`, `eval`) and `WorkflowSnippetRunner` (the compile and launch step, implemented by `protocol-zcode`).
+- `protocol-zcode/src/fork/workflow_snippet.rs`: `ProtocolSnippetRunner`. `check` is the helper call. `start` is the helper call, then the existing `launch_compiled` (the entry writer, the child launcher, the NDJSON host). A snippet has no script hash and no compiled facts; both are empty.
+- `runtime/src/workflow_snippet.rs`: `SnippetService`. Each eval builds a `WorkflowEngine` over `MemoryJournal` (`workflow/src/journal.rs`, the in-memory journal port that already exists) with a `SnippetDriver`. The child's `log` and `phase-entered` events go to the engine. A world read goes through the engine (`world_read`, then `world_read_settled`) and `execute_world_read` with the production read port. A `complete` or `fail` settles the engine; a host stop or the timeout settles it as `stop(interrupted)`. The result is read back from `engine.settlement()`, as Node's `runWorkflowScript` settles.
+- `tools/src/workflow_eval_snippet.rs`: `EvalWorkflowSnippetTool`. `validate_input` checks the shape, then one source, then the Skill gate. `check_permissions` reads and compiles the snippet and keeps its bytes for the call. `call` runs them and formats Node's model text.
+- `tools/src/workflow_tools.rs`: `workflow_tools` takes `snippets: Option<Arc<dyn WorkflowSnippetPort>>`, and registers EvalWorkflowSnippet between SaveWorkflow and ListSavedWorkflows (Node's order) only when a port is given. One entry, and one new parameter, for the CreateWorkflow PR to merge against.
+
+The gate stays off. Nothing calls `workflow_tools` with a port, and nothing constructs `ProtocolSnippetRunner` or `SnippetService` (W7-7 wires them). The tools are defined, not registered for any session.
+
+**Tests (red first, then green).**
+
+- Helper (`bootstrap/tests/fork-rust-helper/workflow-compile.test.ts`, 7 new cases in `evalSnippet (W7-8c)`): with the method absent, 7 failed, as `-32601` (method not found) or on the missing reply. Green after: the file is 22 of 22.
+- Protocol (`workflow_compile_tests.rs`, 4 new, and `workflow_snippet_tests.rs`, 3 new): red as a compile error (the functions did not exist). Green: the `workflow_` filter is 64 of 64.
+- Runtime (`workflow_snippet_tests.rs`, 15): red as a build error (the module did not exist). Green: 15 of 15.
+- Tools (`workflow_eval_snippet_tests.rs`, 22, and `workflow_tools_tests.rs`, 1 new): the test files were written before the module, but the first run came after the module existed, so no tools red run was observed. Green: the `workflow_` filter is 60 of 60 (the count includes the existing Save and List tests).
+- `cargo fmt --all --check` clean; `cargo clippy --workspace --all-targets --locked -- -D warnings` clean; lib tests of tools, workflow, kernel-api, protocol-zcode and runtime pass. The helper's `oxfmt --check` is clean for the touched TypeScript files (run from `apps/zcode-cli`, where the formatter's config resolves).
+
+**Node divergences (new in W7-8c, numbered 160 to 179).**
+
+160. The compile is a new helper method, `helper/workflow/evalSnippet`. Node compiles in process. The helper does the same steps and renders the entry, and runs nothing (see the decision above).
+161. A `path` source must resolve inside the workspace (lexical normalization, no symlink resolution), as SaveWorkflow's `script_path` does (divergence 113). Node reads any path. A path outside is refused at the permission decision with "is outside the workspace".
+162. Schema refusals carry Node's zod wording for the `min` and range rules (`code: String must contain at least 1 character(s)`, `timeoutMs: Number must be greater than or equal to 1000`). An unknown key is serde's message, not zod's. None of them has an error code (Node's schema refusal has none either).
+163. Node's tool-level timeout (660 s) and cancellation (`abort` kills the sandbox child) are not declared: the Rust tool trait has no per-tool timeout and no cancel hook, as for SaveWorkflow (divergence 109). The snippet's own `timeoutMs` is enforced by the service at the same point as Node's inner timer (the child is stopped and the run settles `interrupted`).
+164. The in-memory journal is a deliberate design divergence. A snippet's engine writes no `dwf_*` row and reads none; the run id is `dwfeval-<pid>-<n>` (process-unique, from a process counter), not a UUID, because it names the entry file and is never stored. Nothing persists after the call.
+165. World reads run one at a time: the engine sits behind one mutex, and the read runs on a blocking thread inside the engine call that starts it. Node runs a `Promise.all` of reads concurrently. The answers and the settlement order per request are the same; the side-effect order follows arrival.
+166. The engine's `Caps` are `Caps::default()`, not Node's default concurrency. A snippet starts no ask, so no concurrency bound is observable.
+167. Log limits count Unicode scalar values (`chars()`), not the UTF-16 code units that Node's `length` and `slice` count. The item count (100) and the truncation flag are the same.
+168. `report` and `declare-artifact` events from the child are ignored. The snippet facade declares neither, so a well-formed child never sends them. Node forwards them to the engine. `log` and `phase-entered` reach the engine.
+169. The engine's `start_ask` is a no-op in the driver, and the handler refuses an ask to the child first (DriverError). Node's driver throws DriverError from `startAsk`. The refusal reaches the child in both; only the driver's unreachable member differs.
+170. The wire error's `name` is `WorkflowError`. Node's `error.name` for its workflow error class is not checked here. `violations` passes only an array, and `finalText` passes through.
+171. A child that never settles is bounded only by the timeout. Node's driver has the same bound (the inner timer), so this is not a new limit.
+172. The read-failure text names the file as Node does, but its cause is Rust's io error text (not Node's `ENOENT` text).
+173. A clean return with no value is recorded in the engine as `null` (the engine's completion takes a value). The tool's `It returned no value.` comes from the child's absent `value`, as in Node, so the two stay apart.
+174. A snippet has no script hash and no compiled facts (empty, since nothing resumes a snippet and nothing hashes it). Node's snippet service has none either.
+175. A `world.run` snippet asks with an ordinary permission ask (no always-allow is removed, no always-ask), as Node's `permission` block says (standard flow, `needsApproval` true). A snippet that proceeds is `Allow`, which skips the dialog as Node's `prepareApproval` `proceed` does. Whether Node's standard flow still applies its allow and deny rules to a proceeding snippet was not traced; the chain's deny rules run before the tool's decision here.
+176. The approved bytes are kept per tool-use id and used by the call. Without an approval the call reads the source again (Node resolves input once per call, and no hook rewrites Rust's input: divergence 101 of 9.24).
+177. The output is Node's model text (`response`). `display` carries the output object (`ok`, `diagnostics`, `logs`, `response`, `durationMs`). The desktop renderer for EvalWorkflowSnippet has not been checked.
+178. The result budget is 24,000 bytes, with Node's truncate strategy (the head is kept). The truncation itself is the tool layer's.
+179. `timeoutMs` is an `i64` in the tool and is range-checked before it is used, so the value passed to the service is always 1,000 to 600,000.
+
+**Not done here.** The gate, the wiring of `ProtocolSnippetRunner` and `SnippetService` into the composition root, and the `ChildHandler` lifecycle for a live session (W7-7). The desktop check of the snippet's display. A real child run in a test (the tests use a fake runner and a fake child); the protocol runner is covered by its pure mapping functions, and its launch by `workflow_runner_tests`.
+
 ## 10. Open questions
 
 Each has a recommendation. The user decides. Until decided, the recommendation is the default.

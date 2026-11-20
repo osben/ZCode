@@ -8,7 +8,7 @@ use std::sync::Arc;
 
 use async_trait::async_trait;
 use rust_cli_kernel_api::workflow_analysis::{
-    WorkflowAnalysis, WorkflowAnalysisError, WorkflowAnalyzer,
+    WorkflowAnalysis, WorkflowAnalysisError, WorkflowAnalyzer, WorkflowDiagnostic,
 };
 use rust_cli_protocol_core::rpc::RpcError;
 use serde_json::{Map, Value, json};
@@ -260,6 +260,72 @@ pub(crate) fn parse_analysis(reply: &Value) -> Result<Value, RpcError> {
         .filter(|value| value.is_object())
         .cloned()
         .ok_or_else(malformed)
+}
+
+/// `helper/workflow/evalSnippet` (W7-8c): the snippet compile under the snippet facade.
+pub const EVAL_SNIPPET: &str = "helper/workflow/evalSnippet";
+
+/// The outcome of a snippet compile.
+#[derive(Debug, Clone, PartialEq)]
+pub enum SnippetCompiled {
+    /// The snippet compiles. `world_run` is true when it carries a world.run command; `entry_source` is the child's ESM file.
+    Ready {
+        world_run: bool,
+        entry_source: String,
+    },
+    /// The snippet does not compile under the snippet facade, or a world.run command is not a literal.
+    Rejected {
+        diagnostics: Vec<WorkflowDiagnostic>,
+    },
+}
+
+/// Compiles a snippet on the helper. `run_id` is the identity the entry file carries.
+pub async fn eval_snippet(
+    helper: &NodeHelper,
+    code: &str,
+    run_id: &str,
+) -> Result<SnippetCompiled, RpcError> {
+    let reply = forward(helper, EVAL_SNIPPET, &eval_snippet_params(code, run_id)).await?;
+    parse_eval_snippet(&reply)
+}
+
+pub(crate) fn eval_snippet_params(code: &str, run_id: &str) -> Value {
+    json!({"scriptText": code, "runId": run_id})
+}
+
+pub(crate) fn parse_eval_snippet(reply: &Value) -> Result<SnippetCompiled, RpcError> {
+    match reply.get("ok").and_then(Value::as_bool) {
+        Some(true) => {
+            let world_run = reply.get("worldRun").and_then(Value::as_bool);
+            let entry_source = reply.get("entrySource").and_then(Value::as_str);
+            match (world_run, entry_source) {
+                (Some(world_run), Some(entry_source)) => Ok(SnippetCompiled::Ready {
+                    world_run,
+                    entry_source: entry_source.to_owned(),
+                }),
+                _ => Err(malformed()),
+            }
+        }
+        Some(false) => {
+            let diagnostics = reply
+                .get("diagnostics")
+                .and_then(Value::as_array)
+                .ok_or_else(malformed)?
+                .iter()
+                .map(parse_diagnostic)
+                .map(|parsed| {
+                    parsed.map(|diagnostic| WorkflowDiagnostic {
+                        code: diagnostic.code,
+                        line: diagnostic.line,
+                        column: diagnostic.column,
+                        message: diagnostic.message,
+                    })
+                })
+                .collect::<Result<Vec<_>, _>>()?;
+            Ok(SnippetCompiled::Rejected { diagnostics })
+        }
+        None => Err(malformed()),
+    }
 }
 
 /// SaveWorkflow's typecheck over the helper (`helper/workflow/format`, kind `analysis`), as the kernel-api port.
