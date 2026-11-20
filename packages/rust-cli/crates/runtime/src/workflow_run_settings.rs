@@ -5,12 +5,12 @@
 //! A concurrency-only change to a live run is applied in place (the same run, no stop, no successor). Any other change
 //! amends the run with the predecessor's script and arguments. Either way the parent records a settings turn: a
 //! control-only turn whose text tells the model what changed. The method is not wired to a command yet: the v4
-//! `amendWorkflowRunSettings` command is W9, and the sink is passed in by its caller (divergence 657).
+//! `amendWorkflowRunSettings` command is W9, and the sink is passed in by its caller (divergence 669).
 //!
 //! The order is Node's. Every refusal before the retune or the amend has no side effects. A failure after the amend
 //! has started is not rolled back, as Node does not roll it back.
 //!
-//! Not built here (divergences 651 to 656): a subagent-model change (refused as `model_unavailable`), a run whose launch
+//! Not built here (divergences 663 to 668): a subagent-model change (refused as `model_unavailable`), a run whose launch
 //! names script models (refused the same way: the models are not rebound), the draft file for the kept script (the
 //! successor has none), the compile before the stop (the amend compiles inside its start, as the AmendWorkflow tool does),
 //! and the background tracking of the successor.
@@ -31,7 +31,7 @@ use super::list::on_blocking_pool;
 #[derive(Debug, Clone, PartialEq)]
 pub struct SettingsRequest {
     pub run_id: WorkflowRunId,
-    /// Any value is refused: a subagent-model change is not built (divergence 651).
+    /// Any value is refused: a subagent-model change is not built (divergence 663).
     pub subagent_model: Option<Option<String>>,
     pub max_concurrency: Option<Option<f64>>,
 }
@@ -208,7 +208,7 @@ impl WorkflowRunService {
             return Ok(SettingsOutcome::Refused(SettingsRefusal::NotConfigurable));
         }
 
-        // (3) A subagent-model change is not built (divergence 651).
+        // (3) A subagent-model change is not built (divergence 663).
         if request.subagent_model.is_some() {
             return Ok(SettingsOutcome::Refused(SettingsRefusal::ModelUnavailable {
                 message: "this host cannot change a run's subagent model yet, so the run is not changed".to_owned(),
@@ -291,7 +291,7 @@ impl WorkflowRunService {
                 message: "the run has no working directory to start its successor in".to_owned(),
             }));
         };
-        // (8) A script that names models is refused: the models are not rebound here (divergence 652).
+        // (8) A script that names models is refused: the models are not rebound here (divergence 665).
         let binds_store = store.clone();
         let binds_id = run_id.clone();
         let binds = on_blocking_pool(move || {
