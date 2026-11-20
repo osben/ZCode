@@ -56,7 +56,7 @@ pub async fn write_entry(
     run_id: &str,
     source: &str,
     fallback_dir: &Path,
-    warn: &mut dyn FnMut(&str),
+    warn: &mut (dyn FnMut(&str) + Send),
 ) -> io::Result<EntryFile> {
     let project = project_dir(cwd);
     let file_name = entry_file_name(run_id);

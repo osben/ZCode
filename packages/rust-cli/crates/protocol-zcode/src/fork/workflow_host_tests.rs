@@ -9,7 +9,7 @@ use rust_cli_kernel_api::workflow_child::RequestType;
 use serde_json::{Value, json};
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader, DuplexStream, Lines, duplex};
 
-use super::super::workflow_wire::{ChildEvent, ChildRequest, CreateActor};
+use super::super::workflow_wire::{ChildEvent, ChildRequest, Completion, CreateActor};
 use super::*;
 
 /// Records what the host hands the handler, and answers asks with their instructions.

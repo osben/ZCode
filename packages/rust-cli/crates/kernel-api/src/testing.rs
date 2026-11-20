@@ -18,6 +18,7 @@ mod scripted_model;
 mod session;
 mod store;
 mod store_proxy;
+mod workflow_child;
 
 pub use clocks::{FixedClock, ManualClock, StepClock, TokioClock};
 pub use closing::ClosingEnvironment;
@@ -36,6 +37,7 @@ pub use scripted_model::ScriptedModel;
 pub use session::{NoSession, OpsOverride};
 pub use store::{MemoryArtifacts, MemoryStore};
 pub use store_proxy::{StoreCall, StoreHooks, StoreProxy};
+pub use workflow_child::{FakeChildRunner, FakeLaunch};
 
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};

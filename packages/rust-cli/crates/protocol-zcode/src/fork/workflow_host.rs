@@ -19,7 +19,7 @@ pub use super::workflow_lines::MAX_LINE_BYTES;
 use super::workflow_lines::{Line, NdjsonLines};
 // The handler and the wire shapes live in kernel-api since W7-5 (specs/fork-rust-workflow-engine.md, 9.18 decision 1).
 pub use rust_cli_kernel_api::workflow_child::ChildHandler;
-use super::workflow_wire::{ChildMessage, Completion, WireError, response_line};
+use super::workflow_wire::{ChildMessage, WireError, response_line};
 
 // The stdio ends, the outcome and the stop reason live in kernel-api since W7-5 (specs/fork-rust-workflow-engine.md, 9.22).
 pub use rust_cli_kernel_api::workflow_child::{ChildIo, Outcome, StopReason};

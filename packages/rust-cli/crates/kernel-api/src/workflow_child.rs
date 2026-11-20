@@ -10,13 +10,15 @@
 //! `kind`/`type` this module does not know, is a malformed line.
 
 use std::io;
-use std::path::Path;
+use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
 use async_trait::async_trait;
 use futures_util::future::BoxFuture;
 use serde::{Deserialize, Serialize};
-use serde_json::{Value, json};
+use serde_json::{Map, Value, json};
 use tokio::io::{AsyncBufRead, AsyncRead, AsyncWrite};
+use tokio_util::sync::CancellationToken;
 
 /// The child's three stdio ends, as the launcher hands them over.
 pub struct ChildIo<R, W, E> {
@@ -196,4 +198,86 @@ pub fn response_line(id: &str, answer: &Result<Value, WireError>) -> String {
         Err(error) => json!({"kind": "response", "id": id, "ok": false, "error": error}),
     };
     format!("{line}\n")
+}
+
+/// A positioned compile diagnostic, in the author's script (1-based). The helper's compile answers them.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Diagnostic {
+    pub code: i64,
+    pub line: i64,
+    pub column: i64,
+    pub message: String,
+}
+
+/// What a launch needs from the run: the script and the run it starts, its frozen args and resume origin, and the
+/// directory the entry file goes into (the session's cwd). Nothing else reaches the compile, the entry file or the host.
+#[derive(Debug, Clone, PartialEq)]
+pub struct LaunchInput {
+    pub script_text: String,
+    pub run_id: String,
+    pub args: Option<Map<String, Value>>,
+    pub resumed_from: Option<String>,
+    pub cwd: PathBuf,
+}
+
+/// Why a launch did not start a child. Nothing was spawned in either case.
+#[derive(Debug, Clone, PartialEq)]
+pub enum LaunchError {
+    /// The script did not compile. `message` is set when the compile threw after its diagnostics passed.
+    Rejected {
+        diagnostics: Vec<Diagnostic>,
+        message: Option<String>,
+    },
+    /// The compile helper, the entry file or the process failed. The text names the step and the reason.
+    Failed(String),
+}
+
+/// Stops a running child. Cheap to clone, so the run's owner can keep it while another task awaits the outcome.
+#[derive(Debug, Clone)]
+pub struct ChildStop(CancellationToken);
+
+impl ChildStop {
+    pub fn new(token: CancellationToken) -> Self {
+        Self(token)
+    }
+
+    /// Ends the child's process tree. The outcome then settles as `Stopped(Interrupted)`. Calling it again is a no-op.
+    pub fn stop(&self) {
+        self.0.cancel();
+    }
+
+    /// Whether `stop` has been called.
+    pub fn is_stopped(&self) -> bool {
+        self.0.is_cancelled()
+    }
+}
+
+/// A started child: what the compile produced, where the entry file is, a way to stop the child, and its outcome.
+///
+/// The implementation drives the child's lines while the outcome is unpolled, so the child is not blocked on a full
+/// pipe. Dropping the outcome future before it settles ends the child's process tree, as `stop` does.
+pub struct RunningChild {
+    /// The compiled script's hash, as the helper computed it.
+    pub script_hash: String,
+    /// The compiled facts without the lowered body, as the helper returned them.
+    pub compiled: Value,
+    /// The entry file the child started from.
+    pub entry_path: PathBuf,
+    /// Whether the entry file went to the fallback directory, because the project directory was not writable.
+    pub entry_fallback: bool,
+    pub stop: ChildStop,
+    /// Resolves once, with the run's outcome.
+    pub outcome: BoxFuture<'static, Outcome>,
+}
+
+/// Starts workflow runs: compile the script, write its entry file, launch the child and hand the child's messages to
+/// the handler. The runtime reaches this port through `kernel-api`; the implementation lives where the helper client and
+/// the NDJSON host are (`protocol-zcode`), so the runtime crate does not depend on the protocol crate.
+#[async_trait]
+pub trait WorkflowChildRunner: Send + Sync {
+    async fn start(
+        &self,
+        input: LaunchInput,
+        handler: Arc<dyn ChildHandler>,
+    ) -> Result<RunningChild, LaunchError>;
 }
