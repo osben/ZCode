@@ -1847,8 +1847,8 @@ The W7 estimate is about 21,000 lines (it was 2,500). The W6b parts 2b, 3, 5 and
 52. A session with no gate record sees no workflow tool. Node reads an absent `dynamicWorkflowEnabled` on a protocol session as enabled, and it fails closed only in `appRuntimePreferences`. The Rust record is fail-closed at every layer (W1 `resolve_gate` and this filter), so the Host must send the flag for every session that should have the tools.
 53. The session-less views (`tools()`, `find()`) never list or find a workflow tool. Node has one registry per runtime and no session-less view, so the split is structural: it keeps a tool from reaching a session whose gate is unknown.
 54. On-demand defers every workflow tool for every on-demand session, and nothing activates it. Node's `dynamic-workflow-activation.ts` (DWG-09 and DWG-10) activates on the `/workflow` turn and on cold-recovery history, and persists an entry. Rust has none of that yet, so an on-demand session finds the tools only through ToolSearch. The activation port is a W7 follow-up, before the first tool registers.
-55. The incognito `automationTools` exclusion (Node `resolveRuntimeDynamicWorkflowToolsIncluded`) is not in the gate yet. `IncognitoProfiles` is not reachable from `Server`, so the gate source cannot read it. This is a gap to close before any tool registers (W7-7 wires the source with the first tool).
-56. `Extensions.dynamic_workflow` is set by no entry point. `Server` is built from a kernel that already holds the extensions, so a shared gate table, created before the kernel and held by both, is the wiring. It is inert in W7-1 because `workflow_tools()` returns nothing, and W7-7 adds it with the first tool.
+55. (Closed in 9.36, divergence 311.) The incognito `automationTools` exclusion (Node `resolveRuntimeDynamicWorkflowToolsIncluded`) is not in the gate yet. `IncognitoProfiles` is not reachable from `Server`, so the gate source cannot read it. This is a gap to close before any tool registers (W7-7 wires the source with the first tool).
+56. (Closed in 9.36, divergence 310.) `Extensions.dynamic_workflow` is set by no entry point. `Server` is built from a kernel that already holds the extensions, so a shared gate table, created before the kernel and held by both, is the wiring. It is inert in W7-1 because `workflow_tools()` returns nothing, and W7-7 adds it with the first tool.
 57. The generated asset and the registration use Node's `handlers/index.ts` order (create, amend, save, eval, list runs, get run, resume, resolve, fill, list saved). The W1 constant `tool_names::DYNAMIC_WORKFLOW_TOOLS` keeps the W1 order (list saved after save). Tests compare the set, not the order of that constant.
 58. The port trait carries JSON values for the snapshot, detail, list items and resume result, and the scaffold types only what the tools' inputs and refusals need. Each owning PR types its own fields. Model selections in an amendment stay `serde_json::Value` until W7-8a.
 
@@ -2903,6 +2903,107 @@ attach failure (9.33, item 276).
 **Not done.** A production caller of `launch` (the tools, gated, W9); the browser port (272); the progress sink (5b, 9.31);
 the models below the parent's selection beyond the run and persona models of 9.33 (already done there); a live-mode read
 (300).
+
+### 9.36 W7-7a: gate wiring and tool registration (as built, gate off)
+
+**Scope built.** The gate is one table, shared by the protocol server and the kernel's gate source (divergence 56 closed).
+The incognito `automationTools` toggle closes a session's gate in the runtime (divergence 55 closed). The app server
+registers the workflow tools that have a port in this build, behind that gate. Nothing user-visible changes: no session
+records the gate open unless the Host sends the flag, and the Host's cached fact is the only source.
+
+What is built:
+
+1. **The shared table.** `kernel-api` `dynamic_workflow::SessionGates` holds one record per session and implements
+   `DynamicWorkflowGates`. `protocol-zcode`'s `Context` owns it (`dynamic_workflow_gates()`), so the entry point can take it
+   before the kernel and the server exists. `Server` no longer has its own map: `dynamic_workflow_gate` reads it and
+   `record_dynamic_workflow_gate` writes it. `session_delete` forgets the record through the context.
+2. **The incognito gate.** `runtime::workflow_gate::AutomationGated` wraps the gate source. `gate(session)` is `None` when
+   the kernel's `IncognitoProfiles` excludes `AutomationTools` for the session, and otherwise the inner record. `Kernel`
+   with extensions wraps the source with the kernel's own profiles, so every entry point reads the same fact.
+3. **The wiring.** `runtime::Extensions.dynamic_workflow` (the gate source and its tools) is set from a new `Controller`
+   field, `dynamic_workflow`, which only the app server sets (`cli/src/frontends/workflow_gating.rs`). The source is built
+   right after the Node helper is installed, before assembly. `runtime::wired_workflow_tools` is the one place the set is
+   chosen.
+4. **Registered tools.** SaveWorkflow (only with the helper's analyzer, `HelperWorkflowAnalyzer`) and ListSavedWorkflows.
+   Both are visible only through `GatedRegistry`, to a session whose record is open, and never through the session-less
+   views.
+5. **prepare_worktree.** Confirmed: preparing a worktree records no gate (9.18 W7-1 note). The first record is the
+   activation's (9.2). A test pins it.
+
+**Not registered, and why.**
+
+- CreateWorkflow: its run port (`DynamicWorkflowRunPort::submit`) is not built. `SessionRuns` has the list reads only.
+  The mapping from the compiled script to the engine config (ask specs, site phases, the validator, the caps, the
+  parent's mode) is not in Rust yet. Without a port the tool would only typecheck and say it did not run, so it is kept
+  out of the production set (divergence 312).
+- EvalWorkflowSnippet: its port exists (`SnippetService` over `ProtocolSnippetRunner`), but the world reads are
+  `WorldPorts`, rooted at the process workspace. Node roots a snippet's reads at the session's directory, and the
+  port has no per-call root (divergence 313).
+- ListWorkflowRuns: the port's `list_runs` exists, but no tool is written in `crates/tools`. It is W7-9.
+- GetWorkflowRun, ResumeWorkflowRun, ResolveWorkflowQuestion, AmendWorkflow, FillWorkflowHole: their ports or tools are
+  missing (W7-7 follow-ups, W7-9, W7-10).
+
+**Node divergences (new in W7-7a, numbered from 310).**
+
+310. Closes 56. The gate table is the context's, held by the server and by the kernel's extensions, so one record per
+     session serves both. Node has one `runtimeConfig` per session in the runtime and no shared table.
+311. Closes 55. The incognito exclusion is read at each gate call from the kernel's profiles, not at registration. Node reads
+     `config.incognito` when it registers the tools. The two agree because a profile never changes once recorded
+     (`IncognitoProfiles`: "a profile, once set, never changes").
+312. CreateWorkflow is not registered in production. `workflow_tools` still offers it with no run port (its tests keep that
+     form). `wired_workflow_tools` drops it, so a session never sees a tool that cannot run. Node always runs it. Reopens
+     with the submit port.
+313. EvalWorkflowSnippet is not registered. Its reads are rooted at the process workspace, while Node roots a snippet at its
+     session's cwd. The port has no per-call root; a per-call root is the follow-up (WorldReadPorts takes no root).
+314. ListWorkflowRuns, GetWorkflowRun, ResumeWorkflowRun, ResolveWorkflowQuestion, AmendWorkflow and FillWorkflowHole are not
+     registered: no tool or no port (see the list above).
+315. SaveWorkflow needs the helper. Node's checker runs in the process. Without a Node helper command, SaveWorkflow is not
+     registered; ListSavedWorkflows is.
+316. The saved store's home is the process's `facts.process.home`, the same value the rest of the app reads. Node uses
+     `os.homedir()`. The two match where the app's home is the user's home; a HOME override changes both alike.
+317. The standalone CLI (TUI and headless) gets no workflow tools here: only the app server sets `dynamic_workflow`. Node
+     registers them in every entry point when the flag is on. Not opened by the Host yet, so nothing is lost today.
+318. On-demand activation (9.18 divergence 54) is still open. An on-demand session finds the tools only through ToolSearch.
+     Node's activation on the `/workflow` turn and on cold recovery is not ported.
+319. Divergence 53 is unchanged: the session-less views never list or find a workflow tool.
+320. A record is removed when its session is deleted (`session_delete`), as before; the table is memory only, as Node's
+     `runtimeConfig` is.
+321. The table's lock recovers from poisoning (`PoisonError::into_inner`), as the other per-session maps do. Node has no
+     poisoning; a panic in a gate read does not close the gate for other sessions.
+322. The per-session run port is not a single port. `CreateWorkflowTool` holds one `Option<Arc<dyn DynamicWorkflowRunPort>>`,
+     but the run service is per session (`DynamicWorkflowRunSessions::for_session`). The submit PR must route by
+     `context.session` (the tool's `ToolUseContext`) or take the sessions port. Recorded now so the composition is not
+     built the wrong way.
+323. `wired_workflow_tools` order is the workflow tool order (SaveWorkflow before ListSavedWorkflows), as the W7-8b tests
+     pin it.
+324. The gate source is set before the kernel is assembled, so no tool reaches a session before the first `record`. A
+     session's first record is at its create (9.2), so a session that exists before the source is set has none.
+325. Dynamic-workflow tools are offered only when the record is open, as before. The kernel wraps the source on every
+     assembly, so an alternate entry point that builds `Extensions` itself gets the unwrapped source; the app server is the
+     only entry point that sets it, so that is a note, not a gap today.
+326. The composed path (`lib.rs` wrap, `assemble::kernel` hand-off, `app_server` set) is not covered by a composed test.
+     The pieces are tested: the table, the incognito gate, the tool set, the prepare fact. An end-to-end test through
+     `app_server` needs a helper and a Host session, which the test harness does not build here.
+327. The Node helper's `analyze` path is not exercised in these tests (the analyzer is a stub that refuses). SaveWorkflow's
+     check path is covered by its own tests (W7-8b).
+328. `cargo fmt --check` and `cargo clippy --workspace --all-targets --locked -- -D warnings` pass. The lib suites pass:
+     runtime 284, workflow 434, kernel-api 439, protocol-zcode 946, node-store 357 (1 ignored), tools 579, cli bin 559.
+329. Node's `DynamicWorkflowRunPort` has no per-session form in Rust yet; the composed tools hold none (see 322).
+
+**Tests, red first where they could be red.**
+
+- `kernel-api` `dynamic_workflow_tests` (4 new): red on the missing `SessionGates` (compile error, not a behaviour red), green
+  after. The four cover: no record, read back for one session only, replace and forget, one shared table.
+- `runtime` `workflow_gate_tests` (1 new): red on the missing `AutomationGated` (compile error), green after. An incognito
+  session that excludes automation tools sees no workflow tool; one that keeps it and a plain session see them.
+- `protocol-zcode` `worktree_tests::preparing_a_worktree_records_no_dynamic_workflow_gate`: green on the first run. It
+  confirms the W7-1 note; it did not need an implementation.
+- `cli` `workflow_gating_tests` (3 new): the wired set without a helper (`ListSavedWorkflows`), with an analyzer
+  (`SaveWorkflow`, `ListSavedWorkflows`, and never `CreateWorkflow`), and the gate source reading the shared table.
+
+**Not done.** CreateWorkflow and EvalWorkflowSnippet registration (submit mapping and the per-call root, 312/313);
+ListWorkflowRuns and the other tools (314); on-demand activation (318); the standalone CLI's tools (317); a composed
+end-to-end test (326).
 
 ### 9.37 W7-7b: run-level resume and the quota resumer (as built, gate off)
 

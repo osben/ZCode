@@ -10,7 +10,7 @@ use std::borrow::Cow;
 use std::sync::Arc;
 
 use async_trait::async_trait;
-use rust_cli_kernel_api::dynamic_workflow::DynamicWorkflowGates;
+use rust_cli_kernel_api::dynamic_workflow::{DynamicWorkflowGate, DynamicWorkflowGates};
 use rust_cli_kernel_api::ids::SessionId;
 use rust_cli_kernel_api::mcp::McpToolInfo;
 use rust_cli_kernel_api::mcp_state::McpConnections;
@@ -114,6 +114,51 @@ impl ToolRegistry for GatedRegistry {
 
     fn mcp_for(&self, session: &SessionId) -> Option<Arc<dyn McpConnections>> {
         self.base.mcp_for(session)
+    }
+}
+
+/// Fork (W7-7a, 9.36): the workflow tools wired to a port in this build, in Node's order. SaveWorkflow needs the analyzer
+/// (the helper's check), and ListSavedWorkflows reads the home's saved store. CreateWorkflow is dropped even with an
+/// analyzer: `workflow_tools` offers it without a run port, and that form (it typechecks and says it did not run) must
+/// not reach a session. EvalWorkflowSnippet is not offered either: its reads are rooted at the process workspace, not at
+/// the session's directory (9.36, divergence 313).
+pub fn wired_workflow_tools(
+    analyzer: Option<Arc<dyn rust_cli_kernel_api::workflow_analysis::WorkflowAnalyzer>>,
+    home: &std::path::Path,
+) -> Vec<Arc<dyn Tool>> {
+    rust_cli_tools::workflow_tools(analyzer, home.to_path_buf(), None, None)
+        .into_iter()
+        .filter(|tool| tool.name() != rust_cli_kernel_api::tool_names::CREATE_WORKFLOW)
+        .collect()
+}
+
+/// Fork (W7-7a, divergence 55): the gate source with Node's incognito `automationTools` toggle in it
+/// (`resolveRuntimeDynamicWorkflowToolsIncluded`). A session whose incognito profile excludes automation tools is closed
+/// whatever its record says. The profile is read at each call, so a profile recorded after the record still applies.
+pub struct AutomationGated {
+    inner: Arc<dyn DynamicWorkflowGates>,
+    incognito: rust_cli_kernel_api::incognito::IncognitoProfiles,
+}
+
+impl AutomationGated {
+    pub fn new(
+        inner: Arc<dyn DynamicWorkflowGates>,
+        incognito: rust_cli_kernel_api::incognito::IncognitoProfiles,
+    ) -> Self {
+        Self { inner, incognito }
+    }
+}
+
+impl DynamicWorkflowGates for AutomationGated {
+    fn gate(&self, session: &SessionId) -> Option<DynamicWorkflowGate> {
+        let excluded = self.incognito.excludes(
+            session,
+            rust_cli_kernel_api::incognito::IncognitoKey::AutomationTools,
+        );
+        if excluded {
+            return None;
+        }
+        self.inner.gate(session)
     }
 }
 
