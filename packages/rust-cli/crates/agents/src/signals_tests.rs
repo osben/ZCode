@@ -45,11 +45,17 @@ async fn a_workflow_notice_is_handed_over_once_and_is_never_acked() {
     hub.workflow_notice(
         &session,
         "[SYSTEM NOTIFICATION - NOT USER INPUT]\nescalated".to_owned(),
+        Some(serde_json::json!({"workflowBlocked": {"questions": 1, "holes": 0, "sinceMs": 5}})),
     );
-    let Some(AgentSignal::WorkflowNotice { text }) = stream.next().await else {
+    let Some(AgentSignal::WorkflowNotice { text, workflow }) = stream.next().await else {
         panic!("expected a workflow notice");
     };
     assert_eq!(text, "[SYSTEM NOTIFICATION - NOT USER INPUT]\nescalated");
+    // The payload travels with the notice (9.51, W8d): it is not read back from the text.
+    assert_eq!(
+        workflow,
+        Some(serde_json::json!({"workflowBlocked": {"questions": 1, "holes": 0, "sinceMs": 5}}))
+    );
     assert!(
         hub.pending(&session).is_empty(),
         "a workflow notice is not background work"

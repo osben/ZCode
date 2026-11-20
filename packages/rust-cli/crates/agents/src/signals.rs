@@ -37,7 +37,7 @@ struct Channel {
     /// 子代理发给这个会话的消息（RespondToCoordinator；不 ack）：交给订阅方时从这里取走。
     messages: Vec<(u64, String)>,
     /// 工作流 run 的模型可见通知（9.38，W7-7c；不 ack，不计入后台工作）：交给订阅方时从这里取走。
-    workflows: Vec<(u64, String)>,
+    workflows: Vec<(u64, String, Option<serde_json::Value>)>,
 }
 
 impl Channel {
@@ -107,8 +107,16 @@ fn next_signal(channel: &mut Channel, cursor: &Cursor) -> Option<(u64, AgentSign
     let workflow = channel
         .workflows
         .iter()
-        .find(|(order, _)| *order > cursor.delivered)
-        .map(|(order, text)| (*order, AgentSignal::WorkflowNotice { text: text.clone() }));
+        .find(|(order, _, _)| *order > cursor.delivered)
+        .map(|(order, text, workflow)| {
+            (
+                *order,
+                AgentSignal::WorkflowNotice {
+                    text: text.clone(),
+                    workflow: workflow.clone(),
+                },
+            )
+        });
     let (order, signal) = [notice, tasks, stall, message, workflow]
         .into_iter()
         .flatten()
@@ -120,7 +128,7 @@ fn next_signal(channel: &mut Channel, cursor: &Cursor) -> Option<(u64, AgentSign
         channel.messages.retain(|(sent, _)| *sent != order);
     }
     if matches!(signal, AgentSignal::WorkflowNotice { .. }) {
-        channel.workflows.retain(|(sent, _)| *sent != order);
+        channel.workflows.retain(|(sent, _, _)| *sent != order);
     }
     Some((order, signal))
 }
@@ -220,12 +228,17 @@ impl Hub {
     }
 
     /// 工作流 run 的模型可见通知（9.38，W7-7c）：进 `workflows`，不进 `pending`：不算后台工作，也不要求 ack；交出时取走。
-    pub(crate) fn workflow_notice(&self, session: &SessionId, text: String) {
+    pub(crate) fn workflow_notice(
+        &self,
+        session: &SessionId,
+        text: String,
+        workflow: Option<serde_json::Value>,
+    ) {
         {
             let mut channels = self.channels();
             let channel = channels.entry(session.clone()).or_default();
             let order = channel.order();
-            channel.workflows.push((order, text));
+            channel.workflows.push((order, text, workflow));
         }
         self.wake();
     }

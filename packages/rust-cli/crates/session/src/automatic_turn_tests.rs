@@ -12,6 +12,7 @@ fn user(origin: UserOrigin) -> Message {
         origin,
         intent: None,
         stall_execution: None,
+        workflow_meta: None,
         epilogue_start: None,
     })
 }

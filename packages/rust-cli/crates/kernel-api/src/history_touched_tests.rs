@@ -34,6 +34,7 @@ fn assistant(content: Vec<ContentBlock>) -> Message {
 fn user(content: Vec<ContentBlock>) -> Message {
     Message::User(UserMessage {
         stall_execution: None,
+        workflow_meta: None,
         epilogue_start: None,
         intent: None,
         id: MessageId::new("u"),

@@ -148,7 +148,7 @@ impl ReminderTimers for QuietTimers {
 pub(crate) struct SilentNotices;
 
 impl WorkflowNotices for SilentNotices {
-    fn post(&self, _parent_session_id: &str, _text: String) {}
+    fn post(&self, _parent_session_id: &str, _text: String, _workflow: Option<serde_json::Value>) {}
 }
 
 /// Fork (W7-14, 9.47, finding on PR #603): a submission reservation that is not active yet takes no gate record on its cold

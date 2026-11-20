@@ -255,6 +255,7 @@ async fn a_notice_that_is_already_in_the_conversation_is_only_acked() {
     let model = Arc::new(ScriptedModel::new(Vec::new()));
     let delivered = Message::User(UserMessage {
         stall_execution: None,
+        workflow_meta: None,
         epilogue_start: None,
         intent: None,
         id: MessageId::new("msg_notice"),

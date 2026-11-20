@@ -121,7 +121,7 @@ struct Notices {
 }
 
 impl WorkflowNotices for Notices {
-    fn post(&self, parent_session_id: &str, text: String) {
+    fn post(&self, parent_session_id: &str, text: String, _workflow: Option<serde_json::Value>) {
         lock(&self.posted).push((parent_session_id.to_owned(), text));
     }
 }

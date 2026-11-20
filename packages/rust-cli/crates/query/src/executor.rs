@@ -475,6 +475,7 @@ impl ToolBatch {
     fn result(&self, id: &ToolUseId, assistant: &MessageId, output: ToolOutput) -> Message {
         Message::User(UserMessage {
             stall_execution: None,
+            workflow_meta: None,
             epilogue_start: None,
             intent: None,
             id: self.scope.parts.ids.message(),

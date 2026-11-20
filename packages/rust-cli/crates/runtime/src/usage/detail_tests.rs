@@ -32,6 +32,7 @@ fn text(value: &str) -> ContentBlock {
 fn user(origin: UserOrigin, content: Vec<ContentBlock>) -> Message {
     Message::User(UserMessage {
         stall_execution: None,
+        workflow_meta: None,
         epilogue_start: None,
         intent: None,
         id: MessageId::new("u"),

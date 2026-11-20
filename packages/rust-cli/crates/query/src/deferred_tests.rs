@@ -91,6 +91,7 @@ fn names(wire: &WireTools) -> Vec<&str> {
 fn referencing(name: &str) -> Message {
     Message::User(UserMessage {
         stall_execution: None,
+        workflow_meta: None,
         epilogue_start: None,
         intent: None,
         id: MessageId::new("m1"),
@@ -233,6 +234,7 @@ fn referenced_results_get_the_tool_loaded_note_and_unavailable_ones_are_dropped(
     // 没有引用的消息原样借用。
     let plain = Message::User(UserMessage {
         stall_execution: None,
+        workflow_meta: None,
         epilogue_start: None,
         intent: None,
         id: MessageId::new("m2"),
@@ -342,6 +344,7 @@ fn local_tool_search_sends_loaded_tools_as_plain_definitions() {
 fn local_tool_search_turns_references_into_text() {
     let message = Message::User(UserMessage {
         stall_execution: None,
+        workflow_meta: None,
         epilogue_start: None,
         intent: None,
         id: MessageId::new("m1"),

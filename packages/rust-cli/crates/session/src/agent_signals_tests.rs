@@ -280,6 +280,7 @@ async fn a_workflow_notice_opens_a_turn_with_its_raw_text_and_is_never_acked() {
     sender
         .send(AgentSignal::WorkflowNotice {
             text: STALL_TEXT.to_owned(),
+            workflow: None,
         })
         .unwrap();
     let seen = until_finished(&mut events, 1).await;

@@ -48,6 +48,7 @@ fn call(at: u64, n: u32, tool: &str, input: Value) -> Message {
 fn result(at: u64, n: u32, text: &str, is_error: bool) -> Message {
     Message::User(UserMessage {
         stall_execution: None,
+        workflow_meta: None,
         epilogue_start: None,
         intent: None,
         id: message_id(at + 1, n + 100),
@@ -201,6 +202,7 @@ async fn ids_without_a_time_keep_recurring_tasks_only() {
         }),
         Message::User(UserMessage {
             stall_execution: None,
+            workflow_meta: None,
             epilogue_start: None,
             intent: None,
             id: MessageId::new("u1"),

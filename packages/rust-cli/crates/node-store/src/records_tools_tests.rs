@@ -86,6 +86,7 @@ fn result(
         .sum();
     let message = Message::User(UserMessage {
         stall_execution: None,
+        workflow_meta: None,
         epilogue_start: None,
         intent: None,
         id: MessageId::new(id),

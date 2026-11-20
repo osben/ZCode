@@ -72,6 +72,7 @@ pub(crate) fn mode(parent: PermissionMode, declared: Option<PermissionMode>) -> 
 fn user(core: &Core, text: &str, origin: UserOrigin, epilogue_start: Option<usize>) -> Message {
     Message::User(UserMessage {
         stall_execution: None,
+        workflow_meta: None,
         epilogue_start,
         intent: None,
         id: core.ports.ids.message(),

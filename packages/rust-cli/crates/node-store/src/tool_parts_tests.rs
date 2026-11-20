@@ -38,6 +38,7 @@ fn result(id: &str, owner: &str, call: &str, content: Vec<ToolResultContent>, er
     Fact::MessageAppended {
         message: Message::User(UserMessage {
             stall_execution: None,
+            workflow_meta: None,
             epilogue_start: None,
             intent: None,
             id: MessageId::new(id),
@@ -277,6 +278,7 @@ async fn interrupted_and_unfinished_calls_keep_their_shape() {
         Fact::MessageAppended {
             message: Message::User(UserMessage {
                 stall_execution: None,
+                workflow_meta: None,
                 epilogue_start: None,
                 intent: None,
                 id: MessageId::new("msg_rx_i1"),
@@ -335,6 +337,7 @@ async fn results_need_their_pending_call() {
     let mixed = Fact::MessageAppended {
         message: Message::User(UserMessage {
             stall_execution: None,
+            workflow_meta: None,
             epilogue_start: None,
             intent: None,
             id: MessageId::new("msg_s0_r5"),

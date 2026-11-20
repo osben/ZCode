@@ -129,6 +129,7 @@ impl Screen {
 fn user(id: &str, text: &str) -> Message {
     Message::User(UserMessage {
         stall_execution: None,
+        workflow_meta: None,
         epilogue_start: None,
         intent: None,
         id: MessageId::new(id),
@@ -196,6 +197,7 @@ fn conversation(screen: &mut Screen) {
     screen.event(KernelEvent::MessageDone {
         message: Message::User(UserMessage {
             stall_execution: None,
+            workflow_meta: None,
             epilogue_start: None,
             intent: None,
             id: MessageId::new("r1"),

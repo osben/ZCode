@@ -27,18 +27,21 @@ impl Actor {
             AgentSignal::Notice(notice) => self.on_agent_notice(notice).await,
             AgentSignal::Stall(stall) => self.on_agent_stall(stall).await,
             AgentSignal::SubagentMessage { text } => self.on_subagent_message(text).await,
-            AgentSignal::WorkflowNotice { text } => self.on_workflow_notice(text).await,
+            AgentSignal::WorkflowNotice { text, workflow } => {
+                self.on_workflow_notice(text, workflow).await
+            }
         }
     }
 
     /// A workflow run's model-visible notice (9.38, W7-7c; Node's `enqueueBackgroundTaskNotification` with no
     /// `<task-notification>` envelope): queued as a `next` item, merged at the next tool boundary, or it opens a turn when
     /// the session is idle. It is not background work and not acknowledged.
-    async fn on_workflow_notice(&mut self, text: String) {
+    async fn on_workflow_notice(&mut self, text: String, workflow: Option<serde_json::Value>) {
         if self.closing.is_some() {
             return;
         }
-        self.inbox.push_notice(Waiting::WorkflowNotice(text));
+        self.inbox
+            .push_notice(Waiting::WorkflowNotice { text, workflow });
         if self.running.is_none() {
             self.start_next().await;
         }

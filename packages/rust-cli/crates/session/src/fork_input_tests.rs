@@ -44,6 +44,7 @@ fn fork(input: &MessageId) -> CommandEnvelope {
 fn user(id: &str, text: &str, origin: UserOrigin) -> Message {
     Message::User(UserMessage {
         stall_execution: None,
+        workflow_meta: None,
         epilogue_start: None,
         intent: None,
         id: MessageId::new(id),
@@ -262,6 +263,7 @@ async fn only_an_input_can_be_forked_and_not_while_a_turn_runs() {
 fn the_turn_runs_until_the_next_input() {
     let result = Message::User(UserMessage {
         stall_execution: None,
+        workflow_meta: None,
         epilogue_start: None,
         intent: None,
         id: MessageId::new("r2"),

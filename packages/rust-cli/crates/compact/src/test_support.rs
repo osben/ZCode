@@ -186,6 +186,7 @@ pub(crate) fn request(messages: Vec<Message>, trigger: CompactTrigger) -> Compac
 pub(crate) fn human(id: &str, text: &str) -> Message {
     Message::User(UserMessage {
         stall_execution: None,
+        workflow_meta: None,
         epilogue_start: None,
         intent: None,
         id: MessageId::new(id),
@@ -226,6 +227,7 @@ pub(crate) fn tool_round(index: usize, tool: &str, path: &str) -> [Message; 2] {
         }),
         Message::User(UserMessage {
             stall_execution: None,
+            workflow_meta: None,
             epilogue_start: None,
             intent: None,
             id: MessageId::new(format!("r_tool_{index}")),

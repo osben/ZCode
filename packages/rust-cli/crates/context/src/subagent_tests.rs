@@ -109,6 +109,7 @@ fn sources(attachments: &[AttachmentMessage]) -> Vec<&str> {
 fn user(id: &str, text: &str) -> Message {
     Message::User(UserMessage {
         stall_execution: None,
+        workflow_meta: None,
         epilogue_start: None,
         intent: None,
         id: MessageId::new(id),
@@ -140,6 +141,7 @@ fn round(n: usize, tokens: u64) -> [Message; 2] {
         }),
         Message::User(UserMessage {
             stall_execution: None,
+            workflow_meta: None,
             epilogue_start: None,
             intent: None,
             id: MessageId::new(format!("r{n}")),

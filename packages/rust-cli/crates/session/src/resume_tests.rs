@@ -26,6 +26,7 @@ fn assistant(id: &str, calls: &[&str]) -> Message {
 fn result(id: &str, call: &str, owner: &str) -> Message {
     Message::User(UserMessage {
         stall_execution: None,
+        workflow_meta: None,
         epilogue_start: None,
         intent: None,
         id: MessageId::new(id),
@@ -43,6 +44,7 @@ fn result(id: &str, call: &str, owner: &str) -> Message {
 fn human(id: &str) -> Message {
     Message::User(UserMessage {
         stall_execution: None,
+        workflow_meta: None,
         epilogue_start: None,
         intent: None,
         id: MessageId::new(id),
@@ -144,6 +146,7 @@ fn a_settled_history_is_left_alone() {
 fn meta_messages_after_the_results_do_not_hide_the_trailing_calls() {
     let meta = Message::User(UserMessage {
         stall_execution: None,
+        workflow_meta: None,
         epilogue_start: None,
         intent: None,
         id: MessageId::new("m1"),

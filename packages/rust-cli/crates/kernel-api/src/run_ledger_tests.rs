@@ -31,6 +31,7 @@ fn artifact() -> Value {
 fn result(tool_uses: &[&str], is_error: bool) -> Message {
     Message::User(UserMessage {
         stall_execution: None,
+        workflow_meta: None,
         epilogue_start: None,
         intent: None,
         id: MessageId::new("r1"),
@@ -51,6 +52,7 @@ fn result(tool_uses: &[&str], is_error: bool) -> Message {
 fn human(id: &str) -> Message {
     Message::User(UserMessage {
         stall_execution: None,
+        workflow_meta: None,
         epilogue_start: None,
         intent: None,
         id: MessageId::new(id),

@@ -150,6 +150,7 @@ fn referenced_names_come_from_tool_results() {
     let history = vec![
         Message::User(UserMessage {
             stall_execution: None,
+            workflow_meta: None,
             epilogue_start: None,
             intent: None,
             id: MessageId::new("m1"),
@@ -164,6 +165,7 @@ fn referenced_names_come_from_tool_results() {
         }),
         Message::User(UserMessage {
             stall_execution: None,
+            workflow_meta: None,
             epilogue_start: None,
             intent: None,
             id: MessageId::new("m2"),
@@ -221,6 +223,7 @@ fn loaded_names_include_the_tools_a_boundary_carries() {
         boundary(&["mcp__fixture__lookup", "WebFetch"]),
         Message::User(UserMessage {
             stall_execution: None,
+            workflow_meta: None,
             epilogue_start: None,
             intent: None,
             id: MessageId::new("m1"),

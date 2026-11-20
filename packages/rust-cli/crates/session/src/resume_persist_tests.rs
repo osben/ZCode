@@ -16,6 +16,7 @@ use crate::test_support::{Setup, envelope, finished, meta, submit, until};
 fn human(id: &str, text: &str) -> Message {
     Message::User(UserMessage {
         stall_execution: None,
+        workflow_meta: None,
         epilogue_start: None,
         intent: None,
         id: MessageId::new(id),

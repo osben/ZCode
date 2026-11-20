@@ -70,6 +70,7 @@ mod workflow_eval_snippet;
 mod workflow_run_tools;
 // Fork: GetWorkflowRun's model text (W7-9b, specs/fork-rust-workflow-engine.md, 9.42).
 mod workflow_run_detail;
+pub use workflow_run_detail::provider_stop_text;
 // Fork: the `LSP` agent tool (specs/fork-rust-lsp.md "Tool (D2)").
 mod lsp_tool;
 mod mentions;

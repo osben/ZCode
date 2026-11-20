@@ -16,7 +16,7 @@ use crate::fork::workflow_reminder_host::{ReminderTimers, RunDecisionsSource, Wo
 struct Posted(Mutex<Vec<(String, String)>>);
 
 impl WorkflowNotices for Posted {
-    fn post(&self, parent_session_id: &str, text: String) {
+    fn post(&self, parent_session_id: &str, text: String, _workflow: Option<serde_json::Value>) {
         self.0
             .lock()
             .expect("posted")

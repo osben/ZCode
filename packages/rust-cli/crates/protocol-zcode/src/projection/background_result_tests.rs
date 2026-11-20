@@ -13,6 +13,7 @@ use rust_cli_kernel_api::background_origin::origin_meta;
 fn notification(id: &str, task: &str, summary: &str) -> Message {
     Message::User(UserMessage {
         stall_execution: None,
+        workflow_meta: None,
         epilogue_start: None,
         intent: None,
         id: MessageId::new(id),
@@ -236,6 +237,7 @@ fn one_notification_message_with_two_blocks_is_one_batch_header() {
     };
     let batch = Message::User(UserMessage {
         stall_execution: None,
+        workflow_meta: None,
         epilogue_start: None,
         intent: None,
         id: MessageId::new("msg_n"),
@@ -296,6 +298,7 @@ fn agent_block(task: &str, call: &str, status: &str, summary: &str) -> ContentBl
 fn notifications(id: &str, blocks: Vec<ContentBlock>) -> Message {
     Message::User(UserMessage {
         stall_execution: None,
+        workflow_meta: None,
         epilogue_start: None,
         intent: None,
         id: MessageId::new(id),
@@ -406,6 +409,7 @@ fn a_single_failed_notification_settles_its_card_live_and_cold() {
             agent_calls(&["call_1"]),
             Message::User(UserMessage {
                 stall_execution: None,
+                workflow_meta: None,
                 epilogue_start: None,
                 intent: None,
                 id: MessageId::new("msg_r1"),

@@ -12,6 +12,8 @@ use std::thread::JoinHandle;
 use anyhow::Result;
 use futures_util::future::BoxFuture;
 use rust_cli_base::sync::LockUnpoisoned;
+use rust_cli_kernel_api::agents::AgentSignals;
+use rust_cli_kernel_api::ids::SessionId;
 use rust_cli_kernel_api::workflow_child::{
     ChildEvent, ChildHandler, ChildRequest, ChildStop, Completion, CreateActor, LaunchError,
     LaunchInput, Outcome, RequestType, RunningChild, WireError, WorkflowChildRunner,
@@ -236,6 +238,8 @@ struct Inner {
 struct Setup {
     progress: Option<ProgressSetup>,
     quota: Option<QuotaSetup>,
+    /// Where a run's terminal notice goes, to its parent session's model (9.51, W8d). Without it no notice is posted.
+    terminal: Option<Arc<dyn AgentSignals>>,
 }
 
 struct ProgressSetup {
@@ -424,6 +428,35 @@ impl Inner {
         Some((module, in_use))
     }
 
+    /// Posts the terminal notice of a settled run to its parent session (9.51, W8d). Runs on the owner's thread after the
+    /// settlement, with no lock held. A row that cannot be read posts nothing; the read failure is logged.
+    fn post_terminal_notice(&self, run_id: &str) {
+        let signals = self.setup.lock_unpoisoned().terminal.clone();
+        let (Some(signals), Some(store)) = (signals, self.store.get().cloned()) else {
+            return;
+        };
+        let row = match store.get_run(run_id) {
+            Ok(Some(row)) => row,
+            Ok(None) => return,
+            Err(error) => {
+                tracing::warn!(
+                    event = "workflow.run.terminal_notice_skipped",
+                    run = %run_id,
+                    error = %error,
+                    "a workflow run's terminal notice was skipped: its row could not be read"
+                );
+                return;
+            }
+        };
+        if let Some(notice) = crate::workflow_run_terminal::terminal_notice(&row) {
+            signals.workflow_notice(
+                &SessionId::new(notice.parent_session_id),
+                notice.text,
+                Some(notice.workflow),
+            );
+        }
+    }
+
     /// The quota setup, cloned so no lock is held across the module's creation.
     fn quota_clones(&self) -> Option<QuotaSetup> {
         let setup = self.setup.lock_unpoisoned();
@@ -600,6 +633,12 @@ impl WorkflowRunService {
             port,
             default_concurrency,
         });
+    }
+
+    /// Turns on the terminal notices (9.51, W8d): each run posts one notice to its parent session when it settles, through
+    /// `signals`. Set before the first settlement; a run settled earlier posts nothing.
+    pub fn configure_terminal_notices(&self, signals: Arc<dyn AgentSignals>) {
+        self.inner.setup.lock_unpoisoned().terminal = Some(signals);
     }
 
     /// Turns on quota auto-resume (9.31, spec 9.14): a settled quota stop is armed, and `open_session` scans a session.
@@ -782,6 +821,8 @@ impl WorkflowRunService {
                     quota.on_run_settled(&settle_run_id);
                 }
                 drop(in_use);
+                // The run's terminal notice (9.51): the row is settled, and it is posted once, on this settlement.
+                settle_inner.post_terminal_notice(&settle_run_id);
                 settle_inner.evict_if_idle(&settle_parent);
                 failures
             }) {

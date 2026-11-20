@@ -112,6 +112,7 @@ impl rust_cli_kernel_api::testing::SinkOverride for GoalSink {
 fn feedback(text: &str) -> Message {
     Message::User(UserMessage {
         stall_execution: None,
+        workflow_meta: None,
         epilogue_start: None,
         intent: None,
         id: MessageId::new(format!("msg_feedback_{text}")),
@@ -232,6 +233,7 @@ fn hook_block(text: &str) -> HookOutcome {
         blocking_error: Some(text.to_owned()),
         messages: vec![Message::User(UserMessage {
             stall_execution: None,
+            workflow_meta: None,
             epilogue_start: None,
             intent: None,
             id: MessageId::new(format!("msg_hook_{text}")),
