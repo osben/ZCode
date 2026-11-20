@@ -196,6 +196,9 @@ pub(crate) async fn erase_tree(server: &Server, params: &Value) -> Result<Value,
     // The actor handle ends too (as session delete does): a bridge-only close would keep the
     // runtime, whose end-of-turn commits would recreate rows.
     for id in &tree_ids {
+        // Fork (9.50, divergence 593): the runtime's close stops its reminder clock, as a plain close does (Node
+        // `closeSessionRuntime`, deleted). The gate is forgotten below, once the rows are gone.
+        server.stop_workflow_reminders(&SessionId::new(id));
         if let Some(bridged) = server.bridge.close(&SessionId::new(id)) {
             bridged.handle.close(EndReason::Other).await;
         }
@@ -254,6 +257,14 @@ pub(crate) async fn erase_tree(server: &Server, params: &Value) -> Result<Value,
         .kernel
         .sessions_erased(erased.erased_ids.iter().map(SessionId::new).collect())
         .await;
+    // Fork (9.50, divergence 593): the gate record is per session, so an erased id takes its gate with it, as a delete does
+    // (session_delete.rs). A late child is erased too, so every erased id is forgotten.
+    for id in &erased.erased_ids {
+        server
+            .context
+            .dynamic_workflow_gates()
+            .forget(&SessionId::new(id));
+    }
     // Fork (slice 3): the erased sessions' off-peak runs, flags and admitted inputs go with them.
     let erased_ids: Vec<&str> = erased.erased_ids.iter().map(String::as_str).collect();
     crate::off_peak_control::forget_sessions(&server.context, &erased_ids).await;

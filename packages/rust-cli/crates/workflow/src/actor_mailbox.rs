@@ -16,7 +16,8 @@
 //! - An owner error crosses unchanged as an `anyhow::Error` (`MailboxError::Owner`), so its context chain survives.
 use crate::actor_feed::FeedEvent;
 use crate::driver_owner::{
-    ActorDriverOwner, ActorSessions, StopInitiator, SubmitReply, TicketSettlement, TurnEndReply,
+    ActorDriverOwner, ActorSessions, RetuneAnswer, StopInitiator, SubmitReply, TicketSettlement,
+    TurnEndReply,
 };
 use crate::error::WorkflowError;
 use crate::escalation::{AnswerOutcome, EscalateOutcome, EscalationRequest};
@@ -175,6 +176,11 @@ pub(crate) enum ActorRequest {
     FillHole {
         fill: crate::engine_holes::HoleFill,
         reply: Sender<Result<crate::engine_holes::FillHoleResult>>,
+    },
+    /// The run service's settings retune of the live run (9.50, divergence 455). The reply is the owner's answer.
+    Retune {
+        max_concurrency: f64,
+        reply: Sender<Result<RetuneAnswer>>,
     },
     /// The child's `complete`: the script's end (W7-5a-2).
     Complete {
@@ -336,6 +342,12 @@ fn dispatch_request<J: JournalPort, S: ActorSessions>(
         }
         ActorRequest::FillHole { fill, reply } => {
             let _ = reply.send(owner.fill_hole(fill));
+        }
+        ActorRequest::Retune {
+            max_concurrency,
+            reply,
+        } => {
+            let _ = reply.send(owner.retune(max_concurrency));
         }
         ActorRequest::Complete { artifact, reply } => {
             let _ = reply.send(owner.complete(artifact));
@@ -589,6 +601,14 @@ impl ActorHandle {
         fill: crate::engine_holes::HoleFill,
     ) -> Result<crate::engine_holes::FillHoleResult, MailboxError> {
         self.call(|reply| ActorRequest::FillHole { fill, reply })
+    }
+
+    /// The run service's settings retune (9.50): the owner's answer, given after its own step.
+    pub fn retune(&self, max_concurrency: f64) -> Result<RetuneAnswer, MailboxError> {
+        self.call(|reply| ActorRequest::Retune {
+            max_concurrency,
+            reply,
+        })
     }
 
     /// The child's `create-actor` (W7-5a-2): the engine's id for the new actor.

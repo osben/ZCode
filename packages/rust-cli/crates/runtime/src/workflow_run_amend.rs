@@ -17,16 +17,18 @@ use rust_cli_kernel_api::workflow_run::{
     AmendRefusalReason, AmendRequest, AmendResult, DynamicWorkflowRunError,
 };
 use rust_cli_platform::ids::uuid_v4;
+use rust_cli_workflow::actor_mailbox::ActorMailbox;
 use rust_cli_workflow::engine::EngineConfig;
 use rust_cli_workflow::event::LaunchFields;
 use rust_cli_workflow::import_build::{BuildOutcome, ImportRefusal};
 use rust_cli_workflow::model::Caps;
+use serde_json::Value;
 
 use super::list::on_blocking_pool;
 use super::submit::{
     compile_check, mint_run_id, record_parent_mode_on_blocking_pool, start_failure,
 };
-use super::{WorkflowRunService, buffer_failures, join_owner};
+use super::{LaunchFailure, WireBridge, WorkflowRunService, buffer_failures, join_owner};
 use crate::workflow_owner::ActorBindingsPort;
 use std::sync::Arc;
 
@@ -77,12 +79,10 @@ impl WorkflowRunService {
                 "this host cannot amend a run's subagent model or script-named models yet, so the run is not amended",
             ));
         }
-        if request.phase_names.is_some()
-            || request.phase_alongside.is_some()
-            || request.inherit_args
-        {
+        // Inherited arguments (9.50, the GUI settings route) are carried from the settled row below; phase routing is not.
+        if request.phase_names.is_some() || request.phase_alongside.is_some() {
             return Err(DynamicWorkflowRunError::new(
-                "this host cannot amend a run with phase routing or inherited arguments yet, so the run is not amended",
+                "this host cannot amend a run with phase routing yet, so the run is not amended",
             ));
         }
         if let Some(limit) = request.max_concurrency
@@ -131,8 +131,23 @@ impl WorkflowRunService {
             return Ok(AmendResult::Refused(AmendRefusalReason::RunNotFound));
         }
 
-        // 2. The successor's id, then 3. the stop of a live predecessor, awaited through its own settlement.
+        // 2. The successor's id. 2b. The successor's script compiles before anything is stopped (divergence 667, closed by
+        // 9.50): a script that does not compile refuses with the predecessor untouched, as Node compiles before its stop.
         let successor = mint_run_id();
+        // The probe takes the arguments the successor's start will take (ocr, 9.50): the preflight row holds the stored ones.
+        let probe_args = request
+            .inherit_args
+            .then(|| row.args.as_ref().and_then(Value::as_object).cloned())
+            .flatten();
+        self.precompile(LaunchInput {
+            script_text: request.script_text.clone(),
+            run_id: successor.clone(),
+            args: probe_args,
+            resumed_from: Some(predecessor.clone()),
+            cwd: PathBuf::from(&request.cwd),
+        })
+        .await?;
+        // 3. The stop of a live predecessor, awaited through its own settlement.
         let stopped = self
             .stop_superseded_if_live(&predecessor, &successor)
             .await?;
@@ -182,11 +197,14 @@ impl WorkflowRunService {
             .max_concurrency
             .map_or(settled.caps.max_concurrency, |value| value.floor().max(1.0));
 
+        // Inherited arguments: the settled row's stored arguments, as resume reads them (`workflow_run_resume.rs`).
+        let inherited_args = request.inherit_args.then(|| settled.args.clone()).flatten();
+
         // 6. The launch, as a submit does, with the predecessor as `resumedFrom`.
         let input = LaunchInput {
             script_text: request.script_text.clone(),
             run_id: successor.clone(),
-            args: None,
+            args: inherited_args.as_ref().and_then(Value::as_object).cloned(),
             resumed_from: Some(predecessor.clone()),
             cwd: PathBuf::from(&request.cwd),
         };
@@ -195,7 +213,7 @@ impl WorkflowRunService {
             caps: Caps { max_concurrency },
             script_text: Some(request.script_text),
             name: request.name.or(settled.name),
-            args: None,
+            args: inherited_args,
             parent_session_id: Some(parent.to_owned()),
             cwd: Some(request.cwd),
             tool_call_id: request.tool_call_id,
@@ -217,6 +235,33 @@ impl WorkflowRunService {
             }),
             Err(error) => Err(stopped_before(&predecessor, superseded, error)),
         }
+    }
+
+    /// The compile of the successor's script, before the predecessor is stopped (9.50, divergence 667). The child starts
+    /// and the start's own compile check runs on it; the probe child is stopped again, and nothing is registered. The
+    /// script compiles a second time at the successor's start (divergence 683 records the cost).
+    async fn precompile(&self, input: LaunchInput) -> Result<(), DynamicWorkflowRunError> {
+        // A closed service spawns no child, as `start` refuses one (ocr, 9.50): the probe is a spawn too.
+        if self.inner.state.lock_unpoisoned().closed {
+            return Err(start_failure(LaunchFailure::Closed));
+        }
+        let run_id = input.run_id.clone();
+        // The mailbox stays alive for the probe: a compile sends no request, and a dropped mailbox would fail any that did.
+        let (_mailbox, handle) = ActorMailbox::new();
+        let bridge = Arc::new(WireBridge::new(handle));
+        let running = self
+            .inner
+            .runner
+            .start(input, bridge)
+            .await
+            .map_err(|error| start_failure(LaunchFailure::Child(Box::new(error))))?;
+        let mut probe = EngineConfig {
+            run_id,
+            ..EngineConfig::default()
+        };
+        let checked = compile_check()(&running, &mut probe);
+        running.stop.stop();
+        checked.map_err(start_failure)
     }
 
     /// The start of the successor: the parent's mode is recorded, then the child, the compile and the owner start.

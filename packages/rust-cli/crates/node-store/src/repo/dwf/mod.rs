@@ -630,6 +630,11 @@ pub fn put_actor(conn: &Connection, actor: &ActorRecord, now: i64) -> Result<()>
 const ACTOR_COLUMNS: &str =
     "run_id, site_id, ordinal, name, persona_json, session_id, resolved_model";
 
+/// The actor columns the run detail reads (9.50): `persona_json` is written as null, Node's `withPersona: false`. Spelled out,
+/// so a column change to `ACTOR_COLUMNS` cannot silently null the wrong column.
+const ROSTER_ACTOR_COLUMNS: &str =
+    "run_id, site_id, ordinal, name, null as persona_json, session_id, resolved_model";
+
 fn actor_from_row(row: &Row<'_>) -> rusqlite::Result<ActorRecord> {
     Ok(ActorRecord {
         run_id: row.get("run_id")?,
@@ -714,6 +719,11 @@ pub fn put_node(conn: &Connection, node: &NodeRecord, now: i64) -> Result<()> {
 
 const NODE_COLUMNS: &str = "run_id, site_id, ordinal, kind, actor_site_id, actor_ordinal, actor_seq, \
      input_hash, status, result_json, error_json, stats_json, message_boundary, artifact_id, input_json";
+
+/// The node columns the run detail's roster reads (9.50): `result_json` is written as null, Node's `withResult: false`.
+/// Spelled out, so a column change to `NODE_COLUMNS` cannot silently null the wrong column.
+const ROSTER_NODE_COLUMNS: &str = "run_id, site_id, ordinal, kind, actor_site_id, actor_ordinal, actor_seq, \
+     input_hash, status, null as result_json, error_json, stats_json, message_boundary, artifact_id, input_json";
 
 fn node_kind_from_column(row: &Row<'_>, value: &str) -> rusqlite::Result<NodeKind> {
     Ok(match value {
@@ -849,6 +859,87 @@ pub fn list_events(conn: &Connection, run_id: &str) -> Result<Vec<StoredEvent>> 
     })?;
     rows.collect::<rusqlite::Result<Vec<_>>>()
         .map_err(Into::into)
+}
+
+/// Node `listEvents` with `types: "all"` and `reportItems: {limit: keep}` (9.50, divergence 564), the cold read of the run
+/// detail. The `item` of every report event after the run's `keep`th report is removed in SQL (`json_remove`), as Node's
+/// `listEventRows` does; the ranking is over the whole run. A cap of zero removes every item; a run with fewer than `keep`
+/// reports keeps them all. Sequence, time and the other fields are read as `list_events` reads them.
+pub fn list_events_with_report_cap(
+    conn: &Connection,
+    run_id: &str,
+    keep: usize,
+) -> Result<Vec<StoredEvent>> {
+    // The cutoff is a subquery of the same statement, so the ranking and the scan read one snapshot. A cap of zero gives
+    // -1 (every item goes); fewer reports than the cap leaves the cutoff at the maximum (none goes).
+    let keep = i64::try_from(keep)?;
+    let mut statement = conn.prepare(
+        "select sequence,
+                case when type = 'report' and sequence > (
+                    case when ?2 = 0 then -1 else coalesce(
+                        (select sequence from dwf_event where run_id = ?1 and type = 'report'
+                         order by sequence limit 1 offset ?2 - 1),
+                        9223372036854775807) end
+                ) then json_remove(payload_json, '$.item') else payload_json end,
+                time_created
+         from dwf_event where run_id = ?1 order by sequence",
+    )?;
+    let rows = statement.query_map(params![run_id, keep], |row| {
+        let payload: String = row.get(1)?;
+        let event = serde_json::from_str(&payload).map_err(|error| {
+            rusqlite::Error::FromSqlConversionFailure(
+                1,
+                rusqlite::types::Type::Text,
+                Box::new(error),
+            )
+        })?;
+        Ok(StoredEvent {
+            sequence: row.get(0)?,
+            event,
+            time_created: row.get(2)?,
+        })
+    })?;
+    rows.collect::<rusqlite::Result<Vec<_>>>()
+        .map_err(Into::into)
+}
+
+/// Node `listNodes({kinds: NON_REPORT_NODE_KINDS, withResult: false})` (9.50, divergence 564): the run's non-report rows in
+/// insertion order, with `result_json` read as null. `input_json` is kept, as Node keeps it.
+pub fn list_roster_nodes(conn: &Connection, run_id: &str) -> Result<Vec<NodeRecord>> {
+    let mut statement = conn.prepare(&format!(
+        "select {ROSTER_NODE_COLUMNS} from dwf_node where run_id = ?1 and kind <> 'report' order by id"
+    ))?;
+    let rows = statement.query_map(params![run_id], node_from_row)?;
+    rows.collect::<rusqlite::Result<Vec<_>>>()
+        .map_err(Into::into)
+}
+
+/// Node `listActors(runId, {withPersona: false})` (9.50, divergence 564): the run's actor rows in insertion order, with
+/// `persona_json` read as null (the full system prompt has no reader in the run detail).
+pub fn list_actors_without_persona(conn: &Connection, run_id: &str) -> Result<Vec<ActorRecord>> {
+    let mut statement = conn.prepare(&format!(
+        "select {ROSTER_ACTOR_COLUMNS} from dwf_actor where run_id = ?1 order by id"
+    ))?;
+    let rows = statement.query_map(params![run_id], actor_from_row)?;
+    rows.collect::<rusqlite::Result<Vec<_>>>()
+        .map_err(Into::into)
+}
+
+/// The payload of the run's first `run-launched` event, if it has one (9.50, the settings route): the launch carries the
+/// script's model bindings and path, which the row does not hold. A single indexed row, not the whole journal.
+pub fn run_launched_payload(conn: &Connection, run_id: &str) -> Result<Option<Value>> {
+    let payload: Option<String> = conn
+        .query_row(
+            "select payload_json from dwf_event where run_id = ?1 and type = 'run-launched' order by sequence limit 1",
+            params![run_id],
+            |row| row.get(0),
+        )
+        .optional()?;
+    payload
+        .map(|text| {
+            serde_json::from_str(&text).context("dwf journal: a run-launched payload is not JSON")
+        })
+        .transpose()
 }
 
 /// Node `createSessionTaskLink` for an actor: an upsert on `child_session_id` that moves only status

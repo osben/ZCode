@@ -22,7 +22,8 @@ use rust_cli_kernel_api::workflow_child::LaunchInput;
 use rust_cli_kernel_api::workflow_run::{
     AmendRequest, AmendResult, CancelInitiator, DynamicWorkflowRunError, DynamicWorkflowRunPort,
     DynamicWorkflowRunSessions, FillHoleOutcome, FillHoleRequest, LifecycleStatus, ListQuery,
-    ResolveQuestionRefusalReason, ResolveQuestionResult, SubmitRequest,
+    ResolveQuestionRefusalReason, ResolveQuestionResult, RetuneOutcome, RetuneRequest,
+    SubmitRequest,
 };
 use rust_cli_workflow::actor_mailbox::{ActorHandle, MailboxError};
 use rust_cli_workflow::engine::EngineConfig;
@@ -516,6 +517,14 @@ impl DynamicWorkflowRunPort for SessionRuns {
         request: FillHoleRequest,
     ) -> Result<FillHoleOutcome, DynamicWorkflowRunError> {
         self.service.fill_hole_run(&self.parent, request).await
+    }
+
+    /// Node `retuneConcurrency` (9.50): a live run of this session changes its limit in place.
+    async fn retune_concurrency(
+        &self,
+        request: RetuneRequest,
+    ) -> Result<RetuneOutcome, DynamicWorkflowRunError> {
+        self.service.retune_run(&self.parent, request).await
     }
 
     /// Node `cancel` (W8a, 9.48): stops a live run of this session, as the user's or the model's stop.

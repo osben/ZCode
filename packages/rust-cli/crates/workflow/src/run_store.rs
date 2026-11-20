@@ -71,6 +71,13 @@ pub trait RunStore: Send + Sync {
     /// Node `buildImportedCache` over this store's journal (9.43), without a transcript count: completed asks import,
     /// and an in-flight continuation is not built (the transcript surface is not composed yet).
     fn amend_import(&self, predecessor_run_id: &str) -> Result<BuildOutcome>;
+    /// Whether the run's launch recorded script-named model bindings (9.50, the settings route). The settings route refuses
+    /// such a run, since it does not rebind them yet. Required in spirit: the default answers `true` (refuse), so a store that
+    /// does not read the launch cannot amend a settings change by accident.
+    fn launch_binds_models(&self, run_id: &str) -> Result<bool> {
+        let _ = run_id;
+        Ok(true)
+    }
     /// One run's detail read (9.42): the row with its timestamps, and the run's entry of the journal's replay (the
     /// run-panel fields: pending questions, holes, artifacts, phases, node entries, the launch settings).
     ///
@@ -195,6 +202,12 @@ impl RunStore for SqliteRunStore {
         build_imported_cache(&journal, predecessor_run_id, BuildOptions::default())
     }
 
+    fn launch_binds_models(&self, run_id: &str) -> Result<bool> {
+        let conn = self.conn.lock_unpoisoned();
+        Ok(dwf::run_launched_payload(&conn, run_id)?
+            .is_some_and(|launch| launch.get("modelBindings").is_some()))
+    }
+
     fn run_detail(
         &self,
         run_id: &str,
@@ -213,12 +226,16 @@ impl RunStore for SqliteRunStore {
             let Some((created, updated)) = dwf::run_times(&tx, run_id)? else {
                 anyhow::bail!("the run {run_id} has a row without timestamps");
             };
-            let events = dwf::list_events(&tx, run_id)?;
-            let nodes: Vec<_> = dwf::list_nodes(&tx, run_id)?
-                .into_iter()
-                .filter(|node| node.kind != dwf::NodeKind::Report)
-                .collect();
-            let actors = dwf::list_actors(&tx, run_id)?;
+            // Divergence 564 (9.50): the events are read in every case, bounded like Node's cold read (report items past the
+            // projection's cap are removed). Only the replay of state needs the configured default (below). The roster's node
+            // and actor reads leave out the result and persona columns, as Node's do.
+            let events = dwf::list_events_with_report_cap(
+                &tx,
+                run_id,
+                rust_cli_node_store::WORKFLOW_RUN_LIMITS.max_reports,
+            )?;
+            let nodes = dwf::list_roster_nodes(&tx, run_id)?;
+            let actors = dwf::list_actors_without_persona(&tx, run_id)?;
             (record, created, updated, events, nodes, actors)
         };
         let state = default_concurrency.and_then(|default| {

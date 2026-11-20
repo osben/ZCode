@@ -157,6 +157,10 @@ impl RunStore for LazyRunStore {
         self.get()?.amend_import(predecessor_run_id)
     }
 
+    fn launch_binds_models(&self, run_id: &str) -> Result<bool> {
+        self.get()?.launch_binds_models(run_id)
+    }
+
     fn run_detail(
         &self,
         run_id: &str,

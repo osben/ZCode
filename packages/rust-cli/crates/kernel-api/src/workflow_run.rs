@@ -190,6 +190,33 @@ pub enum AmendResult {
     Refused(AmendRefusalReason),
 }
 
+/// Node `retuneConcurrency` (9.50, divergence 455): a concurrency-only change to a run in flight, applied in place. `None` is
+/// the default concurrency (Node's `null`); a value is floored and kept at least 1 by the run service.
+#[derive(Debug, Clone, PartialEq)]
+pub struct RetuneRequest {
+    pub run_id: WorkflowRunId,
+    pub max_concurrency: Option<f64>,
+}
+
+/// Node `DynamicWorkflowRunRetuneResult`. A refusal is an answer (the caller then amends the run); a failure is an error.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum RetuneOutcome {
+    Retuned {
+        previous: f64,
+        max_concurrency: f64,
+        default_concurrency: f64,
+    },
+    Refused(RetuneRefusal),
+}
+
+/// Why a retune is refused: the run is not live here (unknown, settled, starting or being stopped), or the limit is already
+/// the one asked for (with the limit in effect).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum RetuneRefusal {
+    NotLive,
+    Unchanged { current: f64 },
+}
+
 /// Node `DynamicWorkflowRunListQuery`: `cwd` and `limit` are required, the tool clamps `limit` to [1, 50].
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ListQuery {
@@ -362,6 +389,16 @@ pub trait DynamicWorkflowRunPort: Send + Sync {
     ) -> Result<Option<String>, DynamicWorkflowRunError> {
         let _ = run_id;
         Err(DynamicWorkflowRunError::unsupported("getScript"))
+    }
+
+    /// Node `retuneConcurrency` (9.50): changes a live run's limit in place, with no successor and no stop. A refusal is a
+    /// result; the GUI settings route amends the run when the retune is refused as not live.
+    async fn retune_concurrency(
+        &self,
+        request: RetuneRequest,
+    ) -> Result<RetuneOutcome, DynamicWorkflowRunError> {
+        let _ = request;
+        Err(DynamicWorkflowRunError::unsupported("retuneConcurrency"))
     }
 
     /// Node `resume`: rerun a cancelled run, or one interrupted by process death, under the same run id.

@@ -750,3 +750,150 @@ fn an_empty_args_text_is_corrupt_like_nodes_json_parse() {
         .unwrap();
     assert!(get_run(&conn, "run_1").is_err());
 }
+
+// ---- 9.50 (divergence 564): the bounded reads of the run detail (Node `listEvents` reportItems, `listNodes` withResult false,
+// `listActors` withPersona false).
+
+fn report_event(ordinal: i64, item: &str) -> Value {
+    json!({"type": "report", "instance": {"siteId": "site#1", "ordinal": ordinal}, "item": item, "label": "l"})
+}
+
+#[test]
+fn report_items_after_the_keepth_report_are_removed_and_nothing_else_changes() {
+    let conn = database();
+    add_session(&conn, "ses_p", None);
+    create_run(&conn, &run("run_1", RunStatus::Running), 10).unwrap();
+    append_event(&conn, "run_1", &json!({"type": "log", "message": "a"}), 1).unwrap();
+    for ordinal in 0..4 {
+        append_event(
+            &conn,
+            "run_1",
+            &report_event(ordinal, &format!("item {ordinal}")),
+            2,
+        )
+        .unwrap();
+    }
+    append_event(&conn, "run_1", &json!({"type": "log", "message": "b"}), 3).unwrap();
+    let full = list_events(&conn, "run_1").unwrap();
+
+    let capped = list_events_with_report_cap(&conn, "run_1", 2).unwrap();
+    // The boundary is the second report's sequence (the last kept one), named here rather than read off a fixed index.
+    let last_kept = capped
+        .iter()
+        .filter(|entry| entry.event["type"] == "report")
+        .nth(1)
+        .expect("two reports are kept")
+        .sequence;
+    assert_eq!(capped.len(), full.len());
+    let items: Vec<Option<Value>> = capped
+        .iter()
+        .filter(|entry| entry.event["type"] == "report")
+        .map(|entry| entry.event.get("item").cloned())
+        .collect();
+    assert_eq!(
+        items,
+        vec![Some(json!("item 0")), Some(json!("item 1")), None, None],
+        "the first two reports keep their items, the later two lose them"
+    );
+    for (bounded, whole) in capped.iter().zip(&full) {
+        assert_eq!(
+            (bounded.sequence, bounded.time_created),
+            (whole.sequence, whole.time_created)
+        );
+        if whole.event["type"] != "report" {
+            assert_eq!(bounded.event, whole.event, "non-report events are verbatim");
+        } else {
+            let mut expected = whole.event.clone();
+            if bounded.sequence > last_kept {
+                expected.as_object_mut().unwrap().remove("item");
+            }
+            assert_eq!(bounded.event, expected);
+        }
+    }
+    assert!(
+        list_events_with_report_cap(&conn, "run_1", 0)
+            .unwrap()
+            .iter()
+            .all(|entry| entry.event.get("item").is_none() || entry.event["type"] != "report"),
+        "a cap of zero removes every report item"
+    );
+    assert_eq!(
+        list_events_with_report_cap(&conn, "run_1", 9).unwrap(),
+        full,
+        "a cap above the run's reports keeps everything"
+    );
+}
+
+#[test]
+fn roster_nodes_are_the_non_report_rows_without_results_and_keep_their_input() {
+    let conn = database();
+    add_session(&conn, "ses_p", None);
+    create_run(&conn, &run("run_1", RunStatus::Running), 10).unwrap();
+    let ask = NodeRecord {
+        run_id: "run_1".into(),
+        site_id: "site#1".into(),
+        ordinal: 0,
+        kind: NodeKind::Ask,
+        actor_site_id: Some("site#1".into()),
+        actor_ordinal: Some(0),
+        actor_seq: Some(1),
+        input_hash: "ih".into(),
+        status: NodeStatus::Completed,
+        result: Some(json!({ "answer": "a long answer" })),
+        input: Some(json!({ "prompt": "p" })),
+        ..NodeRecord::default()
+    };
+    put_node(&conn, &ask, 11).unwrap();
+    let report = NodeRecord {
+        site_id: "site#1".into(),
+        ordinal: 1,
+        kind: NodeKind::Report,
+        input_hash: "ih2".into(),
+        status: NodeStatus::Completed,
+        result: Some(json!({ "x": 1 })),
+        ..ask.clone()
+    };
+    put_node(&conn, &report, 12).unwrap();
+
+    let rows = list_roster_nodes(&conn, "run_1").unwrap();
+    assert_eq!(rows.len(), 1, "the report row is not a roster row");
+    assert_eq!(rows[0].kind, NodeKind::Ask);
+    assert_eq!(rows[0].result, None, "result_json is not read");
+    assert_eq!(
+        rows[0].input,
+        Some(json!({ "prompt": "p" })),
+        "input_json stays, as Node keeps it"
+    );
+    assert_eq!(rows[0].stats, ask.stats);
+    assert_eq!(
+        list_nodes(&conn, "run_1").unwrap()[0].result,
+        ask.result,
+        "the full read still has it"
+    );
+}
+
+#[test]
+fn actors_read_without_their_persona() {
+    let conn = database();
+    add_session(&conn, "ses_p", None);
+    create_run(&conn, &run("run_1", RunStatus::Running), 10).unwrap();
+    let actor = ActorRecord {
+        run_id: "run_1".into(),
+        site_id: "site#1".into(),
+        ordinal: 0,
+        name: Some("scout".into()),
+        persona: Some(json!({ "system": "a very long system prompt" })),
+        session_id: None,
+        resolved_model: Some("m".into()),
+    };
+    put_actor(&conn, &actor, 11).unwrap();
+    let rows = list_actors_without_persona(&conn, "run_1").unwrap();
+    assert_eq!(rows.len(), 1);
+    assert_eq!(rows[0].persona, None);
+    assert_eq!(rows[0].name.as_deref(), Some("scout"));
+    assert_eq!(rows[0].resolved_model.as_deref(), Some("m"));
+    assert_eq!(
+        list_actors(&conn, "run_1").unwrap()[0].persona,
+        actor.persona
+    );
+}

@@ -245,3 +245,49 @@ async fn an_idle_tree_is_erased() {
         vec![vec![SessionId::new(ROOT), SessionId::new(CHILD)]]
     );
 }
+
+/// Divergence 593 (9.47), closed by 9.50: an erase of a tree closes its sessions' runtimes, so it stops their reminder clocks
+/// (as a plain close does) and forgets their gate records, as a delete does. Both sessions of the tree lose them.
+#[tokio::test]
+async fn an_erased_tree_stops_its_reminder_clocks_and_forgets_its_gates() {
+    use crate::fork::workflow_cold_open_tests::{QuietTimers, SilentNotices};
+    use crate::fork::workflow_reminder_host::WorkflowReminders;
+    use rust_cli_kernel_api::dynamic_workflow::DynamicWorkflowGate;
+
+    let (_scope, server, kernel) = server(Vec::new());
+    let gate = DynamicWorkflowGate {
+        enabled: true,
+        tools_on_demand: true,
+    };
+    for id in [ROOT, CHILD] {
+        server.record_dynamic_workflow_gate(&SessionId::new(id), gate);
+    }
+    let reminders = Arc::new(WorkflowReminders::new(
+        server.context.dynamic_workflow_gates().clone(),
+        Arc::new(QuietTimers),
+        Arc::new(SilentNotices),
+    ));
+    server.context.set_workflow_reminders(reminders.clone());
+    for id in [ROOT, CHILD] {
+        reminders.turn_finished(id);
+        assert!(
+            reminders.has_session(id),
+            "a turn edge makes the clock of {id}"
+        );
+    }
+    let result = erase_tree(&server, &json!({"sessionIds": [ROOT]}))
+        .await
+        .unwrap();
+    assert_eq!(result["erasedSessionIds"], json!([ROOT, CHILD]));
+    assert_eq!(kernel.store.erased.lock().unwrap().len(), 1);
+    for id in [ROOT, CHILD] {
+        assert!(
+            !reminders.has_session(id),
+            "the erased session {id} stops its reminder clock (Node closeSessionRuntime, deleted)"
+        );
+        assert!(
+            server.dynamic_workflow_gate(&SessionId::new(id)).is_none(),
+            "the erased session {id} forgets its gate, as a delete does"
+        );
+    }
+}
