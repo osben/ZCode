@@ -10,6 +10,7 @@ use rust_cli_kernel_api::tool::Tool;
 use rust_cli_kernel_api::workflow_analysis::{
     WorkflowAnalysis, WorkflowAnalysisError, WorkflowAnalyzer,
 };
+use rust_cli_kernel_api::workflow_run::{DynamicWorkflowRunSessions, LateRunSessions};
 use rust_cli_runtime::wired_workflow_tools;
 
 use super::gating;
@@ -25,27 +26,48 @@ impl WorkflowAnalyzer for NoAnalyzer {
     }
 }
 
+fn no_runs() -> Arc<dyn DynamicWorkflowRunSessions> {
+    Arc::new(LateRunSessions::default())
+}
+
 fn names(tools: &[Arc<dyn Tool>]) -> Vec<String> {
     tools.iter().map(|tool| tool.name().to_owned()).collect()
 }
 
 #[test]
 fn without_an_analyzer_only_list_saved_workflows_is_wired() {
-    let tools = wired_workflow_tools(None, &PathBuf::from("/home"));
-    assert_eq!(names(&tools), ["ListSavedWorkflows"]);
+    let tools = wired_workflow_tools(None, &PathBuf::from("/home"), no_runs());
+    assert_eq!(
+        names(&tools),
+        [
+            "ListWorkflowRuns",
+            "ResumeWorkflowRun",
+            "ResolveWorkflowQuestion",
+            "ListSavedWorkflows"
+        ]
+    );
 }
 
 #[test]
 fn with_an_analyzer_save_is_wired_before_list_and_create_never_is() {
     let analyzer: Arc<dyn WorkflowAnalyzer> = Arc::new(NoAnalyzer);
-    let tools = wired_workflow_tools(Some(analyzer), &PathBuf::from("/home"));
-    assert_eq!(names(&tools), ["SaveWorkflow", "ListSavedWorkflows"]);
+    let tools = wired_workflow_tools(Some(analyzer), &PathBuf::from("/home"), no_runs());
+    assert_eq!(
+        names(&tools),
+        [
+            "SaveWorkflow",
+            "ListWorkflowRuns",
+            "ResumeWorkflowRun",
+            "ResolveWorkflowQuestion",
+            "ListSavedWorkflows"
+        ]
+    );
 }
 
 #[test]
 fn the_gate_source_reads_the_shared_table_the_server_records_into() {
     let table = Arc::new(SessionGates::default());
-    let source = gating(table.clone(), None, &PathBuf::from("/home"));
+    let source = gating(table.clone(), None, &PathBuf::from("/home"), no_runs());
     let open = DynamicWorkflowGate {
         enabled: true,
         tools_on_demand: false,
@@ -53,5 +75,13 @@ fn the_gate_source_reads_the_shared_table_the_server_records_into() {
     table.record(&SessionId::new("ses_a"), open);
     assert_eq!(source.gates.gate(&SessionId::new("ses_a")), Some(open));
     assert_eq!(source.gates.gate(&SessionId::new("ses_b")), None);
-    assert_eq!(names(&source.tools), ["ListSavedWorkflows"]);
+    assert_eq!(
+        names(&source.tools),
+        [
+            "ListWorkflowRuns",
+            "ResumeWorkflowRun",
+            "ResolveWorkflowQuestion",
+            "ListSavedWorkflows"
+        ]
+    );
 }

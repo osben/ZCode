@@ -122,14 +122,28 @@ impl ToolRegistry for GatedRegistry {
 /// analyzer: `workflow_tools` offers it without a run port, and that form (it typechecks and says it did not run) must
 /// not reach a session. EvalWorkflowSnippet is not offered either: its reads are rooted at the process workspace, not at
 /// the session's directory (9.36, divergence 313).
+///
+/// Fork (W7-9, 9.40): the run tools (ListWorkflowRuns, ResumeWorkflowRun, ResolveWorkflowQuestion) read and act through
+/// `runs`, the per-session run port of the calling session. They sit before ListSavedWorkflows, in Node's order.
 pub fn wired_workflow_tools(
     analyzer: Option<Arc<dyn rust_cli_kernel_api::workflow_analysis::WorkflowAnalyzer>>,
     home: &std::path::Path,
+    runs: Arc<dyn rust_cli_kernel_api::workflow_run::DynamicWorkflowRunSessions>,
 ) -> Vec<Arc<dyn Tool>> {
-    rust_cli_tools::workflow_tools(analyzer, home.to_path_buf(), None, None)
-        .into_iter()
-        .filter(|tool| tool.name() != rust_cli_kernel_api::tool_names::CREATE_WORKFLOW)
-        .collect()
+    let mut tools: Vec<Arc<dyn Tool>> =
+        rust_cli_tools::workflow_tools(analyzer, home.to_path_buf(), None, None)
+            .into_iter()
+            .filter(|tool| tool.name() != rust_cli_kernel_api::tool_names::CREATE_WORKFLOW)
+            .collect();
+    let list_saved = tools
+        .iter()
+        .position(|tool| tool.name() == rust_cli_kernel_api::tool_names::LIST_SAVED_WORKFLOWS)
+        .unwrap_or(tools.len());
+    tools.splice(
+        list_saved..list_saved,
+        rust_cli_tools::workflow_run_tools(runs),
+    );
+    tools
 }
 
 /// Fork (W7-7a, divergence 55): the gate source with Node's incognito `automationTools` toggle in it
