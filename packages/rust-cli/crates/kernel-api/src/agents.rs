@@ -121,6 +121,12 @@ pub enum AgentSignal {
     SubagentMessage {
         text: String,
     },
+    /// Fork (9.38, W7-7c): a workflow run's model-visible notice (an escalation, a stall, a blocked reminder). `text` is the
+    /// complete notice (Node's `enqueueBackgroundTaskNotification` with no `<task-notification>` envelope). Not acked and not
+    /// background work: once handed over it is not kept.
+    WorkflowNotice {
+        text: String,
+    },
 }
 
 #[async_trait]
@@ -130,6 +136,10 @@ pub trait AgentSignals: Send + Sync {
 
     /// `seq` 这条通知已作为消息提交（幂等）。没有 ack 的通知在重新订阅时再次送达。
     async fn ack(&self, session: &SessionId, seq: u64);
+
+    /// Fork (9.38, W7-7c): a workflow run's notice for `session`'s model. Synchronous and never blocks on the session: the
+    /// notice waits in the channel until the session's stream takes it. The default drops it (no agents).
+    fn workflow_notice(&self, _session: &SessionId, _text: String) {}
 
     /// 无进展提醒是否仍然成立（Node `isBackgroundSubagentStallReminderCurrent`）：子代理还在跑、没在等审批、仍是提醒
     /// 依据的那次运行、进展没有前进。默认成立（没有子代理能力的实现没有提醒）。

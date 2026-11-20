@@ -36,6 +36,8 @@ struct Channel {
     stalls: Vec<(u64, AgentStall)>,
     /// 子代理发给这个会话的消息（RespondToCoordinator；不 ack）：交给订阅方时从这里取走。
     messages: Vec<(u64, String)>,
+    /// 工作流 run 的模型可见通知（9.38，W7-7c；不 ack，不计入后台工作）：交给订阅方时从这里取走。
+    workflows: Vec<(u64, String)>,
 }
 
 impl Channel {
@@ -102,7 +104,12 @@ fn next_signal(channel: &mut Channel, cursor: &Cursor) -> Option<(u64, AgentSign
         .iter()
         .find(|(order, _)| *order > cursor.delivered)
         .map(|(order, text)| (*order, AgentSignal::SubagentMessage { text: text.clone() }));
-    let (order, signal) = [notice, tasks, stall, message]
+    let workflow = channel
+        .workflows
+        .iter()
+        .find(|(order, _)| *order > cursor.delivered)
+        .map(|(order, text)| (*order, AgentSignal::WorkflowNotice { text: text.clone() }));
+    let (order, signal) = [notice, tasks, stall, message, workflow]
         .into_iter()
         .flatten()
         .min_by_key(|(order, _)| *order)?;
@@ -111,6 +118,9 @@ fn next_signal(channel: &mut Channel, cursor: &Cursor) -> Option<(u64, AgentSign
     }
     if matches!(signal, AgentSignal::SubagentMessage { .. }) {
         channel.messages.retain(|(sent, _)| *sent != order);
+    }
+    if matches!(signal, AgentSignal::WorkflowNotice { .. }) {
+        channel.workflows.retain(|(sent, _)| *sent != order);
     }
     Some((order, signal))
 }
@@ -205,6 +215,17 @@ impl Hub {
             let channel = channels.entry(session.clone()).or_default();
             let order = channel.order();
             channel.messages.push((order, text));
+        }
+        self.wake();
+    }
+
+    /// 工作流 run 的模型可见通知（9.38，W7-7c）：进 `workflows`，不进 `pending`：不算后台工作，也不要求 ack；交出时取走。
+    pub(crate) fn workflow_notice(&self, session: &SessionId, text: String) {
+        {
+            let mut channels = self.channels();
+            let channel = channels.entry(session.clone()).or_default();
+            let order = channel.order();
+            channel.workflows.push((order, text));
         }
         self.wake();
     }

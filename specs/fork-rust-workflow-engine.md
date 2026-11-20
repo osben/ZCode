@@ -2904,6 +2904,75 @@ attach failure (9.33, item 276).
 the models below the parent's selection beyond the run and persona models of 9.33 (already done there); a live-mode read
 (300).
 
+### 9.38 W7-7c: model-visible progress effects (as built, gate off)
+
+**Scope built.** The progress path now gives the parent's model the run notices that Node's `recordDynamicWorkflowRunProgress`
+produces (295 of 9.34): an escalation raised, a run stall, and the reminder clock of an idle main agent (`noteWorkflowReminderRunEvent`).
+The hole notice is not built (holes are refused until W7-8). The notices reach the model through a new signal of the agents' channel, which
+the session actor takes like a subagent's message: queued as a `next` item, merged at the next tool boundary or opening a turn when idle,
+never acknowledged and not background work. Nothing user-visible changes: nothing launches a run while the gate is off.
+
+- **Notice path.** `AgentSignal::WorkflowNotice { text }` (kernel-api) with a default `AgentSignals::workflow_notice` (no-op). The
+  agents' `Signals` implements it through `Hub::workflow_notice`, which keeps the text in a per-session list that the stream takes once
+  (the same shape as `messages`). The session actor pushes `Waiting::WorkflowNotice` (`agent_signals.rs`, `lane.rs`): its text is the full notice,
+  its source is the task-notification source, and it sorts after the terminal notifications (Node `orderTaskNotificationsForParsing`).
+- **Progress host** (`protocol-zcode/src/fork/workflow_progress.rs`). `WorkflowProgressHost` gains `with_notices` and `with_reminder`
+  (both optional). `record` delivers the deltas, then tells the reminder clock when the event changes a run's open set, then posts the
+  escalation notice for `escalation-raised` and the stall notice for `run-stalled`. A payload that is not what the notice needs is
+  skipped with a warn log and no panic. The production sink is `SignalNotices` over `Agents::signals()`, wired by `app_server.rs`.
+- **Formatters** (`prompts/src/workflow_notice.rs`). Node's `workflow-notification-copy.ts` for the stall, the escalation and the blocked
+  reminder, with the banner, the XML escape (five characters, as Node) and the truncation at 120 000 UTF-16 units.
+- **Reminder clock** (`protocol-zcode/src/fork/workflow_reminder.rs`). Node's `WorkflowBlockedReminderClock` as a state machine over a
+  `ReminderHost`: 15 idle minutes for the first reminder, 30 for the second, counted when queued; a busy turn cancels the timer; an
+  open-set change or a user message clears a run's count; a stopped clock is silent. The host is not wired (divergence 357).
+
+**Tests.** Red-first was not kept for every test: the formatter, reminder and host tests were written with the code in one pass, and
+the first compile of the reminder module was red only on dead code (clippy). Each behaviour test was then green. The notice and clock
+tests are in `prompts` (`workflow_notice_tests.rs`, 6), `protocol-zcode` (`workflow_progress_notice_tests.rs`, 8;
+`workflow_reminder_tests.rs`, 9), `agents` (`signals_tests.rs`: a workflow notice is handed over once and never acked), and
+`session` (`agent_signals_tests.rs`: a workflow notice opens an idle turn with its raw text and emits no `BackgroundWork`).
+Green: prompts, kernel-api, workflow, agents, session, node-store, tools, runtime, protocol-zcode (960 and 283 lib tests), the cli
+bins (556). Clippy with `-D warnings` over the workspace, all targets, is clean. One agents test,
+`shell_notices::tests::a_reopen_right_after_a_refused_notice_still_delivers_it`, failed once under the full run and passed 3 of 3 alone:
+it is a timing flake in the shell-notice path, not this change.
+
+**Node divergences (new in W7-7c, numbered from 350).**
+
+350. The notices go through the agents' signal channel, not Node's runtime command queue. Node also writes an admission row to the
+     `session_input` ledger and fences by branch generation (`enqueueBackgroundTaskNotification`); the Rust path has neither. The
+     branch fence is not needed here, because the Hub channel belongs to one session.
+351. No `originMeta` is carried. Node sets `{backgroundSource: "workflow", workId, title, workflowNotification}` on the message, so the
+     App titles the notice. The Rust notice is text only, and `background_origin::origin_meta` still returns `None` for it, so the UI
+     does not title it.
+352. The run label is the run id. Node uses the registry description, then the run id. The progress path has no registry, so the escalation
+     and stall texts read `Workflow run <id> (<id>)`.
+353. The hole notice (`notifyHoleReached`) is not built. Holes are refused until W7-8.
+354. The stall's minutes round the floored `sinceMs` (`since_ms` is a `u64`). Node rounds the raw value. The two differ only by under a millisecond.
+355. A malformed-payload warn log carries the run id but not the sequence. Node logs both. The event names are Node's.
+356. A notice the session has not taken stays in the channel until the session subscribes. Node's in-memory queue is lost on process
+     exit, and its ledger settles an admitted notice as discarded on resume. Rust keeps the notice for the session's life and writes no
+     discard row. A notice handed over while the session is closing is dropped without an ack, as Node drops during shutdown.
+357. **The reminder clock is not wired.** No session idle or busy edge calls it, no timer is scheduled, no production `ReminderHost` reads the
+     run snapshot, and the composition does not call `with_reminder`. The clock is inert in the app. The state machine and its tests are
+     built, so the wiring is a host and two call sites.
+358. The host's `read_open` is synchronous. Node awaits the run snapshot and skips a failing read with `onReadError`. The production read
+     must run on the blocking pool (as the actor bindings do, 9.35) and report its error through the host.
+359. The clock's `schedule` returns a cancel. Node's timer is `setTimeout` with `unref`, so the timer does not keep a headless process alive.
+     The production timer must not keep the process alive either (not decided).
+360. The reminder's text is not produced yet. The `prompts` `blocked` formatter exists and is tested. The step that maps the clock's
+     `Reminder` (the run's questions and holes, with `waited_ms` from the clock's `now`) into it lands with the host (357).
+361. The formatters are inline `format!` strings, as `prompts/src/notification.rs` writes the task-notification envelope. The `prompts/`
+     data-file rule is not applied to these notices.
+362. A notice is pushed without a duplicate check. Node's command queue does not check duplicates either, and the progress path posts once per
+     event, so a repeated event would post twice.
+363. Cold replay of progress events (298) is not done. A session that reopens does not get its escalation or stall notice again. The blocked
+     reminder is the only path that would reach it, and it is not wired (357).
+364. No composed test runs a launched run through the composition and checks that its escalation reaches the parent's stream. The composition
+     tests stop at the progress port. The live run with a real child process is not covered, as in 9.34.
+
+**Not done.** The hole notice (353, W7-8); the host that wires the reminder clock (357, 358, 359, 360); the cold replay (363); a composed
+escalation test through a real run; the gate.
+
 ## 10. Open questions
 
 Each has a recommendation. The user decides. Until decided, the recommendation is the default.

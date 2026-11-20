@@ -1,44 +1,204 @@
-//! Fork: the run progress port's live half (specs/fork-rust-workflow-engine.md, 9.34, W7-5e). Node's sink appends each
-//! run's progress to the parent session's in-memory event store and the Host hears it. Here the progress is not written
-//! anywhere: the durable record is the run's journal. The port hands the projection's deltas to the parent session's
-//! open stream, if one is open. Rust's cold read does not yet replay the journal into progress events (9.34, 298).
+//! Fork: the run progress port's live half (specs/fork-rust-workflow-engine.md, 9.34, W7-5e; the model-visible effects of
+//! the progress path, 9.38, W7-7c). Node's sink appends each run's progress to the parent session's in-memory event store
+//! and the Host hears it. Here the progress is not written anywhere: the durable record is the run's journal. The port
+//! hands the projection's deltas to the parent session's open stream, if one is open, and it posts the run notices the
+//! parent's model reads (an escalation, a stall). Rust's cold read does not yet replay the journal into progress events
+//! (9.34, 298).
 
 use std::sync::{Arc, Weak};
 
+use rust_cli_kernel_api::agents::AgentSignals;
+use rust_cli_kernel_api::ids::SessionId;
 use rust_cli_kernel_api::workflow_run_progress::WorkflowRunProgressPort;
+use rust_cli_prompts::workflow_notice::{Escalation, Stall};
 use serde_json::Value;
+
+use super::workflow_reminder::BlockedReminderClock;
 
 /// Where a run's live deltas go: the parent session's open stream.
 pub trait ProgressDelivery: Send + Sync {
     fn deliver(&self, parent_session_id: &str, deltas: Vec<Value>);
 }
 
-/// The run progress port. Its only effect is the live delivery of the deltas; nothing is persisted, and the payload is
-/// not written anywhere (it is the journal's row, which the run service keeps).
+/// Where a run's model-visible notices go: the parent session's model inbox (Node `enqueueBackgroundTaskNotification`).
+/// The text is complete; it is not wrapped again.
+pub trait WorkflowNotices: Send + Sync {
+    fn post(&self, parent_session_id: &str, text: String);
+}
+
+/// The production notices: the parent session's signal channel, which the session actor reads at its tool boundary or
+/// when it is idle (the same channel as a subagent's message, and not counted as background work).
+pub struct SignalNotices {
+    signals: Arc<dyn AgentSignals>,
+}
+
+impl SignalNotices {
+    pub fn new(signals: Arc<dyn AgentSignals>) -> Self {
+        Self { signals }
+    }
+}
+
+impl WorkflowNotices for SignalNotices {
+    fn post(&self, parent_session_id: &str, text: String) {
+        self.signals
+            .workflow_notice(&SessionId::new(parent_session_id), text);
+    }
+}
+
+/// The run progress port. Its effects are the live delivery of the deltas and the parent's model notices; nothing is
+/// persisted, and the payload is not written anywhere (it is the journal's row, which the run service keeps).
 pub struct WorkflowProgressHost {
     delivery: Arc<dyn ProgressDelivery>,
+    notices: Option<Arc<dyn WorkflowNotices>>,
+    reminder: Option<Arc<BlockedReminderClock>>,
 }
 
 impl WorkflowProgressHost {
     pub fn new(delivery: Arc<dyn ProgressDelivery>) -> Self {
-        Self { delivery }
+        Self {
+            delivery,
+            notices: None,
+            reminder: None,
+        }
+    }
+
+    /// The parent's model inbox for the run notices. Without it no notice is posted.
+    #[must_use]
+    pub fn with_notices(mut self, notices: Arc<dyn WorkflowNotices>) -> Self {
+        self.notices = Some(notices);
+        self
+    }
+
+    /// The blocked-run reminder clock, told when a run's open set changes (Node `noteWorkflowReminderRunEvent`).
+    #[must_use]
+    pub fn with_reminder(mut self, reminder: Arc<BlockedReminderClock>) -> Self {
+        self.reminder = Some(reminder);
+        self
     }
 }
 
 impl WorkflowRunProgressPort for WorkflowProgressHost {
-    /// Delivers the deltas to the parent's open stream. The progress payload is not used here: it is the Node-shaped
-    /// event that the model-visible notifications of divergence 295 would read, and those are not built yet.
+    /// Delivers the deltas to the parent's open stream, then gives the model its notices (Node's order: the reminder
+    /// clock, the escalation, the stall; the hole notice is not built, see 9.38).
     fn record(
         &self,
         parent_session_id: &str,
-        _progress: &Value,
+        progress: &Value,
         deltas: &[Value],
     ) -> Result<(), String> {
         if !deltas.is_empty() {
             self.delivery.deliver(parent_session_id, deltas.to_vec());
         }
+        let event_type = str_field(progress, "eventType");
+        let run_id = str_field(progress, "runId");
+        if let (Some(reminder), Some(run_id), Some(event_type)) =
+            (&self.reminder, run_id, event_type)
+            && OPEN_SET_EVENT_TYPES.contains(&event_type)
+        {
+            reminder.open_set_changed(run_id);
+        }
+        if let (Some(notices), Some(run_id)) = (&self.notices, run_id) {
+            let payload = progress.get("payload").unwrap_or(&Value::Null);
+            let text = match event_type {
+                Some(ESCALATION_RAISED) => escalation_text(run_id, payload),
+                Some(RUN_STALLED) => stall_text(run_id, payload),
+                _ => None,
+            };
+            if let Some(text) = text {
+                notices.post(parent_session_id, text);
+            }
+        }
         Ok(())
     }
+}
+
+/// The run events that change a run's open set (Node `OPEN_SET_EVENT_TYPES`).
+const OPEN_SET_EVENT_TYPES: [&str; 4] = [
+    "escalation-raised",
+    "escalation-resolved",
+    "hole-reached",
+    "hole-filled",
+];
+const ESCALATION_RAISED: &str = "escalation-raised";
+const RUN_STALLED: &str = "run-stalled";
+
+/// `escalation-raised` → the parked question's notice. A payload without a question id or text is skipped, and never
+/// panics: the notice is an observation, and the run's truth is in the journal.
+fn escalation_text(run_id: &str, payload: &Value) -> Option<String> {
+    let (Some(qid), Some(question)) = (str_field(payload, "qid"), str_field(payload, "question"))
+    else {
+        tracing::warn!(
+            event = "dynamic_workflow.escalation.notification_skipped",
+            run_id,
+            "Dynamic workflow escalation notification skipped: malformed payload"
+        );
+        return None;
+    };
+    let actor = str_field(payload, "actorName")
+        .map(str::to_owned)
+        .unwrap_or_else(|| actor_ref_label(payload.get("actor")));
+    let context = str_field(payload, "context");
+    Some(rust_cli_prompts::workflow_notice::escalation(&Escalation {
+        // The run's display name is the registry's description (Node); the progress path has no registry, so the id stands.
+        run_label: run_id,
+        run_id,
+        qid,
+        actor: &actor,
+        question,
+        context,
+    }))
+}
+
+/// `run-stalled` → the run's stall notice. A `sinceMs` that is not a finite, non-negative number is skipped.
+fn stall_text(run_id: &str, payload: &Value) -> Option<String> {
+    let Some(since) = payload
+        .get("sinceMs")
+        .and_then(Value::as_f64)
+        .filter(|since| since.is_finite() && *since >= 0.0)
+    else {
+        tracing::warn!(
+            event = "dynamic_workflow.stall.notification_skipped",
+            run_id,
+            "Dynamic workflow stall notification skipped: malformed payload"
+        );
+        return None;
+    };
+    let cap = payload
+        .get("cap")
+        .and_then(Value::as_f64)
+        .filter(|cap| cap.is_finite() && *cap >= 0.0)
+        .map(|cap| cap.floor() as u64);
+    Some(rust_cli_prompts::workflow_notice::stall(&Stall {
+        run_label: run_id,
+        run_id,
+        since_ms: since.floor() as u64,
+        reason: str_field(payload, "reason"),
+        cap,
+    }))
+}
+
+/// Node `actorRefLabel`: a named actor's name, else `siteId@ordinal`, else a fixed fallback.
+fn actor_ref_label(actor: Option<&Value>) -> String {
+    match actor {
+        Some(Value::String(name)) => name.clone(),
+        Some(Value::Object(actor)) => {
+            let site = actor.get("siteId").and_then(Value::as_str);
+            let ordinal = actor.get("ordinal").and_then(Value::as_u64);
+            match (site, ordinal) {
+                (Some(site), Some(ordinal)) => format!("{site}@{ordinal}"),
+                _ => "unknown actor".to_owned(),
+            }
+        }
+        _ => "unknown actor".to_owned(),
+    }
+}
+
+/// A non-empty string field (Node `stringField`).
+fn str_field<'a>(value: &'a Value, key: &str) -> Option<&'a str> {
+    value
+        .get(key)
+        .and_then(Value::as_str)
+        .filter(|text| !text.is_empty())
 }
 
 /// The production delivery: the parent session's open stream gets the deltas in its pump, as the helper's plugin UI
@@ -76,3 +236,7 @@ impl ProgressDelivery for BridgeDelivery {
 #[cfg(test)]
 #[path = "workflow_progress_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "workflow_progress_notice_tests.rs"]
+mod notice_tests;
