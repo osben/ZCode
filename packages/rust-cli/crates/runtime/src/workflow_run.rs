@@ -796,6 +796,25 @@ impl WorkflowRunHost for WorkflowRunService {
             lines
         })
     }
+
+    /// The sweep first (its own blocking work), then the quota scan: the scan reads the rows the sweep just settled.
+    /// Both read the journal, so the scan runs on the blocking pool; a failed join is logged, never raised.
+    fn session_opened(&self, parent_session_id: &str) -> BoxFuture<'static, ()> {
+        let service = self.clone();
+        let parent = parent_session_id.to_owned();
+        Box::pin(async move {
+            service.reconcile_session_off_thread(&parent).await;
+            let scan = service.clone();
+            let opened = tokio::task::spawn_blocking(move || scan.open_session(&parent)).await;
+            if let Err(error) = opened {
+                tracing::error!(
+                    event = "workflow.run.session_open_failed",
+                    error = %error,
+                    "the quota scan of an opened session did not finish"
+                );
+            }
+        })
+    }
 }
 
 /// Runs on the owner's thread once the owner has stopped serving: the run settled, or every handle was dropped. The
