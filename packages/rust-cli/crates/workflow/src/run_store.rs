@@ -61,23 +61,29 @@ pub trait RunStore: Send + Sync {
     fn list_runs(&self, query: &RunListQuery) -> Result<Vec<RunListRow>>;
     /// Node `getRun(runId)`.
     fn get_run(&self, run_id: &str) -> Result<Option<RunRow>>;
-    /// The row's `(time_created, time_updated)` (9.42): the detail read's timestamps. A store that does not read them
-    /// fails the read rather than reporting zero.
-    fn run_times(&self, run_id: &str) -> Result<Option<(i64, i64)>> {
-        let _ = run_id;
-        Err(anyhow::anyhow!("this run store does not read run times"))
-    }
-    /// The run's projected state (9.42): the run-panel fields of the journal's replay (pending questions, holes, artifacts,
-    /// usage, phases, actors, the launch settings), as Node's `workflowRuns` snapshot carries them. `None` for a run the
-    /// journal does not hold. A store that does not replay fails the read.
-    fn run_state(
+    /// One run's detail read (9.42): the row with its timestamps, and the run's entry of the journal's replay (the
+    /// run-panel fields: pending questions, holes, artifacts, phases, node entries, the launch settings).
+    ///
+    /// `Ok(None)` means the journal does not hold the run. `state` is `None` when `default_concurrency` is `None` (the
+    /// replay needs the configured default, and none is fabricated here) and when the journal holds no event for the run
+    /// yet, which is a row written before its first event. A store that cannot read details fails the read.
+    fn run_detail(
         &self,
         run_id: &str,
-        default_concurrency: f64,
-    ) -> Result<Option<serde_json::Map<String, serde_json::Value>>> {
+        default_concurrency: Option<f64>,
+    ) -> Result<Option<RunDetail>> {
         let _ = (run_id, default_concurrency);
-        Err(anyhow::anyhow!("this run store does not replay run state"))
+        Err(anyhow::anyhow!("this run store does not read run details"))
     }
+}
+
+/// What one detail read holds, all from one snapshot of the journal (9.42).
+#[derive(Debug, Clone)]
+pub struct RunDetail {
+    /// The row, with its timestamps.
+    pub run: RunListRow,
+    /// The run's entry of the journal's replay, as `RunStore::run_detail` documents it.
+    pub state: Option<serde_json::Map<String, serde_json::Value>>,
 }
 
 /// The `RunStore` over one session database. `clock` stamps the rows a settlement writes.
@@ -164,32 +170,43 @@ impl RunStore for SqliteRunStore {
         Ok(dwf::get_run(&conn, run_id)?.map(row_from_dwf))
     }
 
-    fn run_times(&self, run_id: &str) -> Result<Option<(i64, i64)>> {
-        let conn = self.conn.lock_unpoisoned();
-        dwf::run_times(&conn, run_id)
-    }
-
-    fn run_state(
+    fn run_detail(
         &self,
         run_id: &str,
-        default_concurrency: f64,
-    ) -> Result<Option<serde_json::Map<String, serde_json::Value>>> {
-        let conn = self.conn.lock_unpoisoned();
-        let Some(record) = dwf::get_run(&conn, run_id)? else {
-            return Ok(None);
+        default_concurrency: Option<f64>,
+    ) -> Result<Option<RunDetail>> {
+        // The row, its timestamps and its events are read under one lock hold, so they are one snapshot. The replay
+        // folds the events after the lock is released.
+        let (record, time_created, time_updated, events) = {
+            let conn = self.conn.lock_unpoisoned();
+            let Some(record) = dwf::get_run(&conn, run_id)? else {
+                return Ok(None);
+            };
+            let Some((created, updated)) = dwf::run_times(&conn, run_id)? else {
+                anyhow::bail!("the run {run_id} has a row without timestamps");
+            };
+            let events = dwf::list_events(&conn, run_id)?;
+            (record, created, updated, events)
         };
-        let events = dwf::list_events(&conn, run_id)?;
-        let state = rust_cli_node_store::replay_run_state(
-            &record,
-            &events,
-            default_concurrency,
-            &rust_cli_node_store::WORKFLOW_RUN_LIMITS,
-        );
-        Ok(state.and_then(|state| {
-            state
+        let state = default_concurrency.and_then(|default| {
+            let replayed = rust_cli_node_store::replay_run_state(
+                &record,
+                &events,
+                default,
+                &rust_cli_node_store::WORKFLOW_RUN_LIMITS,
+            )?;
+            replayed
                 .runs
                 .into_iter()
-                .find(|run| run.get("runId") == Some(&serde_json::Value::String(run_id.to_owned())))
+                .find(|run| run.get("runId").and_then(serde_json::Value::as_str) == Some(run_id))
+        });
+        Ok(Some(RunDetail {
+            run: RunListRow {
+                run: row_from_dwf(record),
+                time_created,
+                time_updated,
+            },
+            state,
         }))
     }
 }

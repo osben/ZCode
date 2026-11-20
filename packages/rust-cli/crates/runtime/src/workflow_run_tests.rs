@@ -1330,8 +1330,8 @@ async fn resolve_question_is_refused_as_unknown_when_no_live_run_of_the_session_
 #[derive(Default)]
 struct DetailStore {
     rows: Vec<(rust_cli_workflow::model::RunRow, i64, i64)>,
-    /// The projected state of each run, as the journal's replay gives it.
-    states: Vec<(String, serde_json::Map<String, serde_json::Value>)>,
+    /// The journal's events of each run, in order. The detail read replays them through the real reducer.
+    events: Vec<(String, Vec<serde_json::Value>)>,
 }
 
 impl rust_cli_workflow::run_store::RunStore for DetailStore {
@@ -1364,23 +1364,53 @@ impl rust_cli_workflow::run_store::RunStore for DetailStore {
             .find(|(row, _, _)| row.run_id == run_id)
             .map(|(row, _, _)| row.clone()))
     }
-    fn run_times(&self, run_id: &str) -> anyhow::Result<Option<(i64, i64)>> {
-        Ok(self
-            .rows
-            .iter()
-            .find(|(row, _, _)| row.run_id == run_id)
-            .map(|(_, created, updated)| (*created, *updated)))
-    }
-    fn run_state(
+    fn run_detail(
         &self,
         run_id: &str,
-        _default_concurrency: f64,
-    ) -> anyhow::Result<Option<serde_json::Map<String, serde_json::Value>>> {
-        Ok(self
-            .states
-            .iter()
-            .find(|(id, _)| id == run_id)
-            .map(|(_, state)| state.clone()))
+        default_concurrency: Option<f64>,
+    ) -> anyhow::Result<Option<rust_cli_workflow::run_store::RunDetail>> {
+        let Some((row, created, updated)) =
+            self.rows.iter().find(|(row, _, _)| row.run_id == run_id)
+        else {
+            return Ok(None);
+        };
+        // The state is the real reducer's replay of the run's events, as the SQLite store folds them.
+        let state = default_concurrency.and_then(|default| {
+            let record = rust_cli_node_store::dwf::RunRecord {
+                run_id: run_id.to_owned(),
+                parent_session_id: row.parent_session_id.clone(),
+                ..Default::default()
+            };
+            let events: Vec<rust_cli_node_store::dwf::StoredEvent> = self
+                .events
+                .iter()
+                .filter(|(id, _)| id == run_id)
+                .flat_map(|(_, events)| events.iter().cloned())
+                .enumerate()
+                .map(|(index, event)| rust_cli_node_store::dwf::StoredEvent {
+                    sequence: i64::try_from(index + 1).unwrap_or(i64::MAX),
+                    event,
+                    time_created: 0,
+                })
+                .collect();
+            rust_cli_node_store::replay_run_state(
+                &record,
+                &events,
+                default,
+                &rust_cli_node_store::WORKFLOW_RUN_LIMITS,
+            )?
+            .runs
+            .into_iter()
+            .find(|run| run.get("runId").and_then(serde_json::Value::as_str) == Some(run_id))
+        });
+        Ok(Some(rust_cli_workflow::run_store::RunDetail {
+            run: rust_cli_workflow::run_store::RunListRow {
+                run: row.clone(),
+                time_created: *created,
+                time_updated: *updated,
+            },
+            state,
+        }))
     }
 }
 
@@ -1418,22 +1448,24 @@ async fn get_run_detail_reads_the_journal_row_for_the_owner_and_another_session(
     use rust_cli_kernel_api::workflow_run::DynamicWorkflowRunSessions;
     use rust_cli_workflow::model::RunStatus;
     let h = harness();
-    let done_state = json!({
-        "runId": "wf_done",
-        "subagentModel": "m-1",
-        "pendingQuestions": [{
-            "qid": "dwfq-wf_done-0", "actorSiteId": "agent#1", "actorOrdinal": 1,
-            "actorName": "poet", "question": "which branch?", "askedAt": 1_500
-        }],
-        "holes": [{"siteId": "hole#1", "ordinal": 1, "name": "gate", "type": "string",
-                   "state": "waiting", "since": 1_600}],
-        "nodes": [{"kind": "ask", "status": "completed"}, {"kind": "ask", "status": "running"}]
-    });
+    // The run's journal, as the owner writes it: the replay of these events is the projected state the detail reads.
+    // One node is waiting, one settled ok, one settled failed; one question is open; one hole is waiting.
+    let journal = vec![
+        json!({"type": "run-launched", "subagentModel": "m-1"}),
+        json!({"type": "node-waiting", "instance": {"siteId": "ask#1", "ordinal": 1}}),
+        json!({"type": "node-settled", "instance": {"siteId": "ask#2", "ordinal": 1},
+               "outcome": "ok", "cached": false, "sourceSessionId": "sess-x"}),
+        json!({"type": "node-settled", "instance": {"siteId": "ask#3", "ordinal": 1},
+               "outcome": "failed", "cached": false, "sourceSessionId": "sess-x"}),
+        json!({"type": "escalation-raised", "qid": "dwfq-wf_done-0", "question": "which branch?",
+               "actor": {"siteId": "agent#1", "ordinal": 1}, "actorName": "poet", "askedAt": 1_500}),
+        // The journal does not carry a hole's type (the reducer's `type` is the event's own key, and the compiled script
+        // holds the type), so the fixture has none. The detail reports the hole without a type (divergence 437).
+        json!({"type": "hole-reached", "instance": {"siteId": "hole#1", "ordinal": 1},
+               "name": "gate", "reachedAt": 1_600}),
+    ];
     let store = DetailStore {
-        states: vec![(
-            "wf_done".to_owned(),
-            done_state.as_object().expect("a state object").clone(),
-        )],
+        events: vec![("wf_done".to_owned(), journal)],
         rows: vec![
             (
                 settled_row("wf_done", "ses_p", RunStatus::Completed),
@@ -1448,6 +1480,9 @@ async fn get_run_detail_reads_the_journal_row_for_the_owner_and_another_session(
         ],
     };
     assert!(h.service.set_store(Arc::new(store)));
+    // The replay needs the configured default concurrency (the service's progress port sets it).
+    h.service
+        .configure_progress(Arc::new(RecordingProgress::default()), 4.0);
     let owner = h.service.for_session(&SessionId::new("ses_p"));
     let detail = owner
         .get_run_detail(&WorkflowRunId::new("wf_done"))
@@ -1472,11 +1507,14 @@ async fn get_run_detail_reads_the_journal_row_for_the_owner_and_another_session(
     assert_eq!(detail["pendingQuestions"][0]["askedAt"], 1_500);
     assert_eq!(detail["holes"][0]["name"], "gate");
     assert_eq!(detail["holes"][0]["state"], "waiting");
-    assert_eq!(detail["usage"]["nodesObserved"], 2);
+    // The reducer's node entries: a waiting node is running, an ok settle is completed, a failed settle is failed.
+    assert_eq!(detail["usage"]["nodesObserved"], 3);
     assert_eq!(detail["usage"]["nodesRunning"], 1);
     assert_eq!(detail["usage"]["nodesCompleted"], 1);
-    assert_eq!(detail["usage"]["nodesFailed"], 0);
-    assert_eq!(detail["subagentModel"], "m-1");
+    assert_eq!(detail["usage"]["nodesFailed"], 1);
+    // The replay keeps the subagent model on the progress path, not in the run entry, so the detail does not show it yet
+    // (divergence 436).
+    assert!(detail.get("subagentModel").is_none());
     assert!(detail.get("possiblyInterrupted").is_none());
 
     let other = h.service.for_session(&SessionId::new("ses_q"));

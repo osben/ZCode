@@ -1,7 +1,9 @@
 //! Fork: the model text of GetWorkflowRun (Node `core/src/tool/handlers/get-workflow-run-format.ts` and
-//! `get-workflow-run-summary.ts`; specs/fork-rust-workflow-engine.md, 9.42). The block order is Node's. The blocks that need
-//! the run's live roster, phases, log tail, holes, artifacts, node counts or pending-question ids are not in this build
-//! (divergences 433 to 436), so their absence is said in the text rather than shown as zero.
+//! `get-workflow-run-summary.ts`; specs/fork-rust-workflow-engine.md, 9.42). The block order is Node's. The text writes the
+//! pending questions (with their ids), the holes, the artifacts, the usage counts and the launch settings the detail
+//! carries, from the journal's projected state. What it does not write is the run's roster: the phases, subagents, health,
+//! log tail and actors (divergence 433), and with them the summary's step, phase and progress clauses. A count the detail
+//! does not carry is left out, not shown as zero.
 //!
 //! A pure function of the detail and of one clock reading, so the text is exact in tests.
 
@@ -71,11 +73,13 @@ fn holes_block(detail: &Value, now: i64) -> Option<String> {
     let rendered: Vec<String> = holes
         .iter()
         .map(|hole| {
+            // The journal does not carry a hole's type (divergence 437), so a hole may have none; then no type is written.
+            let type_part = text_of(hole, "type")
+                .map_or_else(String::new, |kind| format!(": {}", escape_xml(kind)));
             let head = format!(
-                "[{}] \"{}\": {}",
+                "[{}] \"{}\"{type_part}",
                 escape_xml(text_of(hole, "siteId").unwrap_or_default()),
                 escape_xml(text_of(hole, "name").unwrap_or_default()),
-                escape_xml(text_of(hole, "type").unwrap_or_default())
             );
             if text_of(hole, "state") == Some("waiting") {
                 let since = hole.get("since").and_then(Value::as_i64);
@@ -296,14 +300,32 @@ pub fn format_detail(detail: &Value, now: i64) -> String {
         escape_xml(text_of(detail, "label").unwrap_or_default())
     ));
     blocks.push(format!("<status>{}</status>", escape_xml(status)));
+    // Node's order: stop reason, resumed-from, the concurrency limit and subagent model an amendment inherits, superseded-by.
     for (key, tag) in [
         ("stopReason", "stop_reason"),
         ("resumedFrom", "resumed_from"),
-        ("supersededBy", "superseded_by"),
     ] {
         if let Some(value) = text_of(detail, key) {
             blocks.push(format!("<{tag}>{}</{tag}>", escape_xml(value)));
         }
+    }
+    if let Some(limit) = detail.get("maxConcurrency") {
+        blocks.push(format!(
+            "<max_concurrency>{}</max_concurrency>",
+            field_text(limit)
+        ));
+    }
+    if let Some(model) = text_of(detail, "subagentModel") {
+        blocks.push(format!(
+            "<subagent_model>{}</subagent_model>",
+            escape_xml(model)
+        ));
+    }
+    if let Some(value) = text_of(detail, "supersededBy") {
+        blocks.push(format!(
+            "<superseded_by>{}</superseded_by>",
+            escape_xml(value)
+        ));
     }
     let owned = detail.get("ownedByThisSession") == Some(&Value::Bool(true));
     blocks.push(format!(

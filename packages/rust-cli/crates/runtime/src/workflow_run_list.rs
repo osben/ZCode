@@ -313,15 +313,7 @@ fn merge_run_state(
         ),
         (
             "artifacts",
-            &[
-                "id",
-                "kind",
-                "title",
-                "contentType",
-                "sourcePath",
-                "itemCount",
-                "primary",
-            ][..],
+            &["id", "kind", "title", "contentType", "itemCount", "primary"][..],
         ),
     ] {
         let copied: Vec<Value> = state
@@ -333,19 +325,7 @@ fn merge_run_state(
             item[key] = Value::Array(copied);
         }
     }
-    // Node's `nodesObserved` is the persisted node rows; they are counted by status.
-    let nodes: Vec<&Value> = state
-        .get("nodes")
-        .and_then(Value::as_array)
-        .map(|list| list.iter().collect())
-        .unwrap_or_default();
-    let count = |status: &str| {
-        nodes
-            .iter()
-            .filter(|node| node.get("status").and_then(Value::as_str) == Some(status))
-            .count()
-    };
-    let (running, completed, failed) = (count("running"), count("completed"), count("failed"));
+    let (running, completed, failed) = node_counts(state.get("nodes"));
     item["usage"]["nodesObserved"] = json!(running + completed + failed);
     item["usage"]["nodesRunning"] = json!(running);
     item["usage"]["nodesCompleted"] = json!(completed);
@@ -358,6 +338,29 @@ fn merge_run_state(
     {
         item["maxConcurrency"] = json!(max_concurrency);
     }
+}
+
+/// Node's node counts from the reducer's node entries (9.42). The reducer writes `phase` (`queued`, `dispatched`,
+/// `executing`, `waiting`, `repairing`, `nudged`, `settled`) and, once settled, an `outcome` (`ok`, `failed`, `cancelled`),
+/// never a `status`. A queued node has no row yet, so it is not counted. A settled node is `completed` when its outcome is
+/// `ok` and `failed` otherwise (`cancelled` counts as failed, as `eviction.rs` counts it). Any other phase is `running`.
+/// Returns `(running, completed, failed)`.
+fn node_counts(nodes: Option<&Value>) -> (usize, usize, usize) {
+    let mut counts = (0, 0, 0);
+    for node in nodes.and_then(Value::as_array).into_iter().flatten() {
+        match node.get("phase").and_then(Value::as_str) {
+            None | Some("queued") => {}
+            Some("settled") => {
+                if node.get("outcome").and_then(Value::as_str) == Some("ok") {
+                    counts.1 += 1;
+                } else {
+                    counts.2 += 1;
+                }
+            }
+            Some(_) => counts.0 += 1,
+        }
+    }
+    counts
 }
 
 /// The keys of one entry that the detail carries (a reducer entry has more, which Node's detail does not show).
@@ -599,9 +602,10 @@ impl WorkflowRunService {
         }
     }
 
-    /// Node `getRunDetail` for one parent session (9.42). The row's fields are the list item's, plus the usage, the
-    /// result and the error. Node's roster, phases, log tail, holes, artifacts, actors and pending-question ids are not
-    /// read here (divergence 433).
+    /// Node `getRunDetail` for one parent session (9.42). The row's fields are the list item's, plus the usage, the result
+    /// and the error, all from one read of the journal (`RunStore::run_detail`). The projected state adds the pending
+    /// questions, holes, artifacts, node counts and launch settings (`merge_run_state`). The roster, phases, log tail and
+    /// actors are not read (divergence 433).
     pub(crate) fn run_detail_of(
         &self,
         parent: &str,
@@ -614,26 +618,26 @@ impl WorkflowRunService {
             .live_runs_of(parent)
             .into_iter()
             .find(|run| run.run_id == run_id);
-        let Some(row) = store.get_run(run_id).map_err(store_error)? else {
+        // The configured default concurrency is what the replay needs; without one the state is not read (no default is
+        // invented here).
+        let default = self
+            .inner
+            .setup
+            .lock_unpoisoned()
+            .progress
+            .as_ref()
+            .map(|progress| progress.default_concurrency);
+        let Some(detail) = store.run_detail(run_id, default).map_err(store_error)? else {
             // The gap form: this session's launched run whose row is not written yet (Node's registry gap copy).
             return Ok(live.map(|run| detail_with_usage(gap_item(&run.run_id, &run.meta))));
         };
-        let (time_created, time_updated) = store
-            .run_times(run_id)
-            .map_err(store_error)?
-            .ok_or_else(|| {
-                DynamicWorkflowRunError::new(format!("the run {run_id} has no row timestamps"))
-            })?;
         let live_here = live.is_some();
-        let spent = js_number(row.spent_tokens);
-        let failure = row.failure.clone();
-        let result = row.result.clone();
-        let max_concurrency = row.caps.max_concurrency;
-        let listed = RunListRow {
-            run: row,
-            time_created,
-            time_updated,
-        };
+        let mut listed = detail.run;
+        let spent = js_number(listed.run.spent_tokens);
+        let max_concurrency = listed.run.caps.max_concurrency;
+        // The result and the failure are taken out of the row, not cloned: the list item reads neither.
+        let result = listed.run.result.take();
+        let failure = listed.run.failure.take();
         let mut item = list_item(&listed, live_here, parent);
         item["usage"] = json!({ "spentTokens": spent });
         if let Some(result) = result {
@@ -652,17 +656,7 @@ impl WorkflowRunService {
             }
         }
         // The journal's projected state (9.42): pending questions, holes, node counts, the launch settings.
-        let default = self
-            .inner
-            .setup
-            .lock_unpoisoned()
-            .progress
-            .as_ref()
-            .map(|progress| progress.default_concurrency);
-        let state = store
-            .run_state(run_id, default.unwrap_or(1.0))
-            .map_err(store_error)?;
-        if let Some(state) = state {
+        if let Some(state) = detail.state {
             merge_run_state(&mut item, &state, max_concurrency, default);
         }
         Ok(Some(item))

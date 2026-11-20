@@ -147,16 +147,12 @@ impl RunStore for LazyRunStore {
         self.get()?.get_run(run_id)
     }
 
-    fn run_times(&self, run_id: &str) -> Result<Option<(i64, i64)>> {
-        self.get()?.run_times(run_id)
-    }
-
-    fn run_state(
+    fn run_detail(
         &self,
         run_id: &str,
-        default_concurrency: f64,
-    ) -> Result<Option<serde_json::Map<String, serde_json::Value>>> {
-        self.get()?.run_state(run_id, default_concurrency)
+        default_concurrency: Option<f64>,
+    ) -> Result<Option<rust_cli_workflow::run_store::RunDetail>> {
+        self.get()?.run_detail(run_id, default_concurrency)
     }
 }
 

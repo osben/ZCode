@@ -143,29 +143,52 @@ fn run_state_replays_the_open_escalations_of_the_journal() {
     )
     .unwrap();
     let store = store(conn);
-    let state = store
-        .run_state("run_1", 4.0)
+    let detail = store
+        .run_detail("run_1", Some(4.0))
         .unwrap()
-        .expect("the run replays");
+        .expect("the run is held");
+    let state = detail.state.expect("the run replays");
     let pending = state["pendingQuestions"].as_array().expect("pending list");
     assert_eq!(pending.len(), 1, "{state:?}");
     assert_eq!(pending[0]["qid"], "dwfq-run_1-0");
     assert_eq!(pending[0]["question"], "which branch?");
     assert_eq!(pending[0]["actorName"], "poet");
-    assert!(store.run_state("run_9", 4.0).unwrap().is_none());
+    assert!(store.run_detail("run_9", Some(4.0)).unwrap().is_none());
 }
 
-/// 9.42: the run row's own timestamps (the detail read needs them; the row read leaves them out).
+/// 9.42: the detail's row carries the row's own timestamps and result from the same snapshot. Without a configured default
+/// nothing is replayed (`state` is `None`), and a row with no event yet has no replayed state either.
 #[test]
-fn run_times_read_the_row_timestamps_and_none_for_an_unknown_run() {
+fn run_detail_carries_the_row_timestamps_and_replays_only_with_a_default_and_an_event() {
     let conn = database();
     add_session(&conn, "ses_p");
     dwf::create_run(&conn, &run("run_1", "ses_p", "/w", DwfStatus::Running), 7).unwrap();
+    dwf::create_run(&conn, &run("run_2", "ses_p", "/w", DwfStatus::Running), 8).unwrap();
+    dwf::append_event(
+        &conn,
+        "run_1",
+        &json!({"type": "escalation-raised", "qid": "q", "question": "?",
+                "actor": {"siteId": "agent#1", "ordinal": 1}, "askedAt": 9}),
+        9,
+    )
+    .unwrap();
     let store = store(conn);
     store.interrupt_run("run_1").unwrap();
 
-    assert_eq!(store.run_times("run_1").unwrap(), Some((7, 500)));
-    assert_eq!(store.run_times("run_9").unwrap(), None);
+    let detail = store.run_detail("run_1", None).unwrap().expect("held");
+    assert_eq!(detail.run.time_created, 7);
+    assert_eq!(detail.run.time_updated, 500, "the settlement's clock");
+    assert!(detail.state.is_none(), "no default, so no replay");
+
+    let replayed = store.run_detail("run_1", Some(4.0)).unwrap().expect("held");
+    assert!(replayed.state.is_some());
+
+    let no_event = store.run_detail("run_2", Some(4.0)).unwrap().expect("held");
+    assert_eq!(no_event.run.time_created, 8);
+    assert!(
+        no_event.state.is_none(),
+        "a row with no event has no replayed state"
+    );
 }
 
 #[test]

@@ -140,12 +140,50 @@ fn a_completed_run_names_its_primary_deliverable_and_lists_its_artifacts() {
 }
 
 #[test]
-fn an_ask_that_is_not_settled_and_a_hole_count_are_both_said_in_the_summary() {
+fn two_questions_and_two_waiting_holes_are_both_counted_in_the_summary() {
     let mut detail = running();
     detail["pendingQuestions"] = json!([
         {"qid": "q1", "question": "a?", "askedAt": 1_100_000},
         {"qid": "q2", "question": "b?", "askedAt": 1_100_000}
     ]);
+    detail["holes"] = json!([
+        {"siteId": "h1", "ordinal": 1, "name": "x", "state": "waiting", "since": 1_150_000},
+        {"siteId": "h2", "ordinal": 2, "name": "y", "state": "waiting", "since": 1_150_000}
+    ]);
     let text = format_detail(&detail, NOW);
-    assert!(text.contains("2 questions awaiting your answer."), "{text}");
+    assert!(
+        text.starts_with(
+            "<summary>Running for 3m 00s. 2 questions awaiting your answer. 2 holes awaiting your code.</summary>"
+        ),
+        "{text}"
+    );
+}
+
+#[test]
+fn the_identity_block_writes_the_concurrency_limit_and_the_subagent_model_after_resumed_from() {
+    let mut detail = running();
+    detail["resumedFrom"] = json!("wf_old");
+    detail["maxConcurrency"] = json!(2);
+    detail["subagentModel"] = json!("m-1");
+    let text = format_detail(&detail, NOW);
+    let resumed = text
+        .find("<resumed_from>wf_old</resumed_from>")
+        .expect("resumed_from");
+    let limit = text
+        .find("<max_concurrency>2</max_concurrency>")
+        .expect("max_concurrency");
+    let model = text
+        .find("<subagent_model>m-1</subagent_model>")
+        .expect("subagent_model");
+    assert!(resumed < limit && limit < model, "{text}");
+}
+
+#[test]
+fn a_hole_without_a_type_is_written_without_one() {
+    let mut detail = running();
+    detail["holes"] = json!([{
+        "siteId": "gate#1", "ordinal": 1, "name": "pick", "state": "waiting", "since": 1_150_000
+    }]);
+    let text = format_detail(&detail, NOW);
+    assert!(text.contains("[gate#1] \"pick\" — waiting 30s"), "{text}");
 }

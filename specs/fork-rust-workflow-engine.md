@@ -3612,6 +3612,50 @@ The hole notice (353) and the cold replay (363) are still open, as in 9.38.
 422. The read ports for a snippet are resolved once per eval, for its cwd, and reused for every child read (ocr on #598). Node does not
      cache them, but the cwd does not change within a snippet, so the result is the same.
 
+#### 9.42, review round (ocr on #600, 20 findings; all fixed, none rejected)
+
+- **Node counts (HIGH, two findings).** The reducer writes a node entry's `phase` (`queued`, `dispatched`, `executing`, `waiting`,
+  `repairing`, `nudged`, `settled`) and, once settled, an `outcome` (`ok`, `failed`, `cancelled`); it never writes `status`. The
+  counts now follow that: a queued node is not counted; a settled node is `completed` when its outcome is `ok` and `failed`
+  otherwise (`cancelled` counts as failed, as `eviction.rs` does); any other phase is `running`. `node_counts` in
+  `runtime/src/workflow_run_list.rs`. The runtime test's fixture is no longer a hand-written state: it is the real reducer's
+  replay of journal events (`replay_run_state` over `StoredEvent`s), so the counts (3 observed: 1 running, 1 completed,
+  1 failed) come from the same code the store uses. The old counting read `status`, which the reducer never writes, so every
+  real detail reported 0; that was the defect. The red for it was not captured separately: the fixture and the counting changed
+  in one edit.
+- **One snapshot (medium).** `RunStore::run_detail(run_id, default: Option<f64>)` replaces `get_run` + `run_times` + `run_state`.
+  The row, its timestamps and its events are read under one lock hold; the replay runs after the lock is released. `RunDetail`
+  holds the row (with timestamps) and the replayed state. No default concurrency means no replay (`state` is `None`); the
+  default is not invented (the earlier `1.0` is gone). A row with no event yet has `state` `None`. Both are pinned by
+  `run_detail_carries_the_row_timestamps_and_replays_only_with_a_default_and_an_event`.
+- **Output budget (medium).** `GetWorkflowRun` has Node's 400 000-byte budget (`DETAIL_MODEL_BYTES`); the list, resume and
+  resolve keep 24 000. Test: `get_has_the_detail_budget_and_the_list_keeps_its_own`. Divergence 438: Node persists an overflow as
+  an artifact; here the text is cut at the budget.
+- **Identity block (medium).** `<max_concurrency>` and `<subagent_model>` are written after `<resumed_from>`, in Node's order.
+  Test: `the_identity_block_writes_the_concurrency_limit_and_the_subagent_model_after_resumed_from`. The projection does not carry
+  `subagentModel` in the run entry (the reducer keeps it on the progress path), so the detail does not show it yet (divergence 436,
+  pinned by an assertion in the runtime test).
+- **Divergence 437 (hole type).** The journal does not carry a hole's type: the reducer reads `type` from the payload, which is the
+  event's own key, and the compiled script holds the type (cold replay says so). A hole is written without a type (test:
+  `a_hole_without_a_type_is_written_without_one`).
+- **Artifact `sourcePath`.** Dropped from the detail: the reducer never writes it.
+- **Lows.** Stale docs fixed: the module headers of `workflow_run_tools.rs` and `workflow_run_detail.rs`, the "three" and
+  "needsApproval for all three" wording (now four), the `run_list` detail doc (no longer says holes are unread), the `run_not_found`
+  and `iso_from_ms` doc comments (each on its own function). The shared not-found text is one function, `run_not_found`, used by
+  ResumeWorkflowRun's `not_found` arm and by GetWorkflowRun. `ResumeInput` is renamed `RunIdInput` and shared by both tools.
+  The clones of `result` and `failure` are gone (taken from the row). The `run_id` predicate compares `&str`, with no allocation.
+  The replay runs outside the lock. The summary test asserts both plural clauses (`2 questions awaiting your answer.` and
+  `2 holes awaiting your code.`). The tool test's clock comment says the real clock is read, so only clock-free clauses are asserted.
+
+**Tests this round.** `workflow`: `run_detail_carries_the_row_timestamps_and_replays_only_with_a_default_and_an_event`,
+`run_state_replays_the_open_escalations_of_the_journal` (now through `run_detail`). `runtime`: the two `get_run_detail` tests (the
+first on the real reducer). `tools`: `get_has_the_detail_budget_and_the_list_keeps_its_own`, the three identity and hole tests, the
+summary plural test, and the formatter goldens above.
+
+**Gates.** `cargo fmt --all --check` clean; `cargo clippy --workspace --all-targets --locked -- -D warnings` clean;
+`cargo test --workspace --locked --no-fail-fast --lib --bins` passes. One flake in `rust-cli-fs` (`exclusive::tests::only_one_holder_at_a_time`)
+failed once under the full run and passed alone and on the next run; it is not in this change.
+
 ## 10. Open questions
 
 Each has a recommendation. The user decides. Until decided, the recommendation is the default.

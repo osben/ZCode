@@ -463,7 +463,8 @@ async fn resolve_without_a_run_service_says_this_session_cannot_answer() {
 
 // --- GetWorkflowRun (9.42) -------------------------------------------------------------------------------------------
 
-/// A completed run as the detail read answers it, and the clock the formatter reads: 1 minute after it settled.
+/// A completed run as the detail read answers it. The tool reads the real clock, so only the clock-free clauses are
+/// asserted (e.g. "Completed in 1s."); the ages are pinned in the formatter's own tests, which pass a fixed clock.
 fn completed_detail() -> Value {
     json!({
         "runId": "wf_done",
@@ -639,6 +640,17 @@ async fn get_escapes_a_failure_message_and_names_its_code() {
 }
 
 // --- the set and the declarations -----------------------------------------------------------------------------------
+
+/// The detail's text can be long (a result is the run's whole return value), so GetWorkflowRun has Node's own budget of
+/// 400 000 bytes, and the list keeps its 24 000. A shared budget would cut a long result before the routing blocks.
+#[test]
+fn get_has_the_detail_budget_and_the_list_keeps_its_own() {
+    let (sessions, _) = sessions(FakePort::default());
+    let get = tool(tool_names::GET_WORKFLOW_RUN, sessions.clone());
+    let list = tool(tool_names::LIST_WORKFLOW_RUNS, sessions);
+    assert_eq!(get.result_budget_truncate_bytes(), Some(400_000));
+    assert_eq!(list.result_budget_truncate_bytes(), Some(24_000));
+}
 
 #[test]
 fn the_four_tools_come_in_node_order() {
