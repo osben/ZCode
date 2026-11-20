@@ -662,3 +662,67 @@ async fn a_second_turn_on_a_running_actor_is_refused_and_does_not_disturb_the_fi
     );
     assert_eq!(first_end, ActorTurnEnd::Stopped);
 }
+
+/// Review finding 4: releasing a child with no live entry is nothing to release.
+#[tokio::test]
+async fn releasing_an_actor_session_with_no_entry_is_ok() {
+    let h = harness(None);
+    let child = SessionId::new("sess_unknown");
+    h.agents
+        .release_actor_session(&child)
+        .expect("nothing to release");
+    assert!(h.agents.core.live.get(&actor_entry_id(&child)).is_none());
+}
+
+/// Review finding 4: a turn still running holds its session, so the release is refused and the entry stays.
+#[tokio::test]
+async fn a_running_actor_session_is_refused_and_keeps_its_entry() {
+    let h = harness(None);
+    let parent = SessionId::new("ses_parent");
+    let child = SessionId::new("sess_running");
+    let agent = actor_entry_id(&child);
+    let root = h.agents.core.live.root_of(&parent);
+    let started = h.agents.core.live.begin_actor_run(
+        &agent,
+        || LiveAgent::for_actor(run_for(&child, &parent), agent.clone(), root.clone()),
+        |_entry| {},
+        "exec_running".to_owned(),
+    );
+    assert!(matches!(started, crate::live::BeginActorRun::Started));
+    let error = h
+        .agents
+        .release_actor_session(&child)
+        .expect_err("a running session is not released");
+    assert!(error.contains("still running"), "{error}");
+    assert!(
+        h.agents
+            .core
+            .live
+            .get(&agent)
+            .is_some_and(|entry| entry.is_live()),
+        "the refused release leaves the running entry"
+    );
+}
+
+/// Review finding 4: a finished turn's entry is removed by the release, and a second release is a no-op.
+#[tokio::test]
+async fn a_finished_actor_session_is_released_once_and_releasing_again_is_ok() {
+    let h = harness(None);
+    let parent = SessionId::new("ses_parent");
+    let child = SessionId::new("sess_done");
+    create_child(h.store.as_ref(), &child, &parent).await;
+    h.agents
+        .run_actor_turn(run_for(&child, &parent), "do it", CancellationToken::new())
+        .await;
+    assert!(
+        h.agents.core.live.get(&actor_entry_id(&child)).is_some(),
+        "the finished turn leaves its entry"
+    );
+    h.agents
+        .release_actor_session(&child)
+        .expect("a finished session is released");
+    assert!(h.agents.core.live.get(&actor_entry_id(&child)).is_none());
+    h.agents
+        .release_actor_session(&child)
+        .expect("releasing again does nothing");
+}

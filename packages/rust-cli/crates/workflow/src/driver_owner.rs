@@ -21,6 +21,7 @@
 //!   engine has already settled the ask, so a returned error would make the caller retry a settled call. A reply call
 //!   returns an error only when the engine call itself failed, since then no reply exists; the pump error is logged in
 //!   that case too.
+use crate::actor_feed::{FeedEvent, NON_FAILURE_RETRY_REASONS};
 use crate::actor_mailbox::{ActorHandle, ActorRequest};
 use crate::actor_turns::TurnInput;
 use crate::driver_rules::{
@@ -35,7 +36,7 @@ use crate::engine::{
 use crate::engine_artifacts::ArtifactPublishRequest;
 use crate::error::{ErrorCode, WorkflowError};
 use crate::escalation::{AnswerOutcome, EscalateOutcome, EscalationBook, EscalationRequest};
-use crate::event::RunEvent;
+use crate::event::{LastTool, RunEvent};
 use crate::journal::JournalPort;
 use crate::model::{AskWait, StopReason, WaitCause};
 use crate::model::{ConcurrencyChange, Ref, StoredEvent};
@@ -57,10 +58,6 @@ use rust_cli_kernel_api::workflow_failure::{
 use serde_json::Value;
 use std::collections::{BTreeMap, HashMap, HashSet, VecDeque};
 use std::sync::{Arc, Mutex};
-
-/// Node `NON_FAILURE_RETRY_REASONS` (`workflow-driver-concurrency.ts`): retries that are not failures and do not arm the
-/// stall clock.
-const NON_FAILURE_RETRY_REASONS: &[&str] = &["reasoning_signature_repair", "auth_refresh"];
 
 /// Node `cancelAsk`'s rejection of a pending submit: the text the submit's caller reads.
 pub const CANCELLED_BY_ENGINE_MESSAGE: &str = "The ask was cancelled by the engine.";
@@ -160,6 +157,9 @@ struct ActiveAsk {
     /// (ocr review, finding 9).
     stats_base: (f64, f64),
     stats_last: (f64, f64),
+    /// The last tool the ask started, as the turn side fed it (Node `lastTool`). It is carried on the ask's next
+    /// `node-progress`, and the ask's own state, so a new ask starts with none.
+    last_tool: Option<LastTool>,
 }
 
 /// The owner's redrive wiring. A redrive job reads the mailbox out of `slot` when it fires, so a settled run can clear
@@ -533,6 +533,15 @@ impl<J: JournalPort, S: ActorSessions> ActorDriverOwner<J, S> {
         &mut self.engine.driver
     }
 
+    /// Test hook: the next pump reports `message` as its error, through the same channel a deferred driver error uses.
+    #[cfg(test)]
+    pub(crate) fn fail_next_pump_for_test(&mut self, message: &str) {
+        self.engine
+            .driver
+            .deferred_errors
+            .push(anyhow!(message.to_owned()));
+    }
+
     /// Node's launch registration (`setRunBound` with the run's cap, then `subscribe`): binds the run on the governor
     /// and hears its cap changes through the mailbox, as `concurrency-changed` events. A run that has already settled
     /// attaches nothing. The listener only posts to `handle`, since the governor calls it on its own thread.
@@ -655,6 +664,57 @@ impl<J: JournalPort, S: ActorSessions> ActorDriverOwner<J, S> {
     pub fn complete(&mut self, artifact: Value) -> Result<()> {
         let result = self.engine.complete(artifact);
         self.after_engine(result)
+    }
+
+    /// The run's stop, as the residency ledger asks it (`LiveRun::stop_interrupted`, W6b part 6): the run settles as
+    /// `stopped(interrupted)`, and the settlement releases the guard, the governor link and the clocks. Served on the
+    /// owner's thread by the mailbox.
+    pub fn stop_interrupted(&mut self) -> Result<()> {
+        // The stop runs whatever the pump reports. A run that does not settle holds its guard, so every later close of
+        // its parent waits out the full bound. The pump's error is still returned, after the run has settled.
+        let pumped = self.pump();
+        let result = self.engine.stop(StopReason::Interrupted, None, None);
+        let stopped = self.after_engine(result);
+        pumped?;
+        stopped
+    }
+
+    /// Routes one observation of an actor's ask to its engine call (W7-3). The ask is found by its session. An
+    /// observation for a session with no ask in flight changes nothing, as the engine ignores late observations.
+    pub fn feed(&mut self, session: &str, event: FeedEvent) -> Result<()> {
+        self.pump()?;
+        match event {
+            FeedEvent::Waiting(wait) => {
+                let Some(instance) = self.active.get(session).map(|ask| ask.instance.clone())
+                else {
+                    return Ok(());
+                };
+                let result = self.engine.ask_waiting(&instance, wait);
+                self.after_engine(result)
+            }
+            FeedEvent::Executing => {
+                let Some(instance) = self.active.get(session).map(|ask| ask.instance.clone())
+                else {
+                    return Ok(());
+                };
+                let result = self.engine.ask_executing(&instance);
+                self.after_engine(result)
+            }
+            FeedEvent::RetryScheduled(reason) => {
+                self.model_retry_scheduled(&reason);
+                Ok(())
+            }
+            FeedEvent::RequestCompleted => {
+                self.model_request_completed();
+                Ok(())
+            }
+            FeedEvent::LastTool(tool) => {
+                if let Some(ask) = self.active.get_mut(session) {
+                    ask.last_tool = Some(tool);
+                }
+                Ok(())
+            }
+        }
     }
 
     pub fn take_outcomes(&mut self) -> Vec<AskOutcome> {
@@ -1102,6 +1162,7 @@ impl<J: JournalPort, S: ActorSessions> ActorDriverOwner<J, S> {
         let key = instance.key();
         // The ask's resolved turns count across its redrives (Node's `turnsResolved` is per ask).
         let mut turn = None;
+        let mut last_tool = None;
         let stats = match self
             .active
             .values_mut()
@@ -1110,6 +1171,7 @@ impl<J: JournalPort, S: ActorSessions> ActorDriverOwner<J, S> {
             Some(ask) => {
                 ask.turns += 1;
                 turn = Some(ask.turns);
+                last_tool = ask.last_tool.clone();
                 let (base_tools, base_world) = ask.stats_base;
                 let report = crate::engine::AskStats {
                     tool_calls: base_tools + stats.tool_calls,
@@ -1131,7 +1193,7 @@ impl<J: JournalPort, S: ActorSessions> ActorDriverOwner<J, S> {
                 AskProgress {
                     turn,
                     tool_calls: stats.tool_calls,
-                    last_tool: None,
+                    last_tool,
                 },
             );
             self.after_engine(progress)?;
@@ -1372,6 +1434,7 @@ impl<J: JournalPort, S: ActorSessions> ActorDriverOwner<J, S> {
                         turns: 0,
                         stats_base: (0.0, 0.0),
                         stats_last: (0.0, 0.0),
+                        last_tool: None,
                     },
                 );
                 self.engine

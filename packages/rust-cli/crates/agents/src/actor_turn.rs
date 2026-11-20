@@ -262,6 +262,27 @@ impl crate::Agents {
             tokens: (stats.usage_requests > 0).then_some(stats.usage_tokens),
         })
     }
+
+    /// Releases a workflow actor's child session once no turn runs on it (the agents part of Node's
+    /// `closeBrowserSession`, W7-3): its live entry is removed. A session with a turn still running is refused, since the
+    /// turn side holds its close until that turn lands, so a refusal here is a wiring error. A session with no entry is
+    /// already released, and releasing it again does nothing.
+    pub fn release_actor_session(&self, child: &SessionId) -> Result<(), String> {
+        let agent = actor_agent_id(child);
+        self.core.live.with(|agents| {
+            match agents.get(&agent).map(super::live::LiveAgent::is_live) {
+                None => Ok(()),
+                Some(true) => Err(format!(
+                    "the actor's session {} is still running",
+                    child.as_str()
+                )),
+                Some(false) => {
+                    agents.remove(&agent);
+                    Ok(())
+                }
+            }
+        })
+    }
 }
 
 /// The asks channel of an actor. It exists only when the parent offers background prompts and its interactions have a

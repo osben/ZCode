@@ -30,6 +30,7 @@ mod projects;
 mod sampling;
 mod table;
 mod usage;
+pub mod workflow_assembly;
 mod workflow_gate;
 mod workspace_sessions;
 

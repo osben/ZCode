@@ -79,6 +79,7 @@ rust-cli-tui.workspace = true
 rust-cli-tui-ports.workspace = true
 # `/usage` 端口与 `@` 预览答的数据类型（kit 的 `widgets::usage`、`at_panel::data`），启动前两屏的 panic 记录。
 rust-cli-tui-kit.workspace = true
+rust-cli-workflow.workspace = true
 # 内嵌的 ripgrep：zcode 以 `rg` 的名字启动时直接跑它（docs/specs/rust-cli/embedded-search.md §3、§5，F53）。
 rust-cli-vendor-rg = { path = "../../vendor/rg" }
 # 内嵌的 ugrep：zcode 以 `ugrep` 的名字启动时直接跑它（embedded-search.md §3、§7，F53）。

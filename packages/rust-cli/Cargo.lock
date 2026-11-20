@@ -1907,6 +1907,7 @@ dependencies = [
  "rust-cli-vendor-bfs",
  "rust-cli-vendor-rg",
  "rust-cli-vendor-ugrep",
+ "rust-cli-workflow",
  "rustls",
  "serde",
  "serde_json",
