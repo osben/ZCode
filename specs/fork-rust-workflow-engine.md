@@ -3919,9 +3919,10 @@ merged). The step clause of 431 is written. Holes stay as 9.42 has them (435, 43
      future-dated event.
 556. Summary step clause. Written only when the read carries the node counts (the projected state). Without them the clause is
      omitted rather than written as zeros (432 of 9.42 applies to the usage line too).
-557. `scriptPath` is the `run-launched` event's path, described relative to the workspace with `describe_script_path`
-     (CreateWorkflow's rule for a file inside the working directory). Node's `describeWorkflowScriptPath` was not compared line
-     by line.
+557. `scriptPath` is the last `hole-filled` event's path when a fill minted one, else the `run-launched` path (Node
+     `readRunScriptPath`, review round of PR 604). It is described relative to the workspace with `describe_script_path`
+     (CreateWorkflow's rule for a file inside the working directory). Node's `describeWorkflowScriptPath` was not compared
+     line by line.
 558. `modelBindings` come from the `run-launched` event of the journal for every run. Node reads the owner's registry entry for
      a live run. The values are the same once the launch event is written; the gap form (554) has none.
 559. Holes. The hole block renders what the journal has (no hole `type`, 437 of 9.42). Its instruction names `FillWorkflowHole`
@@ -3960,6 +3961,15 @@ Lib tests: `rust-cli-workflow` 452, `rust-cli-runtime` 338, `rust-cli-tools` 650
 **Not done in this row.** FillWorkflowHole and the hole fill (559). The Node handler and summary test files (562). The
 artifact line (560). The owner's live parking table (550, 552). The gap-form roster (554). Everything else in the roster family
 and the summary is built.
+
+564. Read cost (review round of PR 604, not fixed here). Node's cold `getRunDetail` bounds its reads: report-item payloads in
+     the event read are capped at `maxReports` and the roster's node read skips `result_json`. Here `list_events` decodes every
+     payload and `list_nodes` reads each non-report row's `result_json` and `input_json`. The events are now read on every
+     detail, including when no default concurrency is configured (before this row they were skipped there). A long, report-heavy
+     run therefore costs more per GetWorkflowRun. The fix is node-store read variants (a report-item cap on the event read, a node
+     read without results); both are shared-file edits, so they are the follow-up.
+565. Subagent and actor scans (review round). The asks are grouped once by actor and the parked and born maps are first-wins
+     lookups, so the roster is linear in actors plus nodes. The index entries are updated in place. No behaviour change.
 
 ## 10. Open questions
 

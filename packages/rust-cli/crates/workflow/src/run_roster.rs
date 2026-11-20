@@ -85,7 +85,14 @@ pub fn build_roster(facts: &RosterFacts<'_>) -> Map<String, Value> {
     {
         out.insert("modelBindings".into(), Value::Object(bindings.clone()));
     }
-    if let Some(path) = launch.and_then(|event| str_of(event, "scriptPath")) {
+    // Node readRunScriptPath: the last hole-filled path (a fill can mint one) wins over the run-launched record.
+    let minted = facts
+        .events
+        .iter()
+        .filter(|stored| event_type(&stored.event) == Some("hole-filled"))
+        .filter_map(|stored| str_of(&stored.event, "scriptPath"))
+        .next_back();
+    if let Some(path) = minted.or_else(|| launch.and_then(|event| str_of(event, "scriptPath"))) {
         out.insert("scriptPath".into(), Value::String(path.to_owned()));
     }
     out
@@ -181,12 +188,12 @@ fn index_events(events: &[StoredEvent]) -> Index {
             continue;
         };
         let key = node_key(site, ordinal);
-        let mut trace = index.nodes.get(&key).cloned().unwrap_or_default();
+        let trace = index.nodes.entry(key.clone()).or_default();
         if PROGRESS_EVENTS.contains(&kind) {
             trace.last_activity_at = later(trace.last_activity_at, at);
         }
         if LIFECYCLE_EVENTS.contains(&kind) {
-            track_lifecycle(&mut trace, kind, at);
+            track_lifecycle(trace, kind, at);
         }
         if kind == "node-waiting" {
             // A backoff ladder emits several waits: the start of the wait is kept, the reason and retry interval are the latest.
@@ -208,7 +215,6 @@ fn index_events(events: &[StoredEvent]) -> Index {
                 cached: event.get("cached") == Some(&Value::Bool(true)),
             });
         }
-        index.nodes.insert(key, trace);
     }
     index.stalled_since = if stalled_pending { stalled_at } else { None };
     index
@@ -366,49 +372,52 @@ fn subagent_views(facts: &RosterFacts<'_>, index: &Index) -> Vec<Value> {
         .iter()
         .map(|node| (reduced_key(node), node))
         .collect();
-    // Parked questions, keyed by the asker. Without the projected state the parking is unknown, so no one is parked.
-    let parked: Vec<(String, String)> = state
+    // Parked questions and born phases, keyed by the actor; the first entry wins, as a linear search would find it.
+    let parked: HashMap<String, String> = state
         .map(|state| {
-            array_of(state.get("pendingQuestions"))
-                .iter()
-                .filter_map(|question| {
-                    let actor = node_key(
-                        str_of(question, "actorSiteId")?,
-                        int_of(question.get("actorOrdinal"))?,
-                    );
-                    Some((actor, str_of(question, "qid")?.to_owned()))
-                })
-                .collect()
+            first_wins(
+                array_of(state.get("pendingQuestions"))
+                    .iter()
+                    .filter_map(|question| {
+                        let actor = node_key(
+                            str_of(question, "actorSiteId")?,
+                            int_of(question.get("actorOrdinal"))?,
+                        );
+                        Some((actor, str_of(question, "qid")?.to_owned()))
+                    }),
+            )
         })
         .unwrap_or_default();
-    let born: Vec<(String, Option<String>)> = state
+    let born: HashMap<String, Option<String>> = state
         .map(|state| {
-            array_of(state.get("actors"))
-                .iter()
-                .filter_map(|actor| {
-                    Some((
-                        node_key(str_of(actor, "siteId")?, int_of(actor.get("ordinal"))?),
-                        str_of(actor, "phaseName").map(str::to_owned),
-                    ))
-                })
-                .collect()
+            first_wins(array_of(state.get("actors")).iter().filter_map(|actor| {
+                Some((
+                    node_key(str_of(actor, "siteId")?, int_of(actor.get("ordinal"))?),
+                    str_of(actor, "phaseName").map(str::to_owned),
+                ))
+            }))
         })
         .unwrap_or_default();
+    // The asks of each subagent, grouped once and in sequence order (a stable sort keeps the journal order of equal sequences).
+    let mut asks_by_actor: HashMap<String, Vec<&NodeRecord>> = HashMap::new();
+    for node in facts.nodes {
+        if let (Some(site), Some(ordinal)) = (node.actor_site_id.as_deref(), node.actor_ordinal) {
+            asks_by_actor
+                .entry(node_key(site, ordinal))
+                .or_default()
+                .push(node);
+        }
+    }
+    for asks in asks_by_actor.values_mut() {
+        asks.sort_by_key(|node| node.actor_seq.unwrap_or(0));
+    }
 
     facts
         .actors
         .iter()
         .map(|actor| {
             let key = node_key(&actor.site_id, actor.ordinal);
-            let mut asks: Vec<&NodeRecord> = facts
-                .nodes
-                .iter()
-                .filter(|node| {
-                    node.actor_site_id.as_deref() == Some(actor.site_id.as_str())
-                        && node.actor_ordinal == Some(actor.ordinal)
-                })
-                .collect();
-            asks.sort_by_key(|node| node.actor_seq.unwrap_or(0));
+            let asks: Vec<&NodeRecord> = asks_by_actor.get(&key).cloned().unwrap_or_default();
             let settled: Vec<&NodeRecord> = asks
                 .iter()
                 .copied()
@@ -420,10 +429,7 @@ fn subagent_views(facts: &RosterFacts<'_>, index: &Index) -> Vec<Value> {
                 .rfind(|node| node.status == NodeStatus::Running);
             let trace =
                 running_ask.and_then(|ask| index.nodes.get(&node_key(&ask.site_id, ask.ordinal)));
-            let parked_on = parked
-                .iter()
-                .find(|(asker, _)| *asker == key)
-                .map(|(_, qid)| qid.clone());
+            let parked_on = parked.get(&key).cloned();
             let last_failed = settled
                 .last()
                 .is_some_and(|ask| ask.status == NodeStatus::Failed);
@@ -452,11 +458,7 @@ fn subagent_views(facts: &RosterFacts<'_>, index: &Index) -> Vec<Value> {
                         .and_then(|node| str_of(node, "phaseName"))
                 })
                 .map(str::to_owned)
-                .or_else(|| {
-                    born.iter()
-                        .find(|(asker, _)| *asker == key)
-                        .and_then(|(_, phase)| phase.clone())
-                });
+                .or_else(|| born.get(&key).cloned().flatten());
             if let Some(phase) = phase {
                 view.insert("phaseName".into(), json!(phase));
             }
@@ -715,6 +717,15 @@ fn actors(rows: &[ActorRecord]) -> Vec<Value> {
 
 fn node_key(site: &str, ordinal: i64) -> String {
     format!("{site}@{ordinal}")
+}
+
+/// The map of the first value for each key: a linear search over the pairs would have found that one.
+fn first_wins<V>(pairs: impl Iterator<Item = (String, V)>) -> HashMap<String, V> {
+    let mut map = HashMap::new();
+    for (key, value) in pairs {
+        map.entry(key).or_insert(value);
+    }
+    map
 }
 
 /// The key of a reduced node entry (its `siteId` and `ordinal`).

@@ -404,3 +404,40 @@ fn a_log_message_is_bounded_to_2048_utf16_units() {
     let out = roster(&facts(Some(&s), &events, &[], &[], false));
     assert_eq!(out["logTail"][0]["message"].as_str().unwrap().len(), 2_048);
 }
+
+#[test]
+fn a_hole_fill_minted_script_path_wins_over_the_launch_record() {
+    // Node readRunScriptPath: the last hole-filled scriptPath wins over the run-launched one.
+    let s = state(json!({ "phaseNames": [], "phases": [] }));
+    let events = [
+        stored(
+            1,
+            10,
+            json!({ "type": "run-launched", "scriptPath": "/w/launch.js" }),
+        ),
+        stored(
+            2,
+            20,
+            json!({ "type": "hole-filled", "scriptPath": "/w/minted.js" }),
+        ),
+        stored(
+            3,
+            30,
+            json!({ "type": "hole-filled", "scriptPath": "/w/minted-2.js" }),
+        ),
+    ];
+    let out = roster(&facts(Some(&s), &events, &[], &[], false));
+    assert_eq!(out["scriptPath"], "/w/minted-2.js");
+}
+
+#[test]
+fn a_log_message_of_astral_characters_is_bounded_by_utf16_units_not_characters() {
+    // 1,100 emoji are 2,200 UTF-16 units: the bound keeps 1,024 whole characters (2,048 units), never a split pair.
+    let s = state(json!({ "phaseNames": [], "phases": [] }));
+    let long = "\u{1F600}".repeat(1_100);
+    let events = [stored(1, 10, json!({ "type": "log", "message": long }))];
+    let out = roster(&facts(Some(&s), &events, &[], &[], false));
+    let message = out["logTail"][0]["message"].as_str().unwrap();
+    assert_eq!(message.encode_utf16().count(), 2_048);
+    assert_eq!(message.chars().count(), 1_024);
+}
