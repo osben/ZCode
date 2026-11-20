@@ -17,27 +17,9 @@ use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 
 pub use super::workflow_lines::MAX_LINE_BYTES;
 use super::workflow_lines::{Line, NdjsonLines};
-use super::workflow_wire::{
-    ChildEvent, ChildMessage, ChildRequest, Completion, CreateActor, WireError, response_line,
-};
-
-/// The engine side of Boundary A. Methods are synchronous except the request's future, which runs while the host
-/// keeps reading lines, so asks in flight do not hold up the child's next message.
-pub trait ChildHandler: Send + Sync {
-    /// Creates the actor in the engine and returns its engine id. An `Err` refuses the actor and carries the reason,
-    /// which ends the run.
-    fn create_actor(&self, actor: &CreateActor) -> Result<String, String>;
-
-    /// Starts one request. `actor_id` is the engine id of the request's actor, resolved by the host.
-    fn request(
-        &self,
-        request: ChildRequest,
-        actor_id: Option<String>,
-    ) -> BoxFuture<'static, Result<Value, WireError>>;
-
-    /// Handles one event, in the order the child wrote it.
-    fn event(&self, event: ChildEvent);
-}
+// The handler and the wire shapes live in kernel-api since W7-5 (specs/fork-rust-workflow-engine.md, 9.18 decision 1).
+pub use rust_cli_kernel_api::workflow_child::ChildHandler;
+use super::workflow_wire::{ChildMessage, Completion, WireError, response_line};
 
 /// The child's three stdio ends, as the launcher hands them over.
 pub struct ChildIo<R, W, E> {
