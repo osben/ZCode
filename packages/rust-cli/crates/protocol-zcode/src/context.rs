@@ -54,6 +54,10 @@ pub struct Context {
     /// kernel-api; set once by the composition root beside the launcher. Nothing calls it yet (gate off).
     workflow_runner:
         std::sync::OnceLock<Arc<dyn rust_cli_kernel_api::workflow_child::WorkflowChildRunner>>,
+    /// Fork (specs/fork-rust-workflow-engine.md, 9.29 W7-5a-4): the run service's per-session run ports, set once by the
+    /// composition root. Without it the run reads fall through to the helper or to the empty answer.
+    dynamic_workflow_runs:
+        std::sync::OnceLock<Arc<dyn rust_cli_kernel_api::workflow_run::DynamicWorkflowRunSessions>>,
     /// Fork (specs/fork-rust-workflow-engine.md, 9.30): the run service's lifecycle, set once by the composition root
     /// when it builds the service; the shutdown closes the live runs through it.
     workflow_runs: std::sync::OnceLock<Arc<dyn rust_cli_kernel_api::workflow_run::WorkflowRunHost>>,
@@ -99,6 +103,22 @@ impl Context {
     /// Fork: the sandbox child launcher, when the helper command is configured.
     pub fn workflow_child(&self) -> Option<&Arc<dyn crate::fork::workflow_child::ChildLauncher>> {
         self.workflow_child.get()
+    }
+
+    /// Fork (9.29 W7-5a-4): the run service's per-session run ports (set once; without it the run reads are not
+    /// answered here).
+    pub fn set_dynamic_workflow_runs(
+        &self,
+        sessions: Arc<dyn rust_cli_kernel_api::workflow_run::DynamicWorkflowRunSessions>,
+    ) {
+        let _ = self.dynamic_workflow_runs.set(sessions);
+    }
+
+    /// Fork (9.29 W7-5a-4): the run service's per-session run ports, when the composition installed them.
+    pub fn dynamic_workflow_runs(
+        &self,
+    ) -> Option<&Arc<dyn rust_cli_kernel_api::workflow_run::DynamicWorkflowRunSessions>> {
+        self.dynamic_workflow_runs.get()
     }
 
     /// Fork (W7-5a-1): the workflow child runner port (set once; without it no run can start).
@@ -283,6 +303,7 @@ impl Context {
             node_helper: std::sync::OnceLock::new(),
             workflow_child: std::sync::OnceLock::new(),
             workflow_runner: std::sync::OnceLock::new(),
+            dynamic_workflow_runs: std::sync::OnceLock::new(),
             workflow_runs: std::sync::OnceLock::new(),
             model_port: std::sync::OnceLock::new(),
             mcp_processes: std::sync::OnceLock::new(),

@@ -46,6 +46,7 @@ pub(crate) mod session_tree;
 mod skills;
 mod subagents;
 mod usage;
+pub(crate) mod workflow_runs;
 mod workspace_model;
 pub(crate) use workspace_model::Operations as WorkspaceOperations;
 pub(crate) mod workspace_trust;

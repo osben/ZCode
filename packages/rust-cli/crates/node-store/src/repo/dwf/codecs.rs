@@ -17,7 +17,7 @@ use serde_json::{Map, Value};
 
 use super::{RunStatus, Settlement, StopReason};
 
-const INTERRUPTED_CODE: &str = "Interrupted";
+pub const INTERRUPTED_CODE: &str = "Interrupted";
 
 /// The physical vocabulary of `dwf_run.status` (the CHECK set in migration 0019).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

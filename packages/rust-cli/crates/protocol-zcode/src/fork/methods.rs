@@ -18,6 +18,16 @@ pub(crate) async fn dispatch(
     if let Some(result) = super::mcp_ui_rust::route(server, method, &params).await {
         return Some(result.map(Reply::new));
     }
+    // Fork (specs/fork-rust-workflow-engine.md, 9.29 W7-5a-4): the Rust run service answers the session's run list
+    // once the composition installed it. It comes before the helper, which would otherwise forward the read.
+    if method == "v4/conversation/workflowRuns" && server.context.dynamic_workflow_runs().is_some()
+    {
+        return Some(
+            super::workflow_runs::list(server, &params)
+                .await
+                .map(Reply::new),
+        );
+    }
     // Fork: the Node helper answers the forwarded families when the Host configured one. `None` falls through, so
     // an unadvertised method keeps its answer (`-32601`, or `{"runs": []}` for the run list).
     if let Some(helper) = server.context.node_helper() {

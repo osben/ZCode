@@ -6,7 +6,7 @@
 
 use std::collections::{BTreeSet, HashMap, HashSet};
 use std::fmt;
-use std::sync::{Arc, Mutex, Weak};
+use std::sync::{Arc, Mutex, OnceLock, Weak};
 use std::thread::JoinHandle;
 
 use anyhow::Result;
@@ -30,10 +30,18 @@ use rust_cli_workflow::run_concurrency::RunConcurrency;
 use rust_cli_workflow::run_progress::{
     LaunchProgress, RunProgress, SharedProjection, shared_projection,
 };
+use rust_cli_workflow::run_store::RunStore;
 use serde_json::{Map, Value};
 
 use crate::workflow_assembly::{RunRegistrations, attach_run};
 use crate::workflow_quota::{QuotaRunReads, QuotaRunResumer, SessionQuotaPort};
+
+#[path = "workflow_run_list.rs"]
+mod list;
+#[path = "workflow_run_orphans.rs"]
+mod orphans;
+
+pub use orphans::ReconcileReport;
 
 /// One run's owner as the service holds it: attached at launch, then served on its own thread until it settles.
 pub trait HostedOwner: Send {
@@ -165,6 +173,11 @@ struct Inner {
     runner: Arc<dyn WorkflowChildRunner>,
     owners: OwnerFactory,
     state: Mutex<State>,
+    /// The journal's host reads and orphan write (W7-5a-4). Set once by the composition; without it the reads are
+    /// unsupported or empty, as Node's are without an enumeration query, and the orphan sweep is skipped.
+    store: OnceLock<Arc<dyn RunStore>>,
+    /// The production clock, for a launch's start time (W7-5a-4). Set once by the composition.
+    clock: OnceLock<Arc<dyn rust_cli_kernel_api::clock::Clock>>,
     /// The optional hooks the composition sets (9.31). Read once per launch, never held across a call.
     setup: Mutex<Setup>,
     /// Per parent session: its progress projection and its quota module (9.31). Written only under `state`, after the
@@ -218,6 +231,8 @@ struct RunEntry {
     handle: ActorHandle,
     stop: ChildStop,
     serve: Option<JoinHandle<Vec<(String, String)>>>,
+    /// What the run's reads need before its row exists (W7-5a-4).
+    meta: Arc<list::RunMeta>,
 }
 
 /// Frees a run id's reservation when its launch ends, however it ends.
@@ -438,12 +453,41 @@ impl WorkflowRunService {
                 runner,
                 owners,
                 state: Mutex::new(State::default()),
+                store: OnceLock::new(),
+                clock: OnceLock::new(),
                 setup: Mutex::new(Setup::default()),
                 sessions: Mutex::new(HashMap::new()),
                 #[cfg(test)]
                 before_quota_module: Mutex::new(None),
             }),
         }
+    }
+
+    /// Sets the journal's run store (set once, by the composition root that owns the session database).
+    /// Returns `false` (and keeps the first store) when one is already set: a second composition is a wiring fault,
+    /// logged here rather than swallowed.
+    pub fn set_store(&self, store: Arc<dyn RunStore>) -> bool {
+        let first = self.inner.store.set(store).is_ok();
+        if !first {
+            tracing::warn!(
+                event = "workflow.run.store_already_set",
+                "the run store was set twice; the first one stays"
+            );
+        }
+        first
+    }
+
+    /// Sets the clock a launch reads its start time from (set once, by the composition root).
+    /// Returns `false` (and keeps the first clock) when one is already set, logged as `set_store` is.
+    pub fn set_clock(&self, clock: Arc<dyn rust_cli_kernel_api::clock::Clock>) -> bool {
+        let first = self.inner.clock.set(clock).is_ok();
+        if !first {
+            tracing::warn!(
+                event = "workflow.run.clock_already_set",
+                "the run clock was set twice; the first one stays"
+            );
+        }
+        first
     }
 
     /// Test seam: the next quota-module lookup runs `hook` first (see `Inner::quota_module`).
@@ -528,6 +572,13 @@ impl WorkflowRunService {
             inner: inner.clone(),
             run_id: run_id.clone(),
         };
+        // The start time is the injected clock's (Node's `startedAt`). Without a clock it is 0, which only the
+        // synthesized gap rows of a list would show.
+        let started_at_ms = inner
+            .clock
+            .get()
+            .map_or(0, |clock| i64::try_from(clock.now_ms()).unwrap_or(i64::MAX));
+        let meta = Arc::new(list::RunMeta::at_launch(&input, &config, started_at_ms));
 
         // The compile and the child's start come first, as Node's launch does: a rejected script creates no engine and
         // no run row. The mailbox is held here, so the child's early requests wait in it until the owner serves.
@@ -648,6 +699,7 @@ impl WorkflowRunService {
                 handle: handle.clone(),
                 stop: stop.clone(),
                 serve: Some(serve),
+                meta,
             },
         );
         drop(state);
@@ -1004,3 +1056,7 @@ async fn join_owner(serve: JoinHandle<Vec<(String, String)>>) -> Vec<(String, St
 #[cfg(test)]
 #[path = "workflow_run_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "workflow_run_store_tests.rs"]
+mod store_tests;
