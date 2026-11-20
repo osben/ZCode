@@ -11,7 +11,11 @@ import {
   LIST_WORKFLOW_RUNS_TOOL_NAME,
 } from "@zcode/contracts";
 import { builtInTools } from "@zcode/core";
-import { analyzeWorkflowScript } from "@zcode/dynamic-workflow";
+import {
+  analyzeWorkflowScript,
+  collectSites,
+  createWorkflowProgram,
+} from "@zcode/dynamic-workflow";
 import {
   FORK_RUST_HELPER_METHODS,
   FORK_RUST_HELPER_PROTOCOL_VERSION,
@@ -474,7 +478,7 @@ describe("fork: helper/workflow/fillPrepare (W7-12)", () => {
     const reply = await helper.request("helper/workflow/fillPrepare", {
       scriptText: HOLE_SCRIPT,
       runId: "dwfrun-w712-1",
-      holeId: "hole#1",
+      holeId: collectSites(createWorkflowProgram(HOLE_SCRIPT)).holes[0]?.id,
       body: "return 'approved';",
     });
     expect(reply.error).toBeUndefined();

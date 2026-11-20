@@ -11,7 +11,8 @@ use rust_cli_kernel_api::ids::{SessionId, WorkflowRunId};
 use rust_cli_kernel_api::permission::PermissionMode;
 use rust_cli_kernel_api::testing::FakeChildRunner;
 use rust_cli_kernel_api::workflow_child::{
-    ChildHandler, LaunchError, LaunchInput, RunningChild, WorkflowChildRunner,
+    ChildHandler, FillPrepareInput, FillPrepareOutcome, LaunchError, LaunchInput, RunningChild,
+    WorkflowChildRunner,
 };
 use rust_cli_kernel_api::workflow_run::{
     AmendRefusalReason, AmendRequest, AmendResult, DynamicWorkflowRunSessions, FillHoleOutcome,
@@ -496,6 +497,99 @@ async fn a_fill_of_another_sessions_run_is_refused_as_run_not_found() {
 }
 
 /// W7-12 (9.45): a stopped run is not in flight, so its hole is not waiting; the text says to resume it first (Node's hint).
+/// A child runner whose fills the helper refuses as `compile_failed`, with one diagnostic (9.45).
+struct RefusingFill {
+    fake: Arc<FakeChildRunner>,
+}
+
+#[async_trait]
+impl WorkflowChildRunner for RefusingFill {
+    async fn start(
+        &self,
+        input: LaunchInput,
+        handler: Arc<dyn ChildHandler>,
+    ) -> Result<RunningChild, LaunchError> {
+        let mut running = self.fake.start(input, handler).await?;
+        running.compiled = compiled_facts();
+        Ok(running)
+    }
+
+    async fn prepare_fill(
+        &self,
+        _input: FillPrepareInput,
+    ) -> Result<FillPrepareOutcome, LaunchError> {
+        Ok(FillPrepareOutcome::Refused {
+            reason: "compile_failed".to_owned(),
+            message: "The effective script does not compile (1 diagnostic); nothing was spliced and the hole is still waiting."
+                .to_owned(),
+            diagnostics: Some(json!([{"line": 3, "column": 5, "message": "bad", "code": 9001}])),
+        })
+    }
+}
+
+/// A fixture whose child runner refuses every fill as `compile_failed` (the rest as `fixture`).
+fn fixture_refusing_fills(seed: impl FnOnce(&rusqlite::Connection)) -> Fixture {
+    let dir = tempfile::tempdir().expect("temp dir");
+    let path = dir.path().join("session.db");
+    let conn = open(&path);
+    add_session(&conn, PARENT);
+    add_session(&conn, OTHER);
+    seed(&conn);
+    let store = Arc::new(SqliteRunStore::new(conn, || 500));
+    let fake = Arc::new(FakeChildRunner::new());
+    let runner: Arc<dyn WorkflowChildRunner> = Arc::new(RefusingFill { fake: fake.clone() });
+    let factory = production_owner_factory(
+        OwnerStores {
+            database: path.clone(),
+            directory: "project".to_owned(),
+            version: "test".to_owned(),
+            clock: || 1,
+        },
+        Arc::new(UnwiredTurns),
+        Arc::new(UnwiredRelease),
+    );
+    let service = WorkflowRunService::new(
+        Arc::new(SessionResidency::new()),
+        Arc::new(NoConcurrency),
+        runner,
+        factory,
+    );
+    service.set_store(store);
+    service.configure_concurrency(DEFAULT as f64);
+    service.configure_bindings(Arc::new(Mode));
+    Fixture {
+        _dir: dir,
+        path,
+        service,
+        fake,
+    }
+}
+
+/// W7-12 (9.45): a fill the helper refuses as `compile_failed` on a live run is refused with the helper's text and its
+/// diagnostics, and the run keeps its hole waiting (no fill is applied).
+#[tokio::test]
+async fn a_fill_the_helper_refuses_as_compile_failed_keeps_the_hole_waiting() {
+    let fx =
+        fixture_refusing_fills(|conn| interrupted(conn, "dwfrun-refused", PARENT, "return 1\n"));
+    fx.service
+        .for_session(&SessionId::new(PARENT))
+        .resume(&WorkflowRunId::new("dwfrun-refused"))
+        .await
+        .expect("the resume answers");
+    let answer = fill(&fx.service, fill_request("dwfrun-refused")).await;
+    assert!(
+        matches!(
+            &answer,
+            FillHoleOutcome::Refused {
+                reason: FillRefusalReason::CompileFailed,
+                diagnostics: Some(_),
+                ..
+            }
+        ),
+        "the helper's compile refusal is the answer: {answer:?}"
+    );
+}
+
 #[tokio::test]
 async fn a_fill_of_a_stopped_run_is_refused_with_the_resume_hint() {
     let fx = fixture(|conn| interrupted(conn, "dwfrun-stopped", PARENT, "return 1\n"));
