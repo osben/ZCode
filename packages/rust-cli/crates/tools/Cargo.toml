@@ -18,6 +18,7 @@ async-trait.workspace = true
 futures-util.workspace = true
 regex.workspace = true
 rust-cli-base.workspace = true
+rust-cli-fs.workspace = true
 rust-cli-kernel-api.workspace = true
 rust-cli-policy.workspace = true
 rust-cli-prompts.workspace = true
@@ -29,8 +30,11 @@ tracing.workspace = true
 unicode-width.workspace = true
 # WebFetch 的 URL 校验、重定向地址解析（WHATWG URL 规则）。
 url.workspace = true
+# 保存的工作流定义的元数据块（YAML 解析）。
+yaml-rust2.workspace = true
 
 [dev-dependencies]
 rust-cli-kernel-api = { workspace = true, features = ["testing"] }
 tokio = { workspace = true, features = ["macros", "rt", "test-util"] }
+tempfile.workspace = true
 tokio-util.workspace = true

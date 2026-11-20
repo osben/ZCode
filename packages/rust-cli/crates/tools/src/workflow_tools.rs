@@ -1,18 +1,25 @@
 //! Fork: the dynamic-workflow tools (Node `core/src/tool/handlers/*-workflow*.ts`; specs/fork-rust-workflow-engine.md,
 //! W7-1). The contracts (name, provider description, input schema, the flags the registry reads) are generated from Node
-//! by `scripts/fork-rust-agent/workflow-tools.mts` into `assets/node_workflow_tools.json`. The tools themselves land
-//! with their PRs (W7-7..10); until then [`workflow_tools`] registers nothing, and the registry and the gate are tested
-//! with stub tools.
+//! by `scripts/fork-rust-agent/workflow-tools.mts` into `assets/node_workflow_tools.json`. The tools land with their
+//! PRs: SaveWorkflow and ListSavedWorkflows (W7-8b) are registered here; the others are W7-7, W7-8a, W7-9 and W7-10.
 //!
 //! The two predicates are Node's contract helpers (`contracts/src/tools/amend-workflow.ts`,
 //! `contracts/src/tools/fill-workflow-hole.ts`): the permission service and the handler read the same fact, so both
 //! live here rather than in a handler.
 
+use std::collections::HashSet;
+use std::path::PathBuf;
 use std::sync::Arc;
 
-use rust_cli_kernel_api::tool::Tool;
+use rust_cli_kernel_api::message::{ContentBlock, Message};
+use rust_cli_kernel_api::tool::{Tool, ToolUseContext};
+use rust_cli_kernel_api::tool_names;
+use rust_cli_kernel_api::workflow_analysis::WorkflowAnalyzer;
 use serde::Deserialize;
 use serde_json::Value;
+
+use crate::workflow_list::ListSavedWorkflowsTool;
+use crate::workflow_save::SaveWorkflowTool;
 
 const CONTRACTS: &str = rust_cli_base::include_lf!("../assets/node_workflow_tools.json");
 
@@ -42,10 +49,68 @@ pub fn contracts() -> &'static [Contract] {
     })
 }
 
-/// The dynamic-workflow tools to register. Empty until the tools land (W7-7..10); the gate filter and the
-/// denylists (`agents::toolset`) are already in place for them.
-pub fn workflow_tools() -> Vec<Arc<dyn Tool>> {
-    Vec::new()
+/// The Skill that carries the authoring rules; SaveWorkflow and EvalWorkflowSnippet refuse until it has been read.
+pub const DYNAMIC_WORKFLOW_SKILL: &str = "dynamic-workflows";
+
+/// The contract of one of the ten tools, by its Node name.
+pub fn contract(name: &str) -> &'static Contract {
+    contracts()
+        .iter()
+        .find(|contract| contract.name == name)
+        .unwrap_or_else(|| unreachable!("the workflow tool contract {name} exists"))
+}
+
+/// The workspace root of the call, as a local path (the saved-workflow store is local, as in Node).
+pub fn workspace_dir(context: &ToolUseContext) -> String {
+    context.workspace.root.as_str().to_owned()
+}
+
+/// Node `hasLoadedSkill`: a Skill call for the dynamic-workflows skill that succeeded and is still in the session's
+/// committed history (compaction removes it, and the gate closes again). A session with no history to read counts as
+/// not loaded: this fails closed, where Node's absent probe passes.
+pub async fn skill_loaded(context: &ToolUseContext) -> bool {
+    let Some(messages) = context.session_ops.conversation().await else {
+        return false;
+    };
+    let mut calls = HashSet::new();
+    for message in &messages {
+        if let Message::Assistant(assistant) = message {
+            for block in &assistant.content {
+                if let ContentBlock::ToolUse { id, name, input } = block
+                    && name == tool_names::SKILL
+                    && input.get("skill").and_then(Value::as_str) == Some(DYNAMIC_WORKFLOW_SKILL)
+                {
+                    calls.insert(id.clone());
+                }
+            }
+        }
+    }
+    messages.iter().any(|message| {
+        let Message::User(user) = message else {
+            return false;
+        };
+        user.content.iter().any(|block| {
+            matches!(
+                block,
+                ContentBlock::ToolResult { tool_use_id, is_error: false, .. } if calls.contains(tool_use_id)
+            )
+        })
+    })
+}
+
+/// The dynamic-workflow tools to register, in Node's registration order (SaveWorkflow, then ListSavedWorkflows).
+/// SaveWorkflow checks scripts, so it exists only with an analyzer; without one, no SaveWorkflow is offered. Both
+/// reach a session only through the gate (`runtime::workflow_gate`), whose source no entry point sets yet.
+pub fn workflow_tools(
+    analyzer: Option<Arc<dyn WorkflowAnalyzer>>,
+    home: PathBuf,
+) -> Vec<Arc<dyn Tool>> {
+    let mut tools: Vec<Arc<dyn Tool>> = Vec::new();
+    if let Some(analyzer) = analyzer {
+        tools.push(Arc::new(SaveWorkflowTool::new(analyzer, home.clone())));
+    }
+    tools.push(Arc::new(ListSavedWorkflowsTool::new(home)));
+    tools
 }
 
 /// Node `isAmendWorkflowOwnedPredecessor`: an owned predecessor that the user did not stop, and whose revision adds no
