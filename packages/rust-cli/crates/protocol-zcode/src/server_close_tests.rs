@@ -635,3 +635,78 @@ async fn a_failed_persist_fails_the_input() {
     assert!(!ack.to_string().contains("db.sqlite"), "{ack}");
     assert!(handle.log.lock_unpoisoned().is_empty());
 }
+
+/// Counts the session-open hooks it is asked to run (9.30 item 212, 9.31 divergence 233).
+#[derive(Default)]
+struct CountingRuns {
+    opened: std::sync::atomic::AtomicUsize,
+}
+
+impl rust_cli_kernel_api::workflow_run::WorkflowRunHost for CountingRuns {
+    fn held_runs(&self) -> usize {
+        0
+    }
+
+    fn close(&self) -> futures_util::future::BoxFuture<'static, Vec<String>> {
+        Box::pin(async { Vec::new() })
+    }
+
+    fn session_opened(
+        &self,
+        _parent_session_id: &str,
+    ) -> futures_util::future::BoxFuture<'static, ()> {
+        self.opened
+            .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        Box::pin(async {})
+    }
+}
+
+/// Two concurrent cold opens of one session make one projection, so the session-open hook runs once: the open that
+/// made the projection is the only one that starts it (a concurrent caller that found the session not yet open must
+/// not start a second sweep and quota scan).
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn two_concurrent_cold_opens_run_the_session_open_hook_once() {
+    let scope = TaskScope::root("test", |_| {});
+    let (out, _reader) = tokio::io::duplex(1 << 16);
+    let (peer, _writer) = connection::start(out, &scope.spawner(), Options::default());
+    let context = Arc::new(Context::new(peer, Arc::new(FixedClock(5))));
+    let runs = Arc::new(CountingRuns::default());
+    context.set_workflow_runs(runs.clone());
+    let handle = Arc::new(TestHandle {
+        id: SessionId::new("s1"),
+        view: SessionView::new(meta(), Vec::new(), selection(), PermissionMode::Default),
+        closes: StdMutex::new(Vec::new()),
+        log: Log::default(),
+        accepts: std::sync::atomic::AtomicBool::new(false),
+    });
+    let queries = Arc::new(DraftQueries::default());
+    let kernel = Arc::new(CloseKernel { handle, queries });
+    let server = Arc::new(Server::new(
+        context,
+        kernel,
+        scope.spawner(),
+        Defaults {
+            selection: selection().into(),
+            mode: PermissionMode::Default,
+            environment: EnvironmentId::new("local"),
+        },
+    ));
+    let (first, second) = (server.clone(), server.clone());
+    let a = tokio::spawn(async move { first.live(&SessionId::new("s1")).await.is_ok() });
+    let b = tokio::spawn(async move { second.live(&SessionId::new("s1")).await.is_ok() });
+    assert!(a.await.unwrap() && b.await.unwrap(), "both opens succeed");
+
+    // The hook is spawned in the background: wait for it, then give a duplicate time to show itself.
+    for _ in 0..200 {
+        if runs.opened.load(std::sync::atomic::Ordering::SeqCst) > 0 {
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(5)).await;
+    }
+    tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+    assert_eq!(
+        runs.opened.load(std::sync::atomic::Ordering::SeqCst),
+        1,
+        "one cold open makes the projection, so one session-open hook"
+    );
+}

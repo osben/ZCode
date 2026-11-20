@@ -225,14 +225,6 @@ impl Server {
             .unwrap_or(Followup::Queue);
         let (context, topics) = (self.context.clone(), self.topics.clone());
         let opening = self.bridge.get(session).is_none();
-        // Fork (9.30 item 212, 9.31 divergence 233): a cold open runs the parent's run sweep and quota scan. Background: the
-        // open does not wait on the journal, and a failure there is logged by the run service, never raised here.
-        if opening && let Some(runs) = self.context.workflow_runs().cloned() {
-            let parent = session.as_str().to_owned();
-            drop(self.spawner.spawn("workflow-session-open", async move {
-                runs.session_opened(&parent).await;
-            }));
-        }
         // Fork: the model directory is read only for a cold open.
         let catalog = if opening {
             self.context.catalog().await
@@ -305,6 +297,15 @@ impl Server {
             })
             .await?;
         if made.load(std::sync::atomic::Ordering::Relaxed) {
+            // Fork (9.30 item 212, 9.31 divergence 233): only the open that made the projection runs the parent's run
+            // sweep and quota scan, once per cold open. Background: the open does not wait on the journal, and a failure
+            // there is logged by the run service, never raised here.
+            if let Some(runs) = self.context.workflow_runs().cloned() {
+                let parent = session.as_str().to_owned();
+                drop(self.spawner.spawn("workflow-session-open", async move {
+                    runs.session_opened(&parent).await;
+                }));
+            }
             // Fork: the stored display copy of the session's ACP agent (Node `seedExternalAgentConfig`).
             crate::fork::external_agent_config::seed(self, &live, session).await;
             // Fork: a store draft (an app-server prewarm) stays out of the sessions index (crate::live).
