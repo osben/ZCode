@@ -408,7 +408,7 @@ impl Tool for EvalWorkflowSnippetTool {
         };
         let cwd = PathBuf::from(workspace_dir(context));
         // A source that cannot be read is denied here without a code. Node refuses it at resolveInput with 400, but a
-        // permission denial carries no code and validate_input has no disk access (divergence 180 of 9.28).
+        // permission denial carries no code and validate_input has no disk access (divergence 240 of 9.28).
         let source = match resolve_source_off_thread(&input, &cwd).await {
             Ok(source) => source,
             Err(message) => return PermissionDecision::Deny { message },
