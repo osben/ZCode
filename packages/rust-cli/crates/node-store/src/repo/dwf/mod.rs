@@ -231,6 +231,14 @@ fn value_column(row: &Row<'_>, name: &'static str) -> rusqlite::Result<Option<Va
 }
 
 fn run_from_row(row: &Row<'_>) -> rusqlite::Result<RunRecord> {
+    let mut run = run_metadata_from_row(row)?;
+    run.result = value_column(row, "result_json")?;
+    Ok(run)
+}
+
+/// A run row without its result: the columns the host lists read (`LIST_COLUMNS`). The result is the
+/// script's return value and is unbounded, so list reads never select it.
+fn run_metadata_from_row(row: &Row<'_>) -> rusqlite::Result<RunRecord> {
     let physical: String = row.get("status")?;
     let physical = PhysicalStatus::from_column(&physical)
         .ok_or_else(|| column_error(row, "status", format!("unknown dwf_run status {physical}")))?;
@@ -253,8 +261,130 @@ fn run_from_row(row: &Row<'_>) -> rusqlite::Result<RunRecord> {
         stop_reason: settlement.stop_reason,
         superseded_by: settlement.superseded_by,
         failure: settlement.failure,
-        result: value_column(row, "result_json")?,
+        result: None,
     })
+}
+
+/// A run as a host list reads it (Node `DwfRunListItem` / `DwfRunSessionListItem`): the run without its
+/// result, with the journal timestamps.
+#[derive(Debug, Clone, PartialEq, Default)]
+pub struct RunListRecord {
+    pub run: RunRecord,
+    pub time_created: i64,
+    pub time_updated: i64,
+}
+
+/// The columns of a list read: `LIST_COLUMNS` is Node's list select, and `result_json` is left out on purpose.
+const LIST_COLUMNS: &str = "id, parent_session_id, cwd, name, script_text, script_hash, args_json, \
+     tool_call_id, resumed_from, caps_max_concurrency, spent_tokens, status, failure_json, \
+     time_created, time_updated";
+
+fn list_record_from_row(row: &Row<'_>) -> rusqlite::Result<RunListRecord> {
+    Ok(RunListRecord {
+        run: run_metadata_from_row(row)?,
+        time_created: row.get("time_created")?,
+        time_updated: row.get("time_updated")?,
+    })
+}
+
+/// Filter and bound of Node's `listRuns` (the `ListWorkflowRuns` surface).
+#[derive(Debug, Clone, PartialEq, Default)]
+pub struct RunListQuery {
+    /// Literal equality with `dwf_run.cwd`; `None` lists every project.
+    pub cwd: Option<String>,
+    /// Maximum rows; `0` is an empty page. There is no ceiling here: the caller probes `limit + 1`.
+    pub limit: usize,
+    /// `None` is no filter; `Some(empty)` matches no run.
+    pub statuses: Option<Vec<RunStatus>>,
+}
+
+/// Node `listRunsByParentSession`: one parent session's runs, most recently updated first (ties by id),
+/// up to `limit`. Dwf rows per session are few, so there is no index beyond the table's own.
+pub fn list_runs_by_parent_session(
+    conn: &Connection,
+    parent_session_id: &str,
+    limit: usize,
+) -> Result<Vec<RunListRecord>> {
+    if limit == 0 {
+        return Ok(Vec::new());
+    }
+    let mut statement = conn.prepare(&format!(
+        "select {LIST_COLUMNS} from dwf_run
+         where parent_session_id = ?1
+         order by time_updated desc, id desc
+         limit ?2"
+    ))?;
+    let rows = statement.query_map(
+        params![parent_session_id, i64::try_from(limit).unwrap_or(i64::MAX)],
+        list_record_from_row,
+    )?;
+    rows.collect::<rusqlite::Result<Vec<_>>>()
+        .map_err(Into::into)
+}
+
+/// Node `listRuns`: runs by project (optional) and status, most recently updated first, up to `limit`.
+pub fn list_runs(conn: &Connection, query: &RunListQuery) -> Result<Vec<RunListRecord>> {
+    if query.limit == 0 || query.statuses.as_ref().is_some_and(Vec::is_empty) {
+        return Ok(Vec::new());
+    }
+    let mut values: Vec<Box<dyn rusqlite::ToSql>> = Vec::new();
+    let mut sql = format!("select {LIST_COLUMNS} from dwf_run where 1 = 1");
+    if let Some(cwd) = &query.cwd {
+        sql.push_str(" and cwd = ?");
+        values.push(Box::new(cwd.clone()));
+    }
+    if let Some(statuses) = &query.statuses {
+        sql.push_str(" and ");
+        sql.push_str(&status_predicate(statuses, &mut values));
+    }
+    sql.push_str(" order by time_updated desc limit ?");
+    values.push(Box::new(i64::try_from(query.limit).unwrap_or(i64::MAX)));
+    let mut statement = conn.prepare(&sql)?;
+    let rows = statement.query_map(
+        rusqlite::params_from_iter(values.iter().map(AsRef::as_ref)),
+        list_record_from_row,
+    )?;
+    rows.collect::<rusqlite::Result<Vec<_>>>()
+        .map_err(Into::into)
+}
+
+/// The failure code that marks an interrupted run (Node `INTERRUPTED_FAILURE_CODE`).
+const INTERRUPTED_CODE: &str = "Interrupted";
+
+/// Node `encodeRunStatusPredicate`: a logical status is a physical one, and `stopped` and `errored` share the
+/// physical `cancelled` and `failed` with the failure code deciding. Pushes the bound values in order.
+fn status_predicate(statuses: &[RunStatus], values: &mut Vec<Box<dyn rusqlite::ToSql>>) -> String {
+    let mut clauses = Vec::with_capacity(statuses.len());
+    for status in statuses {
+        clauses.push(match status {
+            RunStatus::Stopped => {
+                values.push(Box::new(INTERRUPTED_CODE));
+                "(status = 'cancelled' or (status = 'failed' and json_extract(failure_json, '$.code') = ?))"
+                    .to_owned()
+            }
+            RunStatus::Errored => {
+                values.push(Box::new(INTERRUPTED_CODE));
+                "(status = 'failed' and coalesce(json_extract(failure_json, '$.code'), '') <> ?)"
+                    .to_owned()
+            }
+            other => {
+                values.push(Box::new(plain_status_name(*other)));
+                "status = ?".to_owned()
+            }
+        });
+    }
+    format!("({})", clauses.join(" or "))
+}
+
+/// The physical value of a status that has one (`pending`, `running`, `completed`).
+fn plain_status_name(status: RunStatus) -> &'static str {
+    match status {
+        RunStatus::Pending => "pending",
+        RunStatus::Running => "running",
+        RunStatus::Completed => "completed",
+        RunStatus::Errored => "failed",
+        RunStatus::Stopped => "cancelled",
+    }
 }
 
 /// Node `createRun`: writes the run with its settlement (if the record already has one).
@@ -742,3 +872,7 @@ mod workflow_actor_tests;
 #[cfg(test)]
 #[path = "golden_tests.rs"]
 mod golden_tests;
+
+#[cfg(test)]
+#[path = "dwf_list_tests.rs"]
+mod dwf_list_tests;

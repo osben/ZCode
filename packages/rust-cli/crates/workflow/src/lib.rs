@@ -38,6 +38,10 @@ pub mod replay;
 pub mod residency;
 pub mod resume;
 pub mod run_concurrency;
+pub mod run_store;
+#[cfg(test)]
+#[path = "run_store_tests.rs"]
+mod run_store_tests;
 pub mod scheduler;
 pub mod scheduler_submit;
 pub mod stall_clock;

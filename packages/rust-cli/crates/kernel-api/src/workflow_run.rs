@@ -6,10 +6,18 @@
 //! Shapes not needed by the scaffold (snapshots, details, list items, fill results) travel as JSON values; each
 //! PR that owns a tool types its own fields (the spec's W7 split).
 
+use std::sync::Arc;
+
 use async_trait::async_trait;
 use serde_json::Value;
 
 use crate::ids::{QuestionId, SessionId, WorkflowRunId};
+
+/// The Host's view of the run service: one run port per parent session (Node's run service is one object per
+/// session). Set once by the composition root; the protocol answers a session's run reads through it.
+pub trait DynamicWorkflowRunSessions: Send + Sync {
+    fn for_session(&self, session: &SessionId) -> Arc<dyn DynamicWorkflowRunPort>;
+}
 
 /// Node `DynamicWorkflowRunAmendRefusalReason`. The two cases need different next steps, so both are kept.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -200,10 +208,17 @@ pub trait DynamicWorkflowRunPort: Send + Sync {
         Err(DynamicWorkflowRunError::unsupported("cancel"))
     }
 
-    /// Node `listRuns`, the `ListWorkflowRuns` surface. Items are JSON until W7-8b types them.
+    /// Node `listRuns`, the `ListWorkflowRuns` surface: `{runs, truncated?}` in Node's item shape. Items are JSON until W7-8b types them.
     async fn list_runs(&self, query: ListQuery) -> Result<Value, DynamicWorkflowRunError> {
         let _ = query;
         Err(DynamicWorkflowRunError::unsupported("listRuns"))
+    }
+
+    /// Node `listRunsForSession(limit)`, the `v4/conversation/workflowRuns` read: `{runs}` in the V4 summary shape,
+    /// most recently updated first. `limit` is already clamped by the caller to [1, 64].
+    async fn list_runs_for_session(&self, limit: usize) -> Result<Value, DynamicWorkflowRunError> {
+        let _ = limit;
+        Err(DynamicWorkflowRunError::unsupported("listRunsForSession"))
     }
 
     /// Node `getRunDetail`: `None` for an unknown run id.

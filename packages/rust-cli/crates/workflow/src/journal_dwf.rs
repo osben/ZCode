@@ -151,7 +151,7 @@ fn row_to_dwf(row: &RunRow) -> Result<DwfRun> {
     })
 }
 
-fn row_from_dwf(run: DwfRun) -> RunRow {
+pub(crate) fn row_from_dwf(run: DwfRun) -> RunRow {
     RunRow {
         run_id: run.run_id,
         parent_session_id: run.parent_session_id,
