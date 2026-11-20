@@ -2121,8 +2121,67 @@ The W7-5 brief covers more than one PR. The Node sources are about 160 KB (`dyna
 14. Fixed. `workflow_child::Diagnostic` is now an alias of `workflow_analysis::WorkflowDiagnostic`.
 15. Fixed. `text_files` is private and re-exported at the fs crate root: `read_text`, `write_text`, `list_file_names`, `canonicalize_path`, `symlink_to` (unix), and `is_regular_file` (the sync `is_file`; the root `is_file` is the async one). The docs say `metadata` follows symlinks and any stat error is not-a-file. The non-UTF-8 listing test is gated off macOS, because APFS refuses such names (EILSEQ).
 
-16. Windows device names are not usable workflow names: the stem before the first dot, compared case-insensitively to `CON`, `PRN`, `AUX`, `NUL`, `COM1` to `COM9` and `LPT1` to `LPT9`, is refused with or without an extension. Node accepts them, and a file such as `con.dwf.ts` cannot be written on Windows.
-17. A `script_path` is also compared after symlinks are resolved (canonical paths of the file and of the workspace). A link inside the workspace to a file outside it is refused. This extends divergence 113, which was lexical only. Node has no such check.
+**Divergence 118.** Windows device names are not usable workflow names: the stem before the first dot, compared case-insensitively to `CON`, `PRN`, `AUX`, `NUL`, `COM1` to `COM9` and `LPT1` to `LPT9`, is refused with or without an extension. Node accepts them, and a file such as `con.dwf.ts` cannot be written on Windows.
+**Divergence 119.** A `script_path` is also compared after symlinks are resolved (canonical paths of the file and of the workspace). A link inside the workspace to a file outside it is refused. This extends divergence 113, which was lexical only. Node has no such check.
+
+**Review round 2 (ocr on PR #585, head 80f93030c, seven findings; merged with origin/fork 89a0af22e, CreateWorkflow).** Verdicts:
+
+- H1. Fixed. The file is read at the real path that was checked (`Contained::real`); the named path is kept for messages only. A canonicalization failure refuses (`Refusal::Unresolved`) instead of falling back to the lexical path. The check is one shared helper, `workspace_path::contain`, used by SaveWorkflow's `script_path` and CreateWorkflow's `path`; each tool keeps its own refusal wording. Test: a dangling link out of the workspace is unresolved, not accepted. The swap between check and read is not reproduced by a test.
+- M2. Fixed. `js_trim` is ECMAScript WhiteSpace plus LineTerminator (`is_js_space`), not Rust's `is_whitespace`, which includes U+0085. Test: a NEL at the marker line's edge is not trimmed.
+- M3. Fixed. An enum violation is `invalid_value` (Node's `invalid_value` issue, with `values`, `path` and the `Invalid option: expected one of ...` text), and a missing required property whose schema has an enum is `invalid_value` too. All non-parameter issues serialize into one JSON array in schema order. Ported Node's "preserves schema property order across present constraints and missing enums" and "keeps normalized enum type mismatches on the invalid-value JSON fallback" cases.
+- L4. Fixed. The inline marker check uses the same `js_trim_start` as the codec. Test: a NEL before the marker is not a block.
+- L5. Fixed. The serialization has an `expect` with the invariant (`#[expect(clippy::expect_used)]`, as the crate does elsewhere).
+- L6. Fixed. One `MALFORMED_REPLY` constant feeds both messages.
+- L7. Fixed. The stem is `split_once('.')`, with no dead fallback.
+
+The `text_files` module stays private and re-exported at the fs root; the merge took origin's `create_new_text`, `ensure_dir` and `symlink`, and dropped the duplicate `canonicalize_path` and `symlink_to`.
+
+### 9.25 W7-5a-3: runtime workflow run service (as built, part)
+
+**Scope built.** `runtime/src/workflow_run.rs` (service, bridge, owner host) and `workflow_run_tests.rs` (13 tests). Launch, the child bridge, the run map and close are in. Not built: the production owner assembly, the cli composition (the gate stays off), admission beyond the governor bound, and orphan reconciliation (5a-4). See "Not done" below.
+
+**Where it lives.**
+
+- `WorkflowRunService` holds one run map and a `SessionResidency`, a `RunConcurrency` and a `WorkflowChildRunner` (all ports). `OwnerFactory` builds a run's owner over its mailbox on the launching thread. `HostedOwner` (`Hosted<J, S>` in production shape) attaches the run (`attach_run`, 9.12 and 9.15) and serves the owner's mailbox on a thread.
+- `WireBridge` implements `ChildHandler`. Create-actor and events are direct mailbox calls. Ask, world read and publish are sent with `ActorHandle::send_ticketed`, drained, and awaited (`ticketed`). Errors map to the wire as Node's `toWireError` does (`name` and `code` are the error code; `violations` and `finalText` are kept).
+- `workflow/src/actor_mailbox.rs` and `driver_owner.rs` gain two small pieces the bridge needs: `ActorRequest::Fail` (`ActorHandle::fail`, `ActorDriverOwner::fail`, the engine's `fail`) for a child's failed `complete`, and `send_ticketed` / `await_ticketed` (a ticketed call sent without waiting).
+
+**Launch (one synchronous step after the compile).** Order: a closed service and a run without a parent are refused first; then the child is started (compile, entry write, spawn), which creates no engine and no run row for a rejected script; then, under the run map's lock with no await, the owner is built, attached (residency guard, governor bound, redrive and stall clocks), its thread is started, and the entry is inserted. A failed attach or thread start stops the child and keeps no entry. A close that ran during the compile refuses the launch and stops the child.
+
+**Close.** `close` marks the service closed (later launches are refused), takes the run map, stops each child and posts `stop_interrupted`, then calls `SessionResidency::close` once per parent session on the blocking pool. A session that does not close in time marks its runs stuck. The other owner threads are joined, and their `take_close_failures` are returned in `CloseReport`.
+
+**Settlement.** The child's outcome drives the owner: `complete` (ok), `fail` (a script error), or `stop_interrupted` (the stream stopped). The owner thread ends once its run settles, whatever settled it (the child's outcome, a residency stop, or close). Then, on that thread, the child is stopped and the run's entry is removed, unless close took it; close joins the threads it took.
+
+**Tests (red first).** The module was written with `todo!` bodies, and the 13 tests were run first: 12 failed on the stubs (the thirteenth is an existing test). Then the bodies were implemented. Two of the first green-run failures were test faults, fixed in the test: the wait helper blocked the single-threaded test runtime (it now yields), and a ticket reply was dropped when the owner settled on the same call (the bridge now keeps the reply). Test names: a launched run holds its guard and bound until its child completes; a rejected script starts no child; a run without a parent is refused before anything starts; a residency refusal stops the child and keeps no entry; a closed service refuses a launch; a duplicate live id is refused; close stops a live run as interrupted and waits for its guard; close reports a non-closing residency as stuck; a child's log and phase do not wedge the owner; a child's error fails the run and releases it; an ask for an unknown actor is answered with the engine's error; create-actor on a dead owner is refused.
+
+**Admission (finding, not built).** Node's launch has no run-level slot wait: the run's cap is a governor bound (`setRunBound`), and slot waits happen per model request in the driver's admission port (`workflow-concurrency-governor.ts`). The Rust equivalent is already in place (9.10, 9.20: the bound through `attach_run`, the wait through `AskObserver::waiting_for_slot`). So the run service adds only the bound, which it does.
+
+**Not done (for the follow-ups).**
+
+- The production owner assembly: `NodeActorSessions<'a, T>` borrows a `rusqlite::Connection`, so an owner moved to a thread needs an owned journal and session set. The `OwnerFactory` seam is where that goes. No production `TurnRunner` is passed in yet.
+- The cli composition (`node_helper::install`) does not install the service yet; the gate stays off, and nothing user-visible changes.
+- Orphan reconciliation and the run list (5a-4); progress fan-out, `workflowRuns`, quota auto-resume (5b).
+- The mailbox has no `declare-artifact` or hole request (9.23 defers them); see divergences 123 and 124.
+
+**Node divergences (new in W7-5a-3, numbered from 120).**
+
+120. The drain follows each ticketed call, not each slice of calls. The handler trait has no slice boundary, so each ask, world read or publish is sent, drained, and awaited. A drain with nothing queued is a no-op, so only the timing of starts within one slice can differ.
+121. Close is bounded. The residency close waits the default 60 seconds, and a run whose guard is not released in time is reported as stuck. Node's close awaits settlement with no timeout (`dynamic-workflow-run-service.ts` invariant 7; `dynamic-workflow-run-lifecycle.ts`, the close's doc comment).
+122. A stuck run's owner thread is not joined and is left to end on its own, and its entry is dropped. Node's close never returns in that case.
+123. A child's `declare-artifact` fails the run with `DriverError`, "declare-artifact is not wired yet". Node records the artifact. The mailbox has no such request yet (9.23 defers it to W7-5b), so the declaration is refused rather than dropped.
+124. A hole request is refused with a `DriverError` wire error until W7-8. Node fills the hole.
+125. A script's error keeps its message as the run's error. Node also records the sandbox's stack as the run error's cause (`dynamic-workflow-runtime` `harness.ts`, the `complete` case). The stack is not kept.
+126. A host-side stop (the child's stream ended before `complete`) settles as `stop_interrupted`, which carries no error text. Node passes an `Interrupted` error with the cause (`harness.ts`, the sandbox-crash case), and journals it. Here the reason and cause are logged (`workflow.run.host_stopped`) and not journaled; the mailbox's stop takes no error. A stop the service asked for (close, or the run settling) is logged at debug only.
+127. A call after the run settled is refused by the owner's closed mailbox, with the mailbox's "owner is gone" text. Node answers with the run's own error (`Run already settled.`).
+128. A settled run's entry is removed when its child completes. Node keeps up to 32 terminal entries for observation (`TERMINAL_REGISTRY_LIMIT`, `dynamic-workflow-run-lifecycle.ts`). Retention belongs with the run list (5a-4 and 5b).
+129. An attach refused by the residency after the child started stops that child, and its outcome is dropped. Node's residency refusal throws before the engine starts (the close gate). The child was briefly started here.
+130. Each live run has one owner thread. Node's owner runs on the process event loop. The owner must stay single-threaded, so the thread is per run, and the closes wait on it.
+131. The host awaits a child's `create-actor` before it reads the next line, since later requests name the engine id it returns. The wait is a future on the blocking pool (`ChildHandler::create_actor` now returns a `BoxFuture`), so a busy owner does not hold a runtime thread. Node's `createActor` is synchronous. Ordering is kept; only the thread is freed.
+132. Close failures of runs that settled on their own are kept for the next close up to 64 (`FAILURE_BUFFER_LIMIT`); each is logged when collected (`workflow.run.close_failed`), and later ones are logged and dropped. Node has no such buffer: its failures are returned to the caller that closes the App.
+
+**Review round 2 (ocr delta on #581, five findings).** A panic in the owner's `serve` is caught on the owner thread, so settlement runs however serve ends: the child stops, the id is freed, and the panic is a close failure (a test shows a panicking owner, then a relaunch, then the report). A declare-artifact failure is posted inline (`ActorHandle::fail_posted`, no reply) so it keeps its queue position before a later `complete`; the ordering test runs 200 rounds and passed on the pre-fix code too, so it pins the contract rather than showing a red. Duplicate's text covers a launch still starting. A service-requested stop logs at debug. The `ChildHandler` summary names both futures: `request` concurrent, `create_actor` awaited inline.
+
+**Review round (ocr on #581, eleven findings).** Fixed: a run that settles engine-side (a residency stop, a failed declare-artifact, any settlement) now stops its child and frees its entry and id, on the owner's thread (H1); the owner is built outside the service lock, and the lock covers only the re-check, the registrations, the thread and the entry (M1); a `declare-artifact` event and a `create-actor` no longer block the host reader (M2, M3); two concurrent launches of one id start one child, since the id is reserved before the compile (L3); a create-actor success path is tested (L4); a drain refusal is logged (L5); a host stop logs its cause (L6, divergence 126); `LaunchFailure` is a `std::error::Error` (L7). Red first: stage A ran the behavioural tests against the old code (six failed: the settlement test, the factory deadlock watchdog, the two blocked-caller watchdogs, the concurrent launches, and the buffer stub); stage B recorded the signature reds (the create-actor future, the error impl). Rejected: none.
 
 ### 9.26 Policy: always-ask through the permission chain (divergence 103 closed)
 
@@ -2145,6 +2204,136 @@ Divergence 103 (recorded in 9.24, from PR #580) is closed here. Its numbering st
   - e. `Check::Ask.independent` is true only for an always-ask. An ordinary ask from a tool's own check stays `independent: false`, as before (plan MCP sets its independent ask in the chain). Carrying it for ordinary asks would change no existing tool, and none asks that way today.
 - Tests: `policy/src/lib_tests_always_ask.rs`, through `PolicyGate::decide` and `check_rules`. Red before the chain change: an always-ask tool was an ordinary ask (Default) and an Allow under guarded, bypass, and a user, project, local or CLI allow rule. Green after.
 - SaveWorkflow (#580, merged as 49687cfd8) is the first user: its `check_permissions` returns `PermissionDecision::always_ask(…, independent: true)` (`tools/src/workflow_save.rs`, the `always_ask(..., true)` call). This is the Node check: `apps/zcode-cli/packages/core/src/tool/handlers/save-workflow.ts:289,292` sets `alwaysAsk` true and `allowAlways` false, so the prompt is asked in every mode with no always-allow offered. Its test `save_workflow_asks_through_the_policy_chain_and_only_a_session_rule_skips_it` (`tools/src/workflow_save_tests.rs`) runs through `PolicyGate::decide`. A PreToolUse allow is covered by `a_hook_allow_does_not_skip_an_always_ask_in_the_pipeline` (`tools/src/pipeline_hook_tests.rs`), which runs the real policy gate and asks again.
+
+### 9.27 W7-8a CreateWorkflow (as built)
+
+**Scope.** The CreateWorkflow tool: its input rules, the three sources (inline, `saved`, `path`), the draft file, the
+permission ask, the diagnostics path and the backgrounded submit through a new `DynamicWorkflowRunPort::submit`. The
+gate stays off. `workflow_tools` now returns CreateWorkflow before SaveWorkflow when an analyzer is given, and nothing
+calls `workflow_tools` yet, so no session sees the tool. The run service (W7-5) is not in fork; the submit is tested
+with a fake port.
+
+**As built.**
+
+- `kernel-api/src/workflow_run.rs`: `SubmitRequest` (script text, cwd, name, args, parent session, tool call id,
+  `max_concurrency`, script path) and `submit`, which defaults to `DynamicWorkflowRunError::unsupported`. The trace, the
+  launch input, the phase table and the model selections are not in it; their owning PRs add them.
+- `tools/src/workflow_create.rs` (the tool):
+  - `validate_input`: schema shape (non-empty name, `max_concurrency` above 0, `saved` name and scope, `args` an object),
+    exactly one source, `args` only with `path`, the Skill gate (428, exempt for a saved run), then `subagent_model`
+    (refused, see 142).
+  - `check_permissions`: resolves the source once (saved definition, `path` file or inline text), typechecks it, keeps the
+    result under the tool-use id (cap 256). A clean script asks with `always_ask(…, independent: false)` and the whole-tool
+    rule as its suggestion (Node `alwaysAsk` with `allowAlways: "session"`, `create-workflow.ts:470,482`). A script that
+    does not check, or a source that cannot be resolved, is allowed so that the call reports it. A failed checker denies.
+  - `call`: uses the kept result (or checks again, and refuses to start a clean script, see 155), writes the draft,
+    then reports diagnostics (file lines, Node's notes) or submits through the port. Without a port the result says the
+    script was typechecked and not run (`EXECUTION_UNAVAILABLE_NOTE`). A refused submit fails the call.
+- Draft: `<cwd>/.zcode/workflow-drafts/<slug>.dwf.ts`, with a `.gitignore` of `*` written once. A taken name takes the
+  next `-N` suffix (exclusive create, no overwrite). A write that fails leaves no draft, and the run starts with no script
+  path. `draft_slug` follows Node's `workflowDraftSlug` (see 153).
+- `tools/src/saved_workflow.rs`: `Store::resolve(name, scope)` (Node `resolveSavedWorkflow`): project copy first, then
+  global, with an optional scope; refusals `InvalidName`, `Parse`, `Read`, `NotFound`.
+- `fs/src/text_files.rs`: `create_new_text` (exclusive create) and `ensure_dir`.
+- `tools/src/workflow_tools.rs`: one registration entry and a `run_port` parameter (the two call sites are updated).
+  `workflow_save.rs` makes `normalize` `pub(crate)`. Nothing else in the shared files changed.
+
+**Node parity checked against source.** Argument validation order and texts (`create-workflow-source.ts`
+`validateCreateWorkflowSource`, `resolveCreateWorkflowInput`); the saved and path argument messages and their declaration
+lines (`describeArgsDeclaration`, `resolvePathSource`); the diagnostics notes and location sentences
+(`workflow-script-notes.ts`); the response text, the concurrency sentence (`describeWorkflowConcurrencyLimit`) and the
+submit fields that the tool fills (`create-workflow.ts`); the draft directory and slug rules (`workflow-drafts.ts`); the
+skill gate exemption for a saved-only call (`workflow-skill-gate.ts`).
+
+**Red first (TDD).** The tests were written first, with a stub `workflow_create.rs` (validate Ok, check Passthrough, call
+returns empty text). The run was 26 of 27 failing on assertions; the one passing test checks only the name, the deferral,
+the read-only flag and the 24 000-byte budget. The three `Store::resolve` tests were red against a stub that returned
+`NotFound`. Not seen red: the `create_new_text` test (added after its code, and it passed at once) and the registration
+test (its expected list was changed together with the one-entry edit).
+
+**Tests.** `workflow_create_tests.rs` (27) covers: the input rules and the 428 and 400 refusals; the always-ask through
+`PolicyGate` in every mode, where only a session rule skips it and a deny rule denies; a clean inline draft, asked and
+started; the next free draft name; the slug; diagnostics in file lines with no run; a checker that cannot answer; a run
+without a port; a failed submit; the saved source (body, defaults, validated args, working copy); a path source (block
+stripped, args, no draft); the `path` outside the workspace; a diagnostic in a saved copy on its file line; the limit
+reaching the port and the default marker; no limit; approved bytes run after the file changes; no decision, no run; a
+draft that cannot be written; the run label. `saved_workflow_tests.rs` gains 3 resolve tests; `text_files_tests.rs` gains
+1; `workflow_tools_tests.rs` checks the order CreateWorkflow, SaveWorkflow, ListSavedWorkflows.
+
+**Node divergences (new in W7-8a, numbered 140 to 155).**
+
+140. No window display and no causality graph. Node's output carries `causalityGraph` and the confirmation draws it
+     (`create-workflow.ts`: `boundGraphOfAnalysis`, `displayOfAnalysis`). The analyzer port returns `ok` and the
+     diagnostics only, so the output has no `causalityGraph` and the ask has no display. Needs the helper's display (W7-2)
+     and the bounds.
+141. No window adjustments. Node's `applyInputAdjustments`, the `adjustable_settings` fill and the "the user adjusted the
+     settings" sentence are not built. The user cannot change the limit or the model in the window.
+142. No model catalog port. `subagent_model` is refused on every call with Node's no-catalog text
+     ("This host cannot choose a subagent model; omit subagent_model."). Node resolves the name when a catalog exists, so a
+     host with one accepts a model this host refuses.
+143. Script-named models are not bound. Node's `readScriptModelBindings`, the 9011 unbound-model diagnostics and
+     `withScriptModelBindingsResolved` are not run, and submit carries no `modelBindings`.
+144. No phase fallback for the draft name. Node names an unnamed draft after the script's first `phase("…")` literal
+     (`resolveWorkflowDraftName`), else `workflow`. Without the causality graph this tool uses `workflow`.
+145. Draft timing. Node writes the saved copy in `resolveInput`, before the confirmation, and keeps it when the user
+     refuses. This tool writes saved copies and inline drafts in `call`, after the approval. A refused saved call leaves no
+     copy, and the confirmation cannot name the draft path.
+146. No read state for drafts. Node's `recordAuthoredWorkflowDraft` tells the read tracker the draft's bytes, so an Edit
+     needs no prior Read. Nothing records the draft here; the model must Read it first.
+147. Call-time refusals carry no error code. Node's resolution failures (unknown saved name, invalid arguments, unreadable
+     file) are `failure()` results with code 400, and they come before the confirmation. Here they come from `call` as
+     `ToolError::Failed` text, after an allow (no prompt), and that error has no code. Input-shape refusals from
+     `validate_input` keep their 400 or 428.
+148. A failed checker denies the decision. Node's `analyzeScript` runs in-process (`workflow-script-analysis.ts` calls
+     `analyzeWorkflowScript`) and cannot fail. The Rust checker is the helper, so a failure denies with the helper's message
+     (as divergence 108 for SaveWorkflow).
+149. A `path` must resolve inside the workspace (lexical normalization; symlinks are not resolved). Node accepts any path.
+     Same rule as SaveWorkflow's `script_path` (divergence 113), with this tool's own wording.
+150. Fewer submit fields. Node's submit request includes `trace` (required), `launchInputId`, `phaseNames`,
+     `phaseAlongside`, `subagentModel` and `modelBindings`. `SubmitRequest` carries only what this tool fills; the rest
+     arrive with the run service (W7-5) and the model catalog.
+151. The confirmation is one line of English with no title and no preview (see 140). Node's dialog is localized, has a
+     title, and carries a diagnostic reason the UI filters.
+152. No timeout and no cancellation declared. Node declares a 15 s timeout with no per-call override and
+     `cancellation.supported: false`. The Rust tool trait has no timeout field (as divergence 109); the call is not
+     cancellable, as in Node. The result budget is Node's 24 000 bytes.
+153. The draft slug approximates Unicode classes. Node keeps `\p{L}` and `\p{N}`. Rust keeps `char::is_alphabetic` and
+     `char::is_numeric`. `is_alphabetic` also keeps Other_Alphabetic marks (some Mn and Mc marks in Indic scripts) that Node
+     drops, so such a name gets a different file stem. Digits and letters match.
+154. The "available" list omits shadowed copies. Node lists each scope without shadowing (`describeAvailableWorkflows`,
+     `create-workflow-source.ts`), so a global copy hidden by a project copy appears. Rust uses `Store::list`, which applies
+     shadowing.
+155. A clean script with no decision is refused. If `call` finds no kept decision, it checks the script again and refuses to
+     run a script that checks ("has no confirmation for this script, so nothing was started"). Node's handler runs only after
+     its permission step, so this is a safety net for an order the Rust executor does not produce.
+
+**Not done here.** The window display and causality graph (140), the window adjustments (141), the model catalog and
+script model bindings (142, 143), the phase draft name (144), the draft read state (146), the run service and the submit
+behind it (W7-5), and the gate (W9). `EvalWorkflowSnippet` is in the other agent's PR and is not touched here.
+
+**Not verified.** Whether the app stores the whole-tool suggestion (the "always allow in this session" option) as a session
+rule. The tool sends the suggestion; the handling of it in the app is not checked here.
+
+**Review round (ocr on PR #583, head 7784b3ca4).** Verdicts, one per finding:
+
+1. Accepted. `allow_session()` is true, so the pipeline offers "Always allow in this session" (`session_allow`), and the
+   session actor's grant then answers the next ask of the tool without a prompt (`turn_interact.rs`). The pipeline test
+   `a_create_workflow_ask_offers_the_session_option` checks the offer; `session_allow_tests.rs` checks the skip.
+2. Accepted. A `path` is checked after symlinks are resolved (`path_in_workspace`), and the file is read from the real
+   path that was checked. `rust_cli_fs::text_files::canonicalize_path` did not exist on origin/fork, so it is added here
+   (same name as #585) and `symlink` (Unix, tests) too. Reconcile with #585 at merge. SaveWorkflow's `script_path` has the
+   same lexical-only check; it is not changed here.
+3. Accepted. `resolve` runs on the blocking pool (`resolve_off_thread`), including the saved-list refusal.
+4. Rejected. Node's `describeValue` is `` `a ${typeof value}` `` (`saved-args.ts`), so an object is "a object". The
+   regression test `a_type_mismatch_names_an_object_as_node_does` keeps it.
+5. Accepted. The table evicts its oldest decision only (FIFO, `Approvals`), and a taken or refused decision leaves
+   the table at once (`forget` on a refused source or checker).
+6. Accepted. An unparsable `saved.scope` is refused by `resolve_saved` too, not read as "either scope".
+7. Rejected. The import is not unused: `PolicyGate::decide` is a trait method, and removing the import fails to
+   compile. Clippy `--all-targets` is clean with it.
+8. Accepted. `path: ""` is refused by the schema, as the contract's `minLength: 1`.
+9. Accepted. `Origin::Saved` keeps the saved name; both messages print it, and the draft and run label keep the run label.
+10. Accepted as tests. `ensure_dir` and the missing-parent NotFound already behaved so; the tests pass at once.
 
 ## 10. Open questions
 

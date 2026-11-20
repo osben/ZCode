@@ -16,6 +16,7 @@ use serde_json::json;
 #[path = "saved_workflow_frontmatter.rs"]
 mod frontmatter;
 
+pub(crate) use frontmatter::js_trim_start;
 pub use frontmatter::{ParseError, SENTINEL, parse, serialize, starts_with_sentinel};
 
 /// Saved-definition file extension. `.dwf.ts` keeps the file valid TypeScript (the metadata is a block comment).
@@ -44,7 +45,7 @@ pub fn is_valid_name(name: &str) -> bool {
     }
     // Windows reserves these device names with or without an extension (`con.dwf.ts` is the `CON` device there).
     // Divergence 118: Node accepts them.
-    let stem = name.split('.').next().unwrap_or(name);
+    let stem = name.split_once('.').map_or(name, |(stem, _)| stem);
     !WINDOWS_RESERVED_STEMS
         .iter()
         .any(|reserved| stem.eq_ignore_ascii_case(reserved))
@@ -141,6 +142,34 @@ pub struct InvalidEntry {
 pub struct Listing {
     pub entries: Vec<SavedEntry>,
     pub invalid: Vec<InvalidEntry>,
+}
+
+/// A saved definition read for a run (Node `ResolvedSavedWorkflow`).
+#[derive(Debug, Clone, PartialEq)]
+pub struct Resolved {
+    pub name: String,
+    pub path: PathBuf,
+    pub scope: Scope,
+    pub meta: Meta,
+    /// The script body: the file after its metadata block.
+    pub script: String,
+    /// The file as written, metadata block included.
+    pub source: String,
+    /// Lines before the body (0 without a block); file line = body line + this.
+    pub body_line_offset: usize,
+}
+
+/// Why a definition could not be read (Node `SavedWorkflowResolveFailure`).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ResolveRefusal {
+    /// The name is not one the rules allow.
+    InvalidName,
+    /// The file exists but its metadata block does not parse.
+    Parse { path: PathBuf, detail: String },
+    /// The file exists but cannot be read.
+    Read { path: PathBuf, detail: String },
+    /// No copy in the scopes searched.
+    NotFound,
 }
 
 /// Why a save did not happen.
@@ -284,6 +313,45 @@ impl Store {
             }
         }
         listing
+    }
+
+    /// Reads the definition a name runs: the project copy first, then the global one (`scope` limits it to one root).
+    /// Node `resolveSavedWorkflow`.
+    pub fn resolve(&self, name: &str, scope: Option<Scope>) -> Result<Resolved, ResolveRefusal> {
+        if !is_valid_name(name) {
+            return Err(ResolveRefusal::InvalidName);
+        }
+        let scopes = match scope {
+            Some(scope) => vec![scope],
+            None => vec![Scope::Project, Scope::Global],
+        };
+        for scope in scopes {
+            let path = self.path(scope, name);
+            let source = match read_text(&path) {
+                Ok(source) => source,
+                Err(error) if is_absent(&error) => continue,
+                Err(error) => {
+                    return Err(ResolveRefusal::Read {
+                        path,
+                        detail: error.to_string(),
+                    });
+                }
+            };
+            let parsed = parse(&source).map_err(|error| ResolveRefusal::Parse {
+                path: path.clone(),
+                detail: error.detail(),
+            })?;
+            return Ok(Resolved {
+                name: name.to_owned(),
+                path,
+                scope,
+                meta: parsed.meta,
+                script: parsed.script,
+                source,
+                body_line_offset: parsed.body_line_offset,
+            });
+        }
+        Err(ResolveRefusal::NotFound)
     }
 
     /// Writes the definition: the metadata block, then the script byte for byte. A name the rules do not allow is

@@ -425,3 +425,31 @@ fn c1_controls_round_trip_and_are_written_as_hex_escapes() {
         );
     }
 }
+
+/// Review round 2: JavaScript's trim does not remove U+0085, so a NEL-edged marker line is not the marker (Node reads
+/// it as missing), while Rust's `char::is_whitespace` would have removed it.
+#[test]
+fn a_nel_at_the_edge_of_the_marker_line_is_not_trimmed_as_node_trims() {
+    assert!(matches!(
+        parse("\u{85}/* zcode-workflow\ndescription: d\n*/\n"),
+        Err(ParseError::MissingFrontmatter)
+    ));
+    assert!(!starts_with_sentinel("\u{85}/* zcode-workflow\n"));
+    assert!(matches!(
+        parse("/* zcode-workflow\ndescription: d\n*/\u{85}\n"),
+        Err(ParseError::UnterminatedFrontmatter)
+    ));
+    assert!(matches!(
+        parse("/* zcode-workflow\ndescription: d\u{85}\n\u{85}*/\n"),
+        Err(ParseError::UnterminatedFrontmatter)
+    ));
+}
+
+/// Review round 2: ECMAScript WhiteSpace and LineTerminator are the trimmed set: the members Rust does not share (U+FEFF)
+/// are trimmed, and U+0085 is not.
+#[test]
+fn js_trim_removes_ecmascript_white_space_and_line_terminators_only() {
+    use super::frontmatter::js_trim;
+    assert_eq!(js_trim("\u{feff}\t \u{a0}\u{2028}x\u{3000}\n"), "x");
+    assert_eq!(js_trim("\u{85}x\u{85}"), "\u{85}x\u{85}");
+}

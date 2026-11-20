@@ -134,3 +134,45 @@ fn a_missing_parameter_is_still_reported_in_the_text_form_without_the_min_length
         "Tool failed due to the following issue:\nThe required parameter `b` is missing"
     );
 }
+
+/// Review round 2 (port of Node `tool-input-validation-error.test.ts`, "preserves schema property order across present
+/// constraints and missing enums"): one JSON array, in schema order, with a missing enum property as `invalid_value`.
+#[test]
+fn issues_serialize_as_one_array_in_schema_order_with_a_missing_enum_as_invalid_value() {
+    let schema = json!({
+        "additionalProperties": false,
+        "properties": {"todos": {"items": {
+            "additionalProperties": false,
+            "properties": {
+                "content": {"type": "string", "minLength": 1},
+                "status": {"type": "string", "enum": ["pending", "in_progress", "completed"]},
+                "priority": {"type": "string", "enum": ["high", "medium", "low"]}
+            },
+            "required": ["content", "status", "priority"],
+            "type": "object"
+        }, "type": "array"}},
+        "required": ["todos"],
+        "type": "object"
+    });
+    let input = json!({"todos": [{"content": "", "priority": "high"}]});
+    assert_eq!(
+        validate("TodoWrite", &schema, &input).unwrap(),
+        "[\n  {\n    \"origin\": \"string\",\n    \"code\": \"too_small\",\n    \"minimum\": 1,\n    \"inclusive\": true,\n    \"path\": [\n      \"todos\",\n      0,\n      \"content\"\n    ],\n    \"message\": \"Too small: expected string to have >=1 characters\"\n  },\n  {\n    \"code\": \"invalid_value\",\n    \"values\": [\n      \"pending\",\n      \"in_progress\",\n      \"completed\"\n    ],\n    \"path\": [\n      \"todos\",\n      0,\n      \"status\"\n    ],\n    \"message\": \"Invalid option: expected one of \\\"pending\\\"|\\\"in_progress\\\"|\\\"completed\\\"\"\n  }\n]"
+    );
+}
+
+/// Review round 2 (port of Node's "keeps normalized enum type mismatches on the invalid-value JSON fallback"): a value of
+/// the wrong type that is also outside the enum is reported as `invalid_value`, not as a type mismatch.
+#[test]
+fn an_enum_type_mismatch_falls_back_to_the_invalid_value_json() {
+    let schema = json!({
+        "additionalProperties": false,
+        "properties": {"mode": {"type": "string", "enum": ["fast", "safe"]}},
+        "required": ["mode"],
+        "type": "object"
+    });
+    assert_eq!(
+        validate("EnumTool", &schema, &json!({"mode": 7})).unwrap(),
+        "[\n  {\n    \"code\": \"invalid_value\",\n    \"values\": [\n      \"fast\",\n      \"safe\"\n    ],\n    \"path\": [\n      \"mode\"\n    ],\n    \"message\": \"Invalid option: expected one of \\\"fast\\\"|\\\"safe\\\"\"\n  }\n]"
+    );
+}

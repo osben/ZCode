@@ -1,13 +1,22 @@
 //! Fork: whole-file text IO for the saved-workflow store (specs/fork-rust-workflow-engine.md, W7-8b). Saved definitions are
 //! small local files that the agent process reads and writes synchronously, as Node does. The IO lives here because
 //! this crate is the local storage entry point; the store's rules live with the tools.
+//!
+//! Private module: the items are re-exported at the crate root (`rust_cli_fs::read_text` and so on).
 
-use std::io;
+use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 
 /// Reads a file as UTF-8 text.
 pub fn read_text(path: &Path) -> io::Result<String> {
     std::fs::read_to_string(path)
+}
+
+/// Makes `link` a symbolic link to `target` (Unix only). Tests use it to check that a link cannot lead a path out of its
+/// root.
+#[cfg(unix)]
+pub fn symlink(target: &Path, link: &Path) -> io::Result<()> {
+    std::os::unix::fs::symlink(target, link)
 }
 
 /// The names of the entries of a directory, unsorted. A missing directory is `ErrorKind::NotFound`. A name that is not
@@ -30,21 +39,31 @@ pub fn write_text(path: &Path, text: &str) -> io::Result<()> {
     std::fs::write(path, text)
 }
 
-/// Whether the path is an existing regular file. `metadata` follows symlinks, so a link to a regular file counts; any
-/// stat error (a missing path, a permission error, a broken link) counts as not-a-file.
-pub fn is_file(path: &Path) -> bool {
-    std::fs::metadata(path).is_ok_and(|metadata| metadata.is_file())
+/// Creates a new file with the text, failing with `AlreadyExists` when the path is taken (the claim is one operation, as
+/// Node's `wx` flag). The parent directory must exist.
+pub fn create_new_text(path: &Path, text: &str) -> io::Result<()> {
+    let mut file = std::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(path)?;
+    file.write_all(text.as_bytes())
 }
 
-/// The path with every symlink resolved. Fails when the path does not exist.
+/// The real path of an existing file or directory, with every symlink resolved. Used to check that a path stays inside a
+/// root: a lexical check alone lets a symlink inside the root lead out of it. Fails when the path does not exist.
 pub fn canonicalize_path(path: &Path) -> io::Result<PathBuf> {
     std::fs::canonicalize(path)
 }
 
-/// Makes `link` a symbolic link to `target` (Unix). Used by the storage tests to set up a link out of the workspace.
-#[cfg(unix)]
-pub fn symlink_to(target: &Path, link: &Path) -> io::Result<()> {
-    std::os::unix::fs::symlink(target, link)
+/// Creates a directory and its missing parents.
+pub fn ensure_dir(path: &Path) -> io::Result<()> {
+    std::fs::create_dir_all(path)
+}
+
+/// Whether the path is an existing regular file. `metadata` follows symlinks, so a link to a regular file counts; any
+/// stat error (a missing path, a permission error, a broken link) counts as not-a-file.
+pub fn is_file(path: &Path) -> bool {
+    std::fs::metadata(path).is_ok_and(|metadata| metadata.is_file())
 }
 
 #[cfg(test)]

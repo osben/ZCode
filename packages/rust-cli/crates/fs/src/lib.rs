@@ -35,9 +35,10 @@ pub use stamp::{ChangeGate, FileStamp};
 // sync check, so it is exported as `is_regular_file`: the root `is_file` is the async one.
 mod text_files;
 #[cfg(unix)]
-pub use text_files::symlink_to;
+pub use text_files::symlink;
 pub use text_files::{
-    canonicalize_path, is_file as is_regular_file, list_file_names, read_text, write_text,
+    canonicalize_path, create_new_text, ensure_dir, is_file as is_regular_file, list_file_names,
+    read_text, write_text,
 };
 
 /// 进程是否存活（Node `process.kill(pid, 0)` 的语义：能发信号或无权限都算存活）。锁文件里记的 PID 用它

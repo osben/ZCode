@@ -7,11 +7,11 @@
 //! for the call that follows it.
 
 use std::collections::{HashMap, VecDeque};
-use std::path::{Component, Path, PathBuf};
+use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 
 use async_trait::async_trait;
-use rust_cli_fs::{canonicalize_path, read_text};
+use rust_cli_fs::read_text;
 use rust_cli_kernel_api::ids::ToolUseId;
 use rust_cli_kernel_api::permission::PermissionDecision;
 use rust_cli_kernel_api::tool::{
@@ -26,12 +26,13 @@ use serde_json::{Value, json};
 use tokio::sync::mpsc;
 
 use crate::saved_workflow::{
-    ArgDecl, ArgType, Meta, SENTINEL, Scope, Shadowing, Store, is_valid_name, parse,
+    ArgDecl, ArgType, Meta, SENTINEL, Scope, Shadowing, Store, is_valid_name, js_trim_start, parse,
     starts_with_sentinel,
 };
 use crate::workflow_tools::{
     Contract, DYNAMIC_WORKFLOW_SKILL, contract, skill_loaded, workspace_dir,
 };
+use crate::workspace_path::{Refusal, contain};
 
 /// The refusal code for a missing source or an unusable name (Node's `SAVE_WORKFLOW_FAILURE_CODE`).
 const FAILURE_CODE: i32 = 400;
@@ -169,9 +170,7 @@ async fn resolve_source_blocking(input: &SaveInput, cwd: &Path) -> Result<String
 /// Whether an inline script opens with the metadata marker, as Node's `trimStart().startsWith` decides (a byte order
 /// mark is trimmed by JavaScript, so it is skipped here too).
 fn opens_with_block(script: &str) -> bool {
-    script
-        .trim_start_matches(|c: char| c.is_whitespace() || c == '\u{feff}')
-        .starts_with(SENTINEL)
+    js_trim_start(script).starts_with(SENTINEL)
 }
 
 /// The refusals of the input's own shape, in Node's order (name, source, block). They read nothing from the disk.
@@ -206,57 +205,24 @@ fn invalid_with(code: i32, message: String) -> Validation {
     }
 }
 
-/// Lexical normalization of `.` and `..` (no disk access).
-fn normalize(path: &Path) -> PathBuf {
-    let mut out = PathBuf::new();
-    for component in path.components() {
-        match component {
-            Component::ParentDir => {
-                out.pop();
-            }
-            Component::CurDir => {}
-            other => out.push(other.as_os_str()),
-        }
-    }
-    out
-}
-
-/// A `script_path` must resolve inside the workspace. Node accepts any path; a draft outside the repository is refused
-/// here (divergence 113), so a model cannot make the tool read files it has no business with. The lexical check is not
-/// enough alone: a symlink inside the workspace can point outside it, so the real locations are compared too
-/// (divergence 119). A path that does not exist has no real location; reading it fails with the usual message.
-fn within_workspace(cwd: &Path, input_path: &str) -> Result<PathBuf, String> {
-    let outside = || {
-        format!(
-            "The workflow script file {input_path} is outside the workspace. Pass a `script_path` inside it, or submit the script inline."
-        )
-    };
-    let joined = if Path::new(input_path).is_absolute() {
-        PathBuf::from(input_path)
-    } else {
-        cwd.join(input_path)
-    };
-    let resolved = normalize(&joined);
-    if !resolved.starts_with(normalize(cwd)) {
-        return Err(outside());
-    }
-    if let (Ok(real), Ok(real_cwd)) = (canonicalize_path(&resolved), canonicalize_path(cwd))
-        && !real.starts_with(&real_cwd)
-    {
-        return Err(outside());
-    }
-    Ok(resolved)
-}
-
-/// Node `readWorkflowScriptFile` for a save: read the file, and if it starts with a block, take its body only.
+/// A `script_path` must resolve inside the workspace (divergences 113 and 119, the shared check in `workspace_path`).
+/// The file is read at the real path that was checked, never at the named one. A file that cannot be resolved (missing,
+/// dangling link) is reported as an unreadable file, and a path outside the workspace is refused.
 fn read_script_path(cwd: &Path, input_path: &str) -> Result<String, String> {
-    let absolute = within_workspace(cwd, input_path)?;
-    let described = describe(&absolute, cwd);
-    let source = read_text(&absolute).map_err(|error| {
-        format!(
-            "The workflow script file {described} could not be read: {error}. Pass `script_path` for a file that exists, or submit the script inline."
-        )
-    })?;
+    let contained = match contain(cwd, input_path) {
+        Ok(contained) => contained,
+        Err(Refusal::Outside) => {
+            return Err(format!(
+                "The workflow script file {input_path} is outside the workspace. Pass a `script_path` inside it, or submit the script inline."
+            ));
+        }
+        Err(Refusal::Unresolved(error)) => {
+            let described = describe(&cwd.join(input_path), cwd);
+            return Err(unreadable(&described, &error));
+        }
+    };
+    let described = describe(&contained.named, cwd);
+    let source = read_text(&contained.real).map_err(|error| unreadable(&described, &error))?;
     if !starts_with_sentinel(&source) {
         return Ok(source);
     }
@@ -268,6 +234,13 @@ fn read_script_path(cwd: &Path, input_path: &str) -> Result<String, String> {
             error.detail()
         )),
     }
+}
+
+/// The refusal for a file that cannot be read (the same text for a missing file and for an unresolvable link).
+fn unreadable(described: &str, error: &std::io::Error) -> String {
+    format!(
+        "The workflow script file {described} could not be read: {error}. Pass `script_path` for a file that exists, or submit the script inline."
+    )
 }
 
 /// Node `describeWorkflowScriptPath`: relative to the working directory when the file is inside it.

@@ -788,7 +788,7 @@ async fn a_script_path_that_is_a_symlink_out_of_the_workspace_is_refused() {
     // The write creates the workspace directory on the way.
     fs::write(harness.dirs.cwd.join(".keep"), "").unwrap();
     let link = harness.dirs.cwd.join("draft-link.ts");
-    rust_cli_fs::symlink_to(&outside, &link).expect("symlink");
+    rust_cli_fs::symlink(&outside, &link).expect("symlink");
     let input = json!({"name": "x", "description": "d", "script_path": "draft-link.ts", "scope": "project"});
     let PermissionDecision::Deny { message } = harness
         .tool
@@ -851,4 +851,18 @@ fn the_pending_table_evicts_the_oldest_decision_only() {
     assert!(table.take(&id(0)).is_none(), "the oldest is evicted");
     assert!(table.take(&id(1)).is_some(), "the second oldest stays");
     assert!(table.take(&id(PENDING_CAP)).is_some(), "the newest stays");
+}
+
+/// Review round 2, item 4: a NEL before the marker is not whitespace to JavaScript's trim, so the script is not refused
+/// as one that opens with a block (the same rule as the frontmatter codec).
+#[tokio::test]
+async fn an_inline_script_with_a_nel_before_the_marker_is_not_refused_as_a_block() {
+    let harness = Harness::new("nel-marker");
+    let script = format!("\u{85}/* zcode-workflow\ndescription: d\n*/\n{CLEAN}");
+    let input = json!({"name": "x", "description": "d", "script": script, "scope": "project"});
+    let outcome = harness
+        .tool
+        .validate_input(&input, &harness.with_skill())
+        .await;
+    assert!(matches!(outcome, Validation::Ok), "{outcome:?}");
 }

@@ -75,7 +75,7 @@ where
                         if bytes.trim_ascii().is_empty() {
                             continue;
                         }
-                        if let Some(outcome) = host.take_line(&bytes, line_no) {
+                        if let Some(outcome) = host.take_line(&bytes, line_no).await {
                             return outcome;
                         }
                     }
@@ -157,7 +157,7 @@ struct Host {
 
 impl Host {
     /// Handles one complete line. `None` keeps the run going; `Some` ends it.
-    fn take_line(&mut self, bytes: &[u8], line_no: usize) -> Option<Outcome> {
+    async fn take_line(&mut self, bytes: &[u8], line_no: usize) -> Option<Outcome> {
         let text = String::from_utf8_lossy(bytes);
         let text = text.trim_end_matches(['\n', '\r']);
         let message: ChildMessage = match serde_json::from_str(text) {
@@ -169,7 +169,7 @@ impl Host {
                 if self.locals.contains_key(&actor.local_id) {
                     return Some(malformed(line_no));
                 }
-                match self.handler.create_actor(&actor) {
+                match self.handler.create_actor(&actor).await {
                     Ok(engine_id) => {
                         self.locals.insert(actor.local_id, engine_id);
                         None

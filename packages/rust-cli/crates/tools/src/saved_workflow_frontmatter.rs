@@ -142,9 +142,33 @@ pub fn starts_with_sentinel(source: &str) -> bool {
         .is_some_and(|line| js_trim(line) == SENTINEL)
 }
 
-/// JavaScript's `String.prototype.trim`, which (unlike Rust's `trim`) also removes U+FEFF. Node's line checks use it.
+/// ECMAScript's WhiteSpace and LineTerminator: what `String.prototype.trim` removes. Rust's `char::is_whitespace` is not
+/// the same set (it includes U+0085, which JavaScript keeps), so it is not used for Node's checks.
+pub(crate) fn is_js_space(c: char) -> bool {
+    matches!(
+        c,
+        '\u{9}'..='\u{d}'
+            | ' '
+            | '\u{a0}'
+            | '\u{1680}'
+            | '\u{2000}'..='\u{200a}'
+            | '\u{2028}'
+            | '\u{2029}'
+            | '\u{202f}'
+            | '\u{205f}'
+            | '\u{3000}'
+            | '\u{feff}'
+    )
+}
+
+/// JavaScript's `String.prototype.trim`. Node's line checks use it.
 pub(crate) fn js_trim(text: &str) -> &str {
-    text.trim_matches(|c: char| c.is_whitespace() || c == '\u{feff}')
+    text.trim_matches(is_js_space)
+}
+
+/// JavaScript's `String.prototype.trimStart`.
+pub(crate) fn js_trim_start(text: &str) -> &str {
+    text.trim_start_matches(is_js_space)
 }
 
 fn parse_metadata(body_text: &str) -> Result<Meta, ParseError> {
