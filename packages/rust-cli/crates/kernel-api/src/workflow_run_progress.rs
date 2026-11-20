@@ -1,12 +1,14 @@
-//! Fork: the run progress port (specs/fork-rust-workflow-engine.md, 9.31, W7-5b). Node's `recordDynamicWorkflowRunProgress`
-//! and the `dynamic_workflow_run_progress` fan-out: the run's progress goes to the parent session, and the projection's
-//! deltas go to the Host. The run service calls it once per journal event, on the run's owner thread. Implementations
-//! are the Host's (the notification and the session event); a missing implementation means no progress is recorded.
+//! Fork: the run progress port (specs/fork-rust-workflow-engine.md, 9.31, W7-5b; 9.34, W7-5e). Node's
+//! `recordDynamicWorkflowRunProgress` fans a run's progress out to its parent session. The run service calls the port once
+//! per journal event, on the run's owner thread, with the projection's deltas. The Host's implementation delivers the
+//! deltas live to the parent session's open stream and persists nothing: the run's journal is the record. A missing
+//! implementation means no progress is delivered.
 
-/// Records one run's progress event for its parent session.
+/// Delivers one run's progress to its parent session.
 pub trait WorkflowRunProgressPort: Send + Sync {
-    /// Appends `progress` (the Node `DynamicWorkflowRunProgressPayload` shape) to `parent_session_id` and publishes the
-    /// projection `deltas` it produced. An error is logged by the caller and never fails the run.
+    /// Hands the projection `deltas` of one journal event to `parent_session_id`'s open stream. `progress` is the Node
+    /// `DynamicWorkflowRunProgressPayload` shape of the same event; the delivery does not persist it. An error is logged
+    /// by the caller and never fails the run.
     fn record(
         &self,
         parent_session_id: &str,

@@ -1,18 +1,22 @@
-//! Tests of the run service's composition (9.30). The gate is off: with no child runner there is no service, and with one
-//! the service holds no run and opens nothing until a run is launched.
+//! Tests of the run service's composition (9.30, 9.34). The gate is off: with no child runner there is no service, and with
+//! one the service holds no run and opens nothing until a run is launched.
 
-use std::sync::Arc;
+use std::path::PathBuf;
+use std::sync::{Arc, Mutex};
+use std::time::{Duration, Instant};
 
 use rust_cli_kernel_api::testing::FakeChildRunner;
+use rust_cli_kernel_api::workflow_child::{Completion, LaunchInput, Outcome};
 use rust_cli_kernel_api::workflow_run::WorkflowRunHost;
+use rust_cli_kernel_api::workflow_run_progress::WorkflowRunProgressPort;
+use rust_cli_workflow::engine::EngineConfig;
 use rust_cli_workflow::residency::SessionResidency;
+use serde_json::{Map, Value, json};
 
 use rust_cli_node_store::dwf::{self, RunRecord, RunStatus};
 use rust_cli_node_store::{MIGRATION_LOCK_WAIT, open_session_database};
 
 use super::build;
-
-use std::sync::Mutex;
 
 use async_trait::async_trait;
 use rust_cli_agents::actor_turn::{ActorRun, ActorTurnEnd, ActorTurnStats};
@@ -20,14 +24,11 @@ use rust_cli_kernel_api::env::{EnvPath, WorkspaceRef};
 use rust_cli_kernel_api::ids::{EnvironmentId, SessionId};
 use rust_cli_kernel_api::model::ModelSelection;
 use rust_cli_kernel_api::permission::PermissionMode;
-use rust_cli_kernel_api::workflow_child::{
-    ChildHandler, ChildRequest, Completion, CreateActor, LaunchInput, Outcome, WireError,
-};
+use rust_cli_kernel_api::workflow_child::{ChildHandler, ChildRequest, CreateActor, WireError};
 use rust_cli_runtime::actor_turns::ActorAgents;
 use rust_cli_runtime::workflow_assembly::ActorSessionRelease;
 use rust_cli_runtime::workflow_owner::{ActorBindingsPort, ParentBindings, record_parent_mode};
-use rust_cli_workflow::engine::{AskSpec, EngineConfig};
-use serde_json::{Map, Value, json};
+use rust_cli_workflow::engine::AskSpec;
 use tokio_util::sync::CancellationToken;
 
 /// The agents a composed run's turns reach. Each turn records the bindings it ran under and answers "done".
@@ -180,6 +181,7 @@ async fn a_launched_run_actor_completes_its_turn_under_the_parents_selection_and
         agents.clone(),
         parent.clone(),
         tokio::runtime::Handle::current(),
+        Arc::new(RecordingPort::default()),
     )
     .expect("the service is built over the runner");
     service
@@ -237,6 +239,7 @@ async fn a_parent_with_no_selection_refuses_its_actor_at_the_ask() {
         agents.clone(),
         parent.clone(),
         tokio::runtime::Handle::current(),
+        Arc::new(RecordingPort::default()),
     )
     .expect("the service is built over the runner");
     service
@@ -278,6 +281,27 @@ fn add_session(conn: &rusqlite::Connection, id: &str) {
     .expect("session row for the run's parent");
 }
 
+/// The progress port the composition is given in these tests: it keeps what it was asked to record.
+#[derive(Default)]
+struct RecordingPort {
+    calls: Mutex<Vec<(String, Value)>>,
+}
+
+impl WorkflowRunProgressPort for RecordingPort {
+    fn record(
+        &self,
+        parent_session_id: &str,
+        progress: &Value,
+        _deltas: &[Value],
+    ) -> Result<(), String> {
+        self.calls
+            .lock()
+            .expect("calls")
+            .push((parent_session_id.to_owned(), progress.clone()));
+        Ok(())
+    }
+}
+
 /// The composition's session open settles the parent's orphan through the production store, which opens the database
 /// on first use (W7-5c item 1): a run a previous process left running reads back as stopped once its session opens.
 #[tokio::test]
@@ -310,6 +334,7 @@ async fn a_session_open_settles_the_parents_orphan_in_the_composed_service() {
             mode: None,
         }),
         tokio::runtime::Handle::current(),
+        Arc::new(RecordingPort::default()),
     )
     .expect("the service is built over the runner");
 
@@ -343,6 +368,7 @@ async fn without_a_child_runner_no_run_service_is_built() {
             mode: None,
         }),
         tokio::runtime::Handle::current(),
+        Arc::new(RecordingPort::default()),
     );
     assert!(service.is_none(), "no child runner, no run service");
     assert!(!database.exists(), "nothing is opened");
@@ -370,6 +396,7 @@ async fn a_built_run_service_is_idle_and_opens_nothing_until_a_launch() {
             mode: None,
         }),
         tokio::runtime::Handle::current(),
+        Arc::new(RecordingPort::default()),
     )
     .expect("the service is built over the runner");
 
@@ -385,4 +412,82 @@ async fn a_built_run_service_is_idle_and_opens_nothing_until_a_launch() {
         lines.is_empty(),
         "a clean close of an idle service: {lines:?}"
     );
+}
+
+/// W7-5e (9.34): a run launched through the composed service records its progress to its parent session, through the
+/// port the composition was given. Node's sink appends each run event to the parent; the first is `run-started`.
+#[tokio::test]
+async fn a_run_launched_in_the_composed_service_records_its_progress_to_its_parent() {
+    let dir = tempfile::tempdir().expect("temp dir");
+    let database = dir.path().join("sessions.db");
+    {
+        let (conn, _) =
+            open_session_database(&database, MIGRATION_LOCK_WAIT, 1).expect("session database");
+        add_session(&conn, "ses_p");
+    }
+    let runner = Arc::new(FakeChildRunner::new());
+    let port = Arc::new(RecordingPort::default());
+    let service = build(
+        Some(runner.clone()),
+        Arc::new(SessionResidency::new()),
+        &database,
+        "/work",
+        Arc::new(FakeAgents::default()),
+        Arc::new(FixedParent {
+            selection: None,
+            mode: None,
+        }),
+        tokio::runtime::Handle::current(),
+        port.clone(),
+    )
+    .expect("the service is built over the runner");
+
+    let mut config = EngineConfig {
+        run_id: "dwfrun-progress".to_owned(),
+        parent_session_id: Some("ses_p".to_owned()),
+        ..Default::default()
+    };
+    config.caps.max_concurrency = 4.0;
+    service
+        .launch(
+            LaunchInput {
+                script_text: "return 1".to_owned(),
+                run_id: "dwfrun-progress".to_owned(),
+                args: Some(Map::new()),
+                resumed_from: None,
+                cwd: PathBuf::from("project"),
+            },
+            config,
+        )
+        .await
+        .expect("launched");
+
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while port.calls.lock().expect("calls").is_empty() {
+        assert!(
+            Instant::now() < deadline,
+            "the run's progress was not recorded"
+        );
+        tokio::time::sleep(Duration::from_millis(5)).await;
+    }
+    {
+        let calls = port.calls.lock().expect("calls");
+        assert!(calls.iter().all(|(parent, _)| parent == "ses_p"));
+        assert_eq!(calls[0].1["eventType"], json!("run-started"));
+        assert_eq!(calls[0].1["runId"], json!("dwfrun-progress"));
+    }
+
+    runner.finish(
+        0,
+        Outcome::Completed(Completion {
+            ok: true,
+            value: Some(json!("done")),
+            error: None,
+        }),
+    );
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while service.run_count() != 0 {
+        assert!(Instant::now() < deadline, "the run settles");
+        tokio::time::sleep(Duration::from_millis(5)).await;
+    }
 }

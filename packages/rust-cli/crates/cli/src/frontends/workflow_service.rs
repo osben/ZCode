@@ -10,6 +10,7 @@ use anyhow::Result;
 use rust_cli_base::clock::SystemClock;
 use rust_cli_base::sync::LockUnpoisoned;
 use rust_cli_kernel_api::workflow_child::WorkflowChildRunner;
+use rust_cli_kernel_api::workflow_run_progress::WorkflowRunProgressPort;
 use rust_cli_node_store::{MIGRATION_LOCK_WAIT, open_session_database};
 use rust_cli_runtime::actor_turns::ActorAgents;
 use rust_cli_runtime::workflow_assembly::ActorSessionRelease;
@@ -24,7 +25,14 @@ use rust_cli_workflow::run_store::{RunListQuery, RunListRow, RunStore, SqliteRun
 use super::workflow_governor::GovernorRunConcurrency;
 
 /// Builds the run service over the process's ports, or none when there is no child runner (no helper configured).
-/// `database` is the session database the app opened; `directory` is the workspace the runs write their rows under.
+/// `database` is the session database the app opened; `directory` is the workspace the runs write their rows under;
+/// `progress` is where each run's progress goes (the parent session's entry and the Host's stream, 9.34). `agents`,
+/// `bindings` and `handle` are the actor side (9.35): each actor's turn runs on the agents under its parent's bindings,
+/// and `handle` is the runtime the bindings are awaited on (the caller passes its own).
+#[expect(
+    clippy::too_many_arguments,
+    reason = "the composition root's build takes each port it wires (9.34, 9.35); a struct would only rename them"
+)]
 pub(crate) fn build<A: ActorAgents + ActorSessionRelease>(
     runner: Option<Arc<dyn WorkflowChildRunner>>,
     residency: Arc<SessionResidency>,
@@ -33,6 +41,7 @@ pub(crate) fn build<A: ActorAgents + ActorSessionRelease>(
     agents: Arc<A>,
     bindings: Arc<dyn ActorBindingsPort>,
     handle: tokio::runtime::Handle,
+    progress: Arc<dyn WorkflowRunProgressPort>,
 ) -> Option<WorkflowRunService> {
     let runner = runner?;
     let stores = OwnerStores {
@@ -53,6 +62,13 @@ pub(crate) fn build<A: ActorAgents + ActorSessionRelease>(
         rust_cli_model::governor::process(),
     ));
     let service = WorkflowRunService::new(residency, concurrency, runner, factory);
+    // W7-5e (9.34): the run progress port, with the real default concurrency (Node's `resolveWorkflowDefaultConcurrency`).
+    // Nothing is recorded until a run launches, so the gate stays off for the user.
+    let parallelism = std::thread::available_parallelism().map_or(1, std::num::NonZeroUsize::get);
+    service.configure_progress(
+        progress,
+        f64::from(rust_cli_model::governor::default_concurrency(parallelism)),
+    );
     // The journal's run rows (reconcile, the run list and the quota scan) read through one store, opened on first use so
     // building the service still opens nothing (9.30).
     let store: Arc<dyn RunStore> = Arc::new(LazyRunStore::new(database.to_path_buf()));
