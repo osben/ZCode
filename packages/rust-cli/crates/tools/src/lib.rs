@@ -52,6 +52,10 @@ mod lsp_range;
 #[path = "side_effect_tests.rs"]
 mod side_effect_tests;
 mod workflow_tools;
+// Fork: saved workflows (SaveWorkflow, ListSavedWorkflows; W7-8b).
+mod saved_workflow;
+mod workflow_list;
+mod workflow_save;
 // Fork: the `LSP` agent tool (specs/fork-rust-lsp.md "Tool (D2)").
 mod lsp_tool;
 mod mentions;

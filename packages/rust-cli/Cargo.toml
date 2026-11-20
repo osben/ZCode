@@ -166,6 +166,8 @@ serde_json = { version = "1", features = ["preserve_order", "float_roundtrip"] }
 # Node 迁移校验和 sha256(sql.trim())。
 sha2 = "0.10"
 tempfile = "3"
+# 保存的工作流定义（SaveWorkflow / ListSavedWorkflows，W7-8b）的元数据块是 YAML；解析用它，写出按 yaml 包的格式自己做。
+yaml-rust2 = "0.13"
 # 只在测试：真实进程测试里现生成 CA 与服务器证书（docs/specs/rust-cli/config.md §5，F21）；与 rustls 共用 ring。
 rcgen = { version = "0.14.10", default-features = false, features = ["crypto", "pem", "ring"] }
 thiserror = "2"

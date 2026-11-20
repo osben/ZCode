@@ -184,3 +184,28 @@ fn the_run_detail_request_carries_the_run_id_the_detail_and_the_cwd() {
         })
     );
 }
+
+#[test]
+fn a_format_analysis_maps_to_the_checker_verdict_and_ignores_the_graph() {
+    use rust_cli_kernel_api::workflow_analysis::{WorkflowAnalysis, WorkflowDiagnostic};
+    let reply = json!({
+        "ok": false,
+        "diagnostics": [{"code": 2322, "line": 1, "column": 7, "message": "Type 'string' is not assignable to type 'number'.", "extra": true}],
+        "declaredArtifacts": [],
+        "modelReferences": []
+    });
+    assert_eq!(
+        analysis_from_value(&reply).unwrap(),
+        WorkflowAnalysis {
+            ok: false,
+            diagnostics: vec![WorkflowDiagnostic {
+                code: 2322,
+                line: 1,
+                column: 7,
+                message: "Type 'string' is not assignable to type 'number'.".to_owned(),
+            }],
+        }
+    );
+    assert!(analysis_from_value(&json!({"ok": "yes", "diagnostics": []})).is_err());
+    assert!(analysis_from_value(&json!({"diagnostics": []})).is_err());
+}
