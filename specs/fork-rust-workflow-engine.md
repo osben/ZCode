@@ -2642,6 +2642,137 @@ The gate stays off. Nothing calls `workflow_tools` with a port, and nothing cons
 
 **ocr review round 1 (PR #584, head 30bd58a68; fixed).** HIGH: `helper/workflow/evalSnippet` was not in `FORWARDED_METHODS`, so every eval was refused as unavailable; it is listed now, and the table test pins the count and the method. HIGH: a call with no approval ran a snippet that calls world.run; it now checks the snippet and refuses a world.run one (red: two tests). HIGH: a world read held the engine lock for its whole run, so the timeout waited on it; a read is now started and settled under the lock and executed outside it (red: the timeout test with a 1.5 s read). MEDIUM: the start (compile, entry, spawn) had no bound; it is now inside the snippet's deadline (red: a hanging start). MEDIUM: the entry file is kept, as Node keeps it (divergence 164). LOW: a world read without `op` is refused as a contract error (red), the test's wait for the child is bounded, and `diagnostic_value` is shared with SaveWorkflow. Containment of a `path` is now CreateWorkflow's (`path_in_workspace`, lexical and real path), with a unix symlink test (red first). SaveWorkflow still has its own lexical `within_workspace`; moving it onto the shared helper is left for a follow-up, since its refusal text and tests are SaveWorkflow's.
 
+### 9.33 W7-5d: actor turn bindings for workflow runs (as built, part)
+
+**Scope built.** A run's actor turns get the bindings of the parent session they are launched from, so an actor's turn runs
+on the agents instead of being refused (9.30 item 202, and the owner's per-run turn side of item 204). Built in
+`runtime/src/workflow_owner.rs` (`bound_owner_factory`, `ActorBindingsPort`, `ParentBindings`, `NoSelectionTurns`,
+`PersonaRecording`) and `runtime/src/actor_turns.rs` (`PersonaPrompts`, `AgentTurnRunner::with_personas`). Tests in
+`workflow_owner_tests.rs` (2 new). The run service (`WorkflowRunService::launch`) is unchanged: the bound factory is an
+`OwnerFactory`, so the launch path, the run map and the close are the same as 9.25 and 9.30.
+
+**Where the bindings come from.** At each launch the factory reads the parent session's bindings from the
+`ActorBindingsPort`, keyed by `config.parent_session_id`: the current model selection, the workspace and the interactions
+channel. The permission mode is read only from the launch's recorded `subagent_permission_mode` (Node `submit`
+records the session's mode at run creation and `resume` ignores the session's current mode, so the parent's live mode is never
+used). The persona prompt of each actor is recorded when its session is created (`PersonaRecording` wraps the
+`ActorSessions` and forwards every call), and each turn reads its own session's prompt. The run id goes in as the admission run
+(9.12). The clock is the runtime's, for escalations.
+
+**Refusal.** A parent with no model selection starts its run. Each actor's turn is refused at its ask with
+`NoSelectionTurns`, which fails the ask with a plain error; the agents never see the turn. A parent the port does not know
+refuses the launch before the child's owner is built (an attach failure, so the child is stopped and no entry is kept).
+
+**Tests, red first.** The two tests were first written against the 9.30 behaviour (the bound factory as a stub that
+delegated to the unwired factory). Both were red with the 9.30 refusal ("not wired in this build"): the happy path
+("the actor's turn completes", the wire error was DriverError with that text) and the refusal (the text did not name the
+missing selection). Then the bindings were implemented and both passed. Two mutations of the implementation were run after
+that and each failed its assertion: the permission mode forced to BypassPermissions failed "the recorded permission mode"
+(left BypassPermissions, right Guarded), and removing `with_personas` failed "the persona's system prompt" (left "",
+right "Be terse."). Both were restored.
+
+**Not done (for the follow-ups).**
+
+- The production composition: `cli` still builds `production_owner_factory` with `UnwiredTurns`, so a launch in the app does
+  not yet run an actor's turn. The port's implementation (the parent's selection and workspace from the session store, the
+  interactions channel from the kernel) and the switch to `bound_owner_factory` are in `cli/src/frontends/workflow_service.rs`
+  and `app_server.rs`, which the W7-5c part is changing. Deferred to that part, so this part does not touch them.
+- No caller of `launch` exists yet (the CreateWorkflow tool path is behind the gate), so no launch supplies a recorded
+  `subagent_permission_mode` in production. The factory's YOLO default for an absent value is Node's read rule, but the
+  production launch must record the mode it was given (divergence 273).
+- The browser port: `ActorRun` has no browser field, and the browser session is not closed at the run's dispose (9.30 item 203
+  closed the release through the agents; the browser part is not built).
+- The model precedence below the parent's selection (divergence 271).
+
+**Node divergences (new in W7-5d, numbered from 270).**
+
+270. The turn side reads the parent's bindings through `ActorBindingsPort` at each launch, not from a parent runtime. Node's
+     `createActorRuntime` is a closure over the app and the session (`create-app.ts`), and it reads the session's current
+     selection when the child's runtime is built. The Rust port reads it at the launch, when the owner is built. The two
+     agree when the parent's selection does not change during the run; a change mid-run is not followed here (the child keeps
+     the selection it inherited at launch). Unverified against Node for a change during a run.
+271. Model precedence: the actor uses the parent's selection only. Node's `resolveActorPersonaModel` (the persona's `model`
+     name, looked up in `modelBindings`), then the run's `subagentModel`, then the journal's pinned model (resume), then the
+     parent's selection (`runSubagentModel`, `pinnedActorModel`). The first three are not read here. A run with a
+     `subagentModel` or a persona model runs on the parent's selection instead, which is a real difference for those runs.
+272. The browser port is absent. Node passes `browserControlPort` to each actor runtime and closes the actor's browser
+     session when the run is disposed (`create-app.ts`). `ActorRun` has no such field, so an actor's browser is not
+     available and nothing closes it.
+273. The permission mode comes from the launch's recorded `subagent_permission_mode` only. An absent value is YOLO, as Node
+     reads it (`actor_permission_policy`). Node's submit records `subagentPermissionMode` from the session's mode at creation
+     (`subagentPermissionModeOf`, with `plan` read as Build). The Rust launch's caller must record it the same way; no caller
+     exists yet (see Not done). Unverified: the value a resume finds in a run journaled by an older build.
+274. A child whose parent has no model selection is refused at each ask with a plain error. Node's `requireActorModelSelection`
+     throws at the runtime's creation (`runtimeFactory`), which fails the ask with a DriverError whose text is in Chinese
+     (`actor 会话没有模型选择，无法记录 resolvedModel`). The Rust text is in English, with the same meaning. The wire name
+     is DriverError in both.
+275. A session's persona prompt is its persona's `system` field. A persona with no `system` gets an empty prompt. Node's
+     `createActorRuntime` with no `system` is not compared here (unverified). The prompt is recorded when the session is
+     created, so a session that is rehydrated without `create_session` would have no record and would fall back to the
+     base's (empty) prompt. The owner's create path always calls `create_session`, so this is not reached today.
+276. A run whose parent session the port does not know is refused at its launch, as an attach failure. Node's
+     `dynamic-workflow-run-service.ts` reads the parent through the session store at submit, and a missing session fails the
+     submit. The refusal's text and where Node raises it are not compared.
+277. The bound factory reads the bindings once per owner, at the launch. Node's runtime factory runs once per actor, so
+     a second actor of the same run sees the parent's selection at its own creation. Same as 270 for the timing; the
+     difference is only visible when the selection changes mid-run.
+
+**Review round 2 (Codex GPT-6.1-Sol on #591, four findings; fixed).** The text above is kept for the record; where round 2
+differs, round 2 is the current state. Seven of the new tests were red on the round-1 code (named below); the overlap test
+was green there, since per-session persona recording already existed, and it pins the behaviour.
+
+1. **Resume mode (HIGH, fixed).** A resumed run (no launch fields) got YOLO. `launch_facts` now reads the journaled
+   `run-launched` event when the config carries no launch, as Node reads `readRunSubagentPermissionMode` on resume. A
+   launch's own mode wins, and the models fall back per field to the journal, as Node does. Red: `a_resumed_run_keeps_the_mode_its_launch_recorded`
+   (BypassPermissions, not Guarded). The first run is interrupted mid-ask, because a completed ask replays from the
+   journal without a turn, so a resume that re-asked a finished actor would test nothing.
+2. **Model precedence (MEDIUM, fixed; divergence 271 closed).** Each actor's model, resolved when its session is created,
+   in Node's order (`workflow-actor-model.ts`): the persona's model, looked up in the run's `modelBindings` (an unbound name
+   refuses the actor's session, as Node's `WorkflowActorModelUnboundError`); then the run's `subagentModel`; then the
+   journaled pin (`resolvedModel` of the actor's row; a pin matching the parent's current model keeps the parent's
+   selection with its reasoning, a different pin is used as it is); then the parent's current selection. The resolved
+   model is journaled as `provider/model` on the actor's row before its first turn (Node `journalActorResolvedModel`); the
+   engine carries the field forward. A run model is an override, so an actor runs when its parent has no selection.
+   Red: `the_persona_model_wins_over_the_run_model_and_the_parent`, `the_run_model_wins_over_the_parent_when_the_persona_names_none`,
+   `a_run_model_runs_an_actor_whose_parent_has_no_selection`, `a_resumed_actor_keeps_the_model_it_was_journaled_with`
+   (the journaled row is empty on the round-1 code).
+3. **Per-actor selection (MEDIUM, fixed; divergences 270 and 277 closed for the selection).** The parent's current
+   selection is read when each actor's session is created, and the actor keeps it (`ActorSettings`, one record per
+   session). A change between two actors reaches the second only, and an actor created while the parent has no selection
+   is refused while a later actor runs. Red: `a_selection_change_reaches_the_next_actor_and_not_the_running_one`,
+   `an_absent_selection_refuses_only_the_actors_created_before_it_is_set`. The workspace and the interactions channel are
+   still read once at launch (divergence 278).
+4. **Persona per actor (LOW, test added).** `two_overlapping_actors_each_keep_their_own_persona`: two actors whose turns
+   overlap (each turn waits 60 ms) each run under their own prompt. Green on both the round-1 and the round-2 code.
+
+The turn runner takes each turn's persona and selection from its session's recorded settings (`AgentTurnRunner::with_settings`).
+A session with no record is refused, and so is a session whose selection is none (`NO_SELECTION`). `ActorRunBase.selection`
+is now an option: it is the fallback for a runner with no settings map, which the agents' tests use.
+
+**Divergences from round 2 (numbered from 278).**
+
+278. The workspace and the interactions channel are read from the parent once, at the launch. Node's `createActorRuntime`
+     reads the parent's session when each actor's runtime is built (`create-app.ts`). A change of the parent's workspace or
+     interactions during a run is not followed. Unverified whether either changes in practice.
+279. The journaled pin is parsed as Node's `providerId/modelId`, with a `$reasoning` segment accepted when present. Node's
+     pin parse has no reasoning segment; the journal writes none, so the two agree on every row this build writes.
+280. Only the selection is read per actor. The journal's permission mode for a resume (273) is read once, at the owner's
+     build, which is when Node reads it too (`runSubagentPermissionMode`, read before the runtime factory runs).
+
+Still open after round 2: 272 (browser port), 273 for production launches (no caller records the mode yet), and 274 (the
+refusal text is English; Node's is Chinese).
+
+**Review round 3 (Codex re-review of #591 at 4d424ec52, one MEDIUM; fixed).** An amend-resume's first live dispatch has no
+pin of its own, and the predecessor's pin is the session seed (`ActorSessionSeed.resolved_model`). The driver discarded the
+seed, so an actor that used model A inherited the parent's model B and journaled B. The seed now travels with the session
+request (`ActorSessionRequest.seed`), and the pin is `currentRunPin ?? seed.resolvedModel` (Node
+`dynamic-workflow-run-launch.ts`, the `runtimeFactory` pin). The precedence is persona, run, current-run pin, seed pin,
+parent's current selection, and the chosen model is journaled. Red: `an_amended_actor_keeps_its_predecessors_model_over_the_parents`
+ran on B with the seed ignored (the round-2 behaviour) and on A with the seed used. Round 2's resume tests now repeat their
+first prompt, since the ask text is hashed on replay. Divergence 281: the predecessor's pin applies only when the seed
+reaches the session, which the import cache does for an actor with a carried in-flight ask or consumed entries (Node
+`ImportedActorState.seed`); the scheduler builds it the same way.
+
 ## 10. Open questions
 
 Each has a recommendation. The user decides. Until decided, the recommendation is the default.

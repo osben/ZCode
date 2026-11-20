@@ -82,6 +82,9 @@ pub struct ActorSessionRequest {
     /// `dwf/<runId>/<site>@<ordinal>`, the `workflow_actor` task link's path.
     pub link_path: String,
     pub persona: Value,
+    /// The session seed of a diverged actor (Node `createActorSession`'s `seed`): its predecessor's model pin, read at
+    /// creation by the turn side when the run has no pin of its own (9.33 review round 3). None for a fresh actor.
+    pub seed: Option<crate::imported_cache::ActorSessionSeed>,
 }
 
 /// The turn side. Implementations run turns and create sessions; they never call the engine. Each call that can
@@ -257,7 +260,7 @@ impl<S: ActorSessions> WorkflowDriver for ActorPort<S> {
         &mut self,
         actor: &Ref,
         persona: &Value,
-        _seed: Option<&crate::imported_cache::ActorSessionSeed>,
+        seed: Option<&crate::imported_cache::ActorSessionSeed>,
     ) -> Result<String> {
         // Node's `Workflow driver closed during actor creation`: a disposed driver accepts no new session.
         if self.disposed {
@@ -270,6 +273,7 @@ impl<S: ActorSessions> WorkflowDriver for ActorPort<S> {
             title: actor_session_title(&actor.site_id, actor.ordinal),
             link_path: actor_task_link_path(&self.run_id, &actor.site_id, actor.ordinal),
             persona: persona.clone(),
+            seed: seed.cloned(),
         };
         let session = self.sessions.create_session(&request)?;
         let interaction =

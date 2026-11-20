@@ -5,13 +5,28 @@ use std::path::Path;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use rust_cli_kernel_api::testing::FakeChildRunner;
-use rust_cli_kernel_api::workflow_child::{Completion, LaunchInput, Outcome};
+use async_trait::async_trait;
+use rust_cli_agents::actor_turn::{ActorRun, ActorTurnEnd, ActorTurnStats};
+use rust_cli_kernel_api::env::{EnvPath, WorkspaceRef};
+use rust_cli_kernel_api::ids::{EnvironmentId, SessionId};
+use rust_cli_kernel_api::model::ModelSelection;
+use rust_cli_kernel_api::permission::PermissionMode;
+use rust_cli_kernel_api::testing::{FakeChildRunner, FixedClock};
+use rust_cli_kernel_api::workflow_child::{
+    ChildHandler, ChildRequest, Completion, CreateActor, LaunchInput, Outcome, WireError,
+};
 use rust_cli_node_store::dwf::{self, RunStatus};
 use rust_cli_workflow::engine::{AskSpec, EngineConfig};
+use rust_cli_workflow::event::LaunchFields;
 use rust_cli_workflow::residency::SessionResidency;
+use std::sync::Mutex;
+use tokio_util::sync::CancellationToken;
+
+use super::{ActorBindingsPort, ParentBindings, bound_owner_factory};
+use crate::actor_turns::ActorAgents;
+use crate::workflow_assembly::ActorSessionRelease;
 use rust_cli_workflow::run_concurrency::{ConcurrencyListener, RunConcurrency};
-use serde_json::{Map, json};
+use serde_json::{Map, Value, json};
 
 use super::{OwnerStores, UnwiredRelease, UnwiredTurns, ledger_ms, production_owner_factory};
 use crate::workflow_run::WorkflowRunService;
@@ -184,4 +199,651 @@ fn the_unwired_turn_side_refuses_its_turns_and_its_releases() {
         .release_actor_session(&rust_cli_kernel_api::ids::SessionId::new("ses_a"))
         .expect_err("a release is refused");
     assert!(error.contains("not wired"), "{error}");
+}
+
+// ---- W7-5d (9.33): a launched run's actor turns carry the parent's bindings ----
+
+/// What a scripted turn saw of its run: the bindings the turn side passed to the agents.
+#[derive(Debug, Clone, PartialEq)]
+struct SeenRun {
+    parent: String,
+    selection: ModelSelection,
+    mode: PermissionMode,
+    workspace_root: String,
+    persona: String,
+    admission_run: Option<String>,
+    description: String,
+}
+
+/// The agents a launched run's turns reach. It records each turn's bindings, waits `delay`, and answers with `reply`.
+struct RecordingAgents {
+    seen: Mutex<Vec<SeenRun>>,
+    reply: String,
+    delay: Duration,
+    /// When set, a turn never answers: it ends only when its cancel is raised (the run is closed mid-ask).
+    hang: bool,
+}
+
+impl RecordingAgents {
+    fn replying(reply: &str) -> Arc<Self> {
+        Arc::new(Self {
+            seen: Mutex::new(Vec::new()),
+            reply: reply.to_owned(),
+            delay: Duration::ZERO,
+            hang: false,
+        })
+    }
+
+    fn slow(reply: &str, delay: Duration) -> Arc<Self> {
+        Arc::new(Self {
+            seen: Mutex::new(Vec::new()),
+            reply: reply.to_owned(),
+            delay,
+            hang: false,
+        })
+    }
+
+    fn hanging() -> Arc<Self> {
+        Arc::new(Self {
+            seen: Mutex::new(Vec::new()),
+            reply: String::new(),
+            delay: Duration::ZERO,
+            hang: true,
+        })
+    }
+
+    fn selections(&self) -> Vec<ModelSelection> {
+        self.seen
+            .lock()
+            .expect("seen")
+            .iter()
+            .map(|turn| turn.selection.clone())
+            .collect()
+    }
+}
+
+#[async_trait]
+impl ActorAgents for RecordingAgents {
+    async fn run_actor_turn(
+        &self,
+        run: ActorRun,
+        _prompt: &str,
+        cancel: CancellationToken,
+    ) -> ActorTurnEnd {
+        self.seen.lock().expect("seen").push(SeenRun {
+            parent: run.parent.as_str().to_owned(),
+            selection: run.selection.clone(),
+            mode: run.mode,
+            workspace_root: run.workspace.root.as_str().to_owned(),
+            persona: run.persona_prompt.clone(),
+            admission_run: run.admission_run.as_ref().map(|id| id.as_str().to_owned()),
+            description: run.interaction_description.clone(),
+        });
+        if self.hang {
+            cancel.cancelled().await;
+            return ActorTurnEnd::Stopped;
+        }
+        tokio::time::sleep(self.delay).await;
+        ActorTurnEnd::Text(self.reply.clone())
+    }
+
+    fn turn_messages(&self, _child: &SessionId) -> Option<u64> {
+        Some(0)
+    }
+
+    fn actor_turn_stats(&self, _child: &SessionId) -> Option<ActorTurnStats> {
+        None
+    }
+}
+
+impl ActorSessionRelease for RecordingAgents {
+    fn release_actor_session(&self, _child: &SessionId) -> std::result::Result<(), String> {
+        Ok(())
+    }
+}
+
+/// The parent session `ses_p`: its current selection can change between launches and between actors. Any other
+/// parent is unknown.
+struct ParentFixture {
+    selection: Mutex<Option<ModelSelection>>,
+}
+
+impl ParentFixture {
+    fn with(selection: Option<ModelSelection>) -> Arc<Self> {
+        Arc::new(Self {
+            selection: Mutex::new(selection),
+        })
+    }
+
+    fn set(&self, selection: Option<ModelSelection>) {
+        *self.selection.lock().expect("selection") = selection;
+    }
+}
+
+impl ActorBindingsPort for ParentFixture {
+    fn parent_bindings(&self, parent: &str) -> Option<ParentBindings> {
+        (parent == "ses_p").then(|| ParentBindings {
+            selection: self.selection.lock().expect("selection").clone(),
+            workspace: WorkspaceRef {
+                environment: EnvironmentId::new("local"),
+                root: EnvPath::new("/work"),
+            },
+            interactions: None,
+        })
+    }
+}
+
+fn selection(provider: &str, model: &str) -> ModelSelection {
+    ModelSelection::new(provider, model)
+}
+
+/// A run service over the bound factory. The parent's bindings come from `parent`, the turns reach `agents`.
+fn bound_service(
+    path: std::path::PathBuf,
+    parent: Arc<ParentFixture>,
+    agents: Arc<RecordingAgents>,
+) -> (
+    WorkflowRunService,
+    Arc<FakeChildRunner>,
+    Arc<SessionResidency>,
+) {
+    let runner = Arc::new(FakeChildRunner::new());
+    let residency = Arc::new(SessionResidency::new());
+    let factory = bound_owner_factory(
+        stores(path),
+        agents,
+        tokio::runtime::Handle::current(),
+        parent,
+        Arc::new(FixedClock(1_700_000_000_000)),
+    );
+    let service = WorkflowRunService::new(
+        residency.clone(),
+        Arc::new(NoGovernor),
+        runner.clone(),
+        factory,
+    );
+    (service, runner, residency)
+}
+
+/// A launch from `ses_p` with the given recorded fields.
+fn launched(run_id: &str, fields: LaunchFields) -> EngineConfig {
+    let mut config = config(run_id, Some("ses_p"));
+    config.launch = Some(fields);
+    config
+}
+
+/// The fields a launch records for a guarded run, with no model override.
+fn guarded() -> LaunchFields {
+    LaunchFields {
+        subagent_permission_mode: Some("guarded".to_owned()),
+        ..Default::default()
+    }
+}
+
+/// The child creates actor `local` (with `persona`) and asks it once. Returns the ask's result.
+async fn actor_asks(
+    handler: &Arc<dyn ChildHandler>,
+    local: &str,
+    persona: Value,
+    prompt: &str,
+) -> std::result::Result<Value, WireError> {
+    let create: CreateActor = serde_json::from_value(json!({
+        "localId": local,
+        "siteId": "plain",
+        "name": persona.get("name").cloned().unwrap_or(Value::Null),
+        "persona": persona,
+    }))
+    .expect("create-actor");
+    let engine_id = handler
+        .create_actor(&create)
+        .await
+        .expect("the actor is created");
+    let ask: ChildRequest = serde_json::from_value(json!({
+        "id": format!("r-{local}"),
+        "type": "ask",
+        "siteId": "plain",
+        "actor": local,
+        "prompt": prompt,
+        "instructions": prompt,
+    }))
+    .expect("ask");
+    handler.request(ask, Some(engine_id)).await
+}
+
+fn ada() -> Value {
+    json!({"name": "Ada", "system": "Be terse."})
+}
+
+/// Starts Ada's ask on a turn that never answers, waits until the turn reached the agents, then closes the run
+/// mid-ask. The journal keeps the actor and its resolved model, and the ask is not answered, so a resume runs it again.
+async fn interrupt_mid_ask(
+    service: &WorkflowRunService,
+    handler: Arc<dyn ChildHandler>,
+    agents: &RecordingAgents,
+) {
+    let pending = tokio::spawn(async move {
+        let _ = actor_asks(&handler, "a1", ada(), "do it").await;
+    });
+    wait_until("the turn to reach the agents", || {
+        agents.seen.lock().expect("seen").len() == 1
+    })
+    .await;
+    let _ = service.close().await;
+    let _ = pending.await;
+}
+
+/// The journaled `resolved_model` of the run's actors, by ordinal order.
+fn journaled_models(path: &std::path::Path, run_id: &str) -> Vec<Option<String>> {
+    let (conn, _) = rust_cli_node_store::open_session_database(path, Duration::from_secs(1), 0)
+        .expect("reopened session database");
+    dwf::list_actors(&conn, run_id)
+        .expect("list the actors")
+        .into_iter()
+        .map(|actor| actor.resolved_model)
+        .collect()
+}
+
+/// 9.33: a launched run's actor completes a turn under the parent's model and permission mode, with the parent's
+/// workspace, the persona's system prompt and the run's admission. The scripted agents see those bindings.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_launched_run_actor_turn_runs_under_the_parent_model_and_permission_mode() {
+    let dir = tempfile::tempdir().expect("temp dir");
+    let path = database(dir.path());
+    let agents = RecordingAgents::replying("done");
+    let (service, runner, residency) = bound_service(
+        path,
+        ParentFixture::with(Some(selection("acct-a", "ma"))),
+        agents.clone(),
+    );
+
+    service
+        .launch(input("wf_1"), launched("wf_1", guarded()))
+        .await
+        .expect("launched");
+    let answer = actor_asks(&runner.launches()[0].handler, "a1", ada(), "do it").await;
+    assert!(answer.is_ok(), "the actor's turn completes: {answer:?}");
+
+    let seen = agents.seen.lock().expect("seen").clone();
+    assert_eq!(seen.len(), 1, "the turn reached the agents once");
+    let turn = &seen[0];
+    assert_eq!(turn.parent, "ses_p");
+    assert_eq!(
+        turn.selection,
+        selection("acct-a", "ma"),
+        "the parent's model"
+    );
+    assert_eq!(
+        turn.mode,
+        PermissionMode::Guarded,
+        "the recorded permission mode"
+    );
+    assert_eq!(turn.workspace_root, "/work", "the parent's workspace");
+    assert_eq!(turn.persona, "Be terse.", "the persona's system prompt");
+    assert_eq!(
+        turn.admission_run.as_deref(),
+        Some("wf_1"),
+        "admitted under the run"
+    );
+    assert!(
+        turn.description.starts_with("Ada ("),
+        "{}",
+        turn.description
+    );
+
+    runner.finish(
+        0,
+        Outcome::Completed(Completion {
+            ok: true,
+            value: Some(json!("done")),
+            error: None,
+        }),
+    );
+    wait_until("the run to settle", || service.run_count() == 0).await;
+    assert_eq!(
+        residency.live_runs("ses_p"),
+        0,
+        "the settled run releases its parent"
+    );
+    let report = service.close().await;
+    assert!(report.stuck.is_empty());
+    assert!(
+        report.close_failures.is_empty(),
+        "{:?}",
+        report.close_failures
+    );
+}
+
+/// 9.33 refusal, as Node refuses it: a parent with no model selection gives its actor none, so the actor's turn is
+/// refused at its ask, and the agents never see it. The run itself is not refused at launch.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn an_actor_whose_parent_has_no_model_selection_is_refused_at_its_ask() {
+    let dir = tempfile::tempdir().expect("temp dir");
+    let path = database(dir.path());
+    let agents = RecordingAgents::replying("done");
+    let (service, runner, _residency) =
+        bound_service(path, ParentFixture::with(None), agents.clone());
+
+    service
+        .launch(input("wf_2"), launched("wf_2", guarded()))
+        .await
+        .expect("launched");
+    let answer = actor_asks(&runner.launches()[0].handler, "a1", ada(), "do it").await;
+    let error = answer.expect_err("the ask is refused");
+    assert!(
+        error.message.contains("model selection"),
+        "the refusal names the missing selection: {}",
+        error.message
+    );
+    assert!(
+        agents.seen.lock().expect("seen").is_empty(),
+        "no turn reached the agents"
+    );
+
+    runner.finish(
+        0,
+        Outcome::Completed(Completion {
+            ok: true,
+            value: None,
+            error: None,
+        }),
+    );
+    wait_until("the run to settle", || service.run_count() == 0).await;
+    let _ = service.close().await;
+}
+
+/// 9.33 finding 1: a resumed run (no launch fields in the config) keeps the permission mode its journal recorded, not
+/// YOLO. Node reads the journal's run-launched mode on resume (`dynamic-workflow-run-launch.ts`).
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_resumed_run_keeps_the_mode_its_launch_recorded() {
+    let dir = tempfile::tempdir().expect("temp dir");
+    let path = database(dir.path());
+    let parent = ParentFixture::with(Some(selection("acct-a", "ma")));
+    let hanging = RecordingAgents::hanging();
+    let (first, runner, _residency) = bound_service(path.clone(), parent.clone(), hanging.clone());
+    first
+        .launch(input("wf_r"), launched("wf_r", guarded()))
+        .await
+        .expect("launched");
+    interrupt_mid_ask(&first, runner.launches()[0].handler.clone(), &hanging).await;
+
+    let agents = RecordingAgents::replying("done");
+    let (second, runner, _residency) = bound_service(path, parent, agents.clone());
+    second
+        .launch(input("wf_r"), config("wf_r", Some("ses_p")))
+        .await
+        .expect("resumed");
+    actor_asks(&runner.launches()[0].handler, "a1", ada(), "do it")
+        .await
+        .expect("the resumed turn completes");
+    let seen = agents.seen.lock().expect("seen").clone();
+    assert_eq!(seen.len(), 1, "the resumed turn reached the agents");
+    assert_eq!(
+        seen[0].mode,
+        PermissionMode::Guarded,
+        "the journal's mode, not YOLO"
+    );
+    let _ = second.close().await;
+}
+
+/// 9.33 finding 2: an actor's model follows Node's order: the persona's model (through the run's bindings), then the
+/// run's subagent model, then the parent's selection.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn the_persona_model_wins_over_the_run_model_and_the_parent() {
+    let dir = tempfile::tempdir().expect("temp dir");
+    let path = database(dir.path());
+    let agents = RecordingAgents::replying("done");
+    let (service, runner, _residency) = bound_service(
+        path,
+        ParentFixture::with(Some(selection("acct-a", "ma"))),
+        agents.clone(),
+    );
+    let mut fields = guarded();
+    fields.subagent_model = Some("acct-r/mr".to_owned());
+    fields.model_bindings = Some(json!({"fast": "acct-x/glm-5.3$high"}));
+    service
+        .launch(input("wf_p"), launched("wf_p", fields))
+        .await
+        .expect("launched");
+    let persona = json!({"name": "Ada", "system": "Be terse.", "model": "fast"});
+    actor_asks(&runner.launches()[0].handler, "a1", persona, "do it")
+        .await
+        .expect("the turn completes");
+    let mut expected = selection("acct-x", "glm-5.3");
+    expected.reasoning = Some("high".to_owned());
+    assert_eq!(agents.selections(), vec![expected], "the persona's model");
+    let _ = service.close().await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn the_run_model_wins_over_the_parent_when_the_persona_names_none() {
+    let dir = tempfile::tempdir().expect("temp dir");
+    let path = database(dir.path());
+    let agents = RecordingAgents::replying("done");
+    let (service, runner, _residency) = bound_service(
+        path,
+        ParentFixture::with(Some(selection("acct-a", "ma"))),
+        agents.clone(),
+    );
+    let mut fields = guarded();
+    fields.subagent_model = Some("acct-r/mr".to_owned());
+    service
+        .launch(input("wf_q"), launched("wf_q", fields))
+        .await
+        .expect("launched");
+    actor_asks(&runner.launches()[0].handler, "a1", ada(), "do it")
+        .await
+        .expect("the turn completes");
+    assert_eq!(
+        agents.selections(),
+        vec![selection("acct-r", "mr")],
+        "the run's model"
+    );
+    let _ = service.close().await;
+}
+
+/// 9.33 finding 2: a run model is an override, so an actor runs even when its parent has no selection.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_run_model_runs_an_actor_whose_parent_has_no_selection() {
+    let dir = tempfile::tempdir().expect("temp dir");
+    let path = database(dir.path());
+    let agents = RecordingAgents::replying("done");
+    let (service, runner, _residency) =
+        bound_service(path, ParentFixture::with(None), agents.clone());
+    let mut fields = guarded();
+    fields.subagent_model = Some("acct-r/mr".to_owned());
+    service
+        .launch(input("wf_o"), launched("wf_o", fields))
+        .await
+        .expect("launched");
+    actor_asks(&runner.launches()[0].handler, "a1", ada(), "do it")
+        .await
+        .expect("the turn runs under the run's model");
+    assert_eq!(agents.selections(), vec![selection("acct-r", "mr")]);
+    let _ = service.close().await;
+}
+
+/// 9.33 finding 2: an actor's resolved model is journaled, and a resumed run keeps it (Node's pin) even when the parent
+/// has since changed its model.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_resumed_actor_keeps_the_model_it_was_journaled_with() {
+    let dir = tempfile::tempdir().expect("temp dir");
+    let path = database(dir.path());
+    let parent = ParentFixture::with(Some(selection("acct-a", "ma")));
+    let hanging = RecordingAgents::hanging();
+    let (first, runner, _residency) = bound_service(path.clone(), parent.clone(), hanging.clone());
+    first
+        .launch(input("wf_k"), launched("wf_k", guarded()))
+        .await
+        .expect("launched");
+    interrupt_mid_ask(&first, runner.launches()[0].handler.clone(), &hanging).await;
+    assert_eq!(
+        journaled_models(&path, "wf_k"),
+        vec![Some("acct-a/ma".to_owned())],
+        "the actor's resolved model is journaled"
+    );
+
+    parent.set(Some(selection("acct-b", "mb")));
+    let agents = RecordingAgents::replying("done");
+    let (second, runner, _residency) = bound_service(path, parent, agents.clone());
+    second
+        .launch(input("wf_k"), config("wf_k", Some("ses_p")))
+        .await
+        .expect("resumed");
+    actor_asks(&runner.launches()[0].handler, "a1", ada(), "do it")
+        .await
+        .expect("the resumed turn completes");
+    assert_eq!(
+        agents.selections(),
+        vec![selection("acct-a", "ma")],
+        "the journaled model"
+    );
+    let _ = second.close().await;
+}
+
+/// 9.33 finding 3: each actor resolves the parent's selection when its session is created, then keeps it. A change
+/// between two actors reaches the second only.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_selection_change_reaches_the_next_actor_and_not_the_running_one() {
+    let dir = tempfile::tempdir().expect("temp dir");
+    let path = database(dir.path());
+    let agents = RecordingAgents::replying("done");
+    let parent = ParentFixture::with(Some(selection("acct-a", "ma")));
+    let (service, runner, _residency) = bound_service(path, parent.clone(), agents.clone());
+    service
+        .launch(input("wf_c"), launched("wf_c", guarded()))
+        .await
+        .expect("launched");
+    let handler = runner.launches()[0].handler.clone();
+    actor_asks(&handler, "a1", ada(), "first")
+        .await
+        .expect("the first actor completes");
+    parent.set(Some(selection("acct-b", "mb")));
+    actor_asks(
+        &handler,
+        "a2",
+        json!({"name": "Bob", "system": "Be wordy."}),
+        "second",
+    )
+    .await
+    .expect("the second actor completes");
+    assert_eq!(
+        agents.selections(),
+        vec![selection("acct-a", "ma"), selection("acct-b", "mb")],
+        "the first actor keeps its model; the second takes the change"
+    );
+    let _ = service.close().await;
+}
+
+/// 9.33 finding 3: a parent with no selection refuses only the actors created while it has none. Once the parent
+/// has one, a later actor runs.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn an_absent_selection_refuses_only_the_actors_created_before_it_is_set() {
+    let dir = tempfile::tempdir().expect("temp dir");
+    let path = database(dir.path());
+    let agents = RecordingAgents::replying("done");
+    let parent = ParentFixture::with(None);
+    let (service, runner, _residency) = bound_service(path, parent.clone(), agents.clone());
+    service
+        .launch(input("wf_m"), launched("wf_m", guarded()))
+        .await
+        .expect("launched");
+    let handler = runner.launches()[0].handler.clone();
+    let refused = actor_asks(&handler, "a1", ada(), "first").await;
+    assert!(refused.is_err(), "the actor with no selection is refused");
+    parent.set(Some(selection("acct-a", "ma")));
+    actor_asks(
+        &handler,
+        "a2",
+        json!({"name": "Bob", "system": "Be wordy."}),
+        "second",
+    )
+    .await
+    .expect("the later actor runs");
+    assert_eq!(agents.selections(), vec![selection("acct-a", "ma")]);
+    let _ = service.close().await;
+}
+
+/// 9.33 finding 4: two actors whose turns overlap each run under their own persona prompt.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn two_overlapping_actors_each_keep_their_own_persona() {
+    let dir = tempfile::tempdir().expect("temp dir");
+    let path = database(dir.path());
+    let agents = RecordingAgents::slow("done", Duration::from_millis(60));
+    let (service, runner, _residency) = bound_service(
+        path,
+        ParentFixture::with(Some(selection("acct-a", "ma"))),
+        agents.clone(),
+    );
+    service
+        .launch(input("wf_o2"), launched("wf_o2", guarded()))
+        .await
+        .expect("launched");
+    let handler = runner.launches()[0].handler.clone();
+    let bob = json!({"name": "Bob", "system": "Be wordy."});
+    let (first, second) = tokio::join!(
+        actor_asks(&handler, "a1", ada(), "first"),
+        actor_asks(&handler, "a2", bob, "second"),
+    );
+    first.expect("Ada completes");
+    second.expect("Bob completes");
+    let mut prompts: Vec<(String, String)> = agents
+        .seen
+        .lock()
+        .expect("seen")
+        .iter()
+        .map(|turn| (turn.description.clone(), turn.persona.clone()))
+        .collect();
+    prompts.sort();
+    assert_eq!(prompts.len(), 2, "both turns reached the agents");
+    assert!(prompts[0].0.starts_with("Ada ("), "{}", prompts[0].0);
+    assert_eq!(prompts[0].1, "Be terse.", "Ada's persona");
+    assert!(prompts[1].0.starts_with("Bob ("), "{}", prompts[1].0);
+    assert_eq!(prompts[1].1, "Be wordy.", "Bob's persona");
+    let _ = service.close().await;
+}
+
+/// 9.33 review round 3: an amend-resume's first live dispatch has no pin of its own, so the actor keeps the model its
+/// predecessor journaled (the seed's pin, Node `currentRunPin ?? seed?.resolvedModel`), not the parent's current model.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn an_amended_actor_keeps_its_predecessors_model_over_the_parents() {
+    use rust_cli_workflow::imported_cache::{
+        ImportedActorCandidate, ImportedInFlightAsk, ImportedRunCache,
+    };
+    use rust_cli_workflow::persona::normalize_persona;
+    use rust_cli_workflow::scheduler::input_hash;
+
+    let dir = tempfile::tempdir().expect("temp dir");
+    let path = database(dir.path());
+    let agents = RecordingAgents::replying("done");
+    let parent = ParentFixture::with(Some(selection("acct-b", "mb")));
+    let (service, runner, _residency) = bound_service(path, parent, agents.clone());
+
+    let candidate = ImportedActorCandidate {
+        persona: normalize_persona(Some("Ada"), Some(&ada())),
+        entries: Vec::new(),
+        in_flight: Some(ImportedInFlightAsk {
+            input_hash: input_hash("do it"),
+            message_boundary: 0,
+        }),
+        transcript_source_session_id: "ses_p".to_owned(),
+        resolved_model: Some("acct-a/ma".to_owned()),
+    };
+    let mut config = launched("wf_am", guarded());
+    config.imported_cache = Some(ImportedRunCache {
+        actors: std::collections::BTreeMap::from([("Ada".to_owned(), candidate)]),
+        world: Default::default(),
+    });
+    service
+        .launch(input("wf_am"), config)
+        .await
+        .expect("launched");
+    actor_asks(&runner.launches()[0].handler, "a1", ada(), "do it")
+        .await
+        .expect("the amended turn completes");
+    assert_eq!(
+        agents.selections(),
+        vec![selection("acct-a", "ma")],
+        "the predecessor's pinned model, not the parent's current one"
+    );
+    let _ = service.close().await;
 }
