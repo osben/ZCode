@@ -14,12 +14,14 @@
 //!   since unwinding drops the request. The turn then gets `MailboxError::NoAnswer`, which says the request may already
 //!   have been applied. A retry must not assume it was not.
 //! - An owner error crosses unchanged as an `anyhow::Error` (`MailboxError::Owner`), so its context chain survives.
+use crate::actor_feed::FeedEvent;
 use crate::driver_owner::{ActorDriverOwner, ActorSessions, SubmitReply, TurnEndReply};
 use crate::escalation::{AnswerOutcome, EscalateOutcome, EscalationRequest};
 use crate::journal::JournalPort;
 use crate::model::{ConcurrencyChange, Ref};
 use crate::model_failure::TurnFailure;
 use crate::parked_answers::ParkedAnswers;
+use crate::residency::LiveRun;
 use anyhow::Result;
 use serde_json::Value;
 use std::fmt;
@@ -121,6 +123,10 @@ pub(crate) enum ActorRequest {
     /// The governor changed a cap this run is engaged on (Node's `concurrencyChanged`, from the run's subscription).
     /// No answer goes back.
     ConcurrencyChanged { change: ConcurrencyChange },
+    /// One observation of an actor's ask, fed by the turn side (W7-3). No answer goes back.
+    Feed { session: String, event: FeedEvent },
+    /// The run's stop from the residency ledger (W6b part 6, `LiveRun`). No answer goes back.
+    StopInterrupted,
 }
 
 impl ActorHandle {
@@ -251,6 +257,16 @@ fn dispatch<J: JournalPort, S: ActorSessions>(
         ActorRequest::Mutating { session, reply } => {
             let _ = reply.send(owner.ask_mutating(&session));
         }
+        ActorRequest::Feed { session, event } => {
+            if let Err(error) = owner.feed(&session, event) {
+                tracing::warn!(%session, error = %error, "the owner failed to record an actor's observation");
+            }
+        }
+        ActorRequest::StopInterrupted => {
+            if let Err(error) = owner.stop_interrupted() {
+                tracing::warn!("the owner failed to settle an interrupted run: {error:#}");
+            }
+        }
     }
 }
 
@@ -336,6 +352,19 @@ impl ActorHandle {
         })
     }
 
+    /// One observation of an actor's ask (W7-3). Posted without an answer: it is false only when the owner is gone.
+    pub fn feed(&self, session: &str, event: FeedEvent) -> bool {
+        self.post(ActorRequest::Feed {
+            session: session.to_owned(),
+            event,
+        })
+    }
+
+    /// Asks the owner to settle its run as interrupted (W6b part 6). Posted without an answer.
+    pub fn stop_interrupted(&self) -> bool {
+        self.post(ActorRequest::StopInterrupted)
+    }
+
     /// One turn's ask stats, before the turn's end. The owner writes them to the ask's node.
     pub fn ask_stats(
         &self,
@@ -347,5 +376,25 @@ impl ActorHandle {
             stats,
             reply,
         })
+    }
+}
+
+/// A run's `LiveRun` over its owner's mailbox (W7-3). The residency ledger calls `stop_interrupted` from any thread; the
+/// stop is posted, and the owner's thread settles the run, which then releases the guard the close waits on.
+#[derive(Clone)]
+pub struct MailboxRun {
+    handle: ActorHandle,
+}
+
+impl MailboxRun {
+    pub fn new(handle: ActorHandle) -> Self {
+        Self { handle }
+    }
+}
+
+impl LiveRun for MailboxRun {
+    fn stop_interrupted(&self) {
+        // A post fails only when the owner is gone, and then there is no run left to stop.
+        let _ = self.handle.stop_interrupted();
     }
 }

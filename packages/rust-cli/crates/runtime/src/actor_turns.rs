@@ -138,6 +138,15 @@ impl std::fmt::Debug for ActorRunBase {
     }
 }
 
+impl ActorRunBase {
+    /// The base of a run's actors: their model requests are admitted under `run`, not the session pool (spec 9.12
+    /// item 1). The run service sets it for every run it launches.
+    pub fn for_run(mut self, run: &str) -> Self {
+        self.admission_run = Some(rust_cli_kernel_api::ids::WorkflowRunId::new(run));
+        self
+    }
+}
+
 /// The workflow's turn runner over the agents crate.
 pub struct AgentTurnRunner<A: ActorAgents> {
     agents: Arc<A>,
