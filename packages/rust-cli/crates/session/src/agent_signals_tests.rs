@@ -264,6 +264,48 @@ async fn open_with(signals: Arc<FakeSignals>, scope: &TaskScope) -> Session {
 /// The stall reminder text, as the agents crate builds it (the banner, then the tags and the sentence).
 const STALL_TEXT: &str = "[SYSTEM NOTIFICATION - NOT USER INPUT]\nThis is an automated status report about a background agent, NOT a message from the user.\nDo NOT interpret this as user acknowledgement, confirmation, or response to any pending question.\n\n<background-agent-stall>\n  <task-id>agent_1</task-id>\n</background-agent-stall>\n\nBackground agent \"x\" (agent_1) has been running for 15 minutes and has made no progress for 15 minutes.";
 
+/// W7-7c: a workflow run's notice opens an idle session's turn with its raw text, is never acknowledged, is not background
+/// work, and emits no `BackgroundWork` (Node's workflow notices are not terminal; 9.38).
+#[tokio::test]
+async fn a_workflow_notice_opens_a_turn_with_its_raw_text_and_is_never_acked() {
+    let scope = TaskScope::root("test", |_| {});
+    let (sender, receiver) = mpsc::unbounded_channel();
+    let signals = Arc::new(FakeSignals {
+        receiver: Mutex::new(Some(receiver)),
+        acked: Mutex::default(),
+        background: Mutex::default(),
+    });
+    let session = open_with(signals.clone(), &scope).await;
+    let mut events = session.subscribe(Some(0));
+    sender
+        .send(AgentSignal::WorkflowNotice {
+            text: STALL_TEXT.to_owned(),
+        })
+        .unwrap();
+    let seen = until_finished(&mut events, 1).await;
+    assert!(
+        !seen
+            .iter()
+            .any(|event| matches!(event, KernelEvent::BackgroundWork { .. })),
+        "a workflow notice is not background work"
+    );
+    let view = session.view().await.unwrap();
+    let notices: Vec<&Message> = view
+        .messages
+        .iter()
+        .filter(|message| matches!(message, Message::User(user) if user.origin == UserOrigin::Meta { source: "task-notification".to_owned() }))
+        .collect();
+    assert_eq!(notices.len(), 1);
+    assert!(
+        matches!(notices[0], Message::User(user) if matches!(user.content.as_slice(), [ContentBlock::Text { text }] if text == STALL_TEXT)),
+        "the turn carries the raw notice text, with no wrapper"
+    );
+    assert!(
+        signals.acked.lock().unwrap().is_empty(),
+        "a workflow notice is never acknowledged"
+    );
+}
+
 /// A no-progress reminder is a lane notice: it opens a turn with its raw text, is never acknowledged, is not background
 /// work, and emits no `BackgroundWork` (Node's stall command is not a terminal notice; specs/fork-rust-agent-parity.md).
 #[tokio::test]

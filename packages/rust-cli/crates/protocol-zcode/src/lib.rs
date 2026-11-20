@@ -75,7 +75,13 @@ pub use fork::workflow_host::{
     ChildHandler, ChildIo, Outcome, StopReason, run as run_workflow_child,
 };
 // Fork (W7-5a-1): the child runner port's implementation over the helper client, the entry writer and the host.
-pub use fork::workflow_progress::{BridgeDelivery, WorkflowProgressHost};
+pub use fork::workflow_progress::{
+    BridgeDelivery, SignalNotices, WorkflowNotices, WorkflowProgressHost,
+};
+pub use fork::workflow_reminder::{
+    BlockedReminderClock, OpenDecisions, OpenHole, OpenQuestion, REMINDER_DELAYS_MS, Reminder,
+    ReminderHost,
+};
 pub use fork::workflow_runner::ProtocolChildRunner;
 pub use fork::workflow_wire::{ChildEvent, ChildRequest, Completion, CreateActor, WireError};
 pub use fork::{
