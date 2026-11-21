@@ -62,13 +62,13 @@ pub fn terminal(input: &TerminalPayload<'_>) -> Value {
     json!({ "workflowNotification": meta })
 }
 
-/// The escalation branch: a parked question. `asked_at` is the ask's epoch milliseconds, when finite.
+/// The escalation branch: a parked question. `asked_at` is the ask's epoch milliseconds, an integer as Node writes it.
 pub fn escalation(
     qid: &str,
     actor: &str,
     question: &str,
     context: Option<&str>,
-    asked_at: Option<f64>,
+    asked_at: Option<u64>,
 ) -> Value {
     let mut meta = json!({
         "kind": "escalation",
@@ -79,7 +79,7 @@ pub fn escalation(
     if let Some(context) = context {
         meta["context"] = json!(bound_units(context, TEXT_MAX_UNITS));
     }
-    if let Some(asked_at) = asked_at.filter(|at| at.is_finite()) {
+    if let Some(asked_at) = asked_at {
         meta["askedAt"] = json!(asked_at);
     }
     json!({ "workflowNotification": meta })
@@ -148,24 +148,13 @@ pub fn blocked(questions: usize, holes: usize, since_ms: u64) -> Value {
     })
 }
 
-/// The length of a text in UTF-16 code units (Node's `length`).
+/// Node `length` in UTF-16 code units, and the bound: the shared helpers keep a character whole (divergence 365 of 9.38).
 fn units(value: &str) -> usize {
-    value.chars().map(char::len_utf16).sum()
+    rust_cli_base::js::string::utf16_len(value)
 }
 
-/// The longest prefix of at most `max` UTF-16 code units. A character is never split (divergence 365 of 9.38).
 fn bound_units(value: &str, max: usize) -> String {
-    let mut used = 0;
-    let mut out = String::new();
-    for character in value.chars() {
-        let width = character.len_utf16();
-        if used + width > max {
-            break;
-        }
-        used += width;
-        out.push(character);
-    }
-    out
+    rust_cli_base::js::string::utf16_prefix(value, max).to_owned()
 }
 
 #[cfg(test)]

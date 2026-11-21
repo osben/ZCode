@@ -200,9 +200,8 @@ async fn a_settled_run_posts_exactly_one_terminal_notice_to_its_parent() {
         !f.recorder.0.lock().expect("notices").is_empty()
     })
     .await;
-    // A second settlement of the same run would post a second notice; give one time to arrive before counting.
+    // The owner settles once per launch and its settle path posts once, so the count is exact once the notice is in.
     wait_until("the run to be collected", || f.service.run_count() == 0).await;
-    tokio::time::sleep(Duration::from_millis(200)).await;
 
     let posted = f.recorder.0.lock().expect("notices").clone();
     assert_eq!(posted.len(), 1, "one notice per settlement: {posted:?}");
@@ -228,7 +227,6 @@ async fn a_service_without_terminal_notices_settles_the_run_and_posts_nothing() 
     f.fake.finish(0, completed(json!("done")));
 
     wait_until("the run to be collected", || f.service.run_count() == 0).await;
-    tokio::time::sleep(Duration::from_millis(200)).await;
     assert!(
         f.recorder.0.lock().expect("notices").is_empty(),
         "an unconfigured service has no sink, so nothing is posted"

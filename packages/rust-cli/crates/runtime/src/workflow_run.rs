@@ -442,8 +442,20 @@ impl Inner {
     /// Posts the terminal notice of a settled run to its parent session (9.51, W8d). Runs on the owner's thread after the
     /// settlement, with no lock held. A row that cannot be read posts nothing; the read failure is logged.
     fn post_terminal_notice(&self, run_id: &str) {
-        let signals = self.setup.lock_unpoisoned().terminal.clone();
-        let (Some(signals), Some(store)) = (signals, self.store.get().cloned()) else {
+        // No sink is the gate-off default: nothing is posted and nothing is logged.
+        let (signals, quota_on) = {
+            let setup = self.setup.lock_unpoisoned();
+            (setup.terminal.clone(), setup.quota.is_some())
+        };
+        let Some(signals) = signals else {
+            return;
+        };
+        let Some(store) = self.store.get().cloned() else {
+            tracing::warn!(
+                event = "workflow.run.terminal_notice_skipped",
+                run = %run_id,
+                "a settled workflow run's terminal notice was not posted: a sink is set but no run store is"
+            );
             return;
         };
         let row = match store.get_run(run_id) {
@@ -468,16 +480,20 @@ impl Inner {
             }
         };
         if !crate::workflow_run_terminal::is_terminal(row.status) {
-            // The settlement latched but its status write did not land (engine `finish_run`); the model would never learn it ended.
+            // The owner ended with no terminal status in the row: a settlement whose status write did not land, or an
+            // owner that stopped serving without settling (a caught panic). The model is not told the run ended.
             tracing::warn!(
                 event = "workflow.run.terminal_notice_skipped",
                 run = %run_id,
                 status = row.status.as_str(),
-                "a settled workflow run's row is not terminal, so its terminal notice was not posted"
+                "a workflow run's row is not terminal when its owner ends, so its terminal notice was not posted"
             );
             return;
         }
-        if let Some(notice) = crate::workflow_run_terminal::terminal_notice(&row) {
+        // The resume guidance is true only where the quota module arms the resume: the same predicate, with quota wired.
+        let auto_resumes =
+            quota_on && rust_cli_workflow::quota_resume::quota_resume_at(&row).is_some();
+        if let Some(notice) = crate::workflow_run_terminal::terminal_notice(&row, auto_resumes) {
             signals.workflow_notice(
                 &SessionId::new(notice.parent_session_id),
                 notice.text,

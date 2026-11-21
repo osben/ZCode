@@ -21,7 +21,11 @@ pub fn origin_meta_for(
     workflow: Option<&Value>,
 ) -> Option<Value> {
     let mut meta = origin_meta_with_execution(text, execution)?;
-    if let (Some(Value::Object(fields)), Some(object)) = (workflow, meta.as_object_mut()) {
+    // Only a workflow base takes a workflow payload, so the fragment cannot be grafted onto another source's meta.
+    let is_workflow = meta["backgroundSource"] == "workflow";
+    if let (true, Some(Value::Object(fields)), Some(object)) =
+        (is_workflow, workflow, meta.as_object_mut())
+    {
         for (key, value) in fields {
             object.insert(key.clone(), value.clone());
         }
@@ -44,13 +48,13 @@ fn workflow_base(text: &str) -> Option<Value> {
         let title = tag(text, "run")?;
         return Some(json!({"backgroundSource": "workflow", "title": title, "workId": work}));
     }
-    if text.contains("<task-notification>") {
-        let summary = decode(between(text, "<summary>", "</summary>")?.trim());
-        if summary.starts_with("Workflow \"") {
-            let work = tag(text, "task-id")?;
-            let title = tag(text, "description")?;
-            return Some(json!({"backgroundSource": "workflow", "title": title, "workId": work}));
-        }
+    // No opening marker is required: telemetry passes each block after its `<task-notification>` split, so the block
+    // alone must parse the same. The summary prefix discriminates the shape; other notifications fall through.
+    let summary = decode(between(text, "<summary>", "</summary>")?.trim());
+    if summary.starts_with("Workflow \"") {
+        let work = tag(text, "task-id")?;
+        let title = tag(text, "description")?;
+        return Some(json!({"backgroundSource": "workflow", "title": title, "workId": work}));
     }
     None
 }

@@ -27,7 +27,7 @@ pub fn is_terminal(status: RunStatus) -> bool {
 }
 
 /// The terminal notice of `row`, or `None` when the run is not terminal, has no parent session, or was superseded.
-pub fn terminal_notice(row: &RunRow) -> Option<TerminalNotice> {
+pub fn terminal_notice(row: &RunRow, auto_resumes: bool) -> Option<TerminalNotice> {
     if !is_terminal(row.status) {
         return None;
     }
@@ -54,10 +54,6 @@ pub fn terminal_notice(row: &RunRow) -> Option<TerminalNotice> {
         .and_then(|failure| failure.get("providerStop"))
         .filter(|stop| stop.is_object());
     let provider_block = provider_stop.map(|stop| rust_cli_tools::provider_stop_text(stop, run_id));
-    let auto_resumes = provider_stop.is_some_and(|stop| {
-        stop.get("kind").and_then(Value::as_str) == Some("quota")
-            && stop.get("resetAt").is_some_and(|reset| !reset.is_null())
-    });
     let error = match (&provider_block, message) {
         (Some(block), _) => Some(ErrorText::ProviderStop(block)),
         (None, Some(message)) => Some(ErrorText::Plain(message)),

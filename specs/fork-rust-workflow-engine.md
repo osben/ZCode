@@ -4393,7 +4393,7 @@ protocol-zcode (1019), runtime (366, including six terminal tests), tools (662),
      `UserMessage::workflow_meta` is `None` after hydration (node-store does not read the stored meta back, as it does not read
      `stall_execution` back). A reopened session shows the run notice's title, not its row, until the cold read carries the payload
      (637). This is the same gap the stall reminder has.
-717. The escalation payload's `askedAt` is the progress payload's `askedAt` when it is a finite number (Node `typeof … === "number"`).
+717. The escalation payload's `askedAt` is the progress payload's epoch milliseconds as an integer (a whole, non-negative number; a float that is whole is read as that integer), as Node writes it.
 718. The hole payload carries the ordinal from the progress payload, which the text does not, and the same type, prompt (4000 units) and
      line as the text. `before`, `after` and `draftPath` are absent, as the text has them absent (633, 634). `reachedAt` is absent (224).
 719. The stall payload floors `sinceMs` and `cap` and bounds `reason` at 64 units, as Node does.
@@ -4429,6 +4429,8 @@ protocol-zcode (1019), runtime (366, including six terminal tests), tools (662),
 
 Rejected: the shared artifact-text helper with `tools` (a one-line rule, not a policy like the provider-stop table; a copy is kept
 in the terminal module, and the two would be edited together only if Node's rule changed).
+
+**Second review round (ocr on 68c294d92, 11 items).** Fixed: the workflow base needs no opening `<task-notification>` marker (telemetry passes each block after its split); a workflow payload merges only onto a workflow base; `askedAt` is an integer end to end (the progress host, the builder and its tests); the UTF-16 bounds use `rust_cli_base::js::string`; the terminal `auto_resumes` is the quota module's own predicate (`quota_resume_at`) and only where quota is configured; the store-less sink is logged on its own, the gate-off path stays silent; the "not terminal" log no longer claims a failed status write; the two fixed sleeps are gone; the duplicate projection-test import is removed.
 
 ### 9.52 W8e: runs in the background list and concurrency-only amend (as built, gate off)
 

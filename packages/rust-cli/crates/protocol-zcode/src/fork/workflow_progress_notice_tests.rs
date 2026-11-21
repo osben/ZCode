@@ -403,7 +403,7 @@ fn a_raised_escalation_carries_its_payload_which_the_text_does_not() {
     assert_eq!(workflow["workflowNotification"]["actor"], "scout@3");
     assert_eq!(
         workflow["workflowNotification"]["askedAt"],
-        json!(1_700_000_000_000.0)
+        json!(1_700_000_000_000u64)
     );
 }
 

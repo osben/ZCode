@@ -252,7 +252,7 @@ fn escalation_text(run_id: &str, payload: &Value) -> Option<(String, Value)> {
         context,
     });
     // `askedAt` is epoch milliseconds, read as a number only when it is one (Node `typeof askedAt === "number"`).
-    let asked_at = payload.get("askedAt").and_then(Value::as_f64);
+    let asked_at = payload.get("askedAt").and_then(integral_ms);
     let workflow = workflow_notice_meta::escalation(qid, &actor, question, context, asked_at);
     Some((text, workflow))
 }
@@ -351,3 +351,13 @@ mod tests;
 #[cfg(test)]
 #[path = "workflow_progress_notice_tests.rs"]
 mod notice_tests;
+
+/// An epoch-milliseconds value as Node writes it: an integer. A whole, non-negative float is taken as that integer.
+fn integral_ms(value: &Value) -> Option<u64> {
+    value.as_u64().or_else(|| {
+        value
+            .as_f64()
+            .filter(|ms| ms.is_finite() && *ms >= 0.0 && ms.fract() == 0.0)
+            .map(|ms| ms as u64)
+    })
+}

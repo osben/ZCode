@@ -63,13 +63,13 @@ fn an_escalation_payload_carries_the_question_and_an_ask_time_only_when_finite()
         "Scout",
         "Which file?",
         Some("ctx"),
-        Some(1_700_000_000_000.0),
+        Some(1_700_000_000_000),
     );
     assert_eq!(
         with_time,
-        json!({"workflowNotification": {"kind": "escalation", "qid": "q-1", "actor": "Scout", "question": "Which file?", "context": "ctx", "askedAt": 1_700_000_000_000.0}})
+        json!({"workflowNotification": {"kind": "escalation", "qid": "q-1", "actor": "Scout", "question": "Which file?", "context": "ctx", "askedAt": 1_700_000_000_000u64}})
     );
-    let without = escalation("q-1", "Scout", "Which file?", None, Some(f64::NAN));
+    let without = escalation("q-1", "Scout", "Which file?", None, None);
     assert_eq!(
         without,
         json!({"workflowNotification": {"kind": "escalation", "qid": "q-1", "actor": "Scout", "question": "Which file?"}})
@@ -149,4 +149,22 @@ fn a_terminal_run_notification_is_titled_by_its_description_and_keyed_by_its_tas
             json!({"backgroundSource": "workflow", "title": "Nightly \"sweep\"", "workId": "dwfrun-9"})
         )
     );
+}
+
+#[test]
+fn a_payload_is_not_grafted_onto_another_sources_meta() {
+    use crate::background_origin::origin_meta_for;
+    let subagent = "<task-notification><task-id>agent_1</task-id><summary>Agent \"Check\" completed</summary></task-notification>";
+    let meta = origin_meta_for(subagent, None, Some(&blocked(1, 0, 5))).expect("the subagent meta");
+    assert_eq!(meta["backgroundSource"], "subagent");
+    assert!(meta.get("workflowBlocked").is_none(), "{meta}");
+}
+
+#[test]
+fn a_terminal_block_parses_the_same_after_telemetry_splits_off_its_marker() {
+    use crate::background_origin::origin_meta;
+    let whole = "<task-notification>\n<task-id>dwfrun-9</task-id>\n<status>completed</status>\n<description>Audit</description>\n<summary>Workflow &quot;Audit&quot; completed.</summary>\n</task-notification>";
+    let split = whole.trim_start_matches("<task-notification>");
+    assert!(origin_meta(split).is_some());
+    assert_eq!(origin_meta(split), origin_meta(whole));
 }

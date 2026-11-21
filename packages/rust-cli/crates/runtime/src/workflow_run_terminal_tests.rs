@@ -4,7 +4,13 @@
 use rust_cli_workflow::model::{Caps, RunRow, RunStatus, StopReason};
 use serde_json::json;
 
-use super::terminal_notice;
+use super::terminal_notice as terminal_notice_with;
+use rust_cli_workflow::quota_resume::quota_resume_at;
+
+/// The notice of a run whose quota resume the module would arm (`quota_resume_at`), as the service decides it.
+fn terminal_notice(row: &RunRow) -> Option<super::TerminalNotice> {
+    terminal_notice_with(row, quota_resume_at(row).is_some())
+}
 
 fn row(status: RunStatus) -> RunRow {
     RunRow {
