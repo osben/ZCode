@@ -313,6 +313,41 @@ async fn a_clean_start_activates_the_parent_submits_and_records_the_launch_turn(
     assert_eq!(fx.fake.launches().len(), 1, "the run is submitted once");
 }
 
+/// 9.65 (closes 916): the launch turn carries Node's `workflowLaunch` facts: the definition's scope, path and
+/// description, its script, and the analysis display only when it is a create window (Node
+/// `display?.kind === "create_workflow"`).
+#[tokio::test]
+async fn the_launch_turn_carries_the_definition_and_its_create_window() {
+    let window = json!({"kind": "create_workflow", "causalityGraph": {"steps": []}});
+    for (display, carried) in [
+        (Some(window.clone()), Some(window.clone())),
+        (Some(json!({"kind": "other"})), None),
+        (None, None),
+    ] {
+        let analyzer: Arc<dyn WorkflowAnalyzer> = Arc::new(Verdict(WorkflowAnalysis {
+            model_references: Vec::new(),
+            display,
+            ok: true,
+            diagnostics: Vec::new(),
+        }));
+        let fx = fixture(Some(analyzer));
+        save_global(&fx, "digest", SAVED);
+        let sink = Recorder::default();
+        fx.service
+            .start_saved(PARENT, request(&fx.cwd, "digest"), &sink)
+            .await
+            .expect("the start answers");
+        let launches = sink.launches.lock().expect("sink");
+        let turn = &launches[0];
+        assert_eq!(turn.scope, "global");
+        assert!(turn.path.ends_with("digest.dwf.ts"), "{}", turn.path);
+        assert_eq!(turn.description, "test");
+        assert!(turn.script.contains("return 2"), "{}", turn.script);
+        assert_eq!(turn.args, None, "a workflow without arguments sends none");
+        assert_eq!(turn.display, carried);
+    }
+}
+
 #[test]
 fn the_launch_text_carries_the_arguments_as_a_json_block_when_there_are_some() {
     let mut args = Map::new();
@@ -323,6 +358,8 @@ fn the_launch_text_carries_the_arguments_as_a_json_block_when_there_are_some() {
         script: "return 1".to_owned(),
         source: String::new(),
         args,
+        path: "digest.ts".to_owned(),
+        description: String::new(),
     };
     let text = launch_text(&resolved, "dwfrun-1");
     assert!(

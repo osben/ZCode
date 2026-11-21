@@ -129,9 +129,10 @@ impl WorkflowTurnSink for ParentTurns {
         self.push(WorkflowRecordSource::Settings, turn.text, Some(meta));
     }
 
-    /// A hub launch's record carries no metadata yet (divergence 916).
+    /// A hub launch's record carries Node's `workflowLaunch` metadata (9.65, closes 916).
     fn launch_turn(&self, turn: LaunchTurn) {
-        self.push(WorkflowRecordSource::Launch, turn.text, None);
+        let meta = turn.workflow_launch_meta();
+        self.push(WorkflowRecordSource::Launch, turn.text, Some(meta));
     }
 }
 

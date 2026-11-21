@@ -579,12 +579,83 @@ impl SettingsTurn {
 }
 
 /// Fork (W9a, 9.53): a launch turn of the hub start (Node `emitControlOnlyUserTurn` with origin `workflowLaunch`).
+///
+/// Fork (9.65, closes 916): it carries what Node's `startSavedWorkflowRun` puts in its `workflowLaunch` metadata, so the
+/// launch record draws its card (the graph from `display`, the script from `script`).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct LaunchTurn {
     pub text: String,
     pub run_id: WorkflowRunId,
     pub tool_call_id: String,
     pub name: String,
+    /// `project` or `global` (Node `found.scope`).
+    pub scope: String,
+    /// The saved definition's file (Node `found.path`).
+    pub path: String,
+    /// The validated arguments, when the run has any.
+    pub args: Option<Map<String, Value>>,
+    /// The definition's description (Node `found.meta.description`).
+    pub description: String,
+    /// The script's `create_workflow` display (Node `displayOfAnalysis`), when the checker gave one.
+    pub display: Option<Value>,
+    /// The script that runs.
+    pub script: String,
+}
+
+/// Node `WORKFLOW_LAUNCH_ARGS_MAX_BYTES`: launch arguments longer than this as JSON are replaced by a note.
+pub const WORKFLOW_LAUNCH_ARGS_MAX_BYTES: usize = 4_096;
+/// Node `WORKFLOW_LAUNCH_DESCRIPTION_MAX_CHARS`.
+pub const WORKFLOW_LAUNCH_DESCRIPTION_MAX_CHARS: usize = 500;
+/// Node `WORKFLOW_LAUNCH_SCRIPT_MAX_CHARS`: a longer script is left out of the metadata.
+pub const WORKFLOW_LAUNCH_SCRIPT_MAX_CHARS: usize = 256_000;
+/// Node `WORKFLOW_LAUNCH_ARGS_TRUNCATED_KEY`.
+const WORKFLOW_LAUNCH_ARGS_TRUNCATED_KEY: &str = "…";
+
+impl LaunchTurn {
+    /// Node's `boundWorkflowLaunchMeta` of a hub launch: the `workflowLaunch` metadata its record carries. Lengths are
+    /// counted in chars where Node counts UTF-16 units (the same outside the astral planes).
+    pub fn workflow_launch_meta(&self) -> Value {
+        let mut meta = Map::new();
+        meta.insert("runId".into(), Value::from(self.run_id.as_str()));
+        meta.insert("toolCallId".into(), Value::from(self.tool_call_id.as_str()));
+        meta.insert("name".into(), Value::from(self.name.as_str()));
+        meta.insert("scope".into(), Value::from(self.scope.as_str()));
+        meta.insert("path".into(), Value::from(self.path.as_str()));
+        if let Some(args) = &self.args {
+            let bytes = serde_json::to_string(args).map_or(0, |text| text.len());
+            let bounded = if bytes > WORKFLOW_LAUNCH_ARGS_MAX_BYTES {
+                let mut note = Map::new();
+                note.insert(
+                    WORKFLOW_LAUNCH_ARGS_TRUNCATED_KEY.into(),
+                    Value::from(format!("arguments omitted ({bytes} bytes)")),
+                );
+                note
+            } else {
+                args.clone()
+            };
+            meta.insert("args".into(), Value::Object(bounded));
+        }
+        let description =
+            if self.description.chars().count() > WORKFLOW_LAUNCH_DESCRIPTION_MAX_CHARS {
+                let mut cut: String = self
+                    .description
+                    .chars()
+                    .take(WORKFLOW_LAUNCH_DESCRIPTION_MAX_CHARS - 1)
+                    .collect();
+                cut.push('…');
+                cut
+            } else {
+                self.description.clone()
+            };
+        meta.insert("description".into(), Value::from(description));
+        if let Some(display) = &self.display {
+            meta.insert("display".into(), display.clone());
+        }
+        if self.script.chars().count() <= WORKFLOW_LAUNCH_SCRIPT_MAX_CHARS {
+            meta.insert("script".into(), Value::from(self.script.as_str()));
+        }
+        Value::Object(meta)
+    }
 }
 
 /// The origin a workflow control record carries on the parent's transcript: a closed set, so a producer names one of these
