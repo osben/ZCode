@@ -6,6 +6,7 @@
 mod args;
 mod body;
 mod builtin;
+mod bundled;
 mod closest;
 mod grants;
 mod inline;
@@ -29,6 +30,7 @@ use rust_cli_kernel_api::listing::ListingEntry;
 use rust_cli_kernel_api::machine::{EnvInfo, Files};
 use rust_cli_kernel_api::message::Message;
 
+pub use bundled::{DYNAMIC_WORKFLOW_SKILL, helper_entry_dir, pack_skills_dir};
 pub use invoked::INVOKED_SKILLS_SOURCE;
 pub use tool::{SKILL_MESSAGE_SOURCE, SkillTool};
 pub use user::SkillCommands;
@@ -53,6 +55,8 @@ pub enum SkillSource {
     },
     /// 内置（bundled）：只有 `/loop`（tools-more.md §17.1）。
     Builtin,
+    /// Fork (W9b-3, 9.58): the bundled skill pack (Node `resolveBundledSkillRoots`, source `bundled`).
+    Bundled,
 }
 
 /// `!` 命令用的 shell（frontmatter `shell`）。
@@ -137,6 +141,12 @@ pub struct SkillCatalog {
     incognito: std::sync::OnceLock<rust_cli_kernel_api::incognito::IncognitoProfiles>,
     /// Fork (rule 17): the grant of each running subagent child (its frozen identities), by child session.
     grants: Mutex<HashMap<rust_cli_kernel_api::ids::SessionId, HashSet<String>>>,
+    /// Fork (W9b-3, 9.58): the directory of the Node bundle entry the bundled pack is searched from (`bundled.rs`).
+    bundled_entry: Mutex<Option<String>>,
+    /// Fork (W9b-3, 9.58): set once the "pack unavailable" warning is out, so a listing does not repeat it.
+    bundled_warned: AtomicBool,
+    /// Fork (W9b-3, 9.58): the rollout gate per session (Node `runtimeConfig.dynamicWorkflowEnabled`).
+    gates: Mutex<Option<Arc<dyn rust_cli_kernel_api::dynamic_workflow::DynamicWorkflowGates>>>,
 }
 
 impl SkillCatalog {
@@ -151,7 +161,49 @@ impl SkillCatalog {
             looping: true,
             incognito: std::sync::OnceLock::new(),
             grants: Mutex::default(),
+            bundled_entry: Mutex::default(),
+            bundled_warned: AtomicBool::new(false),
+            gates: Mutex::default(),
         }
+    }
+
+    /// Fork (W9b-3, 9.58): the directory of the Node bundle entry (`bundled::helper_entry_dir`); None leaves the pack out.
+    pub fn set_bundled_entry_dir(&self, entry_dir: Option<String>) {
+        *self.bundled_entry.lock_unpoisoned() = entry_dir;
+    }
+
+    /// Fork (W9b-3, 9.58): the rollout gate source the session gates are read from (Node `runtimeConfig`).
+    pub fn set_dynamic_workflow_gates(
+        &self,
+        gates: Arc<dyn rust_cli_kernel_api::dynamic_workflow::DynamicWorkflowGates>,
+    ) {
+        *self.gates.lock_unpoisoned() = Some(gates);
+    }
+
+    /// Fork (W9b-3, 9.58): the bundled pack's `skills` directory as Node finds it from the entry, or None (warned once).
+    async fn bundled_skills_dir(&self, workspace: &WorkspaceRef) -> Option<String> {
+        let entry = self.bundled_entry.lock_unpoisoned().clone()?;
+        let dir = bundled::pack_skills_dir(self.files.as_ref(), workspace, &entry).await;
+        match &dir {
+            Some(dir) => tracing::debug!(dir = %dir, "bundled skill pack found"),
+            None if !self.bundled_warned.swap(true, Ordering::Relaxed) => {
+                tracing::warn!(entry = %entry, "bundled skill pack unavailable");
+            }
+            None => {}
+        }
+        dir
+    }
+
+    /// Fork (W9b-3, 9.58): Node's `dynamicWorkflowEnabled === false` for this session withholds the dynamic-workflows
+    /// skill. A session with no recorded gate, or no session (the draft catalog), is not withheld.
+    fn dynamic_workflows_gated(
+        &self,
+        session: Option<&rust_cli_kernel_api::ids::SessionId>,
+    ) -> bool {
+        let (Some(session), Some(gates)) = (session, self.gates.lock_unpoisoned().clone()) else {
+            return false;
+        };
+        gates.gate(session).is_some_and(|gate| !gate.enabled)
     }
 
     /// Fork: set once by [`crate::Ext::new`].
@@ -255,7 +307,7 @@ impl SkillCatalog {
                 return Vec::new();
             }
         };
-        self.skills_with(workspace, &facts, self.keeps_plugins(session))
+        self.skills_with(workspace, &facts, self.keeps_plugins(session), session)
             .await
     }
 
@@ -280,6 +332,7 @@ impl SkillCatalog {
         workspace: &WorkspaceRef,
         facts: &EnvFacts,
         plugins: bool,
+        session: Option<&rust_cli_kernel_api::ids::SessionId>,
     ) -> Vec<Arc<Skill>> {
         let roots = if plugins {
             self.workspace_roots(workspace)
@@ -288,6 +341,16 @@ impl SkillCatalog {
             Vec::new()
         };
         let mut found = load::discover(self, workspace, facts, &roots).await;
+        // Fork (W9b-3, 9.58): the bundled pack comes after the plugin roots (Node's priority after every plugin root), and
+        // the plugins switch does not reach it (Node adds it as a system root).
+        if let Some(dir) = self.bundled_skills_dir(workspace).await {
+            found.extend(load::bundled(self, workspace, facts, &dir).await);
+        }
+        if self.dynamic_workflows_gated(session) {
+            found.retain(|skill| {
+                !(skill.source == SkillSource::Bundled && skill.name == DYNAMIC_WORKFLOW_SKILL)
+            });
+        }
         let built_ins: Vec<Arc<Skill>> = builtin::skills()
             .into_iter()
             .filter(|skill| self.looping || skill.name != builtin::LOOP)
@@ -362,7 +425,7 @@ impl SkillCatalog {
             return Vec::new();
         };
         let skills = self
-            .skills_with(workspace, &facts, self.keeps_plugins(session))
+            .skills_with(workspace, &facts, self.keeps_plugins(session), session)
             .await;
         let skills = self.granted(session, skills);
         let touched = paths::touched(history, facts.cwd.as_str());
@@ -383,7 +446,7 @@ impl SkillCatalog {
 fn reference(skill: &Skill) -> Option<rust_cli_kernel_api::user_command::SkillReference> {
     use rust_cli_kernel_api::user_command::{SkillReference, SkillScope};
     let (scope, plugin) = match &skill.source {
-        SkillSource::Builtin => return None,
+        SkillSource::Builtin | SkillSource::Bundled => return None,
         SkillSource::Plugin { plugin } => (SkillScope::Plugin, Some(plugin.clone())),
         SkillSource::Project => (SkillScope::Workspace, None),
         SkillSource::User | SkillSource::Managed => (SkillScope::User, None),
@@ -416,6 +479,10 @@ fn reference(skill: &Skill) -> Option<rust_cli_kernel_api::user_command::SkillRe
 #[cfg(test)]
 #[path = "mod_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "bundled_tests.rs"]
+mod bundled_tests;
 
 #[async_trait::async_trait]
 impl rust_cli_kernel_api::subagent_config::SubagentSkillGrants for SkillCatalog {
