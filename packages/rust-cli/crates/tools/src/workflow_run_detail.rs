@@ -189,7 +189,7 @@ fn utf16_prefix(text: &str, limit: usize) -> String {
 
 /// Node `buildWorkflowRunSummary`: one sentence from the detail's facts. The status and the step clauses are kept; the
 /// optional clauses are dropped from the end when the sentence is over the budget, and a last cut adds an ellipsis.
-fn summary(detail: &Value, now: i64) -> String {
+pub(crate) fn summary(detail: &Value, now: i64) -> String {
     let status = text_of(detail, "status").unwrap_or_default();
     let terminal = is_terminal(status);
     let mut required = vec![format!(
