@@ -649,8 +649,6 @@ impl WorkflowRunService {
         }
     }
 
-    /// Fork (W9a, 9.53): sets the hub start's ports, the user's home (where saved workflows live) and the compile checker
-    /// (the same analyzer CreateWorkflow uses). Set once: a second call is a wiring fault, logged, and keeps the first.
     /// Fork (9.63): the model catalog of the GUI settings (the slot the workflow tools read too). Returns `false` when
     /// one is already set (the first one stays).
     pub fn configure_models(
@@ -668,6 +666,8 @@ impl WorkflowRunService {
         rust_cli_tools::model_reference::read_entries(Some(directory.as_ref()), None).await
     }
 
+    /// Fork (W9a, 9.53): sets the hub start's ports, the user's home (where saved workflows live) and the compile checker
+    /// (the same analyzer CreateWorkflow uses). Set once: a second call is a wiring fault, logged, and keeps the first.
     pub fn configure_saved_start(
         &self,
         home: std::path::PathBuf,

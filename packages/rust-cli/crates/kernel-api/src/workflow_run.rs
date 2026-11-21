@@ -484,7 +484,9 @@ pub trait DynamicWorkflowRunPort: Send + Sync {
 #[derive(Debug, Clone, PartialEq)]
 pub struct SettingsRequest {
     pub run_id: WorkflowRunId,
-    /// Any value is refused by the run service: a subagent-model change is not built (divergence 663).
+    /// Fork (9.63, closes 663): `None` keeps the run's subagent model, `Some(None)` puts its subagents back on the session
+    /// model, and `Some(Some(name))` is resolved against the catalog (a name that does not resolve refuses the change). A
+    /// model change always amends the run.
     pub subagent_model: Option<Option<String>>,
     pub max_concurrency: Option<Option<f64>>,
 }

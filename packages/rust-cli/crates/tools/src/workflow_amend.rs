@@ -146,6 +146,9 @@ struct Pending {
     analysis: WorkflowAnalysis,
     /// The script is the predecessor's, kept (Node `script_inherited`).
     inherited: bool,
+    /// Fork (9.63): the revision's models, resolved once with the decision, so the owner exemption and the amend share
+    /// one catalog and detail read. `Err` is the call's failure text.
+    models: Result<RevisionModels, String>,
 }
 
 #[derive(Default)]
@@ -577,6 +580,7 @@ impl Tool for AmendWorkflowTool {
                 resolved,
                 analysis,
                 inherited,
+                models,
             },
         );
         if !checks {
@@ -635,12 +639,13 @@ impl Tool for AmendWorkflowTool {
                     .await
                     .map_err(|error| failed(error.message))?;
                 // The same rule as CreateWorkflow: a script that checks needs its approval, inherited or not.
-                let bound = match self.models_of(&input, &context, Some(&analysis)).await {
+                let models = self.models_of(&input, &context, Some(&analysis)).await;
+                let bound = match &models {
                     Ok(models) => crate::model_reference::all_bound(
                         &analysis.model_references,
                         &models.bindings,
                     ),
-                    Err(message) => return Err(failed(message)),
+                    Err(message) => return Err(failed(message.clone())),
                 };
                 if analysis.ok && bound {
                     return Err(failed(
@@ -651,6 +656,7 @@ impl Tool for AmendWorkflowTool {
                     resolved,
                     analysis,
                     inherited,
+                    models,
                 }
             }
         };
@@ -815,6 +821,7 @@ impl AmendWorkflowTool {
             .analyze(&resolved.script)
             .await
             .map_err(|error| failed(error.message))?;
+        let models = self.models_of(input, context, Some(&analysis)).await;
         self.finish_revision(
             input,
             context,
@@ -824,6 +831,7 @@ impl AmendWorkflowTool {
                 resolved,
                 analysis,
                 inherited,
+                models,
             },
         )
         .await
@@ -843,12 +851,11 @@ impl AmendWorkflowTool {
             resolved,
             mut analysis,
             inherited,
+            models,
         } = pending;
-        // Fork (9.63): the revision's models; a script model that does not bind is a 9011 diagnostic (Node).
-        let models = self
-            .models_of(input, context, Some(&analysis))
-            .await
-            .map_err(failed)?;
+        // Fork (9.63): the revision's models as the decision resolved them; a script model that does not bind is a 9011
+        // diagnostic (Node).
+        let models = models.map_err(failed)?;
         if analysis.ok
             && !crate::model_reference::all_bound(&analysis.model_references, &models.bindings)
         {

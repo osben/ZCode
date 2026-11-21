@@ -286,10 +286,10 @@ impl WorkflowRunService {
                             .collect();
                     return Ok(SettingsOutcome::Refused(
                         SettingsRefusal::ModelUnavailable {
-                            message: format!(
+                            message: super::start::bounded_text(format!(
                                 "The models named in the script of run {run_id} cannot be used now:\n{}",
                                 lines.join("\n")
-                            ),
+                            )),
                         },
                     ));
                 }

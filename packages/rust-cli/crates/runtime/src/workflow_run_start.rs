@@ -200,7 +200,11 @@ pub(crate) fn bounded_diagnostics(heading: &str, diagnostics: &[WorkflowDiagnost
             diagnostic.line, diagnostic.column, diagnostic.message
         )
     }));
-    let body = lines.join("\n");
+    bounded_text(lines.join("\n"))
+}
+
+/// The cut of [`bounded_diagnostics`] alone: `body` kept to Node's compile-diagnostics limit, ending in `…` when cut.
+pub(crate) fn bounded_text(body: String) -> String {
     if body.chars().count() <= COMPILE_DIAGNOSTICS_MAX_CHARS {
         return body;
     }

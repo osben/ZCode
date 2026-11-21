@@ -1303,6 +1303,52 @@ async fn a_run_whose_launch_names_models_is_rebound_or_refused_before_the_predec
     }
 }
 
+/// 9.63 review: the refusal for many models that are gone is bounded as Node bounds compile diagnostics (2000 chars).
+#[tokio::test]
+async fn a_settings_refusal_for_many_unusable_models_is_bounded() {
+    let bindings: serde_json::Map<String, Value> = (0..80)
+        .map(|index| {
+            (
+                format!("persona-{index}"),
+                json!(format!("openai/gpt-{index}")),
+            )
+        })
+        .collect();
+    let fx = fixture(|conn| {
+        interrupted(conn, "dwfrun-many", PARENT, "return 1\n");
+        dwf::append_event(
+            conn,
+            "dwfrun-many",
+            &json!({ "type": "run-launched", "modelBindings": bindings }),
+            2,
+        )
+        .expect("seed the launch event");
+    });
+    with_catalog(&fx);
+    let answer = fx
+        .service
+        .amend_settings(
+            PARENT,
+            settings("dwfrun-many", Some(Some(2.0))),
+            &Recorder::default(),
+        )
+        .await
+        .expect("answers");
+    let SettingsOutcome::Refused(SettingsRefusal::ModelUnavailable { message }) = answer else {
+        panic!("the gone models refuse: {answer:?}");
+    };
+    assert!(
+        message.chars().count() <= 2000,
+        "{} chars",
+        message.chars().count()
+    );
+    assert!(message.ends_with('…'), "{message}");
+    assert!(
+        message
+            .starts_with("The models named in the script of run dwfrun-many cannot be used now:")
+    );
+}
+
 /// 9.63: an amend carries the run's subagent model and the script's table to the successor's launch (Node).
 #[tokio::test]
 async fn an_amend_records_the_subagent_model_and_the_script_models_on_the_successor() {

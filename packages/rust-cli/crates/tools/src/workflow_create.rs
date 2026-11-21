@@ -534,7 +534,6 @@ pub(crate) fn resolve_path(
     })
 }
 
-/// Node `describeWorkflowScriptPath`: relative to the working directory when the file is inside it.
 /// Fork (9.63): the shown input with Node's resolved model fields: `subagent_model` canonical and `model_bindings`.
 fn with_models_shown(
     shown: Option<Value>,
@@ -558,6 +557,7 @@ fn with_models_shown(
     Some(Value::Object(shown))
 }
 
+/// Node `describeWorkflowScriptPath`: relative to the working directory when the file is inside it.
 pub fn describe_script_path(absolute: &Path, cwd: &Path) -> String {
     match absolute.strip_prefix(cwd) {
         Ok(relative) if !relative.as_os_str().is_empty() => relative.display().to_string(),
@@ -1043,11 +1043,18 @@ impl Tool for CreateWorkflowTool {
         };
         // Fork (9.63): the canonical model and the script's model table (Node's resolved input). A script whose models are
         // not all bound opens no window: the call reports them as 9011, as a compile failure.
-        let subagent_model = self
+        // A model that does not resolve here (a hook's `updatedInput`, or a catalog that changed since validation) fails
+        // the call as validation would; it never falls back to the session model.
+        let subagent_model = match self
             .subagent_model(input.subagent_model.as_deref(), context)
             .await
-            .ok()
-            .flatten();
+        {
+            Ok(model) => model,
+            Err(message) => {
+                self.forget(&context.tool_use);
+                return PermissionDecision::Deny { message };
+            }
+        };
         let (model_bindings, _) = self.script_models(&analysis, context).await;
         let checks = analysis.ok && all_bound(&analysis.model_references, &model_bindings);
         let name = resolved.name.clone();

@@ -71,13 +71,6 @@ pub trait RunStore: Send + Sync {
     /// Node `buildImportedCache` over this store's journal (9.43), without a transcript count: completed asks import,
     /// and an in-flight continuation is not built (the transcript surface is not composed yet).
     fn amend_import(&self, predecessor_run_id: &str) -> Result<BuildOutcome>;
-    /// Whether the run's launch recorded script-named model bindings (9.50, the settings route). The settings route refuses
-    /// such a run, since it does not rebind them yet. Required in spirit: the default answers `true` (refuse), so a store that
-    /// does not read the launch cannot amend a settings change by accident.
-    fn launch_binds_models(&self, run_id: &str) -> Result<bool> {
-        let _ = run_id;
-        Ok(true)
-    }
     /// Fork (9.63): the run's `run-launched` payload (its `subagentModel` and `modelBindings`), `None` when the journal has
     /// none. The default fails, so a store that does not read the launch cannot drop a run's models by accident.
     fn launch_payload(&self, run_id: &str) -> Result<Option<serde_json::Value>> {
@@ -241,12 +234,6 @@ impl RunStore for SqliteRunStore {
     fn launch_payload(&self, run_id: &str) -> Result<Option<serde_json::Value>> {
         let conn = self.conn.lock_unpoisoned();
         dwf::run_launched_payload(&conn, run_id)
-    }
-
-    fn launch_binds_models(&self, run_id: &str) -> Result<bool> {
-        let conn = self.conn.lock_unpoisoned();
-        Ok(dwf::run_launched_payload(&conn, run_id)?
-            .is_some_and(|launch| launch.get("modelBindings").is_some()))
     }
 
     fn run_detail(

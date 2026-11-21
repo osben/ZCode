@@ -1480,3 +1480,17 @@ async fn an_unresolved_script_model_opens_no_window_and_is_reported_as_9011() {
         );
     }
 }
+
+/// 9.63 review: a model that does not resolve when the window is prepared (a hook's `updatedInput`, or a catalog that
+/// changed after validation) fails the call as validation would; the run never starts on the session model.
+#[tokio::test]
+async fn a_model_that_stops_resolving_after_validation_starts_nothing() {
+    let harness = with_catalog(Some(FakeRun::new(None, false)));
+    let input = json!({"script": CLEAN, "subagent_model": "gpt-9"});
+    let error = harness.run(input).await.expect_err("the call fails");
+    assert!(
+        message_of(&error).starts_with("No configured model matches `gpt-9`."),
+        "{error:?}"
+    );
+    assert!(submits_of(&harness).is_empty(), "nothing is submitted");
+}

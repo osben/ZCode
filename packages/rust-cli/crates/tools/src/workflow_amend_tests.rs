@@ -100,6 +100,20 @@ impl rust_cli_kernel_api::provider::ModelDirectory for Catalog {
     }
 }
 
+/// 9.63 review: the fixture's catalog on its first read, then empty (a catalog that changes while the window waits).
+struct FirstReadOnly(std::sync::atomic::AtomicUsize);
+
+#[async_trait]
+impl rust_cli_kernel_api::provider::ModelDirectory for FirstReadOnly {
+    async fn catalog(&self) -> rust_cli_kernel_api::provider::ModelCatalog {
+        let mut catalog = Catalog.catalog().await;
+        if self.0.fetch_add(1, std::sync::atomic::Ordering::SeqCst) > 0 {
+            catalog.models.clear();
+        }
+        catalog
+    }
+}
+
 /// `harness` with the fixture's catalog wired, over a predecessor whose detail is `detail`.
 fn with_catalog(
     detail: Value,
@@ -1207,4 +1221,28 @@ async fn an_unbound_script_model_is_reported_and_stops_nothing() {
         "{text}"
     );
     assert!(text.contains("Run run-1 was not touched."), "{text}");
+}
+
+/// 9.63 review: the models the permission decision resolved are the ones the call submits. The catalog is read once,
+/// when the window is prepared; a later change does not split the decision from the submission.
+#[tokio::test]
+async fn the_call_submits_the_models_the_decision_resolved() {
+    let port = FakeRun::with_retune(
+        RetuneOutcome::Refused(RetuneRefusal::NotLive),
+        Some(json!({"runId": "run-1", "status": "running"})),
+        Some(CLEAN),
+    );
+    let (tool, ctx, _guard) = harness(port.clone());
+    let models = Arc::new(rust_cli_kernel_api::provider::LateModelDirectory::default());
+    assert!(models.set(Arc::new(FirstReadOnly(Default::default()))));
+    let tool = tool.with_models(models);
+    let input = json!({"run_id": "run-1", "script": REVISED, "subagent_model": "deepseek-v4-pro"});
+    run(&tool, input, ctx).await.expect("the amend runs");
+    assert_eq!(
+        port.amends()[0]
+            .subagent_model
+            .as_ref()
+            .and_then(Value::as_str),
+        Some("deepseek/deepseek-v4-pro")
+    );
 }

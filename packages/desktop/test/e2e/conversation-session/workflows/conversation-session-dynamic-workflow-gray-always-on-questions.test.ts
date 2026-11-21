@@ -114,6 +114,11 @@ describe("动态工作流 · 子代理升级问题", () => {
     await chip.click();
     const question = await $(`[data-testid="workflow-run-question"][data-qid="${qid}"]`);
     await question.waitForDisplayed({ timeout: 30000 });
+    // 侧板刚打开时行尾的等待时长与 qid 可能还没被算作可见，getText 读不到；像等背景那样先等 qid 文本出现再读。
+    await browser.waitUntil(async () => (await question.getText()).includes(qid), {
+      timeout: 10000,
+      timeoutMsg: "问题行没有画出问题 id",
+    });
     expect(await question.getText()).toContain(QUESTION);
     expect(await question.getText()).toContain(qid);
     await expect(question.$('[data-testid="workflow-run-question-context"]')).toHaveText(CONTEXT);
