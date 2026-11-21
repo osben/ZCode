@@ -20,10 +20,10 @@ use rust_cli_kernel_api::ids::QuestionId;
 use rust_cli_kernel_api::ids::{SessionId, WorkflowRunId};
 use rust_cli_kernel_api::workflow_child::LaunchInput;
 use rust_cli_kernel_api::workflow_run::{
-    AmendRequest, AmendResult, CancelInitiator, DynamicWorkflowRunError, DynamicWorkflowRunPort,
-    DynamicWorkflowRunSessions, FillHoleOutcome, FillHoleRequest, LifecycleStatus, ListQuery,
-    ResolveQuestionRefusalReason, ResolveQuestionResult, RetuneOutcome, RetuneRequest,
-    SubmitRequest,
+    AmendRequest, AmendResult, BackgroundRunWork, CancelInitiator, DynamicWorkflowRunError,
+    DynamicWorkflowRunPort, DynamicWorkflowRunSessions, FillHoleOutcome, FillHoleRequest,
+    LifecycleStatus, ListQuery, ResolveQuestionRefusalReason, ResolveQuestionResult, RetuneOutcome,
+    RetuneRequest, SubmitRequest,
 };
 use rust_cli_workflow::actor_mailbox::{ActorHandle, MailboxError};
 use rust_cli_workflow::engine::EngineConfig;
@@ -130,6 +130,33 @@ fn run_not_in_flight_message(qid: &str) -> String {
     )
 }
 
+/// The label source of a user-given name. Shared by `run_label` and the background title, so the two cannot drift.
+pub(crate) const LABEL_SOURCE_NAME: &str = "name";
+
+/// The live runs of one session as background works (9.52): start order, ties broken by the launch token, as `list_runs_of`
+/// breaks its ties (Node's stable sort over its submit-ordered registry). A run is titled by its name when it has one,
+/// else by its id.
+fn background_works_of(service: &WorkflowRunService, parent: &str) -> Vec<BackgroundRunWork> {
+    let mut live = service.live_runs_of(parent);
+    live.sort_by(|a, b| {
+        a.meta
+            .started_at_ms
+            .cmp(&b.meta.started_at_ms)
+            .then(a.token.cmp(&b.token))
+    });
+    live.into_iter()
+        .map(|run| BackgroundRunWork {
+            title: if run.meta.label_source == LABEL_SOURCE_NAME {
+                run.meta.label.clone()
+            } else {
+                run.run_id.clone()
+            },
+            run_id: WorkflowRunId::new(run.run_id),
+            started_at_ms: run.meta.started_at_ms,
+        })
+        .collect()
+}
+
 /// Node `resolveDynamicWorkflowRunLabel`: the name when it is not blank, else the first non-blank script line,
 /// else the run id. The label source is `name` only for a user-given name.
 pub(crate) fn run_label(
@@ -138,7 +165,7 @@ pub(crate) fn run_label(
     script_text: Option<&str>,
 ) -> (String, &'static str) {
     if let Some(name) = name.map(trim).filter(|name| !name.is_empty()) {
-        return (name.to_owned(), "name");
+        return (name.to_owned(), LABEL_SOURCE_NAME);
     }
     if let Some(script) = script_text {
         for line in script.split('\n') {
@@ -517,6 +544,19 @@ impl DynamicWorkflowRunPort for SessionRuns {
         request: FillHoleRequest,
     ) -> Result<FillHoleOutcome, DynamicWorkflowRunError> {
         self.service.fill_hole_run(&self.parent, request).await
+    }
+
+    /// Node's background tracker for runs (9.52, divergence 609): the live runs of this session, in start order. A run
+    /// is titled by its name when it has one, else by its id (Node's `workflowTaskSubject` has no script path to fall
+    /// back to here).
+    async fn background_runs(&self) -> Result<Vec<BackgroundRunWork>, DynamicWorkflowRunError> {
+        let service = self.service.clone();
+        let parent = self.parent.clone();
+        on_blocking_pool(move || Ok(background_works_of(&service, &parent))).await
+    }
+
+    fn background_changes(&self) -> Option<tokio::sync::watch::Receiver<u64>> {
+        Some(self.service.run_changes())
     }
 
     /// Node `retuneConcurrency` (9.50): a live run of this session changes its limit in place.

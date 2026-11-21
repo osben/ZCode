@@ -217,6 +217,15 @@ pub enum RetuneRefusal {
     Unchanged { current: f64 },
 }
 
+/// A live run of one session, as the background list shows it (Node's background tracker entry for a dynamic workflow run,
+/// 9.52, divergence 609). `title` is the run's name, else its id.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct BackgroundRunWork {
+    pub run_id: WorkflowRunId,
+    pub title: String,
+    pub started_at_ms: i64,
+}
+
 /// Node `DynamicWorkflowRunListQuery`: `cwd` and `limit` are required, the tool clamps `limit` to [1, 50].
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ListQuery {
@@ -389,6 +398,18 @@ pub trait DynamicWorkflowRunPort: Send + Sync {
     ) -> Result<Option<String>, DynamicWorkflowRunError> {
         let _ = run_id;
         Err(DynamicWorkflowRunError::unsupported("getScript"))
+    }
+
+    /// Node's background tracker for runs (9.52, divergence 609): this session's live runs, in start order. Empty when the
+    /// host keeps no run service.
+    async fn background_runs(&self) -> Result<Vec<BackgroundRunWork>, DynamicWorkflowRunError> {
+        Ok(Vec::new())
+    }
+
+    /// Fork (9.52): ticks whenever the host's live run set changes (a run started or settled on its own), so the session
+    /// re-reads its background works without a kernel event. `None` when the host keeps no run service.
+    fn background_changes(&self) -> Option<tokio::sync::watch::Receiver<u64>> {
+        None
     }
 
     /// Node `retuneConcurrency` (9.50): changes a live run's limit in place, with no successor and no stop. A refusal is a
