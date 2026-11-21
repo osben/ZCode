@@ -2,13 +2,14 @@
 //! `onBackgroundTaskLifecycle` for `kind: "bash"`; specs/fork-rust-agent-parity.md).
 //!
 //! The kernel's background ledger (`SessionHandle::background_tasks`) owns the commands; the adapter re-reads
-//! it after the events that can change it ([`super::Projection::shell_table`]). The list holds the running
+//! it after the events that can change it ([`super::Projection::background_table`]). The list holds the running
 //! commands only: an ended command leaves it, as the UI reads only running works.
 
 use std::collections::HashMap;
 
 use rust_cli_kernel_api::env_shell::BackgroundStatus;
 use rust_cli_kernel_api::manage::{BackgroundEntry, BackgroundKind};
+use rust_cli_kernel_api::workflow_run::BackgroundRunWork;
 use serde_json::{Map, Value, json};
 
 use super::{Projection, tool_key};
@@ -21,6 +22,8 @@ const MOVED_MARKER: &str = "moved to the background (ID: ";
 pub(super) struct Shells {
     /// The running commands as `backgroundWorks` items, in start order.
     pub(super) works: Vec<Value>,
+    /// Fork (9.52): the live dynamic workflow runs as `backgroundWorks` items, after the commands.
+    pub(super) runs: Vec<Value>,
     /// The Bash call's `description` of each backgrounded command (Node's work title).
     titles: HashMap<String, String>,
     /// Fork: the terminal status each background command's notification reported (`completed`, `failed`,
@@ -93,21 +96,55 @@ impl Projection {
         self.shells.outputs.get(task).map(String::as_str)
     }
 
-    /// The snapshot `backgroundWorks`: shell commands, then background subagents.
+    /// The snapshot `backgroundWorks`: shell commands, then workflow runs, then background subagents.
     pub(super) fn background_works_value(&self) -> Value {
         Value::Array(
             self.shells
                 .works
                 .iter()
+                .chain(&self.shells.runs)
                 .chain(&self.subagents.works)
                 .cloned()
                 .collect(),
         )
     }
 
-    /// Fork: the kernel's background ledger was re-read. Returns the `backgroundWorks` patch when the running
-    /// commands changed.
+    /// Fork: the kernel's background ledger was re-read, without runs (the commands and the subagents only). A test
+    /// helper: the session's refresh always reads the runs too (`background_table`).
+    #[cfg(test)]
     pub fn shell_table(&mut self, entries: &[BackgroundEntry], now: u64) -> Vec<Value> {
+        self.background_table(entries, &[], now)
+    }
+
+    /// Fork (9.52): the kernel's background ledger and the session's live workflow runs were re-read. Returns the
+    /// `backgroundWorks` patch when the running commands or the runs changed. A run keeps its first start time.
+    pub fn background_table(
+        &mut self,
+        entries: &[BackgroundEntry],
+        runs: &[BackgroundRunWork],
+        now: u64,
+    ) -> Vec<Value> {
+        let run_works: Vec<Value> = runs
+            .iter()
+            .map(|run| {
+                let started = self
+                    .shells
+                    .runs
+                    .iter()
+                    .find(|work| work["workId"] == run.run_id.as_str())
+                    .and_then(|work| work["startedAt"].as_u64())
+                    .unwrap_or_else(|| u64::try_from(run.started_at_ms).unwrap_or(0));
+                json!({
+                    "workId": run.run_id.as_str(),
+                    "kind": "workflow",
+                    "title": run.title,
+                    "status": "running",
+                    "startedAt": started,
+                    "cancellable": true,
+                    "anchorRowId": Value::Null,
+                })
+            })
+            .collect();
         let previous = &self.shells.works;
         let works: Vec<Value> = entries
             .iter()
@@ -137,10 +174,11 @@ impl Projection {
                 })
             })
             .collect();
-        if works == *previous {
+        if works == *previous && run_works == self.shells.runs {
             return Vec::new();
         }
         self.shells.works = works;
+        self.shells.runs = run_works;
         let mut patch = Map::new();
         patch.insert("backgroundWorks".into(), self.background_works_value());
         vec![json!({"op": "state.updated", "patch": patch})]

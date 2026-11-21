@@ -1,6 +1,7 @@
 //! Ported from `amend-workflow-permission.test.ts` and the amend cases of `amend-workflow-tool.test.ts` that the source
-//! and refusal paths of this PR cover (specs/fork-rust-workflow-engine.md, 9.43). Not ported here: the in-place
-//! concurrency route, the subagent model, script-named models and the GUI settings window (divergences 455 to 459).
+//! and refusal paths of this PR cover (specs/fork-rust-workflow-engine.md, 9.43). The concurrency-only route is tested
+//! from 9.52 on (retune in place, its refusals, and the fallback to a revision). Not ported here: the subagent model,
+//! script-named models and the GUI settings window (divergences 456 to 459).
 //! These run the tool's `validate_input`, `check_permissions` and `call` directly, in the executor's order.
 
 use std::sync::{Arc, Mutex};
@@ -16,7 +17,7 @@ use rust_cli_kernel_api::workflow_analysis::{
 };
 use rust_cli_kernel_api::workflow_run::{
     AmendRefusalReason, AmendRequest, AmendResult, DynamicWorkflowRunError, DynamicWorkflowRunPort,
-    DynamicWorkflowRunSessions,
+    DynamicWorkflowRunSessions, RetuneOutcome, RetuneRefusal, RetuneRequest,
 };
 use serde_json::{Value, json};
 use tokio::sync::mpsc;
@@ -69,6 +70,13 @@ struct FakeRun {
     default_concurrency: Option<usize>,
     /// The stored-script read fails (a wiring or journal fault, not "no stored script").
     read_fails: bool,
+    /// The retune answer; `None` is the port's unsupported default.
+    retune: Option<RetuneOutcome>,
+    retunes: Mutex<Vec<RetuneRequest>>,
+    /// The run's detail (`get_run_detail`); `None` is a run this session does not hold.
+    detail: Option<Value>,
+    /// The detail read is an optional member this host does not answer (`unsupported`).
+    detail_unsupported: bool,
 }
 
 impl FakeRun {
@@ -79,6 +87,10 @@ impl FakeRun {
             stored: stored.map(str::to_owned),
             default_concurrency: Some(4),
             read_fails: false,
+            retune: None,
+            retunes: Mutex::new(Vec::new()),
+            detail: None,
+            detail_unsupported: false,
         })
     }
 
@@ -89,11 +101,55 @@ impl FakeRun {
             stored: None,
             default_concurrency: Some(4),
             read_fails: true,
+            retune: None,
+            retunes: Mutex::new(Vec::new()),
+            detail: None,
+            detail_unsupported: false,
+        })
+    }
+
+    /// A port whose retune is not live and whose detail read is unsupported on this host.
+    fn with_unsupported_detail(outcome: RetuneOutcome) -> Arc<Self> {
+        Arc::new(Self {
+            amends: Mutex::new(Vec::new()),
+            answer: Answer::Started { superseded: None },
+            stored: Some(CLEAN.to_owned()),
+            default_concurrency: Some(4),
+            read_fails: false,
+            retune: Some(outcome),
+            retunes: Mutex::new(Vec::new()),
+            detail: None,
+            detail_unsupported: true,
+        })
+    }
+
+    /// A port whose retune answers `outcome` and whose run detail is `detail`; its amend starts `run-2` over `run-1`.
+    fn with_retune(
+        outcome: RetuneOutcome,
+        detail: Option<Value>,
+        stored: Option<&str>,
+    ) -> Arc<Self> {
+        Arc::new(Self {
+            amends: Mutex::new(Vec::new()),
+            answer: Answer::Started {
+                superseded: Some("run-1"),
+            },
+            stored: stored.map(str::to_owned),
+            default_concurrency: Some(4),
+            read_fails: false,
+            retune: Some(outcome),
+            retunes: Mutex::new(Vec::new()),
+            detail,
+            detail_unsupported: false,
         })
     }
 
     fn amends(&self) -> Vec<AmendRequest> {
         self.amends.lock().unwrap().clone()
+    }
+
+    fn retunes(&self) -> Vec<RetuneRequest> {
+        self.retunes.lock().unwrap().clone()
     }
 }
 
@@ -122,6 +178,27 @@ impl DynamicWorkflowRunPort for FakeRun {
             return Err(DynamicWorkflowRunError::new("the journal is busy"));
         }
         Ok(self.stored.clone())
+    }
+
+    async fn retune_concurrency(
+        &self,
+        request: RetuneRequest,
+    ) -> Result<RetuneOutcome, DynamicWorkflowRunError> {
+        self.retunes.lock().unwrap().push(request);
+        match self.retune {
+            Some(outcome) => Ok(outcome),
+            None => Err(DynamicWorkflowRunError::unsupported("retuneConcurrency")),
+        }
+    }
+
+    async fn get_run_detail(
+        &self,
+        _run_id: &WorkflowRunId,
+    ) -> Result<Option<Value>, DynamicWorkflowRunError> {
+        if self.detail_unsupported {
+            return Err(DynamicWorkflowRunError::unsupported("getRunDetail"));
+        }
+        Ok(self.detail.clone())
     }
 }
 
@@ -405,16 +482,304 @@ async fn a_number_limit_reaches_the_port_and_null_is_the_default() {
 }
 
 #[tokio::test]
-async fn a_concurrency_only_call_is_refused_before_any_amend() {
+async fn a_concurrency_only_call_is_valid_and_asks_for_nothing() {
     let port = FakeRun::new(Answer::Started { superseded: None }, Some(CLEAN));
     let (tool, ctx, _guard) = harness(port.clone());
-    let validation = tool
-        .validate_input(&json!({"run_id": "run-1", "max_concurrency": 5}), &ctx)
-        .await;
-    let Validation::Invalid { message, .. } = validation else {
-        panic!("a concurrency-only call is not built here");
+    let input = json!({"run_id": "run-1", "max_concurrency": 5});
+    assert!(matches!(
+        tool.validate_input(&input, &ctx).await,
+        Validation::Ok
+    ));
+    let decision = tool.check_permissions(&input, &ctx).await;
+    assert!(
+        matches!(decision, PermissionDecision::Allow { .. }),
+        "a retune has no script to approve, for any owner: {decision:?}"
+    );
+}
+
+#[tokio::test]
+async fn a_concurrency_only_call_retunes_the_live_run_in_place_with_node_text() {
+    let port = FakeRun::with_retune(
+        RetuneOutcome::Retuned {
+            previous: 4.0,
+            max_concurrency: 6.0,
+            default_concurrency: 4.0,
+        },
+        None,
+        None,
+    );
+    let (tool, ctx, _guard) = harness(port.clone());
+    let output = run(&tool, json!({"run_id": "run-1", "max_concurrency": 6}), ctx)
+        .await
+        .expect("the retune applies");
+    assert_eq!(
+        output_text(&output),
+        "Applied to the running run run-1; at most 6 subagents run at once. Run run-1 keeps running under it: nothing was stopped and no new run was started."
+    );
+    assert!(port.amends().is_empty(), "no successor is started");
+    assert_eq!(
+        port.retunes(),
+        vec![RetuneRequest {
+            run_id: WorkflowRunId::new("run-1"),
+            max_concurrency: Some(6.0),
+        }]
+    );
+    assert_eq!(output.display["retuned"]["maxConcurrency"], json!(6.0));
+    assert_eq!(output.display["retuned"]["previous"], json!(4.0));
+    assert_eq!(output.display["retuned"]["defaultConcurrency"], json!(4.0));
+    assert!(
+        output.display.get("status").is_none(),
+        "no backgrounded status"
+    );
+}
+
+#[tokio::test]
+async fn a_retune_to_null_is_the_default_and_says_so() {
+    let port = FakeRun::with_retune(
+        RetuneOutcome::Retuned {
+            previous: 6.0,
+            max_concurrency: 4.0,
+            default_concurrency: 4.0,
+        },
+        None,
+        None,
+    );
+    let (tool, ctx, _guard) = harness(port.clone());
+    let output = run(
+        &tool,
+        json!({"run_id": "run-1", "max_concurrency": null}),
+        ctx,
+    )
+    .await
+    .expect("the retune to the default applies");
+    assert!(
+        output_text(&output).contains("at most 4 subagents run at once (the default)"),
+        "{}",
+        output_text(&output)
+    );
+    assert_eq!(
+        port.retunes()[0].max_concurrency,
+        None,
+        "null is the default"
+    );
+}
+
+#[tokio::test]
+async fn a_retune_to_one_subagent_uses_the_singular_text() {
+    let port = FakeRun::with_retune(
+        RetuneOutcome::Retuned {
+            previous: 4.0,
+            max_concurrency: 1.0,
+            default_concurrency: 4.0,
+        },
+        None,
+        None,
+    );
+    let (tool, ctx, _guard) = harness(port);
+    let output = run(&tool, json!({"run_id": "run-1", "max_concurrency": 1}), ctx)
+        .await
+        .expect("the retune applies");
+    assert!(
+        output_text(&output).contains("at most 1 subagent runs at once."),
+        "{}",
+        output_text(&output)
+    );
+}
+
+#[tokio::test]
+async fn a_retune_to_the_limit_in_force_is_refused_with_node_text_and_changes_nothing() {
+    let port = FakeRun::with_retune(
+        RetuneOutcome::Refused(RetuneRefusal::Unchanged { current: 4.0 }),
+        None,
+        None,
+    );
+    let (tool, ctx, _guard) = harness(port.clone());
+    let error = run(&tool, json!({"run_id": "run-1", "max_concurrency": 4}), ctx)
+        .await
+        .expect_err("an unchanged limit is refused");
+    let ToolError::Failed { message } = error else {
+        panic!("a failure: {error:?}");
     };
-    assert!(message.contains("workflow_retune_unavailable"), "{message}");
+    assert_eq!(
+        message,
+        "workflow_retune_unchanged: run run-1 already runs at the default parallelism (at most 4 subagents at once), so there is nothing to change. Nothing was stopped, created or changed — pass a different `max_concurrency`, or a revised script if you meant to amend the run."
+    );
+    assert!(port.amends().is_empty());
+}
+
+#[tokio::test]
+async fn a_retune_of_a_run_that_is_not_live_and_not_owned_is_not_retunable_or_settled() {
+    let other_live = json!({"runId": "run-1", "ownedByThisSession": false, "status": "running"});
+    let port = FakeRun::with_retune(
+        RetuneOutcome::Refused(RetuneRefusal::NotLive),
+        Some(other_live),
+        Some(CLEAN),
+    );
+    let (tool, ctx, _guard) = harness(port.clone());
+    let error = run(&tool, json!({"run_id": "run-1", "max_concurrency": 5}), ctx)
+        .await
+        .expect_err("another session's live run is not retuned");
+    let ToolError::Failed { message } = error else {
+        panic!("a failure");
+    };
+    assert!(
+        message.starts_with(
+            "workflow_run_not_retunable: run run-1 is not being executed by this agent"
+        ),
+        "{message}"
+    );
+    assert!(port.amends().is_empty());
+
+    let settled = json!({"runId": "run-1", "ownedByThisSession": false, "status": "completed"});
+    let port = FakeRun::with_retune(
+        RetuneOutcome::Refused(RetuneRefusal::NotLive),
+        Some(settled),
+        Some(CLEAN),
+    );
+    let (tool, ctx, _guard) = harness(port.clone());
+    let error = run(&tool, json!({"run_id": "run-1", "max_concurrency": 5}), ctx)
+        .await
+        .expect_err("a settled run is not retuned");
+    let ToolError::Failed { message } = error else {
+        panic!("a failure");
+    };
+    assert!(
+        message.starts_with("workflow_run_settled: run run-1 settled before the new parallelism limit could take hold"),
+        "{message}"
+    );
+    assert!(port.amends().is_empty());
+}
+
+#[tokio::test]
+async fn a_user_stopped_run_that_settled_in_the_race_is_not_amended_by_the_fallback() {
+    let stopped = json!({"runId": "run-1", "ownedByThisSession": true, "status": "stopped", "stopReason": "user"});
+    let port = FakeRun::with_retune(
+        RetuneOutcome::Refused(RetuneRefusal::NotLive),
+        Some(stopped),
+        Some(CLEAN),
+    );
+    let (tool, ctx, _guard) = harness(port.clone());
+    let error = run(&tool, json!({"run_id": "run-1", "max_concurrency": 5}), ctx)
+        .await
+        .expect_err("a user stop is not revised by a retune");
+    let ToolError::Failed { message } = error else {
+        panic!("a failure");
+    };
+    assert!(message.starts_with("workflow_run_settled:"), "{message}");
+    assert!(port.amends().is_empty());
+}
+
+/// The retry the refusal names is a call with `name` set: it takes the revision route with the run's own script (asks),
+/// not the retune route again, so the refusal is not a loop.
+#[tokio::test]
+async fn the_retry_a_refusal_names_takes_the_revision_route_not_the_retune() {
+    let settled = json!({"runId": "run-1", "ownedByThisSession": false, "status": "completed"});
+    let port = FakeRun::with_retune(
+        RetuneOutcome::Refused(RetuneRefusal::NotLive),
+        Some(settled),
+        Some(CLEAN),
+    );
+    let (tool, ctx, _guard) = harness(port.clone());
+    let error = run(&tool, json!({"run_id": "run-1", "max_concurrency": 5}), ctx)
+        .await
+        .expect_err("a settled run is refused");
+    let ToolError::Failed { message } = error else {
+        panic!("a failure");
+    };
+    assert!(message.contains("with `name` set"), "{message}");
+    let (tool, ctx, _guard) = harness(port.clone());
+    let retry = json!({"run_id": "run-1", "max_concurrency": 5, "name": "again"});
+    let decision = tool.check_permissions(&retry, &ctx).await;
+    assert!(
+        matches!(decision, PermissionDecision::Ask { .. }),
+        "a revision of the run's own script asks: {decision:?}"
+    );
+    assert_eq!(port.retunes().len(), 1, "the retry does not retune again");
+}
+
+#[tokio::test]
+async fn an_unreadable_run_detail_on_a_not_live_retune_says_so_and_changes_nothing() {
+    let port = FakeRun::with_unsupported_detail(RetuneOutcome::Refused(RetuneRefusal::NotLive));
+    let (tool, ctx, _guard) = harness(port.clone());
+    let error = run(&tool, json!({"run_id": "run-1", "max_concurrency": 5}), ctx)
+        .await
+        .expect_err("an unreadable detail is refused");
+    let ToolError::Failed { message } = error else {
+        panic!("a failure");
+    };
+    assert_eq!(
+        message,
+        "workflow_retune_unavailable: this host cannot read run run-1's state, so the run's parallelism is not changed. Nothing was stopped, created or changed."
+    );
+    assert!(port.amends().is_empty());
+}
+
+#[tokio::test]
+async fn a_retune_of_an_unknown_run_is_refused_with_the_run_not_found_text() {
+    let port = FakeRun::with_retune(
+        RetuneOutcome::Refused(RetuneRefusal::NotLive),
+        None,
+        Some(CLEAN),
+    );
+    let (tool, ctx, _guard) = harness(port.clone());
+    let error = run(&tool, json!({"run_id": "run-9", "max_concurrency": 5}), ctx)
+        .await
+        .expect_err("an unknown run is refused");
+    let ToolError::Failed { message } = error else {
+        panic!("a failure");
+    };
+    assert!(
+        message.starts_with("run_not_found: no workflow run with ID run-9"),
+        "{message}"
+    );
+    assert!(port.amends().is_empty());
+}
+
+#[tokio::test]
+async fn a_retune_race_with_an_owned_live_run_becomes_an_amendment_without_a_window() {
+    let owned_running = json!({"runId": "run-1", "ownedByThisSession": true, "status": "running"});
+    let port = FakeRun::with_retune(
+        RetuneOutcome::Refused(RetuneRefusal::NotLive),
+        Some(owned_running),
+        Some(CLEAN),
+    );
+    let (tool, ctx, _guard) = harness(port.clone());
+    let input = json!({"run_id": "run-1", "max_concurrency": 5});
+    let decision = tool.check_permissions(&input, &ctx).await;
+    assert!(
+        matches!(decision, PermissionDecision::Allow { .. }),
+        "{decision:?}"
+    );
+    let (tx, _rx) = mpsc::channel(4);
+    let output = tool
+        .call(input, ctx, tx)
+        .await
+        .expect("the fallback amends the settled run");
+    let amends = port.amends();
+    assert_eq!(amends.len(), 1, "one successor starts");
+    assert_eq!(
+        amends[0].script_text, CLEAN,
+        "the predecessor's script is kept"
+    );
+    assert_eq!(amends[0].max_concurrency, Some(5.0));
+    assert_eq!(port.retunes().len(), 1, "the retune was tried first");
+    assert!(output_text(&output).contains("started unchanged in the background as run run-2"));
+}
+
+#[tokio::test]
+async fn a_host_without_a_retune_answers_the_retune_unavailable_text() {
+    let port = FakeRun::new(Answer::Started { superseded: None }, Some(CLEAN));
+    let (tool, ctx, _guard) = harness(port.clone());
+    let error = run(&tool, json!({"run_id": "run-1", "max_concurrency": 5}), ctx)
+        .await
+        .expect_err("an unsupported retune is refused");
+    let ToolError::Failed { message } = error else {
+        panic!("a failure");
+    };
+    assert!(
+        message.starts_with("workflow_retune_unavailable:"),
+        "{message}"
+    );
     assert!(port.amends().is_empty());
 }
 

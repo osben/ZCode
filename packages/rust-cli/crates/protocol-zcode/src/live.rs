@@ -74,6 +74,8 @@ struct State {
     skip_through: u64,
     /// Fork: the subagent table watcher ([`Live::watch_subagents`]).
     watcher: Option<rust_cli_base::Task<()>>,
+    /// Fork (9.52): the watcher of the workflow run set ([`Live::watch_background_runs`]).
+    runs_watcher: Option<rust_cli_base::Task<()>>,
     /// Fork: an event that can change the background ledger was projected; the next flush re-reads it.
     shells_dirty: bool,
     /// Fork: the conversation telemetry facts (crate::telemetry); None for a subagent's child session, whose facts
@@ -214,6 +216,7 @@ impl Live {
                 worktree,
                 skip_through: view.last_seq,
                 watcher: None,
+                runs_watcher: None,
                 shells_dirty: false,
                 telemetry,
                 child_runs: crate::child_runs::ChildRuns::default(),
@@ -860,13 +863,40 @@ impl Live {
                 return Vec::new();
             }
         };
+        // Fork (9.52): the session's live workflow runs are background works too (Node's tracker entries for runs).
+        let runs = match self.context.dynamic_workflow_runs() {
+            Some(sessions) => match sessions
+                .for_session(&rust_cli_kernel_api::ids::SessionId::new(
+                    self.session.as_str(),
+                ))
+                .background_runs()
+                .await
+            {
+                Ok(runs) => runs,
+                // A failed read is not "no live runs": keep the last published list, as the ledger read above does.
+                Err(error) => {
+                    tracing::debug!(event = "protocol.background.runs_read_failed", error = %error.message, "reading the workflow runs failed");
+                    return Vec::new();
+                }
+            },
+            None => Vec::new(),
+        };
         let now = self.context.now();
-        self.state().projection.shell_table(&entries, now)
+        self.state()
+            .projection
+            .background_table(&entries, &runs, now)
     }
 
     /// Fork: the watcher of the kernel's subagent table; it ends with this session.
     pub fn watch_subagents(&self, watcher: rust_cli_base::Task<()>) {
         if let Some(previous) = self.state().watcher.replace(watcher) {
+            previous.abort();
+        }
+    }
+
+    /// Fork (9.52): the watcher of the workflow run set; it ends with this session.
+    pub fn watch_background_runs(&self, watcher: rust_cli_base::Task<()>) {
+        if let Some(previous) = self.state().runs_watcher.replace(watcher) {
             previous.abort();
         }
     }
@@ -1089,6 +1119,25 @@ impl Drop for Live {
         if let Some(watcher) = self.state().watcher.take() {
             watcher.abort();
         }
+        // Fork (9.52): the run-set watcher parks on the server-scoped change channel, so it must end with the session.
+        if let Some(watcher) = self.state().runs_watcher.take() {
+            watcher.abort();
+        }
+    }
+}
+
+/// Fork (9.52): a run started or settled on its own changes the session's background works; re-read them, as
+/// `watch_subagents` re-reads the subagent table. Ends when the run service or the session is gone.
+pub(crate) async fn watch_background_runs(
+    mut changes: tokio::sync::watch::Receiver<u64>,
+    live: std::sync::Weak<rust_cli_protocol_core::sessions::Bridged<Live>>,
+) {
+    while changes.changed().await.is_ok() {
+        let Some(bridged) = live.upgrade() else {
+            return;
+        };
+        let sink = bridged.sink.clone();
+        bridged.run(Box::pin(async move { sink.shells_changed().await }));
     }
 }
 

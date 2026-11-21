@@ -195,6 +195,14 @@ pub struct WorkflowRunService {
     inner: Arc<Inner>,
 }
 
+impl Inner {
+    /// Fork (9.52): the live run set changed; the watchers re-read their sessions' background works.
+    fn runs_changed(&self) {
+        self.changes
+            .send_modify(|count| *count = count.wrapping_add(1));
+    }
+}
+
 struct Inner {
     /// The service's own weak handle, for the idle callbacks of the quota modules.
     me: Weak<Inner>,
@@ -226,6 +234,9 @@ struct Inner {
     /// previous fill wrote. One permit, held across the helper's call and the owner's apply (a semaphore, since a tokio guard
     /// may not be held across an await).
     fills: Arc<tokio::sync::Semaphore>,
+    /// Counts every change of the live run set (a run started or settled, or the host closed). The sessions' background
+    /// watchers wait on it, so a run that ends on its own leaves the background list without a kernel event (9.52).
+    changes: tokio::sync::watch::Sender<u64>,
     /// Serializes a question's answer with its retirement (W8a, 9.48): a resolve delivers and retires under this lock, so a
     /// concurrent resolve of the same question reads the retired table after the delivery, not before it.
     resolves: Mutex<()>,
@@ -506,9 +517,15 @@ impl WorkflowRunService {
                 bindings: OnceLock::new(),
                 default_concurrency: OnceLock::new(),
                 fills: Arc::new(tokio::sync::Semaphore::new(1)),
+                changes: tokio::sync::watch::channel(0).0,
                 resolves: Mutex::new(()),
             }),
         }
+    }
+
+    /// Fork (9.52): a receiver that ticks on every change of the live run set, for a session's background watcher.
+    pub(crate) fn run_changes(&self) -> tokio::sync::watch::Receiver<u64> {
+        self.inner.changes.subscribe()
     }
 
     /// Node `defaultConcurrency()` (9.39): the caps default of a submit, and the port's `default_concurrency`. Set once by
@@ -807,6 +824,7 @@ impl WorkflowRunService {
             },
         );
         drop(state);
+        inner.runs_changed();
         tokio::spawn(drive_outcome(run_id, handle, outcome, stop));
         Ok(())
     }
@@ -819,6 +837,7 @@ impl WorkflowRunService {
             let mut state = inner.state.lock_unpoisoned();
             state.closed = true;
             let runs = std::mem::take(&mut state.runs);
+            inner.runs_changed();
             let modules: Vec<Arc<QuotaAutoResume>> = inner
                 .sessions
                 .lock_unpoisoned()
@@ -973,6 +992,7 @@ fn settle_run(
         .is_some_and(|entry| entry.token == token);
     if owned {
         state.runs.remove(run_id);
+        inner.runs_changed();
         buffer_failures(&mut state.failures, failures);
         return Vec::new();
     }
