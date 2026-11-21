@@ -5194,6 +5194,39 @@ carried into the run service, 512 and 143), so a script that names a model gets 
 process is spawned (`node_helper::launch`), but the actor's first model request fails, so the sample would measure a failed
 run. Open (896).
 
+### 9.60 W9d: workflow actor turns and the DWR-01 run card (as built, partial)
+
+Status: partial. The workflow actor system prompt is ported (b40efb890). DWR-01 is open. The rest of the brief's spec
+list was not run.
+
+**Box, Rust, gray-always-on-run (out-rust-8, head with the actor port).** FAIL at DWR-01 (`run 卡没有画出三枚子代理药丸`).
+A temporary dump in the spec (reverted) showed the run digest renders its header only: the status (`running`), the name and
+the kind are there, but no rail, no `data-expanded`, no stations and no pills. The digest draws the rail only when both
+the causality graph (`display.causalityGraph` on the CreateWorkflow row) and `summary.run` are present. The summary carries
+`run` on every path that builds it from the live projection (`buildWorkflowRunByRunId`), so the open suspect is the graph.
+The ask display does carry the graph (the window shows "2 个阶段"). Not yet shown: whether the result row's display keeps
+`causalityGraph` through the live tool-done projection and the snapshot. Open.
+
+**Actor turns.** Phase-1 actors finish `Completed` in about 690 ms (`tool_uses` 0). Phase-2 actor (`actor_3_1`) is held by the
+controlled stream as designed. After the test's 120 s wait, the held request is cut (`unexpected EOF`), the fixture is
+consumed, and the retries 500 with "Missing Upstream e2e fixture". The cut is consequential, not the cause. Its source
+(mock gateway or the Rust client) is not confirmed. The Rust client has no 120 s timeout in the crates I searched.
+
+**Open item in the spec itself (unverified).** `(await digest.$$(...).length) === 3` reads `.length` off a chainable
+promise. Node passes DWR-01 with the same expression, so it likely works; not checked.
+
+**Ocr lows folded in (from #617).** `phase_table` returns `Vec<Vec<usize>>` and `SubmitRequest.phase_alongside` is
+`Option<Vec<Vec<usize>>>` (as `AmendRequest`); the submit path moves `phase_names`/`phase_alongside` instead of cloning;
+the card display is moved, not cloned; the stale SubmitRequest doc is corrected.
+
+**Gate.** `cargo fmt --all --check` clean. `cargo clippy --workspace --all-targets --locked -- -D warnings` rc 0 (no allow
+attributes added). Lib tests all pass: tools 460, runtime 379, kernel-api 685, agents 350, session 363 (1 ignored, existing),
+protocol-zcode 1060, workflow 422, node-store 463.
+
+**Q8 (child RSS).** Not measured: no Rust actor turn completed in the box, and phase 2 is still held.
+
+**Not done.** DWR-01 fix. The remaining specs in the brief's list (run-permissions onward). The Q8 measurement.
+
 ## 10. Open questions
 
 Each has a recommendation. The user decides. Until decided, the recommendation is the default.
