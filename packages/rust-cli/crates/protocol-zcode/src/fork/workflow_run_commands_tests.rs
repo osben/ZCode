@@ -14,7 +14,7 @@ use rust_cli_kernel_api::workflow_run::{
 };
 use serde_json::{Value, json};
 
-use super::{settings_refusal_code, settings_request, start_refusal_code};
+use super::{settings_ack_message, settings_refusal_code, settings_request, start_refusal_code};
 use crate::fork::legacy_session::tests::server;
 
 /// What the fake run service was asked, the answers it gives, and whether it drives the parent's sink as the run service does.
@@ -589,15 +589,41 @@ fn the_refusal_codes_are_nodes_vocabulary() {
         }),
         (
             "compile_failed",
-            "The stored script of run r has errors:".to_owned()
+            Some("The stored script of run r has errors:".to_owned())
         )
     );
     let (code, message) = settings_refusal_code(&SettingsRefusal::ModelUnavailable {
-        message: "the host's message".to_owned(),
+        message: Some("the resolver's message".to_owned()),
     });
     assert_eq!(
-        (code, message.as_str()),
-        ("model_unavailable", "the host's message")
+        (code, message.as_deref()),
+        ("model_unavailable", Some("the resolver's message"))
+    );
+}
+
+/// 9.65 (closes 921): Node's shape. A refusal Node sends without a message (`model_unavailable` with no catalog, and the
+/// reasons that never carry one) has none, so the ack's message is Node's `V4WorkflowRunSettingsRejectedError`
+/// fallback, `workflow run settings rejected: <reason>`.
+#[test]
+fn a_settings_refusal_without_a_message_acks_with_nodes_fallback_text() {
+    for refusal in [
+        SettingsRefusal::ModelUnavailable { message: None },
+        SettingsRefusal::NotFound,
+        SettingsRefusal::NotConfigurable,
+        SettingsRefusal::Unchanged,
+        SettingsRefusal::ScriptMissing,
+        SettingsRefusal::MissingBoundaries,
+    ] {
+        let (reason, message) = settings_refusal_code(&refusal);
+        assert_eq!(message, None, "{refusal:?}");
+        assert_eq!(
+            settings_ack_message(reason, message),
+            format!("workflow run settings rejected: {reason}")
+        );
+    }
+    assert_eq!(
+        settings_ack_message("start_failed", Some("boom".to_owned())),
+        "boom"
     );
 }
 

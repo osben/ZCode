@@ -1242,13 +1242,12 @@ async fn an_unusable_subagent_model_is_refused_before_anything_changes() {
             .amend_settings(PARENT, request, &sink)
             .await
             .expect("answers");
-        assert!(
-            matches!(
-                answer,
-                SettingsOutcome::Refused(SettingsRefusal::ModelUnavailable { .. })
-            ),
-            "{answer:?}"
-        );
+        let SettingsOutcome::Refused(SettingsRefusal::ModelUnavailable { message }) = answer else {
+            panic!("refused: {answer:?}");
+        };
+        // 9.65 (closes 921): Node sends the resolver's message only with a catalog; without one the GUI gets the
+        // reason alone (the model-facing "omit subagent_model" text is not for people).
+        assert_eq!(message.is_some(), catalog, "{message:?}");
         assert!(fx.fake.launches().is_empty());
         assert_eq!(row(&fx, "dwfrun-model").status, DwfStatus::Stopped);
         assert!(sink.turns.lock().unwrap().is_empty());
@@ -1288,7 +1287,10 @@ async fn a_run_whose_launch_names_models_is_rebound_or_refused_before_the_predec
             assert_eq!(launch["modelBindings"], json!({ "poet": bound }));
             continue;
         }
-        let SettingsOutcome::Refused(SettingsRefusal::ModelUnavailable { message }) = answer else {
+        let SettingsOutcome::Refused(SettingsRefusal::ModelUnavailable {
+            message: Some(message),
+        }) = answer
+        else {
             panic!("a bound model that is gone refuses: {answer:?}");
         };
         assert!(
@@ -1334,7 +1336,10 @@ async fn a_settings_refusal_for_many_unusable_models_is_bounded() {
         )
         .await
         .expect("answers");
-    let SettingsOutcome::Refused(SettingsRefusal::ModelUnavailable { message }) = answer else {
+    let SettingsOutcome::Refused(SettingsRefusal::ModelUnavailable {
+        message: Some(message),
+    }) = answer
+    else {
         panic!("the gone models refuse: {answer:?}");
     };
     assert!(
@@ -1477,7 +1482,10 @@ async fn the_settings_route_binds_the_compiled_scripts_models_with_their_positio
         )
         .await
         .expect("answers");
-    let SettingsOutcome::Refused(SettingsRefusal::ModelUnavailable { message }) = answer else {
+    let SettingsOutcome::Refused(SettingsRefusal::ModelUnavailable {
+        message: Some(message),
+    }) = answer
+    else {
         panic!("an unknown name refuses: {answer:?}");
     };
     assert!(

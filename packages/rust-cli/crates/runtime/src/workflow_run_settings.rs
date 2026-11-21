@@ -168,10 +168,12 @@ impl WorkflowRunService {
             entries.as_deref(),
         ) {
             Ok(model) => model,
+            // Node (closes 921): the resolver's message only with a catalog. Without one it is written for the model
+            // ("omit subagent_model") and the GUI needs only the reason.
             Err(failure) => {
                 return Ok(SettingsOutcome::Refused(
                     SettingsRefusal::ModelUnavailable {
-                        message: failure.message,
+                        message: entries.is_some().then_some(failure.message),
                     },
                 ));
             }
@@ -324,7 +326,9 @@ impl WorkflowRunService {
                 super::start::bounded_text(format!("{heading}\n{}", lines.join("\n")))
             };
             return Ok(SettingsOutcome::Refused(
-                SettingsRefusal::ModelUnavailable { message },
+                SettingsRefusal::ModelUnavailable {
+                    message: Some(message),
+                },
             ));
         }
         // The successor's card graph (Node `displayOfAnalysis` of the same analysis).

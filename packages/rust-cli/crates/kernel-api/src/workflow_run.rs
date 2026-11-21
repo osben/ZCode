@@ -661,10 +661,17 @@ pub enum SettingsRefusal {
     NotConfigurable,
     Unchanged,
     ScriptMissing,
-    CompileFailed { message: String },
-    ModelUnavailable { message: String },
+    CompileFailed {
+        message: String,
+    },
+    /// Fork (9.65, closes 921): `None` as Node's shape, when the subagent model is refused with no catalog.
+    ModelUnavailable {
+        message: Option<String>,
+    },
     MissingBoundaries,
-    StartFailed { message: String },
+    StartFailed {
+        message: String,
+    },
 }
 
 /// Fork (W9a, 9.53): the hub's direct start (Node `startSavedWorkflowRun`'s input). `scope` is `project` or `global` when
