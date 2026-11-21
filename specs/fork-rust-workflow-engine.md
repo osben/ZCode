@@ -5512,7 +5512,7 @@ existing), tools 700, session 422, base 92, node-records 36; cli bin tests 565.
 
 ### 9.63 W9g: workflow model selection under zcode-rs, closing run-pane-details (as built, gate on)
 
-Status: run-pane-details passes under zcode-rs (out-w9g-1, first box run on dd83e6f23; the box binary carries the new
+Status: run-pane-details passes under zcode-rs (out-w9g-1, first box run, on 0c4d59cf5 (dd83e6f23 with the W9f review fixes merged); the box binary carries the new
 literals `Models named in the script` and `its subagents now run on`). Full Rust sweep out-w9g-sweep on b51308230
 (the code of dd83e6f23 with fork merged): 17/26, against Node out-node-3 18/26 (the full Node sweep was not re-run). The
 one Node-passing spec that failed is questions, a test-side race that Node shares (below), so Rust and Node now differ
