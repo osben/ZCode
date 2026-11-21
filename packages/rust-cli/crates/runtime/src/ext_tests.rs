@@ -471,7 +471,8 @@ async fn read_topic_resource_is_registered_only_with_topic_resources() {
 }
 
 /// Fork (W7-1, review finding 1): a session-gated dynamic-workflow tool reaches the session's catalog through the full
-/// chain (built-in, ext, policy) when its record opens the gate, in either mode, and not without a record.
+/// chain (built-in, ext, policy) when its record opens the gate always-on, and not without a record. W9h (9.64): an
+/// on-demand session that has not activated lists none, as Node registers none before activation.
 #[tokio::test]
 async fn a_gated_workflow_tool_reaches_the_catalog_only_through_an_open_gate() {
     use rust_cli_kernel_api::dynamic_workflow::{DynamicWorkflowGate, DynamicWorkflowGates};
@@ -513,7 +514,7 @@ async fn a_gated_workflow_tool_reaches_the_catalog_only_through_an_open_gate() {
         enabled: true,
         tools_on_demand: true,
     };
-    for (gate, expected) in [(None, false), (Some(open), true), (Some(on_demand), true)] {
+    for (gate, expected) in [(None, false), (Some(open), true), (Some(on_demand), false)] {
         let env = MemoryEnvironment::new(EnvFacts {
             cwd: EnvPath::new("/Users/dev/work"),
             platform: "darwin".to_owned(),

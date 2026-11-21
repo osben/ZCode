@@ -11,6 +11,10 @@ const BACKGROUND_DEFAULT_LINE: &str = "- Subagents run in the background by defa
 /// Node's description line (core `tool/handlers/agent.ts`).
 const NODE_BACKGROUND_LINE: &str = "- `run_in_background: true` runs the agent asynchronously; you'll be notified when it completes. Never fabricate or predict a pending agent's results — the notification is never something you write yourself; if the user asks before it arrives, say it's still running.";
 
+/// Node's last description line while the workflow tools are registered (core `tool/handlers/agent.ts`,
+/// `buildAgentProviderDescription`; W9h, 9.64).
+pub(crate) const CREATE_WORKFLOW_LINE: &str = "- If the user explicitly asks for a workflow (\"use a workflow\", \"with a workflow\", or the same request in any language that names a workflow as the means), the CreateWorkflow tool is mandatory: do not use this tool instead, however small the task.";
+
 /// Node's `run_in_background` parameter description (contracts `tools/agent.ts`).
 const NODE_PARAMETER: &str =
     "Set to true to run this agent in the background. You will be notified when it completes.";

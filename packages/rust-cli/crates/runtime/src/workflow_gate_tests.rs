@@ -123,10 +123,9 @@ impl DynamicWorkflowGates for ActivatedGates {
 }
 
 #[test]
-fn an_activated_on_demand_session_sees_the_workflow_tools_undeferred_and_another_still_defers_them()
-{
-    // Fork (W7-11, 9.44, closes 54): on-demand defers the tools until the session activates them. Activation changes
-    // only that session's view; the record it was created with is the same.
+fn an_activated_on_demand_session_sees_the_workflow_tools_and_another_does_not() {
+    // Fork (W7-11, 9.44, closes 54; W9h, 9.64): an on-demand session gets the tools when it activates them, as Node
+    // registers them then (`resolveRuntimeDynamicWorkflowToolsIncluded`). Activation changes only that session's view.
     let gates = ActivatedGates {
         gates: Gates(
             [("s1", ON_DEMAND), ("s2", ON_DEMAND)]
@@ -141,25 +140,17 @@ fn an_activated_on_demand_session_sees_the_workflow_tools_undeferred_and_another
     };
     let registry = GatedRegistry::new(Arc::new(base), Arc::new(gates), workflow_stubs());
     let active = registry.snapshot(&SessionId::new("s1")).tools;
-    let inactive = registry.snapshot(&SessionId::new("s2")).tools;
     for name in tool_names::DYNAMIC_WORKFLOW_TOOLS {
         let in_active = active
             .iter()
             .find(|tool| tool.name() == name)
             .unwrap_or_else(|| panic!("{name} is visible to the activated session"));
-        assert!(
-            !in_active.should_defer(),
-            "{name} is undeferred once activated"
-        );
-        let in_inactive = inactive
-            .iter()
-            .find(|tool| tool.name() == name)
-            .unwrap_or_else(|| panic!("{name} is visible to the on-demand session"));
-        assert!(
-            in_inactive.should_defer(),
-            "{name} is deferred before activation"
-        );
+        assert!(!in_active.should_defer(), "{name} is not deferred");
     }
+    assert_eq!(
+        names(&registry.snapshot(&SessionId::new("s2")).tools),
+        ["Read"]
+    );
 }
 
 fn workflow_stubs() -> Vec<Arc<dyn Tool>> {
@@ -226,21 +217,17 @@ fn an_open_record_sees_the_ten_workflow_tools_always_on() {
 }
 
 #[test]
-fn on_demand_defers_every_workflow_tool_and_keeps_the_base_tools_undeferred() {
+fn on_demand_leaves_every_workflow_tool_out_until_the_session_activates() {
+    // W9h (9.64): Node does not register the ten tools of an on-demand session before activation, so the request
+    // carries none of them and a call finds none (gray-on-demand DWO-01). Deferring them still listed their names.
     let registry = registry(&[("s1", ON_DEMAND)]);
     let session = SessionId::new("s1");
-    let snapshot = registry.snapshot(&session).tools;
-    for tool in &snapshot {
-        if tool.name() == "Read" {
-            assert!(!tool.should_defer());
-        } else {
-            assert!(tool.should_defer(), "{} is not deferred", tool.name());
-        }
-    }
-    let found = registry
-        .find_for(&session, tool_names::CREATE_WORKFLOW)
-        .expect("on demand still finds the tool for execution");
-    assert!(found.should_defer());
+    assert_eq!(names(&registry.snapshot(&session).tools), ["Read"]);
+    assert!(
+        registry
+            .find_for(&session, tool_names::CREATE_WORKFLOW)
+            .is_none()
+    );
 }
 
 // W7-7a (divergence 55): the incognito automationTools toggle closes the gate of its session, read at each call.
