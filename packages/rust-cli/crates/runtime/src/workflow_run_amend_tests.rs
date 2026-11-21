@@ -251,10 +251,45 @@ async fn an_unknown_predecessor_is_refused_and_nothing_starts() {
     assert_eq!(fx.service.run_count(), 0);
 }
 
+/// Node's run service is the app's, so a revision of another session's settled run starts a successor in this session
+/// (DWW-06): it resumes from the predecessor, takes this session as its parent, and leaves the predecessor as it was.
 #[tokio::test]
-async fn a_predecessor_of_another_session_is_unknown_to_this_one() {
+async fn a_settled_predecessor_of_another_session_is_amended_into_a_run_of_this_one() {
     let fx = fixture(|conn| interrupted(conn, "dwfrun-other", OTHER, "return 1\n"));
     let answer = amend(&fx.service, amend_request("dwfrun-other", "return 2\n")).await;
+    let AmendResult::Started { run_id, .. } = answer else {
+        panic!("the amend starts a successor: {answer:?}");
+    };
+    let successor = row(&fx, run_id.as_str());
+    assert_eq!(successor.parent_session_id.as_deref(), Some(PARENT));
+    assert_eq!(successor.resumed_from.as_deref(), Some("dwfrun-other"));
+    let predecessor = row(&fx, "dwfrun-other");
+    assert_eq!(predecessor.parent_session_id.as_deref(), Some(OTHER));
+    assert_eq!(predecessor.stop_reason, Some(DwfStop::Interrupted));
+}
+
+/// A run of another session that has not settled is not this session's to stop, so it stays unknown here and nothing
+/// starts (the tool refuses it first with Node's held-elsewhere text).
+#[tokio::test]
+async fn an_unsettled_predecessor_of_another_session_is_unknown_to_this_one() {
+    let fx = fixture(|conn| {
+        let run = RunRecord {
+            run_id: "dwfrun-other-live".to_owned(),
+            parent_session_id: Some(OTHER.to_owned()),
+            cwd: Some("project".to_owned()),
+            script_text: Some("return 1\n".to_owned()),
+            args: Some(json!({})),
+            max_concurrency: 4,
+            status: DwfStatus::Running,
+            ..RunRecord::default()
+        };
+        dwf::create_run(conn, &run, 1).expect("seed run row");
+    });
+    let answer = amend(
+        &fx.service,
+        amend_request("dwfrun-other-live", "return 2\n"),
+    )
+    .await;
     assert_eq!(
         answer,
         AmendResult::Refused(AmendRefusalReason::RunNotFound)
