@@ -5377,6 +5377,131 @@ that).
 attributes added). Lib tests: tools 698, protocol-zcode 1069, runtime 386, kernel-api 459, node-store 363 (1 ignored,
 existing), workflow 466, policy 227, agents 351, session 422; cli bin tests 564 (on ea46ad5a5, after the merge of fork at aaad5fe16).
 
+### 9.62 W9f: the remaining Rust-only workflow desktop E2E specs under zcode-rs (as built, gate on)
+
+Status: five of the six Rust-only specs from 9.61 pass (lookup, notify, transcript, holes, restart); run-pane-details
+stays open (below). Full Rust sweep out-rust-24 on 91577c700 (the box binary carries the new literal
+`workflow.run.terminal_notice.shutdown_dropped`): 16/26, against Node out-node-3 18/26. The one Node-passing spec that
+failed in the sweep besides run-pane-details is questions, a timing flake (re-runs below). Node was not re-run.
+
+| Spec                            | Node (out-node-3) | Rust before (out-rust-15) | Rust (out-rust-24) | Cause                                                                                                                       |
+| ------------------------------- | ----------------- | ------------------------- | ------------------ | --------------------------------------------------------------------------------------------------------------------------- |
+| gray-always-on-run (main)       | PASS              | PASS                      | PASS               |                                                                                                                             |
+| gray-always-on                  | PASS              | PASS                      | PASS               |                                                                                                                             |
+| gray-always-on-amend            | PASS              | PASS                      | PASS               |                                                                                                                             |
+| gray-always-on-artifacts        | PASS              | PASS                      | PASS               |                                                                                                                             |
+| gray-always-on-compile          | PASS              | PASS                      | PASS               |                                                                                                                             |
+| gray-always-on-cross-session    | PASS              | PASS                      | PASS               |                                                                                                                             |
+| gray-always-on-overflow         | PASS              | PASS                      | PASS               |                                                                                                                             |
+| gray-always-on-run-permissions  | PASS              | PASS                      | PASS               |                                                                                                                             |
+| gray-always-on-save-from-chat   | PASS              | PASS                      | PASS               |                                                                                                                             |
+| gray-always-on-save-window      | PASS              | PASS                      | PASS               |                                                                                                                             |
+| gray-always-on-stop             | PASS              | PASS                      | PASS               |                                                                                                                             |
+| gray-always-on-lookup           | PASS              | FAIL                      | PASS               | DWL-05/06 cold result cards (fixed below)                                                                                   |
+| gray-always-on-notify           | PASS              | FAIL                      | PASS               | DWN-02 script path in the errored notice (fixed below)                                                                      |
+| gray-always-on-transcript       | PASS              | FAIL                      | PASS               | DWT-03 `epilogueStart` on the user row (fixed below)                                                                        |
+| dynamic-workflow-holes          | PASS              | FAIL                      | PASS               | DWH-02/03 draft path, `reachedAt`, fill graph (fixed below)                                                                 |
+| gray-always-on-restart          | PASS              | FAIL                      | PASS               | DWP-02 cold `workflowRuns`, DWP-03 shutdown notice (fixed below; out-rust-23 PASS too)                                      |
+| gray-always-on-questions        | PASS              | PASS                      | FAIL               | flake: DWQ-01 read the question row before its qid span rendered (out-rust-25 FAIL; out-rust-26, 27 PASS; out-rust-21 PASS) |
+| gray-always-on-run-pane-details | PASS              | FAIL                      | FAIL               | DWR-04 `subagent_model`, DWR-06 settings row (open, below)                                                                  |
+| gray-always-on-confirm          | FAIL              | FAIL                      | FAIL               | shared                                                                                                                      |
+| gray-always-on-english-dark     | FAIL              | FAIL                      | FAIL               | shared                                                                                                                      |
+| gray-always-on-resume           | FAIL              | FAIL                      | FAIL               | shared                                                                                                                      |
+| gray-always-on-snippet          | FAIL              | FAIL                      | FAIL               | shared                                                                                                                      |
+| gray-always-on-user-choice      | FAIL              | FAIL                      | FAIL               | shared                                                                                                                      |
+| gray-disabled                   | FAIL              | FAIL                      | FAIL               | shared                                                                                                                      |
+| gray-on-demand                  | FAIL              | FAIL                      | FAIL               | shared                                                                                                                      |
+| automations-workflows-hub       | FAIL              | FAIL                      | FAIL               | shared                                                                                                                      |
+
+**Causes and fixes (each fix has a test seen red first).**
+
+- **DWN-02, the errored notice's script path** (71bdad10c). Node names the run's script file in the errored and model-stop
+  guidance and gives AmendWorkflow its `path=`. The Rust notice had no path: it is only in the journal (the last fill's
+  file, else the launch's). `run_script_path_of` reads it, and the text names it relative to the run's directory (absolute
+  outside it, Node `describeWorkflowScriptPath`). Tests: `an_errored_run_with_a_script_file_says_to_edit_it_and_amend_with_path`,
+  `a_model_stop_with_a_script_file_names_it_after_the_amend_sentence`,
+  `an_errored_run_with_a_journaled_script_names_it_relative_to_the_run_cwd`,
+  `the_script_path_of_a_run_is_the_last_fills_file_else_the_launchs`.
+- **DWH-02, the hole notice's draft and wait** (6656de7c3, 5a1dea3b2; closes 488). The hole notice and the blocked reminder
+  name the run's script as the draft (Node's fallback when the hole has no draft of its own), and the hole payload carries
+  `reachedAt`. A live `hole-reached` had no stamp: `StoredEvent` now carries the journal row's `time_created`, and the
+  envelope mints `reachedAt` from it as the cold replay does, so the hole row shows how long it waited. Tests:
+  `a_hole_notice_names_the_runs_script_as_its_draft_and_carries_when_it_was_reached`,
+  `a_live_hole_reached_carries_the_journal_stamp_as_reached_at`.
+- **DWH-03, the fill row's graph** (5a1dea3b2; narrows 514). A joined fill answered with a card without a graph, so the run
+  card could not swap in the filled graph (`buildWorkflowFillGraphByRunId`). The card now carries the effective script's
+  causality graph from the analyzer (Node `boundGraphOfAnalysis(analyzeScript(result.scriptText))`); the merged W9e review
+  fix supplies the `fill` block with the hole's name. Test: `a_joined_fill_carries_the_effective_scripts_graph_and_its_fill_block`.
+- **DWL-05/06, cold result cards** (fe24c3f1e). Rust wrote `{schemaVersion:1}` into a completed tool part's metadata, Node
+  `{schemaVersion:1, display}` (`completedToolPartMetadata`), so a cold reload lost GetWorkflowRun's and ListWorkflowRuns'
+  cards. The run ledger now commits `Fact::ToolDisplayed` after the result for a completed call whose display has a `kind`;
+  node-store keeps it in `state.metadata.display` and loads it back (`LoadedSession.tool_displays`); the cold projection
+  draws it. A display whose part cannot be found is logged and dropped (`store.tool_display.no_part`), never failing the
+  batch. Tests: `a_completed_result_display_with_a_kind_is_stored_after_the_link`,
+  `a_completed_results_display_is_kept_in_the_part_and_read_back`, `a_cold_tool_row_carries_its_stored_result_display`.
+- **DWT-03, the actor's ask bubble** (f90a33df3). The actor's user message stores `metadata.epilogueStart`, but the Rust
+  `userInput` row never carried `epilogueStart` and hydration dropped it, so the desktop drew no folded epilogue. The row
+  now carries it live and cold (Node `projection-rows.ts`, `transcript-hydration.ts` `epilogueStartOfMessage`: a
+  non-negative integer, else absent). Tests: `a_user_row_carries_its_epilogue_start`,
+  `a_stored_boundary_reads_back_on_the_loaded_message`.
+- **DWP-02, cold `workflowRuns`** (841c6eecc; closes 298 for the projection). A fresh app server started each session's
+  `workflowRuns` empty and only folded live deltas, so after a full restart no run card had a run to draw. Node's cold
+  materialization replays the parent's journaled runs (`replayProgressForSession`) ahead of the memory events. Rust now does
+  the same at the open's run sweep: `RunStore::session_progress` lists the parent's runs (newest first, bounded by the
+  projection's `maxRuns`), skips the runs live in this process, replays them oldest first through `replay_run_envelopes`
+  into one `LiveProjection`, and the deltas reach the session's pump (`seed_workflow_runs`). Test:
+  `session_progress_replays_this_parents_journaled_runs_into_workflow_runs_deltas`. The first box run still drew no card: the
+  composition's `LazyRunStore` forwards every `RunStore` method, and the new one had a default body there, so it
+  replayed nothing. `session_progress` is now required (like `amend_preflight`) and forwarded. Test:
+  `the_lazy_run_store_replays_the_journal_of_a_parent`.
+
+- **DWP-03, no terminal notice from a closing service** (this change). A run still running when the app quits is stopped
+  by the service's close (`stop_interrupted`), and its owner then settled it and posted the terminal notice to the parent,
+  so the restarted app drew a notification row Node does not have. Node drops a background notification while its runtime
+  shuts down (`enqueueBackgroundTaskNotification`, `runtime.background_task_notification.shutdown_dropped`). The settle path
+  now posts nothing once the service is closed and logs `workflow.run.terminal_notice.shutdown_dropped`; the row stays
+  `stopped` (interrupted), so the pane still reads stopped, process exited, resumable. Test:
+  `a_run_stopped_by_the_closing_service_posts_no_terminal_notice`.
+
+**Divergences.**
+
+912. A completed call's `node_repl_images` display is not stored in its tool part: Node carries it (`buildToolOutput`), and
+     its images would only grow the row; a cold reload draws that card without its images.
+913. The cold `workflowRuns` arrive as deltas after the open's run sweep, not inside the first snapshot as Node's cold merge
+     puts them, so a subscriber that opens before the sweep ends sees the runs a moment later.
+914. The run service's per-parent progress projection is not seeded by the replay: a run that resumes after a restart diffs
+     its deltas against an empty base. The deltas are per run, so the desktop's fold is the same; a consumer that diffs whole
+     states would see more ops.
+915. With no configured default concurrency the replay is skipped (the `run-started` payload needs it and none is
+     fabricated); Node always has a default.
+
+**Open (recorded, not fixed here).**
+
+- run-pane-details (DWR-04, DWR-06; 663 and 456 stand). The actors already run on a per-run and per-persona model
+  (`workflow_owner.rs` `resolve_model` reads `subagentModel` and `modelBindings` from the launch or the journal). What is
+  missing is the chain that feeds them, and it is larger than this change's budget (about 2k lines with tests):
+  - DWR-04 fails first at the permission window: `create_workflow` refuses `subagent_model` in validation, before it asks.
+    Lifting it needs a model reference resolver over the provider catalog (Node `model-reference.ts`: qualified and bare
+    names, the session-provider guard, `$level`, the refusal texts), a catalog port in the tool context (`ModelDirectory`
+    exists in kernel-api; the tools have none), the script's named models resolved into `modelBindings` with the
+    "Models named in the script" sentence (`workflow-script-models.ts`), and `subagentModel` and `modelBindings` on
+    `SubmitRequest` and the `run-launched` event.
+  - DWR-06 fails first at the in-place settings row. `SettingsTurn` carries `amend`, but `ParentTurns::settings_turn`
+    records the text only, as a meta user message (`RecordWorkflowTurn`). Node records a control-only turn whose
+    `turnHeader` and `userInput` rows carry `workflowLaunch` (`runId`, `toolCallId`, `name`, `amend`), live and cold
+    (`transcript-hydration.ts` `workflowLaunchOfMessage`); the desktop builds the settings digest from it. The hub launch
+    turn has the same gap. The spec's next step swaps the subagent model through the popover, which the settings path
+    (`workflow_run_settings.rs` step 3) and `amend_run` refuse, so the row alone would not pass it.
+- questions (DWQ-01) is recorded as a flake: on this head it failed twice (out-rust-24, 25) and passed twice
+  (out-rust-26, 27), and it passed on 708613bb6 (out-rust-21). Each failure read the question row's text with its
+  question and context but without the trailing qid span; the run that waited one extra round trip passed.
+- The 9.61 open items DWL-05/06, DWN-02, DWT-03, DWH-02 and restart DWP-02/03 are closed by this section; DWR-04 and
+  DWR-06 stay open as above.
+
+**Gate.** `cargo fmt --all --check` clean. `cargo clippy --workspace --all-targets --locked -- -D warnings` rc 0 (no allow
+attributes added). Lib tests: runtime 390, workflow 468, kernel-api 461, protocol-zcode 1072, node-store 365 (1 ignored,
+existing), tools 700, session 422, base 92, node-records 36; cli bin tests 565.
+
 ## 10. Open questions
 
 Each has a recommendation. The user decides. Until decided, the recommendation is the default.
