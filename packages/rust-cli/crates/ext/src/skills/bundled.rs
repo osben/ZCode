@@ -47,8 +47,12 @@ pub async fn pack_skills_dir(
     let style = PathStyle::infer(entry_dir);
     let mut packs = vec![style.join(entry_dir, &["packages", PACK_DIR])];
     let mut base = entry_dir.to_owned();
+    // A shallow entry (`/app`) runs out of ancestors: stop the walk, keep the candidates already built.
     for _ in 0..3 {
-        base = style.parent(&base)?;
+        let Some(parent) = style.parent(&base) else {
+            break;
+        };
+        base = parent;
         packs.push(style.join(&base, &[PACK_DIR]));
     }
     for pack in packs {

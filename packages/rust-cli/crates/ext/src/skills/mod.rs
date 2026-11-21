@@ -143,8 +143,9 @@ pub struct SkillCatalog {
     grants: Mutex<HashMap<rust_cli_kernel_api::ids::SessionId, HashSet<String>>>,
     /// Fork (W9b-3, 9.58): the directory of the Node bundle entry the bundled pack is searched from (`bundled.rs`).
     bundled_entry: Mutex<Option<String>>,
-    /// Fork (W9b-3, 9.58): set once the "pack unavailable" warning is out, so a listing does not repeat it.
-    bundled_warned: AtomicBool,
+    /// Fork (W9b-3, 9.58): the resolved pack directory, memoized once resolved: outer None = not resolved yet, inner None =
+    /// no pack (found or not, the search runs once per entry; the warning is logged with it).
+    bundled_resolved: Mutex<Option<Option<String>>>,
     /// Fork (W9b-3, 9.58): the rollout gate per session (Node `runtimeConfig.dynamicWorkflowEnabled`).
     gates: Mutex<Option<Arc<dyn rust_cli_kernel_api::dynamic_workflow::DynamicWorkflowGates>>>,
 }
@@ -162,7 +163,7 @@ impl SkillCatalog {
             incognito: std::sync::OnceLock::new(),
             grants: Mutex::default(),
             bundled_entry: Mutex::default(),
-            bundled_warned: AtomicBool::new(false),
+            bundled_resolved: Mutex::default(),
             gates: Mutex::default(),
         }
     }
@@ -170,6 +171,7 @@ impl SkillCatalog {
     /// Fork (W9b-3, 9.58): the directory of the Node bundle entry (`bundled::helper_entry_dir`); None leaves the pack out.
     pub fn set_bundled_entry_dir(&self, entry_dir: Option<String>) {
         *self.bundled_entry.lock_unpoisoned() = entry_dir;
+        *self.bundled_resolved.lock_unpoisoned() = None;
     }
 
     /// Fork (W9b-3, 9.58): the rollout gate source the session gates are read from (Node `runtimeConfig`).
@@ -180,17 +182,26 @@ impl SkillCatalog {
         *self.gates.lock_unpoisoned() = Some(gates);
     }
 
-    /// Fork (W9b-3, 9.58): the bundled pack's `skills` directory as Node finds it from the entry, or None (warned once).
+    /// Fork (W9b-3, 9.58): the bundled pack's `skills` directory as Node finds it from the entry, or None. Resolved once
+    /// per entry and memoized (found or not). With no entry (no Node helper command, divergence 903) or no pack, one
+    /// warning is logged, when the memo is filled.
     async fn bundled_skills_dir(&self, workspace: &WorkspaceRef) -> Option<String> {
-        let entry = self.bundled_entry.lock_unpoisoned().clone()?;
-        let dir = bundled::pack_skills_dir(self.files.as_ref(), workspace, &entry).await;
-        match &dir {
-            Some(dir) => tracing::debug!(dir = %dir, "bundled skill pack found"),
-            None if !self.bundled_warned.swap(true, Ordering::Relaxed) => {
+        if let Some(resolved) = self.bundled_resolved.lock_unpoisoned().clone() {
+            return resolved;
+        }
+        let entry = self.bundled_entry.lock_unpoisoned().clone();
+        let dir = match &entry {
+            Some(entry) => bundled::pack_skills_dir(self.files.as_ref(), workspace, entry).await,
+            None => None,
+        };
+        match (&entry, &dir) {
+            (_, Some(dir)) => tracing::debug!(dir = %dir, "bundled skill pack found"),
+            (None, None) => tracing::warn!("bundled skill pack unavailable: no Node bundle entry"),
+            (Some(entry), None) => {
                 tracing::warn!(entry = %entry, "bundled skill pack unavailable");
             }
-            None => {}
         }
+        *self.bundled_resolved.lock_unpoisoned() = Some(dir.clone());
         dir
     }
 
