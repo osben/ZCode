@@ -198,12 +198,9 @@ fn manifest_chip(artifact: &Value) -> Option<Value> {
     Some(Value::Object(chip))
 }
 
-/// Node `serializeWorkflowArtifact`: a string is the text itself, anything else its JSON.
+/// Node `serializeWorkflowArtifact`: a string is the text itself, anything else `JSON.stringify(value, null, 2)`.
 fn artifact_text(value: &Value) -> String {
-    match value {
-        Value::String(text) => text.clone(),
-        other => other.to_string(),
-    }
+    rust_cli_kernel_api::workflow_notice_meta::artifact_text(value)
 }
 
 #[cfg(test)]

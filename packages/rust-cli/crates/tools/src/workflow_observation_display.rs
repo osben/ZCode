@@ -129,8 +129,9 @@ pub(crate) fn get_display(detail: &Value, now: i64) -> Value {
         tail.push(order(out, &["sequence", "message", "at"]));
     }
     card.insert("logTail".into(), Value::Array(tail));
-    if let Some(result) = detail.get("result").and_then(Value::as_str) {
-        let (result, cut) = bound(result, MAX_RESULT_BYTES);
+    if let Some(result) = detail.get("result") {
+        let text = rust_cli_kernel_api::workflow_notice_meta::artifact_text(result);
+        let (result, cut) = bound(&text, MAX_RESULT_BYTES);
         truncated |= cut;
         card.insert("result".into(), Value::String(result));
     }

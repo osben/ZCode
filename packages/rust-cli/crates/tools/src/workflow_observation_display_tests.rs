@@ -142,3 +142,19 @@ fn the_list_card_carries_the_rows_schema_keys_and_the_truncation() {
         json!({"kind": "list_workflow_runs", "runs": []})
     );
 }
+
+/// Node `serializeWorkflowArtifact`: a result that is not a string reaches the card as `JSON.stringify(value, null, 2)`,
+/// so the desktop's result panel draws it (DWL-03); before, only a string result was carried.
+#[test]
+fn the_status_card_carries_an_object_result_as_indented_json() {
+    let detail = json!({
+        "runId": "run_1", "label": "x", "status": "completed", "stopReason": null, "possiblyInterrupted": false,
+        "usage": {"spentTokens": 0}, "subagents": [], "actors": [], "logTail": [],
+        "result": {"amended": true, "items": [1, 2]}
+    });
+    let card = get_display(&detail, 1);
+    assert_eq!(
+        card["result"],
+        "{\n  \"amended\": true,\n  \"items\": [\n    1,\n    2\n  ]\n}"
+    );
+}

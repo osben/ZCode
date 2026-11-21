@@ -47,10 +47,14 @@ fn a_completed_run_posts_its_result_to_the_parent_with_the_terminal_payload() {
     assert!(envelope.starts_with(
         "<task-notification>\n<task-id>dwfrun-1</task-id>\n<tool-use-id>toolu_1</tool-use-id>\n<status>completed</status>"
     ));
-    assert!(notice.text.contains("<result>{&quot;n&quot;:2}</result>"));
+    assert!(
+        notice
+            .text
+            .contains("<result>{\n  &quot;n&quot;: 2\n}</result>")
+    );
     assert_eq!(
         notice.workflow,
-        json!({"workflowNotification": {"kind": "terminal", "status": "completed", "summary": "Audit", "result": "{\"n\":2}", "resultForm": "json"}})
+        json!({"workflowNotification": {"kind": "terminal", "status": "completed", "summary": "Audit", "result": "{\n  \"n\": 2\n}", "resultForm": "json"}})
     );
 }
 

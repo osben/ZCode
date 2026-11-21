@@ -1016,11 +1016,8 @@ pub fn provider_stop_text(stop: &Value, run_id: &str) -> String {
 fn outcome_blocks(detail: &Value, run_id: &str) -> Vec<String> {
     let mut blocks = Vec::new();
     if let Some(result) = detail.get("result") {
-        // Verbatim, as Node's `<result>`: a string is the text itself, anything else its JSON.
-        let body = match result {
-            Value::String(text) => text.clone(),
-            other => other.to_string(),
-        };
+        // Node's `<result>` (`serializeWorkflowArtifact`): a string is the text itself, anything else its indented JSON.
+        let body = rust_cli_kernel_api::workflow_notice_meta::artifact_text(result);
         blocks.push(format!("<result>\n{body}\n</result>"));
     }
     if let Some(error) = detail.get("error") {
