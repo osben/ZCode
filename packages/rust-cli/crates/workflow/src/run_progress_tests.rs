@@ -110,6 +110,7 @@ fn started(sequence: u64, run: &str) -> StoredEvent {
     StoredEvent {
         sequence,
         payload_json: event.payload_json(),
+        time_created: None,
     }
 }
 
@@ -306,6 +307,44 @@ fn an_unreadable_payload_is_dropped_without_a_record() {
     sink.progress(&StoredEvent {
         sequence: 1,
         payload_json: "not json".to_owned(),
+        time_created: None,
     });
     assert!(port.calls().is_empty());
+}
+
+/// 9.62 (DWH-02): a live `hole-reached` carries the journal's stamp as `reachedAt` (Node `withHoleFacts` from
+/// `sequenceCapture.timeCreatedOf`), the same number cold replay reads back, so the hole notice can count the wait.
+#[test]
+fn a_live_hole_reached_carries_the_journal_stamp_as_reached_at() {
+    let port = RecordingPort::scripted(&[]);
+    let mut sink = sink(
+        port.clone(),
+        SESSION,
+        Some(SESSION),
+        RUN,
+        fresh_projection(),
+    );
+    sink.progress(&started(1, RUN));
+    let reached = RunEvent::HoleReached {
+        instance: crate::model::Ref {
+            site_id: "hole#1".to_owned(),
+            ordinal: 1,
+        },
+        name: "decide".to_owned(),
+        prompt: None,
+        phase: None,
+    };
+    sink.progress(&StoredEvent {
+        sequence: 2,
+        payload_json: reached.payload_json(),
+        time_created: Some(1_795_280_200_123),
+    });
+    let calls = port.calls();
+    assert_eq!(calls.len(), 2);
+    let (_, progress, _) = &calls[1];
+    assert_eq!(progress["eventType"], json!("hole-reached"));
+    assert_eq!(
+        progress["payload"]["reachedAt"],
+        json!(1_795_280_200_123_i64)
+    );
 }

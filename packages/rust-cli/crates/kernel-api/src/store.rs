@@ -175,7 +175,10 @@ pub enum Fact {
     /// Fork (9.62, DWL-05): a completed call's result display (Node `completedToolPartMetadata`'s `display`), written into
     /// the tool part's `state.metadata.display` so a cold read draws the same card. Committed with the call's result,
     /// after it, like [`Fact::SubagentLinked`]. Only a successful result with a display `kind` has one.
-    ToolDisplayed { tool_use: ToolUseId, display: Value },
+    ToolDisplayed {
+        tool_use: ToolUseId,
+        display: Value,
+    },
     /// Fork: an input queued behind a running turn, Node's `session_input` row `admitted` (specs/fork-rust-agent-parity.md,
     /// Input ledger). Written again when the queued input is edited (the row's sequence is kept).
     ///

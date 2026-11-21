@@ -222,8 +222,14 @@ fn a_completed_result_display_with_a_kind_is_stored_after_the_link() {
     let card = json!({"kind": "get_workflow_run", "runId": "dwfrun-1"});
     ledger.tool_finished(&ToolUseId::new("t_card"), &output(false, card.clone()));
     ledger.tool_finished(&ToolUseId::new("t_agent"), &output(false, agent_display()));
-    ledger.tool_finished(&ToolUseId::new("t_err"), &output(true, json!({"kind": "bash_output"})));
-    ledger.tool_finished(&ToolUseId::new("t_img"), &output(false, json!({"kind": "node_repl_images"})));
+    ledger.tool_finished(
+        &ToolUseId::new("t_err"),
+        &output(true, json!({"kind": "bash_output"})),
+    );
+    ledger.tool_finished(
+        &ToolUseId::new("t_img"),
+        &output(false, json!({"kind": "node_repl_images"})),
+    );
     let settled = ledger.settle(
         result(&["t_card", "t_agent", "t_err", "t_img"], false),
         Some(&MessageId::new("u1")),

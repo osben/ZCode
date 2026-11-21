@@ -306,6 +306,7 @@ impl JournalPort for MemoryJournal {
         let stored = StoredEvent {
             sequence: run.events.len() as u64,
             payload_json: event.payload_json(),
+            time_created: None,
         };
         run.events.push(stored.clone());
         Ok(stored)

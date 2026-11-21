@@ -16,6 +16,7 @@ use rust_cli_kernel_api::tool::{
     PromptContext, Tool, ToolError, ToolOutput, ToolProgress, ToolUseContext, Validation, failed,
 };
 use rust_cli_kernel_api::tool_names;
+use rust_cli_kernel_api::workflow_analysis::WorkflowAnalyzer;
 use rust_cli_kernel_api::workflow_run::{
     DynamicWorkflowRunPort, DynamicWorkflowRunSessions, FillHoleOutcome, FillHoleRequest,
     FillRefusalReason,
@@ -59,6 +60,8 @@ pub struct FillWorkflowHoleTool {
     contract: &'static Contract,
     /// The run service's per-session ports: a fill goes through the calling session's port.
     runs: Option<Arc<dyn DynamicWorkflowRunSessions>>,
+    /// Fork (9.62, narrows 514): draws the effective script's causality graph for the fill row's card.
+    analyzer: Option<Arc<dyn WorkflowAnalyzer>>,
 }
 
 impl FillWorkflowHoleTool {
@@ -66,7 +69,14 @@ impl FillWorkflowHoleTool {
         Self {
             contract: contract(tool_names::FILL_WORKFLOW_HOLE),
             runs,
+            analyzer: None,
         }
+    }
+
+    /// The analyzer the fill row's graph is drawn with (Node `analyzeScript` over the port's effective script).
+    pub fn with_analyzer(mut self, analyzer: Arc<dyn WorkflowAnalyzer>) -> Self {
+        self.analyzer = Some(analyzer);
+        self
     }
 
     fn port(&self, context: &ToolUseContext) -> Option<Arc<dyn DynamicWorkflowRunPort>> {
@@ -280,7 +290,29 @@ impl Tool for FillWorkflowHoleTool {
             .await
             .map_err(|error| failed(error.message))?;
         match outcome {
-            FillHoleOutcome::Filled { phases_added, .. } => {
+            FillHoleOutcome::Filled {
+                phases_added,
+                script_text,
+            } => {
+                // Fork (9.62, narrows 514): the card carries the effective script's graph, so the run card swaps in the
+                // filled graph (the desktop's `buildWorkflowFillGraphByRunId`), and Node's `fill` block names the hole.
+                // A graph the analyzer cannot draw leaves the card without one; the fill has joined either way.
+                let display = match &self.analyzer {
+                    Some(analyzer) => analyzer.display(&script_text).await.unwrap_or_else(|error| {
+                        tracing::debug!(%error, "fill display reply dropped; the fill row shows no graph");
+                        None
+                    }),
+                    None => None,
+                };
+                let mut card = crate::workflow_card::card(
+                    display
+                        .as_ref()
+                        .and_then(|display| display.get("causalityGraph")),
+                    true,
+                    &[],
+                );
+                // Node `fillBlock`: the hole's name is resolved from its facts, which are not read here (divergence 513).
+                card["fill"] = serde_json::json!({"siteId": input.hole_id, "name": input.hole_id});
                 let phases = if phases_added.is_empty() {
                     "It added no phases.".to_owned()
                 } else {
@@ -291,7 +323,7 @@ impl Tool for FillWorkflowHoleTool {
                         "The fill joined run {} at hole \"{}\"; the branch parked there has resumed and the run keeps going in the background. {phases} Do not wait for the run.",
                         input.run_id, input.hole_id
                     ),
-                    crate::workflow_card::card(None, true, &[]),
+                    card,
                 ))
             }
             FillHoleOutcome::Refused {

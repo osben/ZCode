@@ -2754,7 +2754,12 @@ fn a_cold_tool_row_carries_its_stored_result_display() {
         assistant("msg_a1", vec![call("toolu_1"), call("toolu_2")]),
         done("msg_r1", "msg_a1", "toolu_1", false),
         done("msg_r2", "msg_a1", "toolu_2", true),
-        assistant("msg_a2", vec![ContentBlock::Text { text: "done".into() }]),
+        assistant(
+            "msg_a2",
+            vec![ContentBlock::Text {
+                text: "done".into(),
+            }],
+        ),
     ]);
     let card = json!({"kind": "get_workflow_run", "runId": "dwfrun-1", "name": "nightly"});
     cold.tool_displays = [

@@ -151,9 +151,7 @@ pub(super) fn rows(projection: &mut Projection, view: &SessionView) {
                                 .get(tool_use_id)
                                 .filter(|_| !*is_error)
                                 .cloned()
-                                .unwrap_or_else(|| {
-                                    cold_display(&super::text_of_result(content))
-                                }),
+                                .unwrap_or_else(|| cold_display(&super::text_of_result(content))),
                         };
                         let event = SequencedEvent {
                             seq: 0,
