@@ -496,6 +496,8 @@ async fn a_submit_through_the_composed_sessions_starts_a_run_under_its_session()
             tool_call_id: Some("toolu_composed".to_owned()),
             max_concurrency: None,
             script_path: None,
+            phase_names: None,
+            phase_alongside: None,
         })
         .await
         .expect("the submit starts the run");

@@ -20,6 +20,7 @@ fn permission() -> InteractionRequest {
         once: false,
         independent: false,
         session_allow: false,
+        display: None,
     }
 }
 

@@ -586,6 +586,7 @@ impl Projection {
                 independent,
                 origin,
                 session_allow,
+                display,
                 ..
             } => {
                 let mut payload = json!({
@@ -608,6 +609,10 @@ impl Projection {
                 // Fork (B3, Node `product-projection.ts`): only the session's own ask that is no independent
                 // confirmation offers a permission mode switch. A once-ask (guarded already) can only switch to full
                 // access; any other offers guarded or full access, with the full access option for older clients.
+                // Node `approval.display` (product-projection.ts `askDisplay`): the graph of a workflow launch's window.
+                if let Some(display) = display {
+                    payload["display"] = display.clone();
+                }
                 if origin.is_none() && !*independent {
                     if *once {
                         payload["modeSwitch"] = json!("fullAccessOnly");

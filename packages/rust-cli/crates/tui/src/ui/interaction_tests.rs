@@ -59,6 +59,7 @@ fn bash(command: &str, suggestions: &[&str]) -> InteractionRequest {
         once: false,
         independent: false,
         session_allow: false,
+        display: None,
     }
 }
 

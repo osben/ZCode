@@ -5117,6 +5117,83 @@ The Node column was not re-run in this PR. 9.57 holds for its four Node baseline
 905. Closed for the discovery and the gate: the bundled skill loads under `zcode-rs` on every spec in the box run (0 unknown-skill
      lines). The remaining Rust failures in the table are the next gaps, not this one.
 
+### 9.59 W9c: the workflow desktop E2E under zcode-rs, first clusters (as built, gate on)
+
+Scope: the 25 workflow conversation specs and the hub, run in the OrbStack Linux box (no Mac window). One box at a time.
+Keys: `BOX_RUST_KEY=w9b3`, `BOX_SRC_KEY` per worktree. Node baseline `out-node-3` (full sweep, this head); Rust `out-rust-6`
+(full sweep after the fixes below, merged with origin/fork at b0a1ac62e, PR 616 final); single-spec run `out-rust-5`.
+
+**Pass counts.** Node 18 of 26 (the 25 specs and the hub). Rust 2 of 26 (`gray-always-on`, `gray-always-on-save-window`), the
+same two as in 9.58. The fixes below move the confirmation window and the run's phase table; no further spec turns green yet.
+
+| Spec (suffix after `conversation-session/workflows/conversation-session-dynamic-workflow-`) | Node | Rust | Rust first failure (box)                                                                                                                                                 |
+| ------------------------------------------------------------------------------------------- | ---- | ---- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `gray-always-on`                                                                            | PASS | PASS |                                                                                                                                                                          |
+| `gray-always-on-save-window`                                                                | PASS | PASS |                                                                                                                                                                          |
+| `gray-always-on-amend`                                                                      | PASS | FAIL | not re-triaged after the fixes                                                                                                                                           |
+| `gray-always-on-artifacts`                                                                  | PASS | FAIL | not re-triaged                                                                                                                                                           |
+| `gray-always-on-compile`                                                                    | PASS | FAIL | not re-triaged                                                                                                                                                           |
+| `gray-always-on-confirm`                                                                    | FAIL | FAIL | not re-triaged                                                                                                                                                           |
+| `gray-always-on-cross-session`                                                              | PASS | FAIL | not re-triaged                                                                                                                                                           |
+| `gray-always-on-english-dark`                                                               | FAIL | FAIL | not re-triaged                                                                                                                                                           |
+| `gray-always-on-lookup`                                                                     | PASS | FAIL | not re-triaged                                                                                                                                                           |
+| `gray-always-on-notify`                                                                     | PASS | FAIL | not re-triaged                                                                                                                                                           |
+| `gray-always-on-overflow`                                                                   | PASS | FAIL | not re-triaged                                                                                                                                                           |
+| `gray-always-on-questions`                                                                  | PASS | FAIL | not re-triaged                                                                                                                                                           |
+| `gray-always-on-restart`                                                                    | PASS | FAIL | not re-triaged                                                                                                                                                           |
+| `gray-always-on-resume`                                                                     | FAIL | FAIL | not re-triaged                                                                                                                                                           |
+| `gray-always-on-run-pane-details`                                                           | PASS | FAIL | not re-triaged                                                                                                                                                           |
+| `gray-always-on-run-permissions`                                                            | PASS | FAIL | not re-triaged                                                                                                                                                           |
+| `gray-always-on-run`                                                                        | PASS | FAIL | confirm window now shows "2 个阶段" (fixed); the run card has no three agent pills: the workflow actor's model request fails with "Missing Upstream e2e fixture" (below) |
+| `gray-always-on-save-from-chat`                                                             | PASS | FAIL | not re-triaged                                                                                                                                                           |
+| `gray-always-on-snippet`                                                                    | FAIL | FAIL | not re-triaged                                                                                                                                                           |
+| `gray-always-on-stop`                                                                       | PASS | FAIL | not re-triaged                                                                                                                                                           |
+| `gray-always-on-transcript`                                                                 | PASS | FAIL | not re-triaged                                                                                                                                                           |
+| `gray-always-on-user-choice`                                                                | FAIL | FAIL | not re-triaged (DWG-23, 894, shared)                                                                                                                                     |
+| `gray-disabled`                                                                             | FAIL | FAIL | not re-triaged (DWG-23, 894, shared)                                                                                                                                     |
+| `gray-on-demand`                                                                            | FAIL | FAIL | not re-triaged (shared)                                                                                                                                                  |
+| `holes`                                                                                     | PASS | FAIL | not re-triaged                                                                                                                                                           |
+| hub `automations/workflows/automations-workflows-hub`                                       | FAIL | FAIL | not re-triaged (895, shared with Node)                                                                                                                                   |
+
+Node failures (`confirm`, `english-dark`, `resume`, `snippet`, `user-choice`, `gray-disabled`, `gray-on-demand`, hub) are recorded
+as shared, not chased here. "Not re-triaged" rows are Rust-only failures whose first cause is open.
+
+**Fixed: the confirmation window and the run's phase table (divergences 140 and 514 closed for CreateWorkflow).** Rust asked
+with no display and sent a result with no `kind`, so the window had no graph and the run card had nothing to join on. Now:
+
+- The analyzer port gets a defaulted `display` method; `HelperWorkflowAnalyzer` calls the helper's existing `format`/`display`
+  kind (Node `prepareApproval`). It is read once per script that checks, kept in the approval entry, and a helper error leaves
+  the window without a graph rather than denying the call.
+- The ask carries it: `Tool::ask_display` (defaulted, `None`) is read by the pipeline into the new
+  `InteractionRequest::Permission.display` (serde default, skipped when absent). The projection writes it as `payload.display`,
+  which the UI reads for `create_workflow` and the graph (Node `askDisplay`).
+- The backgrounded result is the same `create_workflow` display (`kind`, `ok`, `errorCount`, `diagnostics`, `causalityGraph`),
+  with `status` and `backgroundTaskId` kept on the same object for the model-facing path.
+- The launch carries the named phase table: `SubmitRequest.phase_names` / `phase_alongside`, computed from the window graph
+  (Node `createWorkflowPhaseNames` / `createWorkflowPhaseAlongside`, cap 32), written to `run-launched` through `LaunchFields`.
+
+**Tests.** Seen red first: `the_window_and_the_result_carry_the_scripts_display` (tools; red at the ask's display) and
+`a_workflow_launch_ask_carries_its_window_display` (protocol-zcode projection; red with the projection line removed). Written
+with the implementation and not seen red: `the_run_is_launched_with_the_scripts_phase_table` (tools). Green after the change:
+tools workflow tests (261, then 36 in the CreateWorkflow module), and the lib tests of agents, kernel-api, node-store,
+protocol-zcode, runtime, session, tools, workflow (349, 460, 363, 1060, 379, 422, 685, 463). `cargo fmt --check` clean.
+`cargo clippy --workspace --all-targets -- -D warnings` clean except the pre-existing `large_enum_variant` in
+`crates/session/src/log.rs` (not touched here; allowed on the run, reported, not fixed).
+
+**Open: the workflow actor's identity prompt (new, Rust-only).** Node's `buildWorkflowActorIdentitySection`
+(`core/src/context/sections/workflow-actor.ts`) opens every subagent of a workflow run with "You are a subagent inside a
+dynamic workflow run…" and the workflow contract. Rust builds the subagent's system prompt with the generic subagent
+identity and no workflow section, so the case-local replay (which matches on that sentence, `bodyIncludes`) misses the actor's
+requests: "Missing Upstream e2e fixture for POST /anthropic/v1/messages" and the run card gets no agent pills. The fix is a port
+of that section into the Rust prompt builder for `workflow_actor` children. Not done in W9c.
+
+**Divergence 906.** The `display` the helper returns is built from the script without model bindings (the bindings are not
+carried into the run service, 512 and 143), so a script that names a model gets no window graph here. Open with 512.
+
+**Q8 (child RSS).** Not measured. No Rust run reaches a workflow child that runs its agent turn to completion. The child
+process is spawned (`node_helper::launch`), but the actor's first model request fails, so the sample would measure a failed
+run. Open (896).
+
 ## 10. Open questions
 
 Each has a recommendation. The user decides. Until decided, the recommendation is the default.

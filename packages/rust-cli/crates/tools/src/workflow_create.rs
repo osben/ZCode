@@ -132,6 +132,9 @@ pub(crate) struct Resolved {
 pub(crate) struct Prepared {
     pub(crate) resolved: Resolved,
     pub(crate) analysis: WorkflowAnalysis,
+    /// The script's `create_workflow` display (the confirmation window's graph, Node `displayOfAnalysis`), read once
+    /// for a script that checks. `None` when the helper gave none.
+    pub(crate) display: Option<Value>,
 }
 
 /// The kept decisions. A full table evicts its oldest entry (never the others), and a taken entry leaves at once.
@@ -183,6 +186,14 @@ impl CreateWorkflowTool {
                 approvals.by_id.remove(&oldest);
             }
         }
+    }
+
+    /// The display kept for this call's ask, read without taking the decision (the ask is raised before the call).
+    fn kept_display(&self, tool_use: &ToolUseId) -> Option<Value> {
+        self.approvals()
+            .by_id
+            .get(tool_use)
+            .and_then(|prepared| prepared.display.clone())
     }
 
     fn take_approval(&self, tool_use: &ToolUseId) -> Option<Prepared> {
@@ -678,6 +689,68 @@ pub(crate) fn diagnostics_note(
     )
 }
 
+/// Node `createWorkflowPhaseNames` and `createWorkflowPhaseAlongside` over the window graph's `phases`: the named phases in
+/// declaration order (capped at Node's `CREATE_WORKFLOW_GRAPH_MAX_PHASES`), and for each the indexes of the named phases
+/// that run alongside it. Each is absent when the graph names no phase, or no phase runs alongside another.
+pub(crate) fn phase_table(display: Option<&Value>) -> (Option<Vec<String>>, Option<Vec<Vec<i64>>>) {
+    const MAX_PHASES: usize = 32;
+    let Some(phases) = display
+        .and_then(|display| display.get("causalityGraph"))
+        .and_then(|graph| graph.get("phases"))
+        .and_then(Value::as_array)
+    else {
+        return (None, None);
+    };
+    let named: Vec<&Value> = phases
+        .iter()
+        .filter(|phase| phase.get("name").and_then(Value::as_str).is_some())
+        .take(MAX_PHASES)
+        .collect();
+    if named.is_empty() {
+        return (None, None);
+    }
+    let names: Vec<String> = named
+        .iter()
+        .filter_map(|phase| phase.get("name").and_then(Value::as_str))
+        .map(str::to_owned)
+        .collect();
+    let index_of: std::collections::HashMap<&str, usize> = named
+        .iter()
+        .enumerate()
+        .filter_map(|(index, phase)| {
+            phase
+                .get("id")
+                .and_then(Value::as_str)
+                .map(|id| (id, index))
+        })
+        .collect();
+    let mut any = false;
+    let alongside: Vec<Vec<i64>> = named
+        .iter()
+        .enumerate()
+        .map(|(own, phase)| {
+            let mut indexes: Vec<i64> = Vec::new();
+            for id in phase
+                .get("alongside")
+                .and_then(Value::as_array)
+                .into_iter()
+                .flatten()
+                .filter_map(Value::as_str)
+            {
+                if let Some(&index) = index_of.get(id)
+                    && index != own
+                    && !indexes.contains(&(index as i64))
+                {
+                    indexes.push(index as i64);
+                }
+            }
+            any = any || !indexes.is_empty();
+            indexes
+        })
+        .collect();
+    (Some(names), any.then_some(alongside))
+}
+
 pub(crate) fn output_for(text_body: String, display: Value) -> ToolOutput {
     let mut output = text(text_body);
     output.display = display;
@@ -708,6 +781,10 @@ impl Tool for CreateWorkflowTool {
 
     /// Starts a run and writes drafts (Node `readOnly: false`), and may be run side by side (Node `concurrentSafe: true`).
     /// Node `askOptions.allowAlways: "session"`: the ask offers "Always allow in this session" (the session actor grants it).
+    fn ask_display(&self, tool_use: &ToolUseId) -> Option<Value> {
+        self.kept_display(tool_use)
+    }
+
     fn allow_session(&self) -> bool {
         true
     }
@@ -835,7 +912,20 @@ impl Tool for CreateWorkflowTool {
         };
         let checks = analysis.ok;
         let name = resolved.name.clone();
-        self.remember(context.tool_use.clone(), Prepared { resolved, analysis });
+        // A display the helper cannot give leaves the window without a graph; it never blocks the ask.
+        let display = if checks {
+            self.analyzer.display(&resolved.script).await.ok().flatten()
+        } else {
+            None
+        };
+        self.remember(
+            context.tool_use.clone(),
+            Prepared {
+                resolved,
+                analysis,
+                display,
+            },
+        );
         if !checks {
             return PermissionDecision::Allow {
                 updated_input: None,
@@ -881,10 +971,18 @@ impl Tool for CreateWorkflowTool {
                         "CreateWorkflow has no confirmation for this script, so nothing was started. Call it again.".to_owned(),
                     ));
                 }
-                Prepared { resolved, analysis }
+                Prepared {
+                    resolved,
+                    analysis,
+                    display: None,
+                }
             }
         };
-        let Prepared { resolved, analysis } = prepared;
+        let Prepared {
+            resolved,
+            analysis,
+            display,
+        } = prepared;
         let draft = self.write_draft(&resolved, &cwd).await;
         let location = self.location(&resolved, draft.as_deref(), &cwd);
         if !analysis.ok {
@@ -932,6 +1030,7 @@ impl Tool for CreateWorkflowTool {
             Origin::Path { absolute } => Some(absolute.display().to_string()),
             _ => draft.as_ref().map(|path| path.display().to_string()),
         };
+        let (phase_names, phase_alongside) = phase_table(display.as_ref());
         let request = SubmitRequest {
             script_text: resolved.script.clone(),
             cwd: cwd.display().to_string(),
@@ -941,6 +1040,8 @@ impl Tool for CreateWorkflowTool {
             tool_call_id: Some(context.tool_use.to_string()),
             max_concurrency: input.max_concurrency,
             script_path,
+            phase_names,
+            phase_alongside,
         };
         let run_id = port
             .submit(request)
@@ -959,16 +1060,23 @@ impl Tool for CreateWorkflowTool {
             ),
         };
         let run_id = run_id.to_string();
+        // The result card is the script's `create_workflow` display (Node's result display), so the card has its graph
+        // and the run card can find it by the call id. The model-facing keys stay on the same object.
+        let mut card = display
+            .and_then(|value| value.as_object().cloned())
+            .unwrap_or_default();
+        card.entry("kind")
+            .or_insert_with(|| json!("create_workflow"));
+        card.insert("ok".to_owned(), json!(true));
+        card.insert("errorCount".to_owned(), json!(0));
+        card.entry("diagnostics").or_insert_with(|| json!([]));
+        card.insert("status".to_owned(), json!("backgrounded"));
+        card.insert("backgroundTaskId".to_owned(), json!(run_id));
         Ok(output_for(
             format!(
                 "The workflow script compiled cleanly and the run started in the background with ID: {run_id}. It is still running — you will be notified with the final output when it completes. Do not wait for it or poll it with TaskOutput; continue with other work unless the user asked you to wait.{settings}{where_}"
             ),
-            json!({
-                "diagnostics": [],
-                "ok": true,
-                "status": "backgrounded",
-                "backgroundTaskId": run_id,
-            }),
+            Value::Object(card),
         ))
     }
 }

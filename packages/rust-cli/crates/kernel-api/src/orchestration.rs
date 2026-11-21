@@ -815,6 +815,10 @@ pub enum InteractionRequest {
         /// innermost subagent writes it, outer forwarding keeps it. None for the main thread.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         origin: Option<Box<AskOrigin>>,
+        /// The tool's confirmation-window display (Node `approval.display`): a workflow launch's graph. The App draws it
+        /// in the window; `None` for every other ask.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        display: Option<Value>,
     },
     Question {
         tool_use: ToolUseId,

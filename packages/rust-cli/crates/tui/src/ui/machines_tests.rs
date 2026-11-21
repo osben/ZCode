@@ -200,6 +200,7 @@ fn ask(tool: &str, input: serde_json::Value, machine: Option<&str>) -> DetachedE
                 once: false,
                 independent: false,
                 session_allow: false,
+                display: None,
             },
         }),
     }

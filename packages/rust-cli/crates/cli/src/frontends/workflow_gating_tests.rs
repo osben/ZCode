@@ -90,6 +90,8 @@ async fn a_submit_before_the_late_slot_is_set_is_unsupported_and_a_second_set_is
             tool_call_id: None,
             max_concurrency: None,
             script_path: None,
+            phase_names: None,
+            phase_alongside: None,
         })
         .await
         .expect_err("no run service is set yet");

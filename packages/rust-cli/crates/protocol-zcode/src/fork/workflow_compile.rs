@@ -459,6 +459,17 @@ impl WorkflowAnalyzer for HelperWorkflowAnalyzer {
     async fn analyze(&self, script: &str) -> Result<WorkflowAnalysis, WorkflowAnalysisError> {
         analysis_verdict(analysis(&self.helper, script).await)
     }
+
+    async fn display(
+        &self,
+        script: &str,
+    ) -> Result<Option<serde_json::Value>, WorkflowAnalysisError> {
+        display(&self.helper, script, None)
+            .await
+            .map_err(|error| WorkflowAnalysisError {
+                message: error.message,
+            })
+    }
 }
 
 /// The port's verdict for one helper reply: a failed call and a reply that does not match its contract both mean the
