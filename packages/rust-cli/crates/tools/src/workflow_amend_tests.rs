@@ -40,6 +40,7 @@ impl WorkflowAnalyzer for Checker {
         if script.contains("BROKEN") {
             return Ok(WorkflowAnalysis {
                 model_references: Vec::new(),
+                display: None,
                 ok: false,
                 diagnostics: vec![WorkflowDiagnostic {
                     code: 2322,
@@ -51,6 +52,7 @@ impl WorkflowAnalyzer for Checker {
         }
         Ok(WorkflowAnalysis {
             model_references: script_models(script),
+            display: None,
             ok: true,
             diagnostics: Vec::new(),
         })

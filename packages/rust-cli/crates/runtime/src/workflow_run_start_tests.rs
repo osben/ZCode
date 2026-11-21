@@ -98,6 +98,7 @@ impl WorkflowAnalyzer for Verdict {
 fn clean() -> Arc<dyn WorkflowAnalyzer> {
     Arc::new(Verdict(WorkflowAnalysis {
         model_references: Vec::new(),
+        display: None,
         ok: true,
         diagnostics: Vec::new(),
     }))
@@ -242,6 +243,7 @@ async fn an_unknown_name_is_refused_and_the_parent_is_not_touched() {
 async fn a_script_with_diagnostics_is_refused_before_anything_starts() {
     let analyzer = Arc::new(Verdict(WorkflowAnalysis {
         model_references: Vec::new(),
+        display: None,
         ok: false,
         diagnostics: vec![WorkflowDiagnostic {
             code: 1,

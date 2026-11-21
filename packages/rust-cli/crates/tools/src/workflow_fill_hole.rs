@@ -339,11 +339,16 @@ impl Tool for FillWorkflowHoleTool {
                 // Fork (9.62, narrows 514): the card carries the effective script's graph, so the run card swaps in the
                 // filled graph (the desktop's `buildWorkflowFillGraphByRunId`), beside Node's `fill` block. A graph the
                 // analyzer cannot draw leaves the card without one; the fill has joined either way.
+                // Node's success card is `boundGraphOfAnalysis(analyzeScript(scriptText))`: one analysis, ungated by
+                // the script's model bindings (9.65, ocr #618 and 906).
                 let display = match &self.analyzer {
-                    Some(analyzer) => analyzer.display(&script_text, None).await.unwrap_or_else(|error| {
-                        tracing::debug!(%error, "fill display reply dropped; the fill row shows no graph");
-                        None
-                    }),
+                    Some(analyzer) => match analyzer.analyze(&script_text).await {
+                        Ok(analysis) => analysis.display,
+                        Err(error) => {
+                            tracing::debug!(%error, "fill analysis reply dropped; the fill row shows no graph");
+                            None
+                        }
+                    },
                     None => None,
                 };
                 let graph = display

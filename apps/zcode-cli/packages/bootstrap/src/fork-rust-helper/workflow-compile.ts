@@ -4,7 +4,7 @@ import {
   LIST_WORKFLOW_RUNS_TOOL_NAME,
   ListWorkflowRunsInputSchema,
 } from "@zcode/contracts";
-import { builtInTools } from "@zcode/core";
+import { builtInTools, displayOfAnalysis } from "@zcode/core";
 import {
   analyzeWorkflowScript,
   collectDiagnostics,
@@ -166,8 +166,11 @@ function formatted(entry: NodeToolEntry, output: unknown): string {
 export async function formatWorkflowForRust(raw: unknown) {
   const params = parseParams(workflowFormatParamsSchema, raw);
   switch (params.kind) {
-    case "analysis":
-      return { analysis: analyzeWorkflowScript(params.scriptText) };
+    case "analysis": {
+      // ocr #618: the display of this same analysis (Node displayOfAnalysis), so the Rust side never analyzes twice.
+      const analysis = analyzeWorkflowScript(params.scriptText);
+      return { analysis, display: displayOfAnalysis(analysis) ?? null };
+    }
     case "display": {
       // Node's prepareApproval reads the input resolveInput produces, where `model_bindings` sits.
       const decision = nodeTool(CREATE_WORKFLOW_TOOL_NAME).prepareApproval?.({

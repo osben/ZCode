@@ -230,6 +230,21 @@ fn a_format_reply_is_the_analysis_object() {
     assert!(parse_analysis(&json!({})).is_err());
 }
 
+/// Fork (9.65, ocr #618): the analysis reply carries the display of the same analysis, so the port reads both at once.
+#[test]
+fn an_analysis_reply_carries_its_display_into_the_verdict() {
+    let window = json!({"kind": "create_workflow", "causalityGraph": {"steps": []}});
+    let reply = json!({"analysis": {"ok": true, "diagnostics": []}, "display": window});
+    let verdict = analysis_verdict(parse_analysis(&reply)).expect("a verdict");
+    assert_eq!(verdict.display, Some(window));
+    let bare = json!({"analysis": {"ok": true, "diagnostics": []}, "display": null});
+    assert_eq!(
+        analysis_verdict(parse_analysis(&bare)).unwrap().display,
+        None
+    );
+    assert!(parse_analysis(&json!({"analysis": {"ok": true}, "display": "text"})).is_err());
+}
+
 #[test]
 fn the_request_carries_the_run_identity_and_only_the_optional_fields_given() {
     let params = compile_params(&CompileRequest {
@@ -350,6 +365,7 @@ fn a_format_analysis_maps_to_the_checker_verdict_and_ignores_the_graph() {
         analysis_from_value(&reply).unwrap(),
         WorkflowAnalysis {
             model_references: Vec::new(),
+            display: None,
             ok: false,
             diagnostics: vec![WorkflowDiagnostic {
                 code: 2322,

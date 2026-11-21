@@ -192,15 +192,19 @@ describe("fork: helper/workflow/compile and helper/workflow/format (W4)", () => 
     await helper.done;
   });
 
-  it("formats the analysis of a script as the JSON of analyzeWorkflowScript", async () => {
+  it("formats the analysis of a script as the JSON of analyzeWorkflowScript, with its display", async () => {
     const helper = await startHelper();
     const reply = await helper.request("helper/workflow/format", {
       kind: "analysis",
       scriptText: VALID_SCRIPT,
     });
     expect(reply.error).toBeUndefined();
+    // ocr #618: the display is Node's confirmation display of the same analysis, so one ask costs one analysis.
+    const window = nodeEntry(CREATE_WORKFLOW_TOOL_NAME).prepareApproval!({ script: VALID_SCRIPT });
+    expect(window.display).toBeDefined();
     expect(reply.result).toEqual({
       analysis: JSON.parse(JSON.stringify(analyzeWorkflowScript(VALID_SCRIPT))),
+      display: JSON.parse(JSON.stringify(window.display)),
     });
     helper.close();
     await helper.done;

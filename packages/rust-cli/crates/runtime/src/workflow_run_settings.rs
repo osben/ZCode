@@ -298,10 +298,12 @@ impl WorkflowRunService {
         };
         // The successor's card graph (Node `displayOfAnalysis`), best-effort from the saved-start checker.
         let display = match self.inner.saved_start.get() {
-            Some(ports) => {
-                let table = (!model_bindings.is_empty()).then_some(&model_bindings);
-                ports.analyzer.display(&script, table).await.ok().flatten()
-            }
+            Some(ports) => ports
+                .analyzer
+                .analyze(&script)
+                .await
+                .ok()
+                .and_then(|analysis| analysis.display),
             None => None,
         };
 
