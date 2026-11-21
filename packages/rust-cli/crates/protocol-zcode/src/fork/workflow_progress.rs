@@ -284,7 +284,7 @@ fn stall_text(run_id: &str, payload: &Value) -> Option<(String, Value)> {
         reason,
         cap,
     });
-    let workflow = workflow_notice_meta::stall(since, reason, cap.map(|cap| cap as f64));
+    let workflow = workflow_notice_meta::stall(since.floor() as u64, reason, cap);
     Some((text, workflow))
 }
 

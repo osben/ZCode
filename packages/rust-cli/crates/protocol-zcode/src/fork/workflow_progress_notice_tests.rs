@@ -12,15 +12,17 @@ use super::{ProgressDelivery, WorkflowNotices, WorkflowProgressHost};
 use crate::fork::workflow_reminder::{OpenDecisions, OpenHole};
 use crate::fork::workflow_reminder_host::{ReminderTimers, RunDecisionsSource, WorkflowReminders};
 
+/// The posted texts (`.0`) and their origin fragments, in order (`.1`).
 #[derive(Default)]
-struct Posted(Mutex<Vec<(String, String)>>);
+struct Posted(Mutex<Vec<(String, String)>>, Mutex<Vec<Option<Value>>>);
 
 impl WorkflowNotices for Posted {
-    fn post(&self, parent_session_id: &str, text: String, _workflow: Option<serde_json::Value>) {
+    fn post(&self, parent_session_id: &str, text: String, workflow: Option<serde_json::Value>) {
         self.0
             .lock()
             .expect("posted")
             .push((parent_session_id.to_owned(), text));
+        self.1.lock().expect("workflow").push(workflow);
     }
 }
 
@@ -385,4 +387,54 @@ fn a_payload_type_and_line_win_over_the_projection() {
         posted[0].1
     );
     assert!(posted[0].1.contains("<line>7</line>"), "{}", posted[0].1);
+}
+
+#[test]
+fn a_raised_escalation_carries_its_payload_which_the_text_does_not() {
+    let posted = Arc::new(Posted::default());
+    host(&posted)
+        .record("ses_parent", &raised(), &[])
+        .expect("recorded");
+    let workflow = posted.1.lock().expect("workflow")[0]
+        .clone()
+        .expect("a payload");
+    assert_eq!(workflow["workflowNotification"]["kind"], "escalation");
+    assert_eq!(workflow["workflowNotification"]["qid"], "dwfq-1-1");
+    assert_eq!(workflow["workflowNotification"]["actor"], "scout@3");
+    assert_eq!(
+        workflow["workflowNotification"]["askedAt"],
+        json!(1_700_000_000_000.0)
+    );
+}
+
+#[test]
+fn a_stall_carries_its_time_reason_and_cap_in_the_payload() {
+    let posted = Arc::new(Posted::default());
+    let stall = stalled(json!({"sinceMs": 1_200_000, "reason": "rate_limit", "cap": 4}));
+    host(&posted)
+        .record("ses_parent", &stall, &[])
+        .expect("recorded");
+    let workflow = posted.1.lock().expect("workflow")[0]
+        .clone()
+        .expect("a payload");
+    assert_eq!(workflow["workflowNotification"]["kind"], "stall");
+    assert_eq!(workflow["workflowNotification"]["sinceMs"], 1_200_000);
+    assert_eq!(workflow["workflowNotification"]["reason"], "rate_limit");
+    assert_eq!(workflow["workflowNotification"]["cap"], 4);
+}
+
+#[test]
+fn a_hole_carries_its_ordinal_which_the_text_does_not() {
+    let posted = Arc::new(Posted::default());
+    host(&posted)
+        .record("ses_parent", &reached("Write it"), &[])
+        .expect("recorded");
+    let workflow = posted.1.lock().expect("workflow")[0]
+        .clone()
+        .expect("a payload");
+    assert_eq!(workflow["workflowNotification"]["kind"], "hole");
+    assert_eq!(workflow["workflowNotification"]["siteId"], "scout");
+    assert_eq!(workflow["workflowNotification"]["ordinal"], 2);
+    assert_eq!(workflow["workflowNotification"]["name"], "Plan");
+    assert_eq!(workflow["workflowNotification"]["prompt"], "Write it");
 }

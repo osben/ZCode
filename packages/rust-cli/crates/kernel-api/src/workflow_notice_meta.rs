@@ -125,14 +125,14 @@ pub fn hole(input: &HolePayload<'_>) -> Value {
     json!({ "workflowNotification": meta })
 }
 
-/// The stall branch: the run has not completed a model request for `since_ms`. Node floors the time and the cap.
-pub fn stall(since_ms: f64, reason: Option<&str>, cap: Option<f64>) -> Value {
-    let mut meta = json!({"kind": "stall", "sinceMs": since_ms.floor() as u64});
+/// The stall branch: the run has not completed a model request for `since_ms`. The caller floors the time and the cap (Node does too).
+pub fn stall(since_ms: u64, reason: Option<&str>, cap: Option<u64>) -> Value {
+    let mut meta = json!({"kind": "stall", "sinceMs": since_ms});
     if let Some(reason) = reason {
         meta["reason"] = json!(bound_units(reason, REASON_MAX_UNITS));
     }
     if let Some(cap) = cap {
-        meta["cap"] = json!(cap.floor() as u64);
+        meta["cap"] = json!(cap);
     }
     json!({ "workflowNotification": meta })
 }

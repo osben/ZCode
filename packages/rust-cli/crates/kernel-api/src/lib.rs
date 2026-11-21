@@ -104,7 +104,6 @@ pub mod machine_notices;
 pub mod machine_param;
 pub mod manage;
 pub mod mcp;
-pub mod workflow_notice_meta;
 // Fork: specs/fork-rust-node-helper.md, "MCP Apps on Rust-hosted servers (F7)": the panel port of a Rust-run server.
 pub mod mcp_app;
 pub mod mcp_name;
@@ -153,6 +152,7 @@ pub mod unparsed_input;
 pub mod user_command;
 pub mod user_input;
 pub mod workflow_child;
+pub mod workflow_notice_meta;
 pub mod workflow_run;
 pub mod workflow_run_progress;
 // Fork: the typecheck of a workflow script for SaveWorkflow (W7-8b).

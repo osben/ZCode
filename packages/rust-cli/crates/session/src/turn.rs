@@ -21,12 +21,12 @@ use crate::lane::Waiting;
 use crate::sink::SinkRequest;
 
 /// Fork (9.51, W8d): one user message to write for a turn's notices: its content, origin, stall execution and workflow payload.
-type NoticeBlock = (
-    Vec<ContentBlock>,
-    UserOrigin,
-    Option<String>,
-    Option<serde_json::Value>,
-);
+struct NoticeBlock {
+    content: Vec<ContentBlock>,
+    origin: UserOrigin,
+    stall_execution: Option<String>,
+    workflow_meta: Option<serde_json::Value>,
+}
 
 /// 工具请求的改动没能落库：原因是存储的原文。
 fn failed(error: StoreError) -> OrchestrationError {
@@ -258,18 +258,23 @@ impl Actor {
             // One block for the whole batch: its execution only when the batch is exactly one stall reminder.
             let execution = if stalls.len() == 1 { stalls[0].clone() } else { None };
             // A batch keeps the base meta only (Node `batch_meta`), so no workflow payload.
-            vec![(content, origin, execution, None)]
+            vec![NoticeBlock {
+                content,
+                origin,
+                stall_execution: execution,
+                workflow_meta: None,
+            }]
         } else {
             texts
                 .into_iter()
                 .enumerate()
                 .map(|(index, (text, origin))| {
-                    (
-                        vec![ContentBlock::Text { text }],
+                    NoticeBlock {
+                        content: vec![ContentBlock::Text { text }],
                         origin,
-                        stalls.get(index).cloned().flatten(),
-                        workflows.get(index).cloned().flatten(),
-                    )
+                        stall_execution: stalls.get(index).cloned().flatten(),
+                        workflow_meta: workflows.get(index).cloned().flatten(),
+                    }
                 })
                 .collect()
         };
@@ -277,23 +282,20 @@ impl Actor {
             .as_ref()
             .map(|fired| fired.before.clone())
             .unwrap_or_default();
-        let users: Vec<Message> =
-            before
-                .into_iter()
-                .chain(blocks.into_iter().map(
-                    |(content, origin, stall_execution, workflow_meta)| {
-                        Message::User(UserMessage {
-                            stall_execution,
-                            workflow_meta,
-                            epilogue_start: None,
-                            intent: None,
-                            id: self.deps.ids.message(),
-                            content,
-                            origin,
-                        })
-                    },
-                ))
-                .collect();
+        let users: Vec<Message> = before
+            .into_iter()
+            .chain(blocks.into_iter().map(|block| {
+                Message::User(UserMessage {
+                    stall_execution: block.stall_execution,
+                    workflow_meta: block.workflow_meta,
+                    epilogue_start: None,
+                    intent: None,
+                    id: self.deps.ids.message(),
+                    content: block.content,
+                    origin: block.origin,
+                })
+            }))
+            .collect();
         // 一个事务：几条通知一起成立；折叠说明与定时任务的 prompt 一起成立；同伴项“已并入”的事实与它们的 user 消息
         // 一起成立（cross-session.md §2.4，F139）。checkpoint 挂在这次运行最后一条 user 消息上（drive 的同一规则）。
         let prompt = users.last().map(|message| message.id().clone());

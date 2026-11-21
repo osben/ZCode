@@ -96,8 +96,8 @@ fn a_hole_payload_carries_the_ordinal_the_text_does_not() {
 }
 
 #[test]
-fn a_stall_payload_floors_its_time_and_cap_and_bounds_the_reason() {
-    let meta = stall(1_200_000.9, Some(&"r".repeat(70)), Some(4.7));
+fn a_stall_payload_carries_its_time_and_cap_and_bounds_the_reason() {
+    let meta = stall(1_200_000, Some(&"r".repeat(70)), Some(4));
     assert_eq!(meta["workflowNotification"]["sinceMs"], json!(1_200_000));
     assert_eq!(meta["workflowNotification"]["cap"], json!(4));
     assert_eq!(

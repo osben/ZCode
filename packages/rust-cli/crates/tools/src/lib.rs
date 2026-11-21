@@ -70,7 +70,6 @@ mod workflow_eval_snippet;
 mod workflow_run_tools;
 // Fork: GetWorkflowRun's model text (W7-9b, specs/fork-rust-workflow-engine.md, 9.42).
 mod workflow_run_detail;
-pub use workflow_run_detail::provider_stop_text;
 // Fork: the `LSP` agent tool (specs/fork-rust-lsp.md "Tool (D2)").
 mod lsp_tool;
 mod mentions;
@@ -151,6 +150,7 @@ pub use tool_search::{ToolCatalog, ToolSearchTool};
 pub use user_input::UserInputTools;
 pub use web_fetch::{SideModel, WebFetchTool};
 pub use web_search::WebSearchTool;
+pub use workflow_run_detail::provider_stop_text;
 pub use workflow_run_tools::run_tools as workflow_run_tools;
 pub use workflow_tools::{
     contracts as workflow_tool_contracts, is_amend_workflow_owned_predecessor,

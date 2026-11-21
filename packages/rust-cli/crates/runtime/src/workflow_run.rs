@@ -437,7 +437,15 @@ impl Inner {
         };
         let row = match store.get_run(run_id) {
             Ok(Some(row)) => row,
-            Ok(None) => return,
+            Ok(None) => {
+                // A run that just settled has a row. Its absence is a persistence fault, not a silent case.
+                tracing::warn!(
+                    event = "workflow.run.terminal_notice_skipped",
+                    run = %run_id,
+                    "a settled workflow run has no journal row, so its terminal notice was not posted"
+                );
+                return;
+            }
             Err(error) => {
                 tracing::warn!(
                     event = "workflow.run.terminal_notice_skipped",
@@ -448,6 +456,16 @@ impl Inner {
                 return;
             }
         };
+        if !crate::workflow_run_terminal::is_terminal(row.status) {
+            // The settlement latched but its status write did not land (engine `finish_run`); the model would never learn it ended.
+            tracing::warn!(
+                event = "workflow.run.terminal_notice_skipped",
+                run = %run_id,
+                status = row.status.as_str(),
+                "a settled workflow run's row is not terminal, so its terminal notice was not posted"
+            );
+            return;
+        }
         if let Some(notice) = crate::workflow_run_terminal::terminal_notice(&row) {
             signals.workflow_notice(
                 &SessionId::new(notice.parent_session_id),

@@ -437,3 +437,39 @@ fn a_single_failed_notification_settles_its_card_live_and_cold() {
         "Agent \"one\" failed: provider & quota"
     );
 }
+
+/// W8d (9.51): a workflow run notice's payload reaches the live turn header; the base (title and work id) is read from the text.
+#[test]
+fn a_workflow_run_notice_turn_carries_its_payload_in_the_header() {
+    use rust_cli_kernel_api::message::{ContentBlock, Message, UserMessage, UserOrigin};
+    let mut feed = Feed::new();
+    feed.apply(KernelEvent::TurnStarted {
+        turn: TurnId::new("turn_w"),
+        command: None,
+    });
+    let message = Message::User(UserMessage {
+        stall_execution: None,
+        workflow_meta: Some(json!({"workflowNotification": {"kind": "escalation", "qid": "q-1", "actor": "Scout", "question": "Which file?"}})),
+        epilogue_start: None,
+        intent: None,
+        id: MessageId::new("msg_w"),
+        content: vec![ContentBlock::Text {
+            text: "<workflow-escalation>\n  <run-id>dwfrun-7</run-id>\n  <run>Audit</run>\n</workflow-escalation>".into(),
+        }],
+        origin: UserOrigin::Meta {
+            source: "task-notification".into(),
+        },
+    });
+    feed.apply(KernelEvent::MessageDone { message });
+    let header = row_of(&feed.projection, "turnHeader", "turn_w");
+    assert_eq!(header["origin"], "backgroundResult");
+    assert_eq!(
+        header["originMeta"],
+        json!({
+            "backgroundSource": "workflow",
+            "title": "Audit",
+            "workId": "dwfrun-7",
+            "workflowNotification": {"kind": "escalation", "qid": "q-1", "actor": "Scout", "question": "Which file?"},
+        })
+    );
+}

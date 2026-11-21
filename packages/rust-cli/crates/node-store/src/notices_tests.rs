@@ -369,3 +369,37 @@ async fn a_workflow_run_notice_stores_its_payload_in_origin_meta() {
         })
     );
 }
+
+/// W8d (9.51): a workflow payload is kept for a message that is exactly one notice. A batch keeps the base meta only (Node `batch_meta`).
+#[tokio::test]
+async fn a_workflow_payload_is_dropped_from_a_batch_of_notices() {
+    let t = TestStore::new();
+    started(&t, "sess_1").await;
+    t.source.at(2000);
+    let escalation = "<workflow-escalation>\n  <run-id>dwfrun-7</run-id>\n  <run>Audit</run>\n</workflow-escalation>";
+    let other = "<task-notification>\n<task-id>agent_9</task-id>\n<summary>Agent \"Other\" completed</summary>\n</task-notification>";
+    let batch_fact = Fact::MessageAppended {
+        message: Message::User(UserMessage {
+            stall_execution: None,
+            workflow_meta: Some(
+                json!({"workflowNotification": {"kind": "escalation", "qid": "q-1", "actor": "Scout", "question": "Which file?"}}),
+            ),
+            epilogue_start: None,
+            intent: None,
+            id: MessageId::new("msg_batch_1"),
+            content: vec![text(escalation), text(other)],
+            origin: UserOrigin::Meta {
+                source: rust_cli_kernel_api::hooks::queued_command::TASK_NOTIFICATION.into(),
+            },
+        }),
+    };
+    t.store
+        .commit(&sid(), batch(None, vec![batch_fact]))
+        .await
+        .unwrap();
+    let (message, _) = stored(&t, "msg_batch_1");
+    let value: Value = serde_json::from_str(&message).unwrap();
+    let meta = &value["metadata"]["originMeta"];
+    assert!(meta.get("workflowNotification").is_none(), "{meta}");
+    assert_eq!(meta["backgroundSource"], "workflow", "{meta}");
+}

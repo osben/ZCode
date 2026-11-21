@@ -227,7 +227,7 @@ impl Hub {
         self.wake();
     }
 
-    /// 工作流 run 的模型可见通知（9.38，W7-7c）：进 `workflows`，不进 `pending`：不算后台工作，也不要求 ack；交出时取走。
+    /// 工作流 run 的模型可见通知（9.38，W7-7c；run 结束时的终态通知，9.51）：进 `workflows`，不进 `pending`：不算后台工作，也不要求 ack；交出时取走。
     pub(crate) fn workflow_notice(
         &self,
         session: &SessionId,

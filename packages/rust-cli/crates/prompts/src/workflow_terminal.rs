@@ -52,12 +52,19 @@ pub fn summary(subject: &str, status: &str, stop_reason: Option<&str>) -> String
             _ => format!("{prefix} was stopped."),
         };
     }
-    format!("{prefix} completed.")
+    if status == "completed" {
+        format!("{prefix} completed.")
+    } else {
+        format!("{prefix} failed.")
+    }
 }
 
 /// The whole terminal notice: the `<task-notification>` block, then the guidance (Node `formatLocalWorkflowTaskNotification`).
 pub fn terminal(input: &Terminal<'_>) -> String {
-    let summary = summary(input.subject, input.status, input.stop_reason);
+    // Node keeps a stop reason only on a stopped run (`workflowSnapshotTerminal`): any other status drops it here, so the
+    // summary, the element and the guidance cannot disagree about how the run ended.
+    let stop_reason = input.stop_reason.filter(|_| input.status == "stopped");
+    let summary = summary(input.subject, input.status, stop_reason);
     let mut lines = vec![
         "<task-notification>".to_owned(),
         format!("<task-id>{}</task-id>", escape_xml(input.run_id)),
@@ -69,7 +76,7 @@ pub fn terminal(input: &Terminal<'_>) -> String {
         ));
     }
     lines.push(format!("<status>{}</status>", escape_xml(input.status)));
-    if let Some(reason) = input.stop_reason {
+    if let Some(reason) = stop_reason {
         lines.push(format!("<stop-reason>{}</stop-reason>", escape_xml(reason)));
     }
     if !input.subject.is_empty() {
@@ -87,26 +94,21 @@ pub fn terminal(input: &Terminal<'_>) -> String {
             lines.push(format!("<error>{}</error>", escape_xml(error)))
         }
         Some(ErrorText::ProviderStop(block)) => {
-            lines.push(format!("<error>\n{}\n</error>", escape_text(block)));
+            lines.push(format!(
+                "<error>\n{}\n</error>",
+                crate::monitor::escape(block)
+            ));
         }
         None => {}
     }
     lines.push("</task-notification>".to_owned());
     lines.push(String::new());
-    lines.push(guidance(input));
+    lines.push(guidance(input, stop_reason));
     truncate_task_notification(&lines.join("\n"))
 }
 
-/// Node `escapeXmlText`: `<`, `>` and `&` only.
-fn escape_text(value: &str) -> String {
-    value
-        .replace('&', "&amp;")
-        .replace('<', "&lt;")
-        .replace('>', "&gt;")
-}
-
 /// Node `workflowDeliveryGuidance` for a dwf run, with no artifacts and no script file.
-fn guidance(input: &Terminal<'_>) -> String {
+fn guidance(input: &Terminal<'_>, stop_reason: Option<&str>) -> String {
     let run_id = input.run_id;
     if input.status == "completed" {
         return [
@@ -117,21 +119,21 @@ fn guidance(input: &Terminal<'_>) -> String {
         .join("\n");
     }
     // A run stopped by the user reflects a decision, not an accident.
-    if input.stop_reason == Some("user") {
+    if stop_reason == Some("user") {
         return [
             "The user stopped this workflow on purpose. Do not resume it with ResumeWorkflowRun and do not amend or rebuild it unless the user asks you to.",
             "Present what it finished before it was stopped: the reported items above are finished findings — show them individually with their evidence. Then stop and wait for the user to say what happens next.",
         ]
         .join("\n");
     }
-    if input.stop_reason == Some("model") {
+    if stop_reason == Some("model") {
         return [
             "You stopped this workflow with TaskStop. If you stopped it to fix the script, do that now: call AmendWorkflow with this run's ID and the corrected script — everything that settled before the stop is imported as cache, and the sooner the fix runs the less it re-pays. (Next time, amend the running run directly: AmendWorkflow stops it for you.)".to_owned(),
             "Otherwise present what it finished: the reported items above are finished findings — show them individually with their evidence. Resume it unchanged only if that is what the user wants.".to_owned(),
         ]
         .join("\n");
     }
-    if input.stop_reason == Some("provider") {
+    if stop_reason == Some("provider") {
         let resume = if input.auto_resumes_after_reset {
             "The run resumes by itself after the usage cap resets (the <error> block says when): tell the user, and do not call ResumeWorkflowRun or rebuild the workflow before then.".to_owned()
         } else {
@@ -145,7 +147,7 @@ fn guidance(input: &Terminal<'_>) -> String {
         ]
         .join("\n");
     }
-    if input.stop_reason == Some("interrupted") {
+    if stop_reason == Some("interrupted") {
         return [
             "The process that owned this run exited before it finished. Present what it finished: the reported items above are finished findings — show them individually with their evidence.".to_owned(),
             format!(
@@ -154,7 +156,7 @@ fn guidance(input: &Terminal<'_>) -> String {
         ]
         .join("\n");
     }
-    if input.stop_reason == Some("superseded") {
+    if stop_reason == Some("superseded") {
         return "This run was stopped because you amended it: a newer run supersedes it and is already running. Do not resume this run and do not amend it again; wait for the successor's notification.".to_owned();
     }
     if input.status == "stopped" {

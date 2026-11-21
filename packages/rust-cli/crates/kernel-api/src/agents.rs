@@ -129,7 +129,7 @@ pub enum AgentSignal {
         /// Fork (9.51, W8d): the notice's origin fragment (`workflowNotification` or `workflowBlocked`), `None` when the
         /// notice carries none. It reaches the message's `originMeta` and is never read back from `text`.
         #[serde(default, skip_serializing_if = "Option::is_none")]
-        workflow: Option<serde_json::Value>,
+        workflow: Option<Value>,
     },
 }
 
@@ -143,13 +143,7 @@ pub trait AgentSignals: Send + Sync {
 
     /// Fork (9.38, W7-7c): a workflow run's notice for `session`'s model. Synchronous and never blocks on the session: the
     /// notice waits in the channel until the session's stream takes it. The default drops it (no agents).
-    fn workflow_notice(
-        &self,
-        _session: &SessionId,
-        _text: String,
-        _workflow: Option<serde_json::Value>,
-    ) {
-    }
+    fn workflow_notice(&self, _session: &SessionId, _text: String, _workflow: Option<Value>) {}
 
     /// 无进展提醒是否仍然成立（Node `isBackgroundSubagentStallReminderCurrent`）：子代理还在跑、没在等审批、仍是提醒
     /// 依据的那次运行、进展没有前进。默认成立（没有子代理能力的实现没有提醒）。

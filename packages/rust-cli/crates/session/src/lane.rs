@@ -34,6 +34,15 @@ pub(crate) const ALREADY_SENT: &str = "the message already went out";
 /// Node decides this by the `originMeta.subagentStall` prefix of each notification; here it is decided by the
 /// variant. The match lists every variant, so a new kind has to be placed on purpose and cannot land in a group by
 /// accident.
+/// Fork (9.51, W8d): whether a workflow run notice is the run's terminal notice, by the kind of its payload (Node's terminal
+/// notification is the one with a `terminal` `workflowNotification`).
+fn is_terminal_run_notice(workflow: Option<&serde_json::Value>) -> bool {
+    workflow
+        .and_then(|fragment| fragment.pointer("/workflowNotification/kind"))
+        .and_then(serde_json::Value::as_str)
+        == Some("terminal")
+}
+
 pub(crate) fn order_for_parsing(notices: &mut [Waiting]) {
     notices.sort_by_key(|notice| match notice {
         // Terminal notifications: a finished command, a finished subagent, or a monitor's final line.
@@ -45,8 +54,9 @@ pub(crate) fn order_for_parsing(notices: &mut [Waiting]) {
         // A stall reminder goes last, after every notification that reports a result.
         Waiting::Stall(_) => 1,
         // Node's order puts the workflow run notices after the standard task notifications, in arrival order (9.38).
-        // A run's terminal notice is a `<task-notification>`, so it is a terminal notification too (9.51, W8d).
-        Waiting::WorkflowNotice { text, .. } if text.starts_with("<task-notification>") => 0,
+        // A run's terminal notice is a terminal notification too: its origin fragment says so (9.51, W8d). The variant
+        // match is the discriminator; the text is not read.
+        Waiting::WorkflowNotice { workflow, .. } if is_terminal_run_notice(workflow.as_ref()) => 0,
         Waiting::WorkflowNotice { .. } => 1,
     });
 }
@@ -66,7 +76,8 @@ pub(crate) enum Waiting {
     Peer(PeerItem),
     /// 子代理经 RespondToCoordinator 发来的消息（`<subagent-message>` 块，全文）：不 ack，不计入后台工作。
     SubagentMessage(String),
-    /// 工作流 run 的模型可见通知（升级、停滞、欠着决定的提醒；全文，不再包装）：不 ack，不计入后台工作（9.38）。
+    /// 工作流 run 的模型可见通知（升级、停滞、欠着决定的提醒，9.38；run 结束时的终态通知，9.51，它的全文是一个
+    /// `<task-notification>` 块，按 payload 的 `terminal` 分支排在终态组）：全文，不再包装；不 ack，不计入后台工作。
     WorkflowNotice {
         text: String,
         /// Fork (9.51, W8d): the notice's origin fragment, set on the message that opens with it.

@@ -37,7 +37,7 @@ pub mod workflow_bindings;
 pub mod workflow_owner;
 pub mod workflow_quota;
 pub mod workflow_run;
-pub mod workflow_run_terminal;
+mod workflow_run_terminal;
 pub mod workflow_snippet;
 mod workspace_sessions;
 

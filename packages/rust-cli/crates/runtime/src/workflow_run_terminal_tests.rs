@@ -2,7 +2,7 @@
 //! Node's `workflowNotification` terminal branch.
 
 use rust_cli_workflow::model::{Caps, RunRow, RunStatus, StopReason};
-use serde_json::{Value, json};
+use serde_json::json;
 
 use super::terminal_notice;
 
@@ -116,5 +116,4 @@ fn a_run_without_a_parent_session_posts_nothing_and_an_unnamed_run_is_titled_by_
         notice.workflow,
         json!({"workflowNotification": {"kind": "terminal", "status": "completed", "summary": "dwfrun-1"}}),
     );
-    let _: Value = notice.workflow;
 }

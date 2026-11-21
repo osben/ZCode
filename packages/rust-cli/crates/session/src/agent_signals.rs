@@ -33,9 +33,10 @@ impl Actor {
         }
     }
 
-    /// A workflow run's model-visible notice (9.38, W7-7c; Node's `enqueueBackgroundTaskNotification` with no
-    /// `<task-notification>` envelope): queued as a `next` item, merged at the next tool boundary, or it opens a turn when
+    /// A workflow run's model-visible notice (9.38, W7-7c; the run's terminal notice, 9.51): queued as a `next` item, merged at the next tool boundary, or it opens a turn when
     /// the session is idle. It is not background work and not acknowledged.
+    /// Fork (9.51, W8d): a run's terminal notice comes through here too, with its `terminal` payload, and sorts with the
+    /// terminal notifications.
     async fn on_workflow_notice(&mut self, text: String, workflow: Option<serde_json::Value>) {
         if self.closing.is_some() {
             return;

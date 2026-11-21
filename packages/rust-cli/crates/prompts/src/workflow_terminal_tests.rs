@@ -159,3 +159,25 @@ fn the_tool_use_id_is_written_after_the_task_id_when_the_run_has_one() {
         "<task-notification>\n<task-id>dwfrun-1</task-id>\n<tool-use-id>toolu_9</tool-use-id>\n<status>completed</status>"
     ));
 }
+
+#[test]
+fn a_stop_reason_is_only_read_from_a_stopped_run() {
+    // A completed or errored run with a residual stop reason says what its status says, as Node does (workflowSnapshotTerminal).
+    let completed = terminal(&Terminal {
+        stop_reason: Some("user"),
+        ..run("completed")
+    });
+    assert!(!completed.contains("<stop-reason>"));
+    assert!(completed.contains("The workflow completed."));
+    let errored = terminal(&Terminal {
+        stop_reason: Some("provider"),
+        ..run("errored")
+    });
+    assert!(!errored.contains("<stop-reason>"));
+    assert!(errored.contains("Fix the script and submit it with AmendWorkflow"));
+}
+
+#[test]
+fn an_unknown_status_is_a_failure_and_never_a_completion() {
+    assert_eq!(summary("A", "killed", None), "Workflow \"A\" failed.");
+}

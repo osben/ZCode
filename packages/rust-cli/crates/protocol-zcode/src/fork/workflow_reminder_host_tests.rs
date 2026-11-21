@@ -118,11 +118,14 @@ impl RunDecisions for Runs {
 #[derive(Default)]
 struct Notices {
     posted: Mutex<Vec<(String, String)>>,
+    /// The origin fragment of each post, in order (9.51, W8d).
+    payloads: Mutex<Vec<Option<serde_json::Value>>>,
 }
 
 impl WorkflowNotices for Notices {
-    fn post(&self, parent_session_id: &str, text: String, _workflow: Option<serde_json::Value>) {
+    fn post(&self, parent_session_id: &str, text: String, workflow: Option<serde_json::Value>) {
         lock(&self.posted).push((parent_session_id.to_owned(), text));
+        lock(&self.payloads).push(workflow);
     }
 }
 
@@ -200,6 +203,12 @@ fn the_first_reminder_fires_after_fifteen_idle_minutes_and_names_the_question() 
         texts[0].contains(&format!("waited-ms=\"{}\"", minutes(15))),
         "{}",
         texts[0]
+    );
+    // The payload carries the counts and the longest wait the text states (9.51, W8d).
+    let payload = lock(&fx.notices.payloads)[0].clone().expect("a payload");
+    assert_eq!(
+        payload["workflowBlocked"],
+        serde_json::json!({"questions": 1, "holes": 0, "sinceMs": minutes(15)})
     );
     assert_eq!(lock(&fx.notices.posted)[0].0, "parent_1");
 }

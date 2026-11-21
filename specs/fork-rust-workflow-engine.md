@@ -4409,6 +4409,27 @@ protocol-zcode (1019), runtime (366, including six terminal tests), tools (662),
 725. The `superseded` branch of the guidance is present but unreachable from the terminal path (702 suppresses the post), as Node keeps
      it for older ports.
 
+**Review round (ocr on #610, 27 findings; four medium).** Fixed, with the tests named:
+
+- Stop reason gated on a stopped status, and a non-completed status summarises as failed (medium, `prompts` `workflow_terminal`).
+  A completed or errored row with a residual stop reason says what its status says (test `a_stop_reason_is_only_read_from_a_stopped_run`).
+- Closes 723: a service-level test settles a run through the production owner over a real session database and counts the
+  posted notices (`runtime` `workflow_run_terminal_service_tests`: exactly one; and an unconfigured service posts none).
+- The terminal group is decided by the payload's `terminal` kind, not the text prefix (medium, `session` `lane`; test
+  `a_run_terminal_notice_sorts_with_the_terminal_group_by_its_payload_kind`).
+- The payload carrier is tested end to end: a workflow notice's payload reaches the notice-opening message (medium, `session`
+  `agent_signals`; test `a_workflow_notices_payload_is_kept_on_the_message_that_opens_its_turn`).
+- The hook warns when a settled run's row is missing or not terminal, and matches the superseded reason by its variant.
+- Payload assertions: the escalation, stall and hole fragments in `protocol-zcode`, the blocked fragment from the reminder host,
+  the live turn header in the projection, and a batch's drop of the payload in node-store.
+- `stall` takes `u64` (no silent float saturation), the wait is one helper shared by the reminder text and payload, the
+  terminal module is private, the status comes from `RunStatus::as_str`, the escape is `monitor::escape` (the same policy),
+  and the `NoticeBlock` tuple is a named struct.
+- Docs for `origin_meta`, the lane variant and the agent signal are updated.
+
+Rejected: the shared artifact-text helper with `tools` (a one-line rule, not a policy like the provider-stop table; a copy is kept
+in the terminal module, and the two would be edited together only if Node's rule changed).
+
 ## 10. Open questions
 
 Each has a recommendation. The user decides. Until decided, the recommendation is the default.

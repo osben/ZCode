@@ -103,7 +103,7 @@ pub fn notified_outputs(text: &str) -> Vec<(String, String)> {
 }
 
 /// `originMeta` of the first `<task-notification>` in a notification message; `None` for a
-/// notification the UI does not title (a Monitor, a workflow). A no-progress reminder
+/// notification the UI does not title (a Monitor). A no-progress reminder
 /// (`<background-agent-stall>`) has its own meta (Node `subagent-stall-reminder.ts`).
 pub fn origin_meta(text: &str) -> Option<Value> {
     if let Some(stall) = stall_origin_meta(text) {

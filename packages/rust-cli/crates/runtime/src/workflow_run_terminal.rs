@@ -18,18 +18,24 @@ pub struct TerminalNotice {
     pub workflow: Value,
 }
 
+/// Whether a run's status is one of its three terminal states (the states a settlement writes).
+pub fn is_terminal(status: RunStatus) -> bool {
+    matches!(
+        status,
+        RunStatus::Completed | RunStatus::Errored | RunStatus::Stopped
+    )
+}
+
 /// The terminal notice of `row`, or `None` when the run is not terminal, has no parent session, or was superseded.
 pub fn terminal_notice(row: &RunRow) -> Option<TerminalNotice> {
-    let status = match row.status {
-        RunStatus::Completed => "completed",
-        RunStatus::Errored => "errored",
-        RunStatus::Stopped => "stopped",
-        RunStatus::Pending | RunStatus::Running => return None,
-    };
-    let stop_reason = row.stop_reason.map(StopReason::as_str);
-    if stop_reason == Some("superseded") {
+    if !is_terminal(row.status) {
         return None;
     }
+    let status = row.status.as_str();
+    if row.stop_reason == Some(StopReason::Superseded) {
+        return None;
+    }
+    let stop_reason = row.stop_reason.map(StopReason::as_str);
     let parent_session_id = row.parent_session_id.clone()?;
     let run_id = row.run_id.as_str();
     let subject = row
@@ -93,3 +99,7 @@ fn artifact_text(value: &Value) -> String {
 #[cfg(test)]
 #[path = "workflow_run_terminal_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "workflow_run_terminal_service_tests.rs"]
+mod service_tests;
