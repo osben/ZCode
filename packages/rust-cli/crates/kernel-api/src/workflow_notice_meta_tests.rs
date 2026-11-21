@@ -206,3 +206,15 @@ fn a_non_string_execution_or_a_non_object_payload_replays_as_absent() {
         (None, None)
     );
 }
+
+/// Node `serializeWorkflowArtifact` is `JSON.stringify(value, null, 2)`: numbers print as JS does (a whole double has no
+/// `.0`, a large one switches to the exponent form), with the two-space layout and `[]`/`{}` for empty containers (ocr #619).
+#[test]
+fn an_artifact_is_indented_json_with_js_numbers() {
+    let value = serde_json::json!({"a": 1.0, "big": 1e21, "mid": 1e17, "list": [], "map": {}, "n": [1, "x"]});
+    assert_eq!(
+        artifact_text(&value),
+        "{\n  \"a\": 1,\n  \"big\": 1e+21,\n  \"mid\": 100000000000000000,\n  \"list\": [],\n  \"map\": {},\n  \"n\": [\n    1,\n    \"x\"\n  ]\n}"
+    );
+    assert_eq!(artifact_text(&serde_json::json!("plain")), "plain");
+}

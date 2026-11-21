@@ -5,7 +5,7 @@
 //! plan 模式询问 → acceptEdits 下工作目录里放行 → allow 规则 → 询问。
 //! 读规则的工具名是 `Read`，写规则是 `Edit`（Write、NotebookEdit 共用）。
 
-use rust_cli_base::names::DOT_DIR;
+use rust_cli_base::names::{DOT_DIR, WORKFLOW_DRAFTS_DIR};
 use rust_cli_kernel_api::env_files::GIT_DIR;
 use rust_cli_kernel_api::env_files::PathStyle;
 use rust_cli_kernel_api::permission::{FileAccess, PermissionMode, RuleBehavior};
@@ -156,7 +156,7 @@ fn draft_write(tool: &str, resolved: &str, inputs: &Inputs<'_>) -> bool {
         return false;
     }
     let style = inputs.paths.style;
-    let drafts = style.join(inputs.root, &[DOT_DIR, "workflow-drafts"]);
+    let drafts = style.join(inputs.root, &[DOT_DIR, WORKFLOW_DRAFTS_DIR]);
     style
         .relative(&drafts, resolved)
         .is_some_and(|rest| !rest.is_empty())

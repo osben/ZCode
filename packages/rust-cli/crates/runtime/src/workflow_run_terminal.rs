@@ -165,6 +165,8 @@ pub fn with_artifacts(mut notice: TerminalNotice, artifacts: Option<&Value>) -> 
 }
 
 const MANIFEST_MAX_ARTIFACTS: usize = 8;
+/// JavaScript's `Number.MAX_SAFE_INTEGER`: below it an integral version converts to `u64` exactly.
+const MAX_SAFE_INTEGER: f64 = 9_007_199_254_740_991.0;
 const MANIFEST_KINDS: [&str; 6] = ["file", "markdown", "chart", "table", "metrics", "board"];
 
 /// One chip, or `None` for an entry the manifest drops whole (Node keeps zod from rejecting the payload).
@@ -190,12 +192,20 @@ fn manifest_chip(artifact: &Value) -> Option<Value> {
             .and_then(Value::as_str)
             .map(str::trim)
             .filter(|text| !text.is_empty())
-            .map(|text| text.chars().take(max).collect::<String>())
+            // Node `slice(0, max)` counts UTF-16 units; the cut keeps a character whole (divergence 365).
+            .map(|text| rust_cli_base::js::string::utf16_prefix(text, max).to_owned())
     };
     if let Some(title) = text("title", 120) {
         chip.insert("title".into(), Value::from(title));
     }
-    chip.insert("version".into(), Value::from(version as u64));
+    // Node passes any integer through; a version past JavaScript's safe integers stays the number it is rather than
+    // saturating at `u64::MAX`.
+    let version = if version <= MAX_SAFE_INTEGER {
+        Value::from(version as u64)
+    } else {
+        Value::from(version)
+    };
+    chip.insert("version".into(), version);
     if let Some(content_type) = artifact
         .get("contentType")
         .and_then(Value::as_str)

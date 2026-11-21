@@ -11,7 +11,7 @@ use rust_cli_base::js::string::{utf16_len, utf16_prefix};
 use rust_cli_kernel_api::agents::AgentSignals;
 use rust_cli_kernel_api::ids::SessionId;
 use rust_cli_kernel_api::workflow_notice_meta::{self, HolePayload};
-use rust_cli_kernel_api::workflow_run_progress::WorkflowRunProgressPort;
+use rust_cli_kernel_api::workflow_run_progress::{RUN_NAME_KEY, WorkflowRunProgressPort};
 use rust_cli_prompts::workflow_notice::{Escalation, Hole, Stall};
 use serde_json::Value;
 
@@ -151,7 +151,6 @@ const OPEN_SET_EVENT_TYPES: [&str; 4] = [
     "hole-filled",
 ];
 const ESCALATION_RAISED: &str = "escalation-raised";
-use rust_cli_kernel_api::workflow_run_progress::RUN_NAME_KEY;
 const RUN_STALLED: &str = "run-stalled";
 const HOLE_REACHED: &str = "hole-reached";
 

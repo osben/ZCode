@@ -437,8 +437,20 @@ fn pending_question(question: &Value) -> Value {
 /// The gap form's detail: the list item plus the usage object (the registry has the spent tokens, and no node counts).
 fn detail_with_usage(mut item: Value) -> Value {
     let spent = item["spentTokens"].clone();
-    item["usage"] = json!({ "spentTokens": spent });
+    item["usage"] = usage_without_nodes(spent);
     item
+}
+
+/// Node's usage before any node is counted (the gap copy, and a row whose journal has no projected state): the tokens and
+/// four zero node counts, so the desktop's strict usage schema holds. A projected state overwrites the counts.
+fn usage_without_nodes(spent: Value) -> Value {
+    json!({
+        "spentTokens": spent,
+        "nodesObserved": 0,
+        "nodesRunning": 0,
+        "nodesCompleted": 0,
+        "nodesFailed": 0,
+    })
 }
 
 fn to_run_status(status: LifecycleStatus) -> RunStatus {
@@ -818,7 +830,7 @@ impl WorkflowRunService {
         let result = listed.run.result.take();
         let failure = listed.run.failure.take();
         let mut item = list_item(&listed, live_here, parent);
-        item["usage"] = json!({ "spentTokens": spent });
+        item["usage"] = usage_without_nodes(json!(spent));
         if let Some(result) = result {
             item["result"] = result;
         }

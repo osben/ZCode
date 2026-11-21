@@ -223,6 +223,56 @@ async fn a_filled_hole_reports_the_phases_it_added() {
     // The fill row is the shared `create_workflow` card (Node `createCreateWorkflowDisplay`).
     assert_eq!(output.display["kind"], "create_workflow");
     assert_eq!(output.display["ok"], true);
+    // Node `fillBlock`: with no hole entry to read, the row is named by the hole id.
+    assert_eq!(
+        output.display["fill"],
+        json!({"siteId": "hole#1", "name": "hole#1"})
+    );
+}
+
+/// A run port whose fill answers `outcome` and whose detail is `detail`.
+struct FillWithDetail(FillHoleOutcome, serde_json::Value);
+
+#[async_trait]
+impl DynamicWorkflowRunPort for FillWithDetail {
+    async fn fill_hole(
+        &self,
+        _request: FillHoleRequest,
+    ) -> Result<FillHoleOutcome, DynamicWorkflowRunError> {
+        Ok(self.0.clone())
+    }
+    async fn get_run_detail(
+        &self,
+        _run_id: &rust_cli_kernel_api::ids::WorkflowRunId,
+    ) -> Result<Option<serde_json::Value>, DynamicWorkflowRunError> {
+        Ok(Some(self.1.clone()))
+    }
+}
+
+/// Node `fillBlock` (ocr #619): the fill row is named by the hole's own name, from the run's hole entry, so the desktop's
+/// fill row does not show the raw site id.
+#[tokio::test]
+async fn a_filled_hole_names_the_fill_row_by_the_holes_name() {
+    let port: Arc<dyn DynamicWorkflowRunPort> = Arc::new(FillWithDetail(
+        FillHoleOutcome::Filled {
+            phases_added: Vec::new(),
+            script_text: "return 1;".to_owned(),
+        },
+        json!({"status": "running", "holes": [{"siteId": "hole#1", "name": "决定分组", "state": "waiting"}]}),
+    ));
+    let tool = tool_with(Some(Arc::new(OneSession(port))));
+    let output = tool
+        .call(
+            json!({"run_id": "run-1", "hole_id": "hole#1", "script": "return 1;"}),
+            context(Arc::new(SkillLoaded)),
+            tokio::sync::mpsc::channel(1).0,
+        )
+        .await
+        .expect("the fill is applied");
+    assert_eq!(
+        output.display["fill"],
+        json!({"siteId": "hole#1", "name": "决定分组"})
+    );
 }
 
 #[tokio::test]
@@ -234,18 +284,27 @@ async fn a_compile_refusal_lists_its_diagnostics_one_per_line() {
     }));
     let tool = tool_with(Some(Arc::new(OneSession(port))));
     let ctx = context(Arc::new(SkillLoaded));
-    let error = tool
+    // Node: a body that does not compile answers with the card (`ok: false`, its diagnostics, the fill block), not a
+    // failure, so the desktop draws the fill row for it too (ocr #619).
+    let output = tool
         .call(
             json!({"run_id": "run-1", "hole_id": "hole#1", "script": "return 1;"}),
             ctx,
             tokio::sync::mpsc::channel(1).0,
         )
-        .await;
-    let text = match error {
-        Err(ToolError::Failed { message }) => message,
-        other => panic!("a refusal is a failure: {other:?}"),
-    };
-    assert_eq!(text, "workflow_fill_refused: does not compile\nL3:C5 bad");
+        .await
+        .expect("a compile refusal answers with its card");
+    assert_eq!(
+        output_text(&output),
+        "workflow_fill_refused: does not compile\nL3:C5 bad"
+    );
+    assert_eq!(output.display["ok"], false);
+    assert_eq!(output.display["errorCount"], 1);
+    assert_eq!(output.display["diagnostics"][0]["code"], 9001);
+    assert_eq!(
+        output.display["fill"],
+        json!({"siteId": "hole#1", "name": "hole#1"})
+    );
 }
 
 #[test]

@@ -32,6 +32,20 @@ pub const PROJECT_CONFIG_FILE: &str = "zcode.json";
 /// 项目里 `.zcode/` 下的 worktree 目录：EnterWorktree 在这里建（env-local），权限判定认它（tools）。
 pub const WORKTREES_DIR: &str = "worktrees";
 
+/// 动态工作流草稿目录名，给 `concat!` 拼 `const` 用；别处写 [`WORKFLOW_DRAFTS_DIR`]。
+macro_rules! workflow_drafts_dir {
+    () => {
+        "workflow-drafts"
+    };
+}
+
+/// 项目里 `.zcode/` 下的动态工作流草稿目录（Node `WORKFLOW_DRAFTS_DIR`）：工具在这里写草稿（tools），
+/// 权限判定预先放行它（policy）。
+pub const WORKFLOW_DRAFTS_DIR: &str = workflow_drafts_dir!();
+
+/// 项目里的草稿目录相对路径 `.zcode/workflow-drafts`。
+pub const PROJECT_WORKFLOW_DRAFTS_DIR: &str = concat!(dot_dir!(), "/", workflow_drafts_dir!());
+
 /// 项目里 `.zcode/` 下的自定义子代理目录：子代理从这里加载（agents），sandbox 禁止写它（env-local）。
 pub const AGENTS_DIR: &str = "agents";
 
