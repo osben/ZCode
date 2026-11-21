@@ -91,6 +91,7 @@ impl Loop<'_> {
         self.panels.view_seq += 1;
         self.app.snapshots.agents = crate::ui::agents::AgentList::default();
         self.app.snapshots.background.clear();
+        self.app.snapshots.workflows.clear();
         if self.app.viewing.take().is_some() {
             self.cache.clear();
             self.app.port.find = None;
@@ -210,6 +211,7 @@ impl Loop<'_> {
                 let TasksSnapshot {
                     subagents,
                     background,
+                    workflows,
                 } = snapshot.unwrap_or_default();
                 // 子会话提交了新的消息（版本变了）或子代理结束了：它的请求统计可能变了，重查数字（tui-panels.md §1.3）。
                 let moved = |entries: &[rust_cli_kernel_api::panels::SubagentEntry]| {
@@ -225,6 +227,7 @@ impl Loop<'_> {
                     shown: self.app.snapshots.agents.shown,
                 };
                 self.app.snapshots.background = background;
+                self.app.snapshots.workflows = workflows;
                 self.follow_viewed();
                 if figures_moved {
                     self.refresh_figures();

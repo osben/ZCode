@@ -4,7 +4,7 @@ use std::time::Instant;
 
 use crossterm::event::{KeyCode, KeyModifiers};
 use rust_cli_kernel_api::env_shell::BackgroundStatus;
-use rust_cli_kernel_api::panels::{ShellDetail, ShellOutput, SubagentStatus};
+use rust_cli_kernel_api::panels::{ShellDetail, ShellOutput, SubagentStatus, WorkflowRunTask};
 use rust_cli_tui_kit::render::{Style, StyledLine, attr};
 
 use super::*;
@@ -425,4 +425,81 @@ fn the_card_keeps_a_blank_row_above_the_draft() {
         .max()
         .expect("the card has rows to click");
     assert!(last < draft - 1, "{last} {draft}");
+}
+
+/// 一个在跑的工作流运行（9.55）：名字是标题，ID 是停止时用的 ID。
+fn run(id: &str, title: &str) -> WorkflowRunTask {
+    WorkflowRunTask {
+        id: id.to_owned(),
+        title: title.to_owned(),
+        started_at_ms: 0,
+    }
+}
+
+/// Workflows is the fourth kind, and it shows only while a run is live: with none, the kinds row is the one it was before.
+#[test]
+fn workflows_are_a_kind_only_while_a_run_is_live() {
+    let mut app = busy(Lang::En);
+    app.snapshots.background.clear();
+    app.open_tasks();
+    let row = |app: &App| plain(&app.tasks_layer(80).unwrap().lines).remove(0);
+    assert_eq!(row(&app), "   Subagents 2  ·  Commands  ·  Todos 1/3");
+    app.snapshots.workflows = vec![run("wf_nightly", "Nightly sweep")];
+    assert_eq!(
+        row(&app),
+        "   Subagents 2  ·  Commands  ·  Todos 1/3  ·  Workflows 1"
+    );
+    let mut app = busy(Lang::Zh);
+    app.snapshots.background.clear();
+    app.open_tasks();
+    assert_eq!(row(&app), "   子代理 2  ·  命令  ·  待办 1/3");
+}
+
+/// A run is a row of the Workflows kind: its title, the ○ of a command, and ⏎ opens nothing (no output to read). ^X stops it
+/// by its run id, through the same `StopTask` as a command.
+#[test]
+fn a_workflow_run_is_listed_and_stopped_from_the_card() {
+    let mut app = app(Lang::En);
+    let now = Instant::now();
+    app.snapshots.workflows = vec![run("wf_nightly", "Nightly sweep")];
+    app.open_tasks();
+    assert_eq!(card(&app).kind, TaskKind::Workflows);
+    assert_eq!(
+        plain(&app.tasks_layer(80).unwrap().lines)[2],
+        "   ○ Nightly sweep"
+    );
+    assert_eq!(app.on_key(key(KeyCode::Enter), now), None);
+    assert!(card(&app).peek.is_none());
+    assert_eq!(
+        app.on_key(ctrl('x'), now),
+        Some(Action::Manage(Manage::StopTask {
+            id: "wf_nightly".into(),
+            label: "Nightly sweep".into()
+        }))
+    );
+}
+
+/// ←→ reaches Workflows from the other kinds, and the card follows the snapshot when the runs settle.
+#[test]
+fn arrows_reach_workflows_and_the_card_follows_the_snapshot() {
+    let mut app = busy(Lang::En);
+    let now = Instant::now();
+    app.snapshots.workflows = vec![run("wf_a", "A"), run("wf_b", "B")];
+    app.open_tasks();
+    app.on_key(key(KeyCode::Right), now);
+    app.on_key(key(KeyCode::Right), now);
+    assert_eq!(card(&app).kind, TaskKind::Todos);
+    app.on_key(key(KeyCode::Right), now);
+    assert_eq!(card(&app).kind, TaskKind::Workflows);
+    app.on_key(key(KeyCode::Down), now);
+    assert_eq!(
+        app.on_key(ctrl('x'), now),
+        Some(Action::Manage(Manage::StopTask {
+            id: "wf_b".into(),
+            label: "B".into()
+        }))
+    );
+    app.snapshots.workflows.clear();
+    app.settle_tasks();
+    assert_ne!(card(&app).kind, TaskKind::Workflows);
 }

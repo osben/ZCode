@@ -378,6 +378,11 @@ impl AgentSignals for OneRead {
         TasksSnapshot {
             subagents: vec![entry],
             background: OneAgent::default().background_entries(session).await,
+            workflows: vec![rust_cli_kernel_api::panels::WorkflowRunTask {
+                id: "wf_1".to_owned(),
+                title: "Nightly sweep".to_owned(),
+                started_at_ms: 3,
+            }],
         }
     }
 }
@@ -408,6 +413,9 @@ async fn the_tasks_snapshot_has_the_commands_and_the_agents_in_one_reply() {
             ("agent_1", BackgroundKind::Agent, None)
         ]
     );
+    // Fork (9.55): the workflow runs ride the same reply, outside the background list.
+    let runs: Vec<_> = snapshot.workflows.iter().map(|r| r.id.as_str()).collect();
+    assert_eq!(runs, ["wf_1"]);
     // 旧的两个查询照旧（只加不改）：这个替身的旧方法没有条目。
     assert!(built.session.subagents().await.unwrap().is_empty());
 }
@@ -800,4 +808,40 @@ async fn stop_subagent_goes_through_the_guarded_stop() {
             format!("{session}/agent_9@0"),
         ]
     );
+}
+
+/// Fork (9.55): the agents' change feed for the session. The subagents never change here; the workflow runs tick once when
+/// they have a run port, and not at all when they do not.
+struct Changes {
+    runs: bool,
+}
+
+#[async_trait]
+impl AgentSignals for Changes {
+    fn signals(&self, _session: &SessionId) -> BoxStream<'static, AgentSignal> {
+        stream::pending().boxed()
+    }
+    async fn ack(&self, _session: &SessionId, _seq: u64) {}
+    async fn background(&self, _session: &SessionId) -> Vec<AgentId> {
+        Vec::new()
+    }
+    fn workflow_changes(&self, _session: &SessionId) -> Option<BoxStream<'static, ()>> {
+        self.runs.then(|| stream::iter(vec![()]).boxed())
+    }
+}
+
+/// Fork (9.55): the session's change stream carries a workflow run's change as well as a subagent's. Without a run port it
+/// stays silent for the subagents' side alone.
+#[tokio::test]
+async fn the_change_stream_carries_a_workflow_run_change_only_when_there_is_a_run_port() {
+    for (runs, ticks) in [(true, true), (false, false)] {
+        let mut setup = Setup::new(std::sync::Arc::new(ScriptedModel::new(Vec::new())));
+        setup.set_machine(Shells::LOCAL.machine());
+        setup.agents = std::sync::Arc::new(Changes { runs });
+        let built = setup.build().await;
+        let mut changes = built.session.subagent_changes();
+        let next =
+            tokio::time::timeout(std::time::Duration::from_millis(300), changes.next()).await;
+        assert_eq!(next.is_ok(), ticks, "runs {runs}: {next:?}");
+    }
 }

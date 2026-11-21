@@ -722,7 +722,8 @@ pub trait SessionHandle: Send + Sync {
     async fn subagents(&self) -> Result<Vec<crate::panels::SubagentEntry>, KernelError>;
 
     /// 子代理的状态有变化时产生一项（多次变化可能合并成一项）；收到后重取 [`SessionHandle::tasks_snapshot`]
-    /// （修复线 F34）。
+    /// （修复线 F34）。这一条流也带本会话的工作流运行的变化（9.55）：运行开始或自己结束时同样产生一项，所以订阅它的一方
+    /// 要按需重读（子代理表、`/tasks`），不能假设只有子代理的变化才会来。
     fn subagent_changes(&self) -> BoxStream<'static, ()>;
 
     /// Fork: the run feed of one of this session's subagent child sessions ([`crate::agents::AgentSignals::child_run`]),

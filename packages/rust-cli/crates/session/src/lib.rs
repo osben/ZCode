@@ -77,6 +77,7 @@ mod workspace;
 use std::sync::{Arc, Mutex};
 
 use async_trait::async_trait;
+use futures_util::StreamExt;
 use futures_util::stream::BoxStream;
 use rust_cli_base::{Spawner, Task};
 use rust_cli_kernel_api::agents::AgentSignals;
@@ -569,8 +570,14 @@ impl SessionHandle for Session {
         Ok(self.deps.agents.subagents(&self.id).await)
     }
 
+    /// Fork (9.55): a change of the subagents or of the session's workflow runs, so `/tasks` re-reads both.
     fn subagent_changes(&self) -> BoxStream<'static, ()> {
-        self.deps.agents.subagent_changes()
+        match self.deps.agents.workflow_changes(&self.id) {
+            Some(runs) => {
+                futures_util::stream::select(self.deps.agents.subagent_changes(), runs).boxed()
+            }
+            None => self.deps.agents.subagent_changes(),
+        }
     }
 
     fn child_run(&self, child: &SessionId) -> Option<rust_cli_kernel_api::agents::ChildLiveFeed> {

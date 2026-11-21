@@ -16,9 +16,16 @@ pub enum TaskKind {
     Subagents,
     Commands,
     Todos,
+    /// 工作流运行（9.55）：只在有运行在跑时才在种类一行里出现（没有时整行与没有这个种类前一样）。
+    Workflows,
 }
 
-pub const KINDS: [TaskKind; 3] = [TaskKind::Subagents, TaskKind::Commands, TaskKind::Todos];
+pub const KINDS: [TaskKind; 4] = [
+    TaskKind::Subagents,
+    TaskKind::Commands,
+    TaskKind::Todos,
+    TaskKind::Workflows,
+];
 
 /// 卡的视图状态。
 #[derive(Debug, Clone, PartialEq)]
@@ -33,6 +40,8 @@ pub struct TaskCard {
     pub todo_top: usize,
     /// 展开着输出的命令。
     pub peek: Option<ShellView>,
+    /// Workflows 选中的运行（9.55）。
+    pub workflow: usize,
 }
 
 impl App {
@@ -42,6 +51,7 @@ impl App {
             TaskKind::Subagents => !self.agent_tree().is_empty() || self.viewing.is_some(),
             TaskKind::Commands => !self.shell_rows().is_empty(),
             TaskKind::Todos => !self.view.tasks().is_empty(),
+            TaskKind::Workflows => !self.snapshots.workflows.is_empty(),
         }
     }
 
@@ -69,6 +79,7 @@ impl App {
             command: 0,
             todo_top: 0,
             peek: None,
+            workflow: 0,
         }
     }
 
@@ -226,6 +237,7 @@ impl App {
         let agents = self.agent_tree().len() + 1;
         let commands = self.shell_rows().len();
         let todos = self.view.tasks().len();
+        let workflows = self.snapshots.workflows.len();
         let step = |at: usize, len: usize| at.saturating_add_signed(by).min(len.saturating_sub(1));
         let agent = self
             .task_card()
@@ -246,6 +258,9 @@ impl App {
                 let last = todos.saturating_sub(super::task_card_rows::WINDOW);
                 card.todo_top = card.todo_top.saturating_add_signed(by).min(last);
             }
+            TaskKind::Workflows => {
+                card.workflow = step(card.workflow.min(workflows.saturating_sub(1)), workflows);
+            }
         }
     }
 
@@ -265,6 +280,7 @@ impl App {
                 Some(Action::Panel(Panel::ReadShell(id)))
             }
             TaskKind::Todos => None,
+            TaskKind::Workflows => None,
         }
     }
 
@@ -284,6 +300,10 @@ impl App {
                 (shell.id.clone(), shell.description.clone())
             }
             TaskKind::Todos => return None,
+            TaskKind::Workflows => {
+                let run = self.snapshots.workflows.get(card.workflow)?;
+                (run.id.clone(), run.title.clone())
+            }
         };
         Some(Action::Manage(Manage::StopTask { id, label }))
     }
@@ -296,6 +316,7 @@ impl App {
             TaskKind::Subagents => card.agent = agent,
             TaskKind::Commands => card.command = index,
             TaskKind::Todos => return None,
+            TaskKind::Workflows => card.workflow = index,
         }
         let card = card.clone();
         self.open_task(&card)
