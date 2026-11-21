@@ -159,6 +159,13 @@ pub trait HandleOverride: Send + Sync {
 
     async fn view(&self) -> Result<SessionView, KernelError>;
 
+    /// The neutral busy answer of a test double: the view's turn, pending and queue. A double does not model a job, so
+    /// it is never busy through one; a test that needs that says so with its own override.
+    async fn busy(&self) -> Result<bool, KernelError> {
+        let view = HandleOverride::view(self).await?;
+        Ok(view.running || !view.pending.is_empty() || !view.queue.is_empty())
+    }
+
     async fn close(&self, _reason: EndReason) -> Vec<String> {
         Vec::new()
     }
@@ -243,6 +250,10 @@ impl<T: HandleOverride> SessionHandle for T {
 
     async fn view(&self) -> Result<SessionView, KernelError> {
         HandleOverride::view(self).await
+    }
+
+    async fn busy(&self) -> Result<bool, KernelError> {
+        HandleOverride::busy(self).await
     }
 
     async fn close(&self, reason: EndReason) -> Vec<String> {

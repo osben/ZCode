@@ -132,6 +132,10 @@ impl WorkflowTurnSink for ParentTurns {
     }
 }
 
+/// The `session_busy` message. It holds when the session is busy and when its busy state is unknown (the actor gave no
+/// answer), since both refuse the start with the same reason code (divergence 803, 9.54).
+const BUSY_MESSAGE: &str = "the session has work in flight or its busy state is unknown";
+
 /// Node `hasActiveOrQueuedTurnWork` at the point of start (divergence 765, 9.54): the session actor answers, because the
 /// protocol projection is updated only when the pump applies events and can lag an input the actor already accepted. The
 /// actor's answer counts its jobs too (goal verification, a rewind), as Node's does through `activeForegroundExecution`.
@@ -247,12 +251,7 @@ pub(crate) async fn start_saved(
         );
     };
     if busy(live).await {
-        return refused_start(
-            envelope,
-            revision,
-            "session_busy",
-            "the session has work in flight",
-        );
+        return refused_start(envelope, revision, "session_busy", BUSY_MESSAGE);
     }
     let port = runs.for_session(&session);
     let request = StartSavedRequest {

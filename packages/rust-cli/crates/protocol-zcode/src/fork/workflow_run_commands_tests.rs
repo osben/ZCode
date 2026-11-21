@@ -298,6 +298,84 @@ async fn a_refused_start_is_a_failed_ack_with_nodes_reason_code_and_message() {
     );
 }
 
+/// The session `s1` of [`session`], with the kernel the test can reach (to make its actor busy or unable to answer).
+async fn session_over_kernel(
+    enabled: Option<bool>,
+    fake: Option<Arc<Fake>>,
+) -> (
+    rust_cli_base::TaskScope,
+    Arc<crate::server::Server>,
+    Arc<crate::fork::legacy_session::tests::TestKernel>,
+) {
+    let (scope, server, kernel) = server();
+    let created = crate::commands::command(
+        &server,
+        json!({
+            "commandId": "create", "clientId": "k", "sessionId": null, "type": "createSession",
+            "payload": {"sessionId": "s1", "workspaceId": "/w"},
+            "issuedAt": 1, "baseRevision": 0, "baseLogEpoch": "e",
+        }),
+    )
+    .await
+    .expect("the create answers");
+    assert_eq!(created["status"], json!("accepted"), "{created}");
+    if let Some(enabled) = enabled {
+        server.record_dynamic_workflow_gate(
+            &SessionId::new("s1"),
+            DynamicWorkflowGate {
+                enabled,
+                tools_on_demand: false,
+            },
+        );
+    }
+    if let Some(fake) = fake {
+        server
+            .context
+            .set_dynamic_workflow_runs(Arc::new(Sessions(fake)));
+    }
+    (scope, server, kernel)
+}
+
+/// W9b-1 (9.54, divergence 765): a start on a session whose actor reports a running turn is refused as busy, and the run
+/// service is not asked.
+#[tokio::test]
+async fn a_start_on_a_session_with_a_turn_running_is_refused_as_session_busy() {
+    let fake = Arc::new(Fake::default());
+    let (_scope, server, kernel) = session_over_kernel(Some(true), Some(fake.clone())).await;
+    crate::fork::legacy_session::tests::set_session_running(&kernel, "s1");
+    let ack = send(&server, "startSavedWorkflow", json!({"name": "digest"})).await;
+    assert_eq!(ack["status"], json!("failed"), "{ack}");
+    assert_eq!(
+        ack["reasonCode"],
+        json!("fault.command.savedWorkflowStartRejected.session_busy")
+    );
+    assert_eq!(
+        ack["message"],
+        json!("the session has work in flight or its busy state is unknown")
+    );
+    assert!(fake.starts.lock().expect("fake").is_empty());
+}
+
+/// W9b-1 (9.54, divergence 803): a start on a session whose actor cannot answer is refused with the same reason code and
+/// message as a busy session, and the run service is not asked.
+#[tokio::test]
+async fn a_start_on_a_session_whose_actor_cannot_answer_is_refused_as_session_busy() {
+    let fake = Arc::new(Fake::default());
+    let (_scope, server, kernel) = session_over_kernel(Some(true), Some(fake.clone())).await;
+    crate::fork::legacy_session::tests::make_session_blind(&kernel, "s1");
+    let ack = send(&server, "startSavedWorkflow", json!({"name": "digest"})).await;
+    assert_eq!(ack["status"], json!("failed"), "{ack}");
+    assert_eq!(
+        ack["reasonCode"],
+        json!("fault.command.savedWorkflowStartRejected.session_busy")
+    );
+    assert_eq!(
+        ack["message"],
+        json!("the session has work in flight or its busy state is unknown")
+    );
+    assert!(fake.starts.lock().expect("fake").is_empty());
+}
+
 #[tokio::test]
 async fn a_start_payload_that_is_not_strict_is_an_invalid_payload_and_the_run_service_is_not_asked()
 {

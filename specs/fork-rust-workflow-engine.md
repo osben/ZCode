@@ -4754,6 +4754,11 @@ Node, so it was not done.
      could be admitted while a mirrored child turn ran. The answer now counts the mirror and attaches a pending child feed
      first, as `View` does, so the first answer sees it. Test: `child_live` `a_mirrored_child_run_is_busy_for_a_start`,
      red with the mirror clause removed (checked by hand).
+813. Review of PR #613 (ocr round 2). Fixed: `SessionHandle::busy` has no default body again (the trait's no-defaults rule,
+     F134/K6). The neutral view-based answer for test doubles is in `HandleOverride::busy`, and the blanket impl forwards it.
+     The `session_busy` message holds for both the busy and the unknown case (one constant, `BUSY_MESSAGE`), with the
+     same reason code. Route tests added: a session whose actor reports a running turn, and one whose actor cannot answer,
+     both refused as `savedWorkflowStartRejected.session_busy` with the run service not asked. Rejected: none.
 
 ### 9.56 Cold replay of run notices (as built, gate off)
 

@@ -1004,6 +1004,18 @@ fn handle(kernel: &TestKernel, id: &str) -> Arc<TestHandle> {
     kernel.handles.lock().unwrap()[&SessionId::new(id)].clone()
 }
 
+/// W9b-1 (9.54): the session's actor reports a running turn (its view and its busy answer).
+pub(crate) fn set_session_running(kernel: &TestKernel, id: &str) {
+    handle(kernel, id).view.lock().unwrap().running = true;
+}
+
+/// W9b-1 (9.54): the session's actor cannot answer (its view and busy answer fail).
+pub(crate) fn make_session_blind(kernel: &TestKernel, id: &str) {
+    handle(kernel, id)
+        .blind
+        .store(true, std::sync::atomic::Ordering::SeqCst);
+}
+
 /// A request still waiting after a moment: it has not finished while the switch in progress holds the turn.
 async fn still_waiting(task: &mut tokio::task::JoinHandle<()>) {
     let finished = tokio::time::timeout(std::time::Duration::from_millis(50), &mut *task).await;
