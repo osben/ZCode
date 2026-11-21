@@ -660,8 +660,14 @@ impl Actor {
                 self.attach_child_live();
             }
             Request::Busy { reply } => {
-                let busy =
-                    self.busy() || !self.pending.is_empty() || !self.inbox.queued().is_empty();
+                // The mirror counts: a child run this side is showing is a turn in flight (as `status_now` and the view's
+                // `running` count it), and a user turn would be held behind it. Attach a pending feed first, so the first
+                // answer already sees a child run that has not been attached yet.
+                self.attach_child_live();
+                let busy = self.busy()
+                    || self.mirror.running()
+                    || !self.pending.is_empty()
+                    || !self.inbox.queued().is_empty();
                 let _ = reply.send(busy);
             }
             Request::Meta { reply } => {

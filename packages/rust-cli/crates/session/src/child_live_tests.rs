@@ -61,6 +61,29 @@ async fn next(
         .event
 }
 
+/// W9b-1 (9.54, divergence 765): a child run this side shows is work in flight for a start, though the actor runs no turn
+/// of its own. The busy answer counts the mirror, as the view's `running` and `status_now` do.
+#[tokio::test]
+async fn a_mirrored_child_run_is_busy_for_a_start() {
+    let (_live, receiver) = mpsc::unbounded_channel();
+    let mut setup = Setup::new(Arc::new(ScriptedModel::new(Vec::new())));
+    setup.child_live = Some(ChildLiveFeed {
+        replay: vec![started(), delta("busy")],
+        live: tokio_stream_from(receiver),
+    });
+    let built = setup.build().await;
+    let session = &built.session;
+    // The first answer is the one that matters: a start may be the first thing that asks.
+    assert!(
+        session.busy().await.unwrap(),
+        "a mirrored child turn makes the session busy for a start"
+    );
+    assert!(
+        session.view().await.unwrap().running,
+        "the mirror runs a turn"
+    );
+}
+
 /// A side tab opened after the child run streamed part of its reply sees that part, then the rest, then the stored
 /// message and the turn end, all after the view it read; a submit meanwhile is refused.
 #[tokio::test]

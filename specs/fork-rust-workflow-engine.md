@@ -4749,6 +4749,11 @@ Node, so it was not done.
      admission reads. A session-level test of the queue arm is not added here.
 811. Node parity for the answer: Node's `hasActiveOrQueuedTurnWork` has no pending-interaction arm, but a pending interaction
      without a running turn does not arise in the Rust session. Kept as a conservative arm.
+812. Regression in the `Request::Busy` answer, found in review and fixed: it left out the child-live mirror
+     (`self.mirror.running()`), which the old view check counted through `running`, and which `status_now` counts. A start
+     could be admitted while a mirrored child turn ran. The answer now counts the mirror and attaches a pending child feed
+     first, as `View` does, so the first answer sees it. Test: `child_live` `a_mirrored_child_run_is_busy_for_a_start`,
+     red with the mirror clause removed (checked by hand).
 
 ### 9.56 Cold replay of run notices (as built, gate off)
 
