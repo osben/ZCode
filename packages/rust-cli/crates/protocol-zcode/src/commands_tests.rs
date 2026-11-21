@@ -993,6 +993,7 @@ impl rust_cli_kernel_api::testing::HandleOverride for GrantHandle {
                     once: false,
                     independent: false,
                     session_allow: false,
+                    display: None,
                 };
                 (InteractionId::new(*id), request)
             })
@@ -1186,6 +1187,7 @@ fn only_a_normal_ask_offers_always_allow() {
         once,
         independent,
         session_allow: false,
+        display: None,
     };
     let always = |request: InteractionRequest| {
         let (offered, tool) = Offered::of(&request).unwrap();
@@ -1221,6 +1223,7 @@ fn allow_always_without_suggestions_remembers_nodes_default_rule() {
             once: false,
             independent: false,
             session_allow: false,
+            display: None,
         }
     };
     let remembered = |request: InteractionRequest| {
@@ -1305,6 +1308,7 @@ fn a_session_ask_offers_the_session_allow_in_place_of_the_project_option() {
         once: false,
         independent: false,
         session_allow,
+        display: None,
     };
     let offered = |request: &InteractionRequest| Offered::of(request).unwrap().0;
     let session = ask(true);

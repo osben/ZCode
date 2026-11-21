@@ -247,6 +247,12 @@ pub trait Tool: Send + Sync {
         false
     }
 
+    /// The display of the confirmation window this tool asked for in `tool_use` (Node `approval.display`). Read once
+    /// when the ask is raised; `None` for a tool with no window.
+    fn ask_display(&self, _tool_use: &ToolUseId) -> Option<Value> {
+        None
+    }
+
     fn is_enabled(&self) -> bool {
         true
     }

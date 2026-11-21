@@ -77,6 +77,28 @@ impl WorkflowAnalyzer for Checker {
             diagnostics: Vec::new(),
         })
     }
+
+    async fn display(
+        &self,
+        script: &str,
+    ) -> Result<Option<serde_json::Value>, WorkflowAnalysisError> {
+        if script.contains("BROKEN") || script.contains("FAIL") {
+            return Ok(None);
+        }
+        Ok(Some(json!({
+            "kind": "create_workflow",
+            "ok": true,
+            "errorCount": 0,
+            "diagnostics": [],
+            "causalityGraph": {
+                "steps": [{"id": "ask-1", "kind": "ask"}],
+                "phases": [
+                    {"id": "p-research", "name": "Research"},
+                    {"id": "p-summary", "name": "Summarize", "alongside": ["p-research"]},
+                ],
+            },
+        })))
+    }
 }
 
 /// A run port that records each submit. `fail` makes the submit a wiring fault.
@@ -573,6 +595,54 @@ async fn max_concurrency_must_be_positive_and_the_name_must_not_be_empty() {
     assert!(matches!(fine, Validation::Ok), "32 is a limit");
 }
 
+/// The confirmation window and the result card both draw the script's display (Node `prepareApproval` and the handler's
+/// `displayOfAnalysis`): the ask carries it, and the backgrounded result is a `create_workflow` row with its graph.
+#[tokio::test]
+async fn the_window_and_the_result_carry_the_scripts_display() {
+    let harness = Harness::new(Some(FakeRun::new(None, false)));
+    let input = inline(CLEAN);
+    let ctx = harness.with_skill();
+    assert!(matches!(
+        harness.tool.check_permissions(&input, &ctx).await,
+        PermissionDecision::Ask { .. }
+    ));
+    let window = harness
+        .tool
+        .ask_display(&ctx.tool_use)
+        .expect("the window has the script's display");
+    assert_eq!(window["kind"], "create_workflow");
+    assert_eq!(window["causalityGraph"]["steps"][0]["id"], "ask-1");
+    let (tx, _rx) = mpsc::channel(4);
+    let output = harness
+        .tool
+        .call(input, ctx, tx)
+        .await
+        .expect("the call runs");
+    assert_eq!(output.display["kind"], "create_workflow");
+    assert_eq!(output.display["errorCount"], 0);
+    assert_eq!(output.display["causalityGraph"]["steps"][0]["id"], "ask-1");
+    assert_eq!(output.display["backgroundTaskId"], "run-1");
+}
+
+/// The run is launched with the script's named phases, in declaration order, and the "running alongside" indexes that
+/// go with them (Node `createWorkflowPhaseNames` / `createWorkflowPhaseAlongside`), so the sidebar run line can name the
+/// stage it is in.
+#[tokio::test]
+async fn the_run_is_launched_with_the_scripts_phase_table() {
+    let harness = Harness::new(Some(FakeRun::new(None, false)));
+    harness.run(inline(CLEAN)).await.expect("the call runs");
+    let submits = submits_of(&harness);
+    assert_eq!(
+        submits[0].phase_names,
+        Some(vec!["Research".to_owned(), "Summarize".to_owned()])
+    );
+    assert_eq!(
+        submits[0].phase_alongside,
+        Some(vec![Vec::new(), vec![0]]),
+        "Summarize runs alongside Research's strands"
+    );
+}
+
 /// A clean inline script is saved as a draft named after the run, asked about, and started in the background. The
 /// result names the run, says it is not to be polled, and names the draft file for the next revision.
 #[tokio::test]
@@ -1059,6 +1129,7 @@ fn prepared(script: &str) -> Prepared {
             ok: true,
             diagnostics: Vec::new(),
         },
+        display: None,
     }
 }
 

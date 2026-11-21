@@ -212,6 +212,7 @@ impl rust_cli_kernel_api::tool::Tool for AskingTool {
                     once: permission["once"].as_bool().unwrap_or(false),
                     independent: permission["independent"].as_bool().unwrap_or(false),
                     session_allow: false,
+                    display: None,
                 }
             }
             None => rust_cli_kernel_api::orchestration::InteractionRequest::Question {

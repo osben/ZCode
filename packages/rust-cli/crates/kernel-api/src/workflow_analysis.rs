@@ -34,4 +34,13 @@ pub struct WorkflowAnalysisError {
 #[async_trait]
 pub trait WorkflowAnalyzer: Send + Sync {
     async fn analyze(&self, script: &str) -> Result<WorkflowAnalysis, WorkflowAnalysisError>;
+
+    /// The `create_workflow` display of a script that checks (Node `displayOfAnalysis`: the causality graph the
+    /// confirmation window and the result card draw). `None` when the checker has no display for it.
+    async fn display(
+        &self,
+        _script: &str,
+    ) -> Result<Option<serde_json::Value>, WorkflowAnalysisError> {
+        Ok(None)
+    }
 }

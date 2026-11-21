@@ -323,6 +323,7 @@ fn a_permission_ask_marks_the_tool_and_lists_the_interaction() {
             once: false,
             independent: false,
             session_allow: false,
+            display: None,
         },
     });
     assert_eq!(asked[0]["row"]["status"], "pendingApproval");
@@ -387,6 +388,7 @@ fn a_scheduled_call_has_its_card_before_the_prompt() {
             once: false,
             independent: false,
             session_allow: false,
+            display: None,
         },
     });
     assert_eq!(asked[0]["row"]["status"], "pendingApproval");
@@ -424,6 +426,7 @@ fn a_denied_permission_does_not_turn_the_card_running() {
             once: false,
             independent: false,
             session_allow: false,
+            display: None,
         },
     });
     let resolved = feed.apply(KernelEvent::InteractionResolved {
@@ -514,6 +517,7 @@ fn a_denial_on_a_settled_card_leaves_no_entry() {
             once: false,
             independent: false,
             session_allow: false,
+            display: None,
         },
     });
     feed.apply(KernelEvent::ToolDone {
@@ -570,6 +574,7 @@ fn a_single_use_ask_offers_no_always_allow_and_no_full_access() {
             once: true,
             independent: false,
             session_allow: false,
+            display: None,
         },
     });
     let payload = &asked[1]["patch"]["pendingInteractions"][0]["payload"];
@@ -620,6 +625,7 @@ fn a_subagent_ask_and_an_independent_ask_offer_no_mode_switch() {
                 once,
                 independent,
                 session_allow: false,
+                display: None,
             },
         });
         let payload = asked
@@ -656,6 +662,7 @@ fn an_independent_ask_offers_allow_once_and_deny_only() {
             once: false,
             independent: true,
             session_allow: false,
+            display: None,
         },
     });
     let payload = asked
@@ -2645,6 +2652,7 @@ fn a_session_level_ask_stays_pending_after_the_turn_ends() {
             once: false,
             independent: false,
             session_allow: false,
+            display: None,
         },
     });
     let finished = feed.apply(KernelEvent::TurnFinished {
@@ -2664,4 +2672,53 @@ fn a_session_level_ask_stays_pending_after_the_turn_ends() {
         snapshot["pendingInteractions"][0]["interactionId"],
         "int_app"
     );
+}
+
+/// A workflow launch's ask carries the confirmation window's `create_workflow` display (Node `approval.display`, the
+/// graph the window draws); an ask with no display carries none.
+#[test]
+fn a_workflow_launch_ask_carries_its_window_display() {
+    let mut feed = Feed::new();
+    feed.apply(KernelEvent::TurnStarted {
+        turn: TurnId::new("turn_1"),
+        command: None,
+    });
+    let tool = ToolUseId::new("toolu_wf");
+    feed.apply(KernelEvent::MessageDone {
+        message: assistant(
+            "msg_wf",
+            vec![ContentBlock::ToolUse {
+                id: tool.clone(),
+                name: "CreateWorkflow".into(),
+                input: json!({"script": "phase('a')"}),
+            }],
+        ),
+    });
+    let display = json!({
+        "kind": "create_workflow",
+        "ok": true,
+        "errorCount": 0,
+        "diagnostics": [],
+        "causalityGraph": {"steps": [{"id": "s1", "kind": "ask"}]},
+    });
+    let asked = feed.apply(KernelEvent::InteractionAsked {
+        interaction: InteractionId::new("int_wf"),
+        request: InteractionRequest::Permission {
+            origin: None,
+            tool_use: tool,
+            tool: "CreateWorkflow".into(),
+            input: json!({"script": "phase('a')"}),
+            message: "Run?".into(),
+            suggestions: Vec::new(),
+            rule_seed: None,
+            asked_by: None,
+            machine: Default::default(),
+            once: false,
+            independent: true,
+            session_allow: false,
+            display: Some(display.clone()),
+        },
+    });
+    let pending = &asked[1]["patch"]["pendingInteractions"][0];
+    assert_eq!(pending["payload"]["display"], display);
 }

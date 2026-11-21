@@ -347,6 +347,7 @@ fn permission_asks_mark_the_tool_and_resolve() {
         once: false,
         independent: false,
         session_allow: false,
+        display: None,
     };
     // The 2c-4f order: the call is scheduled, then its permission ask arrives, and only admission starts it.
     feed.push(started())
@@ -391,6 +392,7 @@ fn a_denied_permission_settles_the_card_cancelled_and_the_rejection_keeps_it() {
         once: false,
         independent: false,
         session_allow: false,
+        display: None,
     };
     // The 2c-4f order: scheduled before the permission check, never started.
     feed.push(started())

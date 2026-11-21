@@ -331,6 +331,7 @@ impl Interactions for ChildSink {
                 independent,
                 session_allow,
                 origin,
+                display,
             } => InteractionRequest::Permission {
                 machine,
                 tool_use,
@@ -344,6 +345,7 @@ impl Interactions for ChildSink {
                 independent,
                 session_allow,
                 origin,
+                display,
             },
             other => other,
         };

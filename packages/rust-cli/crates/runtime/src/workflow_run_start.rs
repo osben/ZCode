@@ -118,6 +118,8 @@ impl WorkflowRunService {
                     tool_call_id: Some(tool_call_id.clone()),
                     max_concurrency: None,
                     script_path: draft.map(|path| path.display().to_string()),
+                    phase_names: None,
+                    phase_alongside: None,
                 },
                 Some(launch_input_id),
             )

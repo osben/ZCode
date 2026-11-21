@@ -166,6 +166,8 @@ fn request(script: &str) -> SubmitRequest {
         tool_call_id: Some("toolu_1".to_owned()),
         max_concurrency: None,
         script_path: None,
+        phase_names: None,
+        phase_alongside: None,
     }
 }
 
