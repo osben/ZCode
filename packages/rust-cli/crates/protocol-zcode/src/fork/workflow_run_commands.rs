@@ -12,7 +12,7 @@ use std::sync::{Arc, Mutex};
 
 use rust_cli_base::sync::LockUnpoisoned;
 use rust_cli_kernel_api::ids::{SessionId, WorkflowRunId};
-use rust_cli_kernel_api::session_api::{Ack as KernelAck, Command, SessionHandle};
+use rust_cli_kernel_api::session_api::{Ack as KernelAck, Command, SessionHandle, SessionView};
 use rust_cli_kernel_api::workflow_run::{
     LaunchTurn, SettingsOutcome, SettingsRefusal, SettingsRequest, SettingsTurn, StartRefusal,
     StartSavedOutcome, StartSavedRequest, WorkflowRecordSource, WorkflowTurnSink,
@@ -132,13 +132,23 @@ impl WorkflowTurnSink for ParentTurns {
     }
 }
 
-/// Whether a control must wait: the session runs a turn, holds a queued input, has a pending interaction, or is preparing
-/// an accepted input (the set `residency_busy` and `preparing` name, which the other session controls read as well).
+/// Node `hasActiveOrQueuedTurnWork` at the point of start (divergence 765, 9.54): the session actor's own view decides,
+/// because the protocol projection is updated only when the pump applies events and can lag an input the actor already
+/// accepted. A first submission still preparing is busy too. A view the actor cannot give is busy: the start fails closed.
 ///
-/// This is read before the run service is asked, and it is not re-read at the submit: a turn that starts in between is not
-/// refused (divergence 765 names the window).
-fn busy(live: &Bridged<Live>) -> bool {
-    live.sink.residency_busy() || live.sink.preparing()
+/// Read once, before the run service is asked. Node checks once too, and its awaits between the check and the submit
+/// are the same window here (divergence 765, shared with Node).
+async fn busy(live: &Bridged<Live>) -> bool {
+    let view = live.handle.view().await.ok();
+    busy_from(view.as_ref(), live.sink.preparing())
+}
+
+/// The decision of [`busy`], from the actor's view alone: a running turn, a pending interaction or a queued input is busy,
+/// as is a first submission still preparing. `None` (no view) is busy.
+pub(crate) fn busy_from(view: Option<&SessionView>, preparing: bool) -> bool {
+    preparing
+        || view
+            .is_none_or(|view| view.running || !view.pending.is_empty() || !view.queue.is_empty())
 }
 
 /// Node's `fault.command.capabilityUnsupported` ack, for a session without the capability.
@@ -227,7 +237,7 @@ pub(crate) async fn start_saved(
             revision,
         );
     };
-    if busy(live) {
+    if busy(live).await {
         return refused_start(
             envelope,
             revision,

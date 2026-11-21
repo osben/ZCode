@@ -630,3 +630,61 @@ mod deliver {
             .await;
     }
 }
+
+/// W9b-1 (9.54, divergence 765): the start's busy decision reads the session actor's view, not the protocol projection.
+/// The projection is updated only when the pump applies events, so an input the actor has accepted can be missing from
+/// it; `busy_from` takes no projection input at all.
+mod busy_decision {
+    use rust_cli_kernel_api::env::{EnvPath, WorkspaceRef};
+    use rust_cli_kernel_api::ids::{EnvironmentId, SessionId, TraceId};
+    use rust_cli_kernel_api::model::ModelSelection;
+    use rust_cli_kernel_api::permission::PermissionMode;
+    use rust_cli_kernel_api::session_api::SessionView;
+    use rust_cli_kernel_api::store::{SessionKind, SessionMeta};
+
+    use super::super::busy_from;
+
+    fn view(running: bool) -> SessionView {
+        let mut view = SessionView::new(
+            SessionMeta {
+                id: SessionId::new("s1"),
+                kind: SessionKind::Interactive,
+                parent: None,
+                workspace: WorkspaceRef {
+                    environment: EnvironmentId::new("local"),
+                    root: EnvPath::new("/w"),
+                },
+                title: String::new(),
+                trace: TraceId::new("trace"),
+                created_at_ms: 0,
+                incognito: None,
+            },
+            Vec::new(),
+            ModelSelection::new("e2e-upstream".to_owned(), "deepseek-v4-flash".to_owned()),
+            PermissionMode::Default,
+        );
+        view.running = running;
+        view
+    }
+
+    #[test]
+    fn a_turn_the_actor_runs_is_busy_whatever_the_projection_says() {
+        // busy_from takes no projection input, so a running actor view is busy on its own.
+        assert!(busy_from(Some(&view(true)), false));
+    }
+
+    #[test]
+    fn an_idle_actor_with_nothing_preparing_is_free_to_start() {
+        assert!(!busy_from(Some(&view(false)), false));
+    }
+
+    #[test]
+    fn a_first_submission_still_preparing_is_busy_even_when_the_actor_is_idle() {
+        assert!(busy_from(Some(&view(false)), true));
+    }
+
+    #[test]
+    fn a_view_the_actor_cannot_give_is_busy_so_the_start_fails_closed() {
+        assert!(busy_from(None, false));
+    }
+}

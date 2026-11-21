@@ -9,6 +9,7 @@ use async_trait::async_trait;
 use rust_cli_kernel_api::default_model::DefaultModel;
 use rust_cli_kernel_api::dynamic_workflow::{
     DynamicWorkflowGate, DynamicWorkflowGates, DynamicWorkflowMode, DynamicWorkflowPreferences,
+    resolve_gate,
 };
 use rust_cli_kernel_api::env::{EnvPath, WorkspaceRef};
 use rust_cli_kernel_api::ids::{EnvironmentId, SessionId};
@@ -587,15 +588,17 @@ impl Server {
                 self.context.off_peak.set_policy(enabled);
                 reply(json!({"workspace": params["workspace"], "enabled": enabled}))
             }
-            // Fork (specs/fork-rust-workflow-engine.md 9.2, W1): the Host's fact is cached for the records created later,
-            // but the answer stays disabled until the tools are registered (W9).
+            // Fork (specs/fork-rust-workflow-engine.md 9.2, W1; 9.54, W9b-1): the Host's fact is cached for the records
+            // created later, and the answer is the resolved gate of that fact (Node `resolveDynamicWorkflowRuntimeGate`
+            // with no create parameters), as Node's reply is the enabled value it stored. The tools follow the records.
             "workspace/updateDynamicWorkflowPolicy" => {
                 let enabled = params["enabled"].as_bool().unwrap_or(false);
                 // The inbound schema has already refused any other value; an absent mode is None.
                 let mode =
                     serde_json::from_value::<DynamicWorkflowMode>(params["mode"].clone()).ok();
                 self.preferences().dynamic_workflow.set(enabled, mode);
-                reply(json!({"workspace": params["workspace"], "enabled": false}))
+                let gate = resolve_gate(None, None, &self.dynamic_workflow_preferences());
+                reply(json!({"workspace": params["workspace"], "enabled": gate.enabled}))
             }
             "workspace/readPresentation" => reply(self.read_presentation(&params).await),
             // 目录来源按 sessionIds 查父链：rust 的会话没有要报的父链（子代理不进列表），P1 回空列表。

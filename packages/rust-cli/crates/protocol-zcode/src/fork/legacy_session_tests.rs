@@ -669,10 +669,11 @@ async fn the_off_peak_tool_policy_answers_the_policy_it_stored() {
     }
 }
 
-/// W1 (specs/fork-rust-workflow-engine.md 9.2): the Host's dynamic-workflow fact is cached (Node
-/// `updateDynamicWorkflowPolicy`: the mode is cleared when disabled) while the answer stays `enabled: false` until W9.
+/// W1 and W9b-1 (specs/fork-rust-workflow-engine.md 9.2, 9.54): the Host's dynamic-workflow fact is cached (Node
+/// `updateDynamicWorkflowPolicy`: the mode is cleared when disabled), and the answer is the resolved gate, which follows
+/// the cached fact as Node's reply does.
 #[tokio::test]
-async fn the_dynamic_workflow_policy_caches_the_host_fact_and_still_answers_disabled() {
+async fn the_dynamic_workflow_policy_caches_the_host_fact_and_answers_with_it() {
     let (_scope, server, _kernel) = server();
     let workspace = json!({"workspacePath": WORKSPACE, "workspaceKey": WORKSPACE});
     let reply = call(
@@ -682,7 +683,7 @@ async fn the_dynamic_workflow_policy_caches_the_host_fact_and_still_answers_disa
     )
     .await
     .unwrap();
-    assert_eq!(reply, json!({"workspace": workspace, "enabled": false}));
+    assert_eq!(reply, json!({"workspace": workspace, "enabled": true}));
     let mut expected = DynamicWorkflowPreferences::default();
     expected.set(true, Some(DynamicWorkflowMode::OnDemand));
     assert_eq!(server.dynamic_workflow_preferences(), expected);
@@ -696,6 +697,36 @@ async fn the_dynamic_workflow_policy_caches_the_host_fact_and_still_answers_disa
     let mut disabled = DynamicWorkflowPreferences::default();
     disabled.set(false, None);
     assert_eq!(server.dynamic_workflow_preferences(), disabled);
+}
+
+/// W9b-1 (9.54): a session created after the Host enables the gate records it open with no create parameters: the
+/// record reads the cached fact (Node `resolveDynamicWorkflowRuntimeGate` with the parameters absent).
+#[tokio::test]
+async fn a_session_created_after_the_host_enables_the_gate_records_it_open() {
+    let (_scope, server, _kernel) = server();
+    let workspace = json!({"workspacePath": WORKSPACE, "workspaceKey": WORKSPACE});
+    call(
+        &server,
+        "workspace/updateDynamicWorkflowPolicy",
+        json!({"workspace": workspace, "enabled": true}),
+    )
+    .await
+    .unwrap();
+    let created = crate::commands::command(
+        &server,
+        json!({
+            "commandId": "create-gate-on", "clientId": "k", "sessionId": null, "type": "createSession",
+            "payload": {"sessionId": "gate-on", "workspaceId": WORKSPACE},
+            "issuedAt": 1, "baseRevision": 0, "baseLogEpoch": "e",
+        }),
+    )
+    .await
+    .expect("the create answers");
+    assert_eq!(created["status"], json!("accepted"), "{created}");
+    let gate = server
+        .dynamic_workflow_gate(&rust_cli_kernel_api::ids::SessionId::new("gate-on"))
+        .expect("the record is written");
+    assert!(gate.enabled, "the Host's enabled fact opens the record");
 }
 
 /// Each legacy call is its own command: the session actor dedupes command ids for its whole lifetime, so a repeated

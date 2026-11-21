@@ -4649,6 +4649,89 @@ controls answer `capabilityUnsupported` while the gate is off.
 **Red, honestly.** The tests above were written after the code they cover, and I did not observe any of them fail first. The
 brief asked for red first; that was not done in this round, and the W9b agent should not count these tests as red-first.
 
+### 9.54 W9b-1: policy from the gate and the start busy race (as built, gate on in the policy answer)
+
+Split: this section is W9b-1 (the policy answer, the busy race, the classification of gate-off markers). The E2E
+classification, the box runs, the parent doc updates and the status lines are W9b-2 (9.57). The gate is on for the
+Host's answer and for the records created after it. No E2E ran in this PR.
+
+**Busy race (divergence 765, closed).** `start_saved` decides busy from the session actor's view, not the protocol
+projection. `busy(live)` reads `handle.view()` (`running`, `pending`, `queue` of `SessionView`) and `preparing()`, and
+`busy_from(view, preparing)` is the decision: a running turn, a pending interaction, a queued input, a first submission
+still preparing, or no view at all is busy. The projection is updated only when the pump applies kernel events
+(`live.rs`, `apply`), so an input the actor has accepted can be missing from it; the actor view is authoritative.
+Node's reference is `hasActiveOrQueuedTurnWork` (`runtime-command-queue.ts:124`), read at step 0 of
+`startSavedWorkflowRun` (`dynamic-workflow-run-start.ts:86`). Node's awaits (context init, persistence, draft write,
+submit) come after that check, so the window between the check and the submit is the same window Node has (shared with
+Node, not closed; see divergence 802). No admission hold was added to the sendText path.
+
+**Policy answer (driven by the gate).** `workspace/updateDynamicWorkflowPolicy` stores the Host's fact as before and
+answers `resolve_gate(None, None, preferences).enabled` (`protocol-zcode/src/server.rs`). Node's reply is the stored
+`enabled`, and `resolveDynamicWorkflowRuntimeGate` with no create parameters yields the same value. A session created
+after the Host enables the gate is recorded open (`record_workflow_gate`), so the run controls and the gated tool set
+(`GatedRegistry`, `runtime/src/workflow_gate.rs`) follow the record. Tools reach a session only through its record, as
+W7-1 built them.
+
+**Incognito (no change to `resolve_gate`).** Node's `resolveDynamicWorkflowRuntimeGate` takes no incognito input. Node
+applies the incognito `automationTools` toggle at tool registration, in `resolveRuntimeDynamicWorkflowToolsIncluded`
+(`core/src/runtime/helpers/tool-allowlist.ts`). Rust already does this in `AutomationGated` (`runtime/src/workflow_gate.rs`,
+divergence 55, with tests in `workflow_gate_tests.rs`). Porting an incognito input into `resolve_gate` would diverge from
+Node, so it was not done.
+
+**Gate-off markers (every one in the listed files).**
+
+| Where                                                                 | Marker                                                | Decision             | Reason                                                                                 |
+| --------------------------------------------------------------------- | ----------------------------------------------------- | -------------------- | -------------------------------------------------------------------------------------- |
+| `protocol-zcode/src/server.rs` (policy answer)                        | hardcoded `enabled: false`                            | removed              | This is the hard stop of W4. The answer now follows the gate.                          |
+| `protocol-zcode/src/fork/workflow_run_commands.rs` (`sessions`)       | a closed gate answers capability unsupported          | kept                 | Node's answer for a closed gate. Correct, not a stop.                                  |
+| `protocol-zcode/src/fork/workflow_run_commands.rs` (`busy`)           | projection-only busy check                            | removed              | Divergence 765, replaced by the actor view.                                            |
+| `protocol-zcode/src/context.rs` (`workflow_child`, `workflow_runner`) | "nothing starts a run yet (gate off)"                 | kept, comment fixed  | The slots are set by the composition root; they are reached only through an open gate. |
+| `protocol-zcode/src/fork/workflow_runner.rs`, `workflow_snippet.rs`   | "nothing starts a run / snippet yet; the gate is off" | kept, comment fixed  | Both start only through the gate.                                                      |
+| `runtime/src/assemble.rs` (no gate source)                            | no gate source registers no tools                     | kept, comment fixed  | Fail closed when the composition sets no gating (W7-1).                                |
+| `cli/src/frontends/workflow_service.rs` (quota allow)                 | a closed or missing gate refuses quota resumes        | kept                 | Node refuses resumes for a closed gate. Not a stop.                                    |
+| `cli/src/frontends/workflow_service.rs` (progress)                    | "the gate stays off for the user"                     | kept, comment fixed  | Nothing is recorded until a run launches.                                              |
+| `cli/src/frontends/app_server.rs` (service build)                     | "nothing starts a run yet"                            | kept, comment fixed  | Building the service opens nothing (9.30).                                             |
+| `cli/src/frontends/node_helper.rs` (runner)                           | "nothing calls it yet"                                | kept, comment fixed  | Called by the run service through the gate.                                            |
+| `workflow/src/lib.rs` (module header)                                 | "not wired until W9"                                  | kept, comment fixed  | Wired through the gate (9.54).                                                         |
+| `node-store/src/workflow_runs/{mod,projection}.rs`, `repo/mod.rs`     | W2/W3 library notes                                   | kept, comments fixed | The run service reads these; the notes were written before W7.                         |
+| `kernel-api/src/dynamic_workflow.rs` (`resolve_gate` closed)          | fail-closed closed gate                               | kept                 | Node's fail-closed rule (`resolveDynamicWorkflowRuntimeGate`).                         |
+
+**Tests (red where it was red).**
+
+- `protocol-zcode` `fork::workflow_run_commands::tests::busy_decision` (4): a running actor view is busy whatever the
+  projection says; an idle view is free; a preparing submission is busy with an idle view; no view is busy. Red: the
+  first run failed to compile (`busy_from` did not exist), which is a behaviour-level red because the names are the
+  behaviour under test.
+- `protocol-zcode` `fork::legacy_session::tests::the_dynamic_workflow_policy_caches_the_host_fact_and_answers_with_it`: the
+  answer is `enabled: true` after the Host enables the gate, and the preferences keep their cache rules. The old expectation
+  (`enabled: false`) was replaced in the same change, so it was not seen red against the old code.
+- `protocol-zcode` `fork::legacy_session::tests::a_session_created_after_the_host_enables_the_gate_records_it_open`: a
+  createSession with no parameters records the gate open.
+- `protocol-zcode` lib: 1050 pass. `cargo clippy --workspace --all-targets --locked -- -D warnings`: clean.
+
+**Node divergences (new in W9b-1, numbered from 800).**
+
+800. Verified against Node: the check is at step 0 of `startSavedWorkflowRun` (`dynamic-workflow-run-start.ts:86`), and the
+     awaits after it are the same window here. The check is not repeated at the submit, as in Node. Shared with Node, not closed.
+801. Node's `hasActiveOrQueuedTurnWork` also reads `foregroundPromotionLease`, `activeForegroundExecution`,
+     `runtimeCommandDrainActive` and `activeTurnStartReservation` (`runtime-command-queue.ts:124`). The Rust view has
+     `running`, `pending` and `queue`. Not verified: whether an admitted turn that has not started is always `queue` or
+     `running` in the actor. The W9b-2 E2E is the first place it would show.
+802. The await window between the busy check and the submit is open, as in Node. Closing it would need an admission hold on
+     the sendText path, which is the change this PR did not make (the coordinator's decision).
+803. An unavailable actor view (the handle answers an error) is busy: the start refuses with `session_busy`. Node has no
+     such case, since its check reads runtime state in process.
+804. The policy reply is the resolved gate of the stored fact (`resolve_gate` with no parameters). Node replies the stored
+     `enabled`. The two are equal by construction; the stored value and the resolved value differ only if a later rule
+     changes the resolver.
+805. Incognito is not an input to `resolve_gate`, as in Node. The `automationTools` toggle is applied at tool registration
+     (divergence 55, `AutomationGated`).
+806. The busy tests take the decision as a value (`busy_from`), not a `SessionHandle` double: the trait has about twenty
+     required methods, and the decision takes no projection input, so a running view is busy by construction.
+807. The gate-off comments listed in the table are updated where they described a state that no longer holds. No behaviour
+     changed for them.
+808. `cargo fmt` reformatted two test and source files after the first test run; the content is unchanged.
+
 ## 10. Open questions
 
 Each has a recommendation. The user decides. Until decided, the recommendation is the default.

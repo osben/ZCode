@@ -2,8 +2,8 @@
 //!
 //! `kernel-api` defines the port, so the runtime can start a run without depending on this crate. This module implements
 //! it over the pieces the protocol crate already owns: the compile client (`workflow_compile`), the entry writer
-//! (`workflow_entry`), the injected child launcher and the NDJSON host (`workflow_host::run`). Nothing starts a run yet;
-//! the gate is off and the composition root only installs the runner.
+//! (`workflow_entry`), the injected child launcher and the NDJSON host (`workflow_host::run`). Runs start through the gate (9.54);
+//! the composition root installs the runner.
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;

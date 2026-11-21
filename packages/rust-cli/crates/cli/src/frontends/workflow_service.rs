@@ -71,7 +71,7 @@ pub(crate) fn build<A: ActorAgents + ActorSessionRelease>(
     ));
     let service = WorkflowRunService::new(residency, concurrency, runner, factory);
     // W7-5e (9.34): the run progress port, with the real default concurrency (Node's `resolveWorkflowDefaultConcurrency`).
-    // Nothing is recorded until a run launches, so the gate stays off for the user.
+    // Nothing is recorded until a run launches.
     let parallelism = std::thread::available_parallelism().map_or(1, std::num::NonZeroUsize::get);
     let default_concurrency = f64::from(rust_cli_model::governor::default_concurrency(parallelism));
     service.configure_progress(progress, default_concurrency);
