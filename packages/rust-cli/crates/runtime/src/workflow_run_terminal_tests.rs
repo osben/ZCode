@@ -9,7 +9,7 @@ use rust_cli_workflow::quota_resume::quota_resume_at;
 
 /// The notice of a run whose quota resume the module would arm (`quota_resume_at`), as the service decides it.
 fn terminal_notice(row: &RunRow) -> Option<super::TerminalNotice> {
-    terminal_notice_with(row, quota_resume_at(row).is_some())
+    terminal_notice_with(row, quota_resume_at(row).is_some(), None)
 }
 
 fn row(status: RunStatus) -> RunRow {
@@ -204,4 +204,23 @@ fn the_terminal_payload_carries_the_runs_artifact_chips_primary_first_and_bounde
     let none = super::with_artifacts(base.clone(), Some(&json!([])));
     assert_eq!(none, base);
     assert_eq!(super::with_artifacts(base.clone(), None), base);
+}
+
+#[test]
+fn an_errored_run_with_a_journaled_script_names_it_relative_to_the_run_cwd() {
+    let mut settled = row(RunStatus::Errored);
+    settled.cwd = Some("/ws".into());
+    settled.failure = Some(json!({"code": "Script", "message": "boom"}));
+    let notice = terminal_notice_with(&settled, false, Some("/ws/.zcode/workflow-drafts/a.dwf.ts"))
+        .expect("an errored run has a notice");
+    assert!(notice.text.ends_with(
+        "The run's script is at .zcode/workflow-drafts/a.dwf.ts. Edit that file in place, then call AmendWorkflow (run_id=\"dwfrun-1\", path=\".zcode/workflow-drafts/a.dwf.ts\") so finished work is reused — do not paste the script inline. ResumeWorkflowRun will refuse this run: replaying the same script would fail the same way."
+    ));
+    // Outside the run's directory the path stays absolute (Node `describeWorkflowScriptPath`).
+    let outside = terminal_notice_with(&settled, false, Some("/other/a.dwf.ts")).expect("notice");
+    assert!(
+        outside
+            .text
+            .contains("The run's script is at /other/a.dwf.ts. Edit that file")
+    );
 }

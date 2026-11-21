@@ -508,26 +508,34 @@ impl Inner {
         // The resume guidance is true only where the quota module arms the resume: the same predicate, with quota wired.
         let auto_resumes =
             quota_on && rust_cli_workflow::quota_resume::quota_resume_at(&row).is_some();
-        if let Some(notice) = crate::workflow_run_terminal::terminal_notice(&row, auto_resumes) {
+        // Fork (9.61, 9.62): one detail read gives the chips (the journal's published records) and the script file the
+        // guidance names (the roster's `scriptPath`). A read fault posts the notice without either.
+        let detail = match store.run_detail(run_id, None) {
+            Ok(detail) => detail,
+            Err(error) => {
+                tracing::warn!(
+                    event = "workflow.run.terminal_artifacts_unread",
+                    run = %run_id,
+                    error = %error,
+                    "a settled workflow run's detail could not be read, so its terminal notice carries no chips and no script path"
+                );
+                None
+            }
+        };
+        let script_path = detail
+            .as_ref()
+            .and_then(|detail| detail.roster.get("scriptPath"))
+            .and_then(Value::as_str);
+        if let Some(notice) =
+            crate::workflow_run_terminal::terminal_notice(&row, auto_resumes, script_path)
+        {
             // Fork (9.61): the card's time cell, this incarnation's life on the injected clock.
             let settled_at_ms = self.clock.get().map(|clock| clock.now_ms());
             let notice = crate::workflow_run_terminal::with_duration(
                 notice,
                 crate::workflow_run_terminal::run_duration_ms(started_at_ms, settled_at_ms),
             );
-            // Fork (9.61): the chips, from the journal's published records (a read fault posts the notice without them).
-            let published = match store.run_detail(run_id, None) {
-                Ok(detail) => detail.map(|detail| Value::Array(detail.published_artifacts)),
-                Err(error) => {
-                    tracing::warn!(
-                        event = "workflow.run.terminal_artifacts_unread",
-                        run = %run_id,
-                        error = %error,
-                        "a settled workflow run's artifacts could not be read, so its terminal notice carries no chips"
-                    );
-                    None
-                }
-            };
+            let published = detail.map(|detail| Value::Array(detail.published_artifacts));
             let notice = crate::workflow_run_terminal::with_artifacts(notice, published.as_ref());
             signals.workflow_notice(
                 &SessionId::new(notice.parent_session_id),
