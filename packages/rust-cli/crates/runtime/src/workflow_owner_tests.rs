@@ -478,7 +478,11 @@ async fn a_launched_run_actor_turn_runs_under_the_parent_model_and_permission_mo
         "the recorded permission mode"
     );
     assert_eq!(turn.workspace_root, "/work", "the parent's workspace");
-    assert_eq!(turn.persona, "Be terse.", "the persona's system prompt");
+    assert_eq!(
+        turn.persona,
+        rust_cli_prompts::workflow_actor::identity(Some("Ada"), Some("Be terse.")),
+        "the persona's identity prompt"
+    );
     assert_eq!(
         turn.admission_run.as_deref(),
         Some("wf_1"),
@@ -796,9 +800,19 @@ async fn two_overlapping_actors_each_keep_their_own_persona() {
     prompts.sort();
     assert_eq!(prompts.len(), 2, "both turns reached the agents");
     assert!(prompts[0].0.starts_with("Ada ("), "{}", prompts[0].0);
-    assert_eq!(prompts[0].1, "Be terse.", "Ada's persona");
+    // The persona is the workflow subagent identity (Node `buildWorkflowActorIdentitySection`): the opening names the
+    // actor, then the persona text.
+    assert_eq!(
+        prompts[0].1,
+        rust_cli_prompts::workflow_actor::identity(Some("Ada"), Some("Be terse.")),
+        "Ada's persona"
+    );
     assert!(prompts[1].0.starts_with("Bob ("), "{}", prompts[1].0);
-    assert_eq!(prompts[1].1, "Be wordy.", "Bob's persona");
+    assert_eq!(
+        prompts[1].1,
+        rust_cli_prompts::workflow_actor::identity(Some("Bob"), Some("Be wordy.")),
+        "Bob's persona"
+    );
     let _ = service.close().await;
 }
 

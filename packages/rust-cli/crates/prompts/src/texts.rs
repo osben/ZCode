@@ -39,6 +39,11 @@ texts! {
     memory_lean => "system/memory_lean",
     context_management => "system/context_management",
     act_dont_rederive => "system/act_dont_rederive",
+    // Fork: Node's workflow subagent identity (core `context/sections/workflow-actor.ts`), the opening sentence and the
+    // contract; `workflow_actor` builds the section from these, the security notice and the harness block.
+    workflow_actor_opening => "system/workflow_actor_opening",
+    workflow_actor_contract => "system/workflow_actor_contract",
+    workflow_actor_harness => "system/harness_block",
     // Fork: Node's "ZCode Desktop Context" section (core `context/sections/desktop.ts`), byte for byte.
     desktop_context => "system/desktop_context",
     desktop_gen_ui => "system/desktop_gen_ui",

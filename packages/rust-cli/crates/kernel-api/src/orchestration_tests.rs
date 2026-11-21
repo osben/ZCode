@@ -151,6 +151,7 @@ async fn no_one_to_ask_answers_by_the_kind_of_question() {
         once: false,
         independent: false,
         session_allow: false,
+        display: None,
     };
     let question = InteractionRequest::Question {
         origin: None,

@@ -81,6 +81,7 @@ fn ask(tool: &str, session_allow: bool) -> InteractionRequest {
         once: false,
         independent: false,
         session_allow,
+        display: None,
     }
 }
 

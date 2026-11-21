@@ -248,8 +248,8 @@ pub enum ResolveQuestionResult {
 }
 
 /// Node `DynamicWorkflowRunSubmitRequest`, for the fields CreateWorkflow (W7-8a) can fill. The trace, the launch input,
-/// the phase table and the model selections are not here yet: the run service (W7-5) and the model catalog own them, and
-/// each adds its field with its own PR.
+/// the launch input and the model selections are not here yet: the run service (W7-5) and the model catalog own them, and
+/// each adds its field with its own PR. The phase table is here: `phase_names` and `phase_alongside` (from the window graph).
 #[derive(Debug, Clone, PartialEq)]
 pub struct SubmitRequest {
     /// The script body that runs (the metadata block of a saved file is not part of it).
@@ -265,6 +265,10 @@ pub struct SubmitRequest {
     pub max_concurrency: Option<u64>,
     /// Absolute path of the file the script came from (a draft or a `path` source), when there is one.
     pub script_path: Option<String>,
+    /// The script's named phases in declaration order (Node `phaseNames`, from the window graph). `None` when it names none.
+    pub phase_names: Option<Vec<String>>,
+    /// Per named phase, the indexes of the phases that run alongside it (Node `phaseAlongside`). `None` when none does.
+    pub phase_alongside: Option<Vec<Vec<usize>>>,
 }
 
 /// A failed port call that is not a business refusal (a wiring fault, or a missing optional member).

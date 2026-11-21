@@ -279,6 +279,7 @@ impl Pipeline {
             independent,
             // Fork (F3b a): an approve-once or independent ask offers no "always allow", the session one included.
             session_allow: tool.allow_session() && !once && !independent,
+            display: tool.ask_display(&context.tool_use),
         };
         let Ok(answer) = crate::asking::ask::<PermissionAnswer>(context, request).await else {
             return Err(error(rejection(context, None)));

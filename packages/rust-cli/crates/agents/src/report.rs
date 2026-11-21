@@ -31,6 +31,33 @@ fn ephemeral(text: String) -> SystemBlock {
 /// Fork: an incognito child (Node `buildSubagentContextSections`) sends no identity block without `identity`, and
 /// without `harness` replaces the Notes with the confirm-first paragraph, which stays as the safety floor.
 pub(crate) fn system(prompt: &str, incognito: Option<&IncognitoProfile>) -> Vec<SystemBlock> {
+    let identity = incognito
+        .is_none_or(|profile| profile.identity)
+        .then(|| ephemeral(context_texts::identity().to_owned()));
+    identity_and_body(identity, prompt, incognito)
+}
+
+/// A workflow subagent's system prompt. Its `prompt` is the whole workflow identity (Node
+/// `buildWorkflowActorIdentitySection`, which the context builder takes instead of the main identity), so no main
+/// identity block is sent.
+pub(crate) fn workflow_actor_system(prompt: &str) -> Vec<SystemBlock> {
+    let tokens = render(
+        context_texts::total_tokens(),
+        &[("tokens", TOTAL_TOKENS_BUDGET)],
+    );
+    let body = [prompt, context_texts::context_management(), &tokens]
+        .into_iter()
+        .filter(|part| !part.is_empty())
+        .collect::<Vec<_>>()
+        .join("\n\n");
+    vec![ephemeral(body)]
+}
+
+fn identity_and_body(
+    identity: Option<SystemBlock>,
+    prompt: &str,
+    incognito: Option<&IncognitoProfile>,
+) -> Vec<SystemBlock> {
     let tokens = render(
         context_texts::total_tokens(),
         &[("tokens", TOTAL_TOKENS_BUDGET)],
@@ -45,9 +72,6 @@ pub(crate) fn system(prompt: &str, incognito: Option<&IncognitoProfile>) -> Vec<
         .filter(|part| !part.is_empty())
         .collect::<Vec<_>>()
         .join("\n\n");
-    let identity = incognito
-        .is_none_or(|profile| profile.identity)
-        .then(|| ephemeral(context_texts::identity().to_owned()));
     identity.into_iter().chain([ephemeral(body)]).collect()
 }
 

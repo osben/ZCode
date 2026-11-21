@@ -167,6 +167,11 @@ impl WorkflowRunService {
             resumed_from: None,
             cwd: PathBuf::from(&request.cwd),
         };
+        // Node's `run-launched` phase table (`phaseNames` / `phaseAlongside`): the sidebar run line names its stage from it.
+        let phase_names = request.phase_names.map(Value::from);
+        let phase_alongside = request
+            .phase_alongside
+            .map(|rows| Value::Array(rows.into_iter().map(Value::from).collect()));
         let config = EngineConfig {
             run_id: run_id.clone(),
             caps: Caps {
@@ -183,6 +188,8 @@ impl WorkflowRunService {
             launch: Some(LaunchFields {
                 input_id: launch_input_id.unwrap_or_else(uuid_v4),
                 script_path: request.script_path,
+                phase_names,
+                phase_alongside,
                 ..LaunchFields::default()
             }),
             ..EngineConfig::default()

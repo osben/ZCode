@@ -152,7 +152,8 @@ impl Run {
 }
 
 enum Entry {
-    Event(SequencedEvent),
+    // Boxed: a sequenced event is far larger than a run (clippy large_enum_variant).
+    Event(Box<SequencedEvent>),
     Run(Run),
     /// 被同一个工具后来的进度取代；整理时去掉。
     Superseded,
@@ -307,7 +308,7 @@ impl Inner {
                     self.entries[at] = Entry::Superseded;
                     self.superseded += 1;
                 }
-                self.entries.push(Entry::Event(sequenced.clone()));
+                self.entries.push(Entry::Event(Box::new(sequenced.clone())));
                 if self.superseded >= COMPACT_AFTER
                     && self.superseded * SUPERSEDED_SHARE >= self.entries.len()
                 {
@@ -315,7 +316,7 @@ impl Inner {
                 }
             }
             Shape::LiveOnly => {}
-            Shape::Plain => self.entries.push(Entry::Event(sequenced.clone())),
+            Shape::Plain => self.entries.push(Entry::Event(Box::new(sequenced.clone()))),
         }
     }
 
@@ -381,12 +382,14 @@ impl Inner {
             .iter()
             .enumerate()
             .filter_map(|(at, entry)| match entry {
-                Entry::Event(SequencedEvent {
-                    event: KernelEvent::ToolProgress { tool_use, progress },
-                    ..
-                }) if matches!(progress_shape(tool_use, &progress.data), Shape::Output(_)) => {
-                    Some((tool_use.clone(), at))
-                }
+                Entry::Event(sequenced) => match &sequenced.event {
+                    KernelEvent::ToolProgress { tool_use, progress }
+                        if matches!(progress_shape(tool_use, &progress.data), Shape::Output(_)) =>
+                    {
+                        Some((tool_use.clone(), at))
+                    }
+                    _ => None,
+                },
                 _ => None,
             })
             .collect();
@@ -475,7 +478,7 @@ impl EventLog {
                 .entries
                 .iter()
                 .filter_map(|entry| match entry {
-                    Entry::Event(event) => (event.seq > after).then(|| event.clone()),
+                    Entry::Event(event) => (event.seq > after).then(|| (**event).clone()),
                     Entry::Run(run) => run.replay(after),
                     Entry::Superseded => None,
                 })

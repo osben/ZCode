@@ -57,6 +57,27 @@ fn failed_notifications_carry_the_error_and_escape_markup() {
 
 /// Fork: an incognito child (Node `buildSubagentContextSections`): without `identity` no identity block; without
 /// `harness` the Notes give way to the confirm-first paragraph, while the launcher-messages note stays.
+/// A workflow subagent's system is its identity prompt plus the context-management and token sections, the sections
+/// Node's context builder keeps for a workflow actor (`builder.ts`: no identity, no subagent authority or Notes).
+#[test]
+fn a_workflow_actor_sends_its_identity_prompt_and_no_main_identity() {
+    use rust_cli_prompts::agents as texts;
+    use rust_cli_prompts::texts as context_texts;
+    let system = super::workflow_actor_system("WORKFLOW IDENTITY");
+    assert_eq!(system.len(), 1);
+    let body = &system[0].text;
+    assert!(body.starts_with("WORKFLOW IDENTITY"));
+    assert!(body.contains(context_texts::context_management()));
+    let tokens = context_texts::render(
+        context_texts::total_tokens(),
+        &[("tokens", super::TOTAL_TOKENS_BUDGET)],
+    );
+    assert!(body.contains(&tokens));
+    assert!(!body.contains(texts::authority()));
+    assert!(!body.contains(texts::notes()));
+    assert!(!body.contains(context_texts::identity()));
+}
+
 #[test]
 fn an_incognito_child_drops_identity_and_keeps_the_confirmation_floor() {
     use rust_cli_kernel_api::incognito::IncognitoProfile;
