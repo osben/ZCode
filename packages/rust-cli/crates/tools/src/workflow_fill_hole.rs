@@ -244,7 +244,15 @@ impl Tool for FillWorkflowHoleTool {
             .runs
             .as_ref()
             .map(|runs| runs.for_session(&context.session));
-        if let Some(detail) = run_detail(port.as_ref(), &input.run_id).await
+        let detail = run_detail(port.as_ref(), &input.run_id).await;
+        // W9h (9.64): a stopped or settled run waits at no hole; Node refuses before the window.
+        if let Some(refusal) = detail
+            .as_ref()
+            .and_then(|detail| not_in_flight(detail, &input.run_id, &input.hole_id))
+        {
+            return invalid(None, &refusal);
+        }
+        if let Some(detail) = detail
             && live_elsewhere(&detail)
         {
             return invalid(
@@ -390,6 +398,25 @@ impl Tool for FillWorkflowHoleTool {
                 ))
             }
         }
+    }
+}
+
+/// Node `findWaitingHole`, its status rows: the refusal for a run that is not in flight, `None` while it is.
+fn not_in_flight(detail: &Value, run: &str, hole: &str) -> Option<String> {
+    match detail.get("status").and_then(Value::as_str) {
+        Some("stopped") => {
+            let reason = detail
+                .get("stopReason")
+                .and_then(Value::as_str)
+                .unwrap_or("unknown reason");
+            Some(format!(
+                "hole_not_waiting: run {run} is stopped ({reason}), so nothing is waiting at {hole}. Continue it with ResumeWorkflowRun first; the hole will ask again once the script reaches it. Nothing was filled."
+            ))
+        }
+        Some(status @ ("completed" | "errored")) => Some(format!(
+            "hole_not_waiting: run {run} has already {status}, so nothing is waiting at {hole}. Nothing was filled."
+        )),
+        _ => None,
     }
 }
 
