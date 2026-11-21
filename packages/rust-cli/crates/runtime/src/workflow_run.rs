@@ -511,6 +511,20 @@ impl Inner {
                 notice,
                 crate::workflow_run_terminal::run_duration_ms(started_at_ms, settled_at_ms),
             );
+            // Fork (9.61): the chips, from the journal's published records (a read fault posts the notice without them).
+            let published = match store.run_detail(run_id, None) {
+                Ok(detail) => detail.map(|detail| Value::Array(detail.published_artifacts)),
+                Err(error) => {
+                    tracing::warn!(
+                        event = "workflow.run.terminal_artifacts_unread",
+                        run = %run_id,
+                        error = %error,
+                        "a settled workflow run's artifacts could not be read, so its terminal notice carries no chips"
+                    );
+                    None
+                }
+            };
+            let notice = crate::workflow_run_terminal::with_artifacts(notice, published.as_ref());
             signals.workflow_notice(
                 &SessionId::new(notice.parent_session_id),
                 notice.text,

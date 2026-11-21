@@ -105,6 +105,92 @@ pub fn run_duration_ms(started_at_ms: i64, settled_at_ms: Option<u64>) -> Option
     settled_at_ms?.checked_sub(started)
 }
 
+/// Fork (9.61): `notice` with the run's user-facing artifact chips (Node `buildWorkflowArtifactsManifestSection`): the
+/// deliverable first, at most 8, and `artifactsTruncated` when any published artifact is not shown (cut by the limit or
+/// dropped for an unknown kind, an empty or overlong id, or a bad version). `artifacts` is the projected run's list; none,
+/// or no valid entry, leaves both keys out.
+pub fn with_artifacts(mut notice: TerminalNotice, artifacts: Option<&Value>) -> TerminalNotice {
+    let Some(published) = artifacts
+        .and_then(Value::as_array)
+        .filter(|list| !list.is_empty())
+    else {
+        return notice;
+    };
+    let is_primary = |artifact: &&Value| artifact.get("primary") == Some(&Value::Bool(true));
+    let ordered = published
+        .iter()
+        .filter(is_primary)
+        .chain(published.iter().filter(|artifact| !is_primary(artifact)));
+    let mut chips = Vec::new();
+    for artifact in ordered {
+        if chips.len() >= MANIFEST_MAX_ARTIFACTS {
+            break;
+        }
+        if let Some(chip) = manifest_chip(artifact) {
+            chips.push(chip);
+        }
+    }
+    if chips.is_empty() {
+        return notice;
+    }
+    let truncated = chips.len() < published.len();
+    if let Some(meta) = notice.workflow.get_mut("workflowNotification") {
+        meta["artifacts"] = Value::Array(chips);
+        if truncated {
+            meta["artifactsTruncated"] = Value::Bool(true);
+        }
+    }
+    notice
+}
+
+const MANIFEST_MAX_ARTIFACTS: usize = 8;
+const MANIFEST_KINDS: [&str; 6] = ["file", "markdown", "chart", "table", "metrics", "board"];
+
+/// One chip, or `None` for an entry the manifest drops whole (Node keeps zod from rejecting the payload).
+fn manifest_chip(artifact: &Value) -> Option<Value> {
+    let id = artifact.get("id").and_then(Value::as_str)?;
+    let kind = artifact
+        .get("kind")
+        .and_then(Value::as_str)
+        .filter(|kind| MANIFEST_KINDS.contains(kind))?;
+    if id.is_empty() || id.encode_utf16().count() > 64 {
+        return None;
+    }
+    let version = artifact
+        .get("version")
+        .and_then(Value::as_f64)
+        .filter(|version| version.fract() == 0.0 && *version >= 1.0)?;
+    let mut chip = serde_json::Map::new();
+    chip.insert("id".into(), Value::from(id));
+    chip.insert("kind".into(), Value::from(kind));
+    let text = |key: &str, max: usize| {
+        artifact
+            .get(key)
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .filter(|text| !text.is_empty())
+            .map(|text| text.chars().take(max).collect::<String>())
+    };
+    if let Some(title) = text("title", 120) {
+        chip.insert("title".into(), Value::from(title));
+    }
+    chip.insert("version".into(), Value::from(version as u64));
+    if let Some(content_type) = artifact
+        .get("contentType")
+        .and_then(Value::as_str)
+        .filter(|content_type| content_type.encode_utf16().count() <= 255)
+    {
+        chip.insert("contentType".into(), Value::from(content_type));
+    }
+    if artifact.get("primary") == Some(&Value::Bool(true)) {
+        chip.insert("primary".into(), Value::Bool(true));
+        if let Some(description) = text("description", 500) {
+            chip.insert("description".into(), Value::from(description));
+        }
+    }
+    Some(Value::Object(chip))
+}
+
 /// Node `serializeWorkflowArtifact`: a string is the text itself, anything else its JSON.
 fn artifact_text(value: &Value) -> String {
     match value {

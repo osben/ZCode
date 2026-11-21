@@ -1477,6 +1477,7 @@ impl rust_cli_workflow::run_store::RunStore for DetailStore {
             },
             state,
             roster,
+            published_artifacts: Vec::new(),
         }))
     }
 }

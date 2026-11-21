@@ -104,6 +104,11 @@ pub struct RunDetail {
     /// The situation snapshot (9.46): the phases, subagents, health, log tail, actors and the launch's script path and model
     /// bindings, built by `run_roster::build_roster` from the same snapshot's events, node and actor rows and `state`.
     pub roster: serde_json::Map<String, serde_json::Value>,
+    /// Fork (9.61): the latest published record of each artifact, in first-publication order, from the journal's
+    /// `artifact-published` events (Node's port `artifactsOf`). Unlike the projection's summaries (Node
+    /// `workflowArtifactSummary`) it keeps the description, which the terminal notice's deliverable chip carries. Read
+    /// without the configured default, so the terminal notice needs no replay.
+    pub published_artifacts: Vec<serde_json::Value>,
 }
 
 /// The `RunStore` over one session database. `clock` stamps the rows a settlement writes.
@@ -254,6 +259,7 @@ impl RunStore for SqliteRunStore {
             record.status,
             dwf::RunStatus::Completed | dwf::RunStatus::Errored | dwf::RunStatus::Stopped
         );
+        let published_artifacts = published_artifacts(&events);
         let roster = build_roster(&RosterFacts {
             state: state.as_ref(),
             events: &events,
@@ -269,6 +275,35 @@ impl RunStore for SqliteRunStore {
             },
             state,
             roster,
+            published_artifacts,
         }))
     }
+}
+
+/// The latest record of each published artifact, kept at its first publication's position (the projection's upsert order).
+fn published_artifacts(events: &[rust_cli_node_store::dwf::StoredEvent]) -> Vec<serde_json::Value> {
+    let mut published: Vec<serde_json::Value> = Vec::new();
+    for stored in events {
+        if stored.event.get("type").and_then(serde_json::Value::as_str)
+            != Some("artifact-published")
+        {
+            continue;
+        }
+        let Some(artifact) = stored
+            .event
+            .get("artifact")
+            .filter(|artifact| artifact.is_object())
+        else {
+            continue;
+        };
+        let id = artifact.get("id").and_then(serde_json::Value::as_str);
+        match published
+            .iter_mut()
+            .find(|held| id.is_some() && held.get("id").and_then(serde_json::Value::as_str) == id)
+        {
+            Some(held) => *held = artifact.clone(),
+            None => published.push(artifact.clone()),
+        }
+    }
+    published
 }
