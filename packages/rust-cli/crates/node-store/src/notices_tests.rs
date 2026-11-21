@@ -484,3 +484,62 @@ async fn a_cold_open_reads_back_the_payload_and_the_stall_execution_of_a_notice(
         assert_eq!(cold.workflow_meta, *workflow, "{id}: workflow payload");
     }
 }
+
+/// 9.63: a workflow settings record keeps its `workflowLaunch` metadata on the message and its part (Node's
+/// `metadata.workflowLaunch`, which its cold hydration reads), and a cold open gives it back to the projection.
+#[tokio::test]
+async fn a_workflow_record_keeps_its_launch_metadata_and_reads_it_back() {
+    let t = TestStore::new();
+    started(&t, "sess_1").await;
+    t.source.at(2000);
+    let launch = json!({"runId": "dwfrun-2", "toolCallId": "settings-1", "amend": {"predecessorRunId": "dwfrun-1", "ceiling": 6}});
+    let record = Fact::MessageAppended {
+        message: Message::User(UserMessage {
+            stall_execution: None,
+            workflow_meta: Some(json!({ "workflowLaunch": launch })),
+            epilogue_start: None,
+            intent: None,
+            id: MessageId::new("msg_set"),
+            content: vec![text(
+                "Changed the settings of workflow run dwfrun-1 from the GUI.",
+            )],
+            origin: UserOrigin::Meta {
+                source: "workflow_settings".into(),
+            },
+        }),
+    };
+    t.store
+        .commit(&sid(), batch(None, vec![record]))
+        .await
+        .unwrap();
+
+    let (message, parts) = stored(&t, "msg_set");
+    let value: Value = serde_json::from_str(&message).unwrap();
+    assert_eq!(value["metadata"]["workflowLaunch"], launch);
+    assert_eq!(
+        value["semantics"]["kind"], "system_reminder",
+        "the record stays a synthetic reminder"
+    );
+    let part: Value = serde_json::from_str(&parts[0]).unwrap();
+    assert_eq!(part["metadata"]["workflowLaunch"], launch);
+
+    let loaded = t.store.load(&sid()).await.unwrap();
+    let cold = loaded
+        .messages
+        .iter()
+        .find_map(|message| match message {
+            Message::User(user) if user.id.as_str() == "msg_set" => Some(user),
+            _ => None,
+        })
+        .expect("the record is read back");
+    assert_eq!(
+        cold.workflow_meta,
+        Some(json!({ "workflowLaunch": launch }))
+    );
+    assert_eq!(
+        cold.origin,
+        UserOrigin::Meta {
+            source: "workflow_settings".into()
+        }
+    );
+}

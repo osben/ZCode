@@ -2,7 +2,7 @@
 //! `workflow-drafts.ts`, `workflow-path-source.ts`, `workflow-skill-gate.ts`; specs/fork-rust-workflow-engine.md W7-8a).
 //!
 //! The order is Node's. The input is checked (name, `max_concurrency`, exactly one source, `args` only with `path`), then
-//! the Skill gate (a saved run is exempt), then `subagent_model`, which this host refuses (it has no model catalog). The
+//! the Skill gate (a saved run is exempt), then `subagent_model`, resolved against the model catalog (refused without one). The
 //! permission decision reads the script once (a `saved` definition, a `path` file or the inline text), checks it, and
 //! asks when it checks. The bytes asked about are kept for the call, which writes the draft, and submits the run through
 //! the run port when one is wired. A script that does not check gets its diagnostics in file lines, with no run.
@@ -15,6 +15,7 @@ use async_trait::async_trait;
 use rust_cli_fs::{create_new_text, ensure_dir, read_text};
 use rust_cli_kernel_api::ids::ToolUseId;
 use rust_cli_kernel_api::permission::{PermissionDecision, PermissionRule};
+use rust_cli_kernel_api::provider::LateModelDirectory;
 use rust_cli_kernel_api::tool::{
     PromptContext, Tool, ToolError, ToolOutput, ToolProgress, ToolUseContext, Validation, failed,
     text,
@@ -29,6 +30,11 @@ use serde::de::IgnoredAny;
 use serde_json::{Map, Value};
 use tokio::sync::mpsc;
 
+use crate::model_reference::{
+    CatalogEntry, SUBAGENT_MODEL_UNAVAILABLE, all_bound, describe_script_bindings,
+    describe_subagent_model, resolve as resolve_model, script_bindings, session_entries,
+    unbound_diagnostics,
+};
 use crate::saved_workflow::{
     ArgDecl, ArgType, FILE_EXTENSION, ResolveRefusal, Scope, Store, invalid_name_text,
     not_found_headline, parse as parse_saved, starts_with_sentinel, unreadable_text,
@@ -57,8 +63,6 @@ pub(crate) const DIAGNOSTICS_NOT_EXECUTED_NOTE: &str =
     "NOTE: The workflow was NOT executed — fix the errors above and resubmit.";
 /// Node `EXECUTION_UNAVAILABLE_NOTE`: the script checks, and this session has no run port.
 pub(crate) const EXECUTION_UNAVAILABLE_NOTE: &str = "NOTE: The workflow was NOT executed — workflow execution is not available in this session, so the script was only typechecked.";
-const SUBAGENT_MODEL_UNAVAILABLE: &str =
-    "This host cannot choose a subagent model; omit subagent_model.";
 const MISSING_SOURCE: &str = r"No workflow source arrived. Pass `script` for a one-off script written inline, `saved` to run a workflow saved in this project, or `path` for a script file on disk. If you did pass one, the call's arguments were not valid JSON, and a call that does not parse arrives empty. The usual cause is an unescaped backslash or double quote in the inline source: inside a JSON string a regex's `\d` must be written `\\d`. Escape it, or write the source to a file and pass `path`.";
 const CONFLICTING_SOURCES: &str = "Provide exactly one workflow source: `script` for a one-off script written inline, `saved` to run a workflow saved in this project, or `path` for a script file on disk (the file a previous result named). Passing more than one is ambiguous.";
 const ARGS_WITHOUT_PATH: &str = "`args` belongs to the `path` source: it carries values for the arguments a script file declares in its `/* zcode-workflow` block. For a saved workflow pass `saved.args`; an inline `script` declares no arguments, so it takes none.";
@@ -138,6 +142,10 @@ pub(crate) struct Prepared {
     pub(crate) display: Option<Value>,
     /// Fork (9.61): the input the ask shows, Node's resolved input (`shown_input`). `None` shows the model's input.
     pub(crate) shown: Option<Value>,
+    /// Fork (9.63): `subagent_model` in canonical form (Node's resolved input), `None` for the session model.
+    pub(crate) subagent_model: Option<String>,
+    /// Fork (9.63): the script's models that resolved, name to canonical (Node `model_bindings`).
+    pub(crate) model_bindings: Map<String, Value>,
 }
 
 /// The kept decisions. A full table evicts its oldest entry (never the others), and a taken entry leaves at once.
@@ -154,6 +162,8 @@ pub struct CreateWorkflowTool {
     runs: Option<Arc<dyn DynamicWorkflowRunSessions>>,
     home: PathBuf,
     approvals: Mutex<Approvals>,
+    /// Fork (9.63): the catalog `subagent_model` and the script's models resolve against; unset refuses both.
+    models: Arc<LateModelDirectory>,
 }
 
 impl CreateWorkflowTool {
@@ -170,7 +180,52 @@ impl CreateWorkflowTool {
             runs,
             home,
             approvals: Mutex::new(Approvals::default()),
+            models: Arc::default(),
         }
+    }
+
+    /// Fork (9.63): resolves model names against `models` (Node `context.modelCatalogPort`).
+    #[must_use]
+    pub fn with_models(mut self, models: Arc<LateModelDirectory>) -> Self {
+        self.models = models;
+        self
+    }
+
+    /// The catalog now, the session's model marked (Node `listModels`); `None` without one.
+    async fn entries(&self, context: &ToolUseContext) -> Option<Vec<CatalogEntry>> {
+        session_entries(&self.models, context).await
+    }
+
+    /// Node `resolveCreateSubagentModel`: the canonical model, `None` when none is asked for. Without a catalog the field
+    /// is refused; a name that does not resolve fails the call with the resolver's text.
+    async fn subagent_model(
+        &self,
+        requested: Option<&str>,
+        context: &ToolUseContext,
+    ) -> Result<Option<String>, String> {
+        let Some(requested) = requested else {
+            return Ok(None);
+        };
+        let Some(entries) = self.entries(context).await else {
+            return Err(SUBAGENT_MODEL_UNAVAILABLE.to_owned());
+        };
+        resolve_model(requested, &entries)
+            .map(|resolved| Some(resolved.canonical))
+            .map_err(|refusal| refusal.message)
+    }
+
+    /// Node `withScriptModelBindings`: the models the script names that resolve now (none when it names none).
+    async fn script_models(
+        &self,
+        analysis: &WorkflowAnalysis,
+        context: &ToolUseContext,
+    ) -> (Map<String, Value>, Option<Vec<CatalogEntry>>) {
+        if !analysis.ok || analysis.model_references.is_empty() {
+            return (Map::new(), None);
+        }
+        let entries = self.entries(context).await;
+        let bindings = script_bindings(&analysis.model_references, entries.as_deref(), None);
+        (bindings, entries)
     }
 
     fn approvals(&self) -> std::sync::MutexGuard<'_, Approvals> {
@@ -477,6 +532,29 @@ pub(crate) fn resolve_path(
         origin: Origin::Path { absolute },
         body_offset,
     })
+}
+
+/// Fork (9.63): the shown input with Node's resolved model fields: `subagent_model` canonical and `model_bindings`.
+fn with_models_shown(
+    shown: Option<Value>,
+    raw: &Value,
+    subagent_model: Option<&str>,
+    bindings: &Map<String, Value>,
+) -> Option<Value> {
+    if subagent_model.is_none() && bindings.is_empty() {
+        return shown;
+    }
+    let mut shown = shown
+        .and_then(|shown| shown.as_object().cloned())
+        .or_else(|| raw.as_object().cloned())
+        .unwrap_or_default();
+    if let Some(model) = subagent_model {
+        shown.insert("subagent_model".to_owned(), Value::from(model));
+    }
+    if !bindings.is_empty() {
+        shown.insert("model_bindings".to_owned(), Value::Object(bindings.clone()));
+    }
+    Some(Value::Object(shown))
 }
 
 /// Node `describeWorkflowScriptPath`: relative to the working directory when the file is inside it.
@@ -924,8 +1002,12 @@ impl Tool for CreateWorkflowTool {
                 error_code: Some(SKILL_NOT_LOADED_CODE),
             };
         }
-        if input.subagent_model.is_some() {
-            return invalid(Some(FAILURE_CODE), SUBAGENT_MODEL_UNAVAILABLE);
+        // Fork (9.63): Node resolves the model after the skill gate, before any disk read.
+        if let Err(message) = self
+            .subagent_model(input.subagent_model.as_deref(), context)
+            .await
+        {
+            return invalid(Some(FAILURE_CODE), &message);
         }
         Validation::Ok
     }
@@ -959,11 +1041,27 @@ impl Tool for CreateWorkflowTool {
                 };
             }
         };
-        let checks = analysis.ok;
+        // Fork (9.63): the canonical model and the script's model table (Node's resolved input). A script whose models are
+        // not all bound opens no window: the call reports them as 9011, as a compile failure.
+        // A model that does not resolve here (a hook's `updatedInput`, or a catalog that changed since validation) fails
+        // the call as validation would; it never falls back to the session model.
+        let subagent_model = match self
+            .subagent_model(input.subagent_model.as_deref(), context)
+            .await
+        {
+            Ok(model) => model,
+            Err(message) => {
+                self.forget(&context.tool_use);
+                return PermissionDecision::Deny { message };
+            }
+        };
+        let (model_bindings, _) = self.script_models(&analysis, context).await;
+        let checks = analysis.ok && all_bound(&analysis.model_references, &model_bindings);
         let name = resolved.name.clone();
         // A display the helper cannot give leaves the window without a graph; it never blocks the ask.
         let display = if checks {
-            match self.analyzer.display(&resolved.script).await {
+            let table = (!model_bindings.is_empty()).then_some(&model_bindings);
+            match self.analyzer.display(&resolved.script, table).await {
                 Ok(display) => display,
                 Err(error) => {
                     tracing::debug!(%error, "create_workflow display reply dropped; the window shows no graph");
@@ -973,7 +1071,12 @@ impl Tool for CreateWorkflowTool {
         } else {
             None
         };
-        let shown = shown_input(raw, &resolved);
+        let shown = with_models_shown(
+            shown_input(raw, &resolved),
+            raw,
+            subagent_model.as_deref(),
+            &model_bindings,
+        );
         self.remember(
             context.tool_use.clone(),
             Prepared {
@@ -981,6 +1084,8 @@ impl Tool for CreateWorkflowTool {
                 analysis,
                 display,
                 shown,
+                subagent_model,
+                model_bindings,
             },
         );
         if !checks {
@@ -1023,7 +1128,8 @@ impl Tool for CreateWorkflowTool {
                     .analyze(&resolved.script)
                     .await
                     .map_err(|error| failed(error.message))?;
-                if analysis.ok {
+                let (model_bindings, _) = self.script_models(&analysis, &context).await;
+                if analysis.ok && all_bound(&analysis.model_references, &model_bindings) {
                     return Err(failed(
                         "CreateWorkflow has no confirmation for this script, so nothing was started. Call it again.".to_owned(),
                     ));
@@ -1033,15 +1139,31 @@ impl Tool for CreateWorkflowTool {
                     analysis,
                     display: None,
                     shown: None,
+                    subagent_model: None,
+                    model_bindings,
                 }
             }
         };
         let Prepared {
             resolved,
-            analysis,
+            mut analysis,
             display,
+            subagent_model,
+            model_bindings,
             ..
         } = prepared;
+        // Fork (9.63): a model the script names that is unbound is a 9011 diagnostic (Node, through the compile path).
+        if analysis.ok && !all_bound(&analysis.model_references, &model_bindings) {
+            let entries = self.entries(&context).await;
+            let unbound = unbound_diagnostics(
+                &analysis.model_references,
+                &model_bindings,
+                entries.as_deref(),
+                None,
+            );
+            analysis.ok = false;
+            analysis.diagnostics.extend(unbound);
+        }
         let draft = self.write_draft(&resolved, &cwd).await;
         let location = self.location(&resolved, draft.as_deref(), &cwd);
         if !analysis.ok {
@@ -1089,12 +1211,20 @@ impl Tool for CreateWorkflowTool {
             script_path,
             phase_names,
             phase_alongside,
+            subagent_model: subagent_model.clone(),
+            model_bindings: (!model_bindings.is_empty()).then(|| model_bindings.clone()),
         };
         let run_id = port
             .submit(request)
             .await
             .map_err(|error| failed(error.message))?;
-        let settings = concurrency_sentence(input.max_concurrency, port.default_concurrency());
+        // Node `describeWorkflowRunSettings`: the limit, the subagent model, then the script's models.
+        let settings = format!(
+            "{}{}{}",
+            concurrency_sentence(input.max_concurrency, port.default_concurrency()),
+            describe_subagent_model(subagent_model.as_deref()),
+            describe_script_bindings(&model_bindings)
+        );
         let where_ = match &location {
             None => String::new(),
             Some(location) if location.path_source => format!(

@@ -5510,6 +5510,169 @@ failed in the sweep besides run-pane-details is questions, a timing flake (re-ru
 attributes added). Lib tests: runtime 390, workflow 468, kernel-api 461, protocol-zcode 1072, node-store 365 (1 ignored,
 existing), tools 700, session 422, base 92, node-records 36; cli bin tests 565.
 
+### 9.63 W9g: workflow model selection under zcode-rs, closing run-pane-details (as built, gate on)
+
+Status: run-pane-details passes under zcode-rs (out-w9g-1, first box run, on 0c4d59cf5 (dd83e6f23 with the W9f review fixes merged); the box binary carries the new
+literals `Models named in the script` and `its subagents now run on`). Full Rust sweep out-w9g-sweep on b51308230
+(the code of dd83e6f23 with fork merged): 17/26, against Node out-node-3 18/26 (the full Node sweep was not re-run). The
+one Node-passing spec that failed is questions, a test-side race that Node shares (below), so Rust and Node now differ
+only by that flake.
+
+Size: 2,525 added and 196 removed lines over 46 files (1,311 added in production code, 1,214 in tests), over the 2k
+plan and under the 3k ceiling. One PR: the resolver, the tool paths, the settings path and the rows are one chain, and
+run-pane-details needs all of it.
+
+| Spec                            | Node (out-node-3) | Rust before (out-rust-24) | Rust (out-w9g-sweep) | Cause                                                                      |
+| ------------------------------- | ----------------- | ------------------------- | -------------------- | -------------------------------------------------------------------------- |
+| dynamic-workflow-holes          | PASS              | PASS                      | PASS                 |                                                                            |
+| gray-always-on                  | PASS              | PASS                      | PASS                 |                                                                            |
+| gray-always-on-amend            | PASS              | PASS                      | PASS                 |                                                                            |
+| gray-always-on-artifacts        | PASS              | PASS                      | PASS                 |                                                                            |
+| gray-always-on-compile          | PASS              | PASS                      | PASS                 |                                                                            |
+| gray-always-on-cross-session    | PASS              | PASS                      | PASS                 |                                                                            |
+| gray-always-on-lookup           | PASS              | PASS                      | PASS                 |                                                                            |
+| gray-always-on-notify           | PASS              | PASS                      | PASS                 |                                                                            |
+| gray-always-on-overflow         | PASS              | PASS                      | PASS                 |                                                                            |
+| gray-always-on-restart          | PASS              | PASS                      | PASS                 |                                                                            |
+| gray-always-on-run              | PASS              | PASS                      | PASS                 |                                                                            |
+| gray-always-on-run-permissions  | PASS              | PASS                      | PASS                 |                                                                            |
+| gray-always-on-save-from-chat   | PASS              | PASS                      | PASS                 |                                                                            |
+| gray-always-on-save-window      | PASS              | PASS                      | PASS                 |                                                                            |
+| gray-always-on-stop             | PASS              | PASS                      | PASS                 |                                                                            |
+| gray-always-on-transcript       | PASS              | PASS                      | PASS                 |                                                                            |
+| gray-always-on-questions        | PASS              | FAIL                      | FAIL                 | flake: DWQ-01 qid read races the panel (test side, Node FAIL 2/3, below)   |
+| gray-always-on-run-pane-details | PASS              | FAIL                      | PASS                 | DWR-04 `subagent_model`, DWR-06 settings row and model change (fixed here) |
+| automations-workflows-hub       | FAIL              | FAIL                      | FAIL                 | shared                                                                     |
+| gray-always-on-confirm          | FAIL              | FAIL                      | FAIL                 | shared                                                                     |
+| gray-always-on-english-dark     | FAIL              | FAIL                      | FAIL                 | shared                                                                     |
+| gray-always-on-resume           | FAIL              | FAIL                      | FAIL                 | shared                                                                     |
+| gray-always-on-snippet          | FAIL              | FAIL                      | FAIL                 | shared                                                                     |
+| gray-always-on-user-choice      | FAIL              | FAIL                      | FAIL                 | shared                                                                     |
+| gray-disabled                   | FAIL              | FAIL                      | FAIL                 | shared                                                                     |
+| gray-on-demand                  | FAIL              | FAIL                      | FAIL                 | shared                                                                     |
+
+**Causes and fixes (each fix has a test seen red first, unless noted).**
+
+- **A model resolver and a catalog the tools reach** (closes 142). `tools/src/model_reference.rs` ports Node
+  `model-reference.ts`: a qualified `provider/model` matches exactly, a bare name is taken under the session's provider,
+  matching ignores case and the canonical form keeps the registry spelling, `$level` suffixes are checked against the
+  model's levels, and the refusals keep Node's kinds (`other_provider`, `ambiguous`, `disabled`,
+  `reasoning_level_unknown`, not found with the usable ids, capped at forty lines). The catalog is a
+  `LateModelDirectory` (kernel-api): the app server makes one, hands it to the workflow tools and the run service, and
+  sets it to the session's model directory when that opens. Until then a named model is refused with Node's no-catalog
+  text. 18 tests in `model_reference_tests.rs`.
+- **DWR-04, CreateWorkflow's `subagent_model` and the script's models** (closes 143, 456 for create). Validation resolves
+  `subagent_model` after the skill gate. The script's model references (the analyzer's `ModelReference{name, line,
+column}`) are bound into `modelBindings` (Node `readScriptModelBindings`); an unbound name reports Node's 9011
+  diagnostic and the call is a compile failure. The permission window shows the canonical model and the bindings table,
+  and the result text adds the subagent-model sentence and "Models named in the script". `SubmitRequest` and the
+  `run-launched` payload carry `subagentModel` and the non-empty `modelBindings`, which the owner's `resolve_model`
+  already read. Tests: `a_subagent_model_resolves_against_the_catalog_and_reaches_the_submit_and_the_result`,
+  `an_unknown_subagent_model_is_refused_with_the_catalog_listed`,
+  `the_models_a_script_names_are_bound_shown_submitted_and_listed`,
+  `a_submit_records_the_subagent_model_and_the_script_models_on_its_launch`.
+- **AmendWorkflow's model** (closes 456 for amend). `subagent_model` has three states as in Node: `null` clears it, a
+  string is resolved, and an omitted field inherits the predecessor's `subagentModel` from its detail, re-resolved. An
+  inherited model that is gone is refused with Node's inherited text, which names `subagent_model: null`. The script's
+  bindings inherit the predecessor's `modelBindings`. A revision that brings in a provider the predecessor did not use
+  asks even for the run's owner (Node `introducedProviders`). The run port no longer refuses a model; it checks the
+  shapes and journals both fields on the successor. Tests: `a_subagent_model_resolves_and_reaches_the_amend_and_the_result`,
+  `an_omitted_subagent_model_is_inherited_and_null_clears_it`,
+  `an_inherited_subagent_model_that_is_gone_is_refused_as_inherited`,
+  `a_revision_that_introduces_a_provider_asks_even_for_the_owner`,
+  `the_script_models_keep_the_predecessors_bindings_and_reach_the_amend`,
+  `an_unbound_script_model_is_reported_and_stops_nothing`,
+  `an_amend_records_the_subagent_model_and_the_script_models_on_the_successor`.
+- **The settings popover's model change** (closes 663, 664, 665). The settings path reads the run's launch payload
+  (`RunStore::launch_payload`), resolves the requested model against the catalog with the launch's model as the inherited
+  one, and refuses a model it cannot use before anything changes. A model change always amends, never retunes in place.
+  The launch's `modelBindings` are re-resolved; one that is gone refuses the change with the 9011 lines before the
+  predecessor stops. The successor's card graph comes from the saved-start analyzer with the bindings (narrows 906). The
+  settings sentence adds Node's clause, "its subagents now run on X" or "its subagents are back on the session model",
+  and `SettingsAmend.max_concurrency` is set only when the bound changed. Tests:
+  `a_subagent_model_change_amends_the_run_onto_the_new_model`,
+  `a_run_whose_launch_names_models_is_rebound_or_refused_before_the_predecessor_is_stopped`;
+  `an_unusable_subagent_model_is_refused_before_anything_changes` passed before and after (the old path refused every
+  model).
+- **DWR-06, the settings turn's rows, live and cold.** Node records the settings change as a control-only turn whose
+  `turnHeader` and `userInput` carry `workflowLaunch` (`runId`, `toolCallId`, `name`, `amend`), and the desktop builds
+  the settings digest from it. The settings record now carries `workflow_meta.workflowLaunch` (kernel-api
+  `workflow_launch_meta`, session `RecordWorkflowTurn`). node-store keeps it as `metadata.workflowLaunch` on the message
+  and its text part, and node-records reads it back. The projection draws a synthetic turn `{msgid}:turn:workflow`
+  (header `origin: workflowLaunch`, `executionKind: controlOnly`, `state: completedSuccess`, `activeMs: 0`, and the
+  user input with the same metadata). The cold pass closes the open turn before it and settles it at once, so live and
+  cold draw the same rows. Tests: `a_live_settings_record_draws_a_control_only_workflow_launch_turn`,
+  `a_cold_settings_record_draws_the_same_turn`, `a_workflow_record_keeps_its_launch_metadata_and_reads_it_back`;
+  `a_record_without_launch_metadata_draws_no_row` passed before and after.
+
+**questions (DWQ-01), a test-side race that Node shares (the spec is fixed in the review round below).** It failed again in the Rust sweep
+(out-w9g-sweep). Three Node runs of the spec in the box on this head (out-w9g-node-q) gave FAIL, PASS, FAIL, and the
+kept Node failure has the same signature as every Rust one: the row's text has the question and the context but not
+the qid. `WorkflowRunQuestionRow` renders the question, the context, the waited label and the qid from one
+`WorkflowRunPendingQuestion` in one render (`data-qid` is already set on the element the test found), so neither
+runtime emits the row before its text. The missing pieces are both in the trailing `shrink-0` span (the waited label is
+missing too), and WebDriver `getText` returns only text it counts as shown. The likely cause is that the read lands
+while the side panel the chip click opens is still laying out, with that span clipped (not proven).
+
+**Review (ocr of #621).** Seven findings, all valid, all fixed:
+
+- CreateWorkflow's permission decision turned a `subagent_model` that no longer resolves into none, so the run started on
+  the session model. The causes are a hook's `updatedInput` or a catalog that changed after validation. It now denies
+  with the resolver's text, as validation does. Test: `a_model_that_stops_resolving_after_validation_starts_nothing`.
+- AmendWorkflow resolved a revision's models up to four times, on different catalog and detail reads, so the owner
+  exemption could disagree with what the amend submitted. `Pending` now carries the one `models_of` result from the
+  decision, the call's no-approval branch, or the retune fallback, and `finish_revision` submits it. Test:
+  `the_call_submits_the_models_the_decision_resolved`.
+- The settings refusal for unusable script models joined its lines with no bound. It is now cut to Node's
+  compile-diagnostics limit, 2000 chars, by `bounded_text`, which is factored out of `bounded_diagnostics`. The lines keep
+  no `L:C` prefix, because the names come from the launch table and have no position. Test:
+  `a_settings_refusal_for_many_unusable_models_is_bounded`.
+- Docs and dead code: the `SettingsRequest::subagent_model` doc describes its three states. The 9.53 doc is back on
+  `configure_saved_start`, and the `describeWorkflowScriptPath` line is back on `describe_script_path`.
+  `RunStore::launch_binds_models` is removed (default, SQLite impl, lazy-store delegation); nothing called it after the
+  settings path moved to `launch_payload`.
+- The questions spec now waits for the qid text in the row before it reads it, as it already waits for the context. The
+  change is test-only.
+
+**Box after the review (head f9299748f).** The box image was rebuilt (4c3fef724e11) and its volumes were recreated. The
+first run did a cold install and a cold Rust build; the binary was built fresh at the run and carries
+`Models named in the script`.
+
+| Run             | Runtime | Spec                            | Result           |
+| --------------- | ------- | ------------------------------- | ---------------- |
+| out-w9g-r3      | Rust    | gray-always-on-questions        | PASS, PASS, PASS |
+| out-w9g-r3      | Rust    | gray-always-on-run-pane-details | PASS             |
+| out-w9g-r3      | Rust    | gray-always-on-save-window      | PASS             |
+| out-w9g-node-q2 | Node    | gray-always-on-questions        | PASS, PASS       |
+
+Before the spec fix, questions failed 2 of 3 times on Node (out-w9g-node-q) and in the Rust sweep. After it, it passed
+3 of 3 on Rust and 2 of 2 on Node.
+
+**Divergences.**
+
+916. A hub launch's record carries no `workflowLaunch` metadata (`workflow_run_commands.rs` passes none), so the hub
+     launch turn draws no control-only launch card; only the settings turn does.
+917. A catalog entry's default reasoning level is its last level. Rust's catalog carries no configured default, and the
+     last level is the platform's own fallback; Node reads the configured default when there is one.
+918. The settings path rebinds the script's models from the launch's `modelBindings` table, without a fresh compile of the
+     script. The run's own script is rerun, so the names are the same; a binding table that was empty at launch binds
+     nothing.
+919. The settings path resolves the requested model with no session-current entry (the GUI sends a qualified id), so a
+     bare name there is resolved without the session-provider preference Node applies.
+920. AmendWorkflow's model refusals answer with failure code 400, the code the tool already uses for its business
+     refusals; Node's code is 23.
+921. A settings model refusal always carries a message, the no-catalog text when no catalog is set; Node's GUI path has a
+     catalog in every host.
+
+**Closed.** 142, 143, 456, 663, 664, 665. 906 is narrowed: the create, amend and settings displays carry the bindings;
+the fill path still passes none (with 512).
+
+**Open.** 512 (a fill body that names a model) and 906 for the fill path; 916 above.
+
+**Gate.** `cargo fmt --all --check` clean. `cargo clippy --workspace --all-targets --locked -- -D warnings` rc 0 (no allow
+attributes added). Lib tests: runtime 394, workflow 468, kernel-api 461, protocol-zcode 1075, node-store 366 (1 ignored,
+existing), tools 728, session 422, node-records 36; cli bin tests 565.
+
 ## 10. Open questions
 
 Each has a recommendation. The user decides. Until decided, the recommendation is the default.

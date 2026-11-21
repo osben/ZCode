@@ -72,11 +72,19 @@ impl WorkflowRunService {
         parent: &str,
         request: AmendRequest,
     ) -> Result<AmendResult, DynamicWorkflowRunError> {
-        // Options this host does not carry are refused up front. Dropping them would start a successor that differs
-        // from what the caller asked for, after the predecessor is already stopped.
-        if request.subagent_model.is_some() || request.model_bindings.is_some() {
+        // Fork (9.63): the models are carried to the successor's launch. A shape the launch cannot record is refused up
+        // front, since dropping it would start a successor that differs from what the caller asked for.
+        if request
+            .subagent_model
+            .as_ref()
+            .is_some_and(|model| !model.is_string())
+            || request
+                .model_bindings
+                .as_ref()
+                .is_some_and(|bindings| !bindings.is_object())
+        {
             return Err(DynamicWorkflowRunError::new(
-                "this host cannot amend a run's subagent model or script-named models yet, so the run is not amended",
+                "the subagent model must be a model id and the script's models a table, so the run is not amended",
             ));
         }
         // Inherited arguments (9.50, the GUI settings route) are carried from the settled row below; phase routing is not.
@@ -229,6 +237,12 @@ impl WorkflowRunService {
             launch: Some(LaunchFields {
                 input_id: uuid_v4(),
                 script_path: request.script_path,
+                subagent_model: request
+                    .subagent_model
+                    .as_ref()
+                    .and_then(Value::as_str)
+                    .map(str::to_owned),
+                model_bindings: request.model_bindings,
                 ..LaunchFields::default()
             }),
             inherited_tokens: Some(settled.spent_tokens),

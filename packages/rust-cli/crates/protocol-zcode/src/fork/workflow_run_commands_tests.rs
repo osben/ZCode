@@ -99,8 +99,10 @@ impl DynamicWorkflowRunPort for Port {
                 tool_call_id: tool_call_id.clone(),
                 name: None,
                 title_input: run_id.as_str().to_owned(),
+                display: None,
                 amend: SettingsAmend {
                     predecessor_run_id: None,
+                    subagent_model: None,
                     max_concurrency: None,
                     default_concurrency: 6.0,
                 },
@@ -612,8 +614,10 @@ mod deliver {
             tool_call_id: "settings-2".to_owned(),
             name: None,
             title_input: "dwfrun-2".to_owned(),
+            display: None,
             amend: SettingsAmend {
                 predecessor_run_id: None,
+                subagent_model: None,
                 max_concurrency: None,
                 default_concurrency: 6.0,
             },
@@ -643,7 +647,7 @@ mod deliver {
         let sent: Mutex<Vec<(WorkflowRecordSource, String)>> = Mutex::new(Vec::new());
         turns
             .deliver_with(|_id, command| {
-                let Command::RecordWorkflowTurn { text, source } = command else {
+                let Command::RecordWorkflowTurn { text, source, .. } = command else {
                     panic!("only the records are sent: {command:?}");
                 };
                 sent.lock().unwrap().push((source, text));

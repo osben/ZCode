@@ -504,6 +504,8 @@ async fn a_submit_through_the_composed_sessions_starts_a_run_under_its_session()
             script_path: None,
             phase_names: None,
             phase_alongside: None,
+            subagent_model: None,
+            model_bindings: None,
         })
         .await
         .expect("the submit starts the run");

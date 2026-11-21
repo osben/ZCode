@@ -65,6 +65,18 @@ pub(super) fn rows(projection: &mut Projection, view: &SessionView) {
     let mut anchor: Option<String> = None;
     for (index, message) in view.messages.iter().enumerate() {
         match message {
+            // Fork (9.63): a workflow record with its launch metadata is a turn of its own (Node's cold hydration opens
+            // it as the live projection did): the turn before it closes, and it settles at once.
+            Message::User(user) if super::rows::workflow_launch_of(user).is_some() => {
+                if projection.turn.is_some() {
+                    flush_screenshots(projection, &mut anchor, view, at, &mut out);
+                    projection.close_cold_turn(interrupted, at, &mut out);
+                }
+                interrupted = false;
+                notice_batch = false;
+                turn_ended = true;
+                projection.message(message, at, 0, &mut out);
+            }
             Message::User(user) if opening(message, turn_ended) && !is_notice(message) => {
                 if projection.turn.is_some() {
                     flush_screenshots(projection, &mut anchor, view, at, &mut out);

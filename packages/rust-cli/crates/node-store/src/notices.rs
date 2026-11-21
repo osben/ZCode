@@ -85,7 +85,24 @@ pub fn append_meta(ctx: &Commit<'_>, user: &UserMessage, source: &str) -> Result
             Some(&notice),
         );
     }
-    save(ctx, user.id.as_str(), source, &texts, marker, None)
+    // Fork (9.63): a workflow control record keeps its `workflowLaunch` metadata (Node's `metadata.workflowLaunch`).
+    let launch = user
+        .workflow_meta
+        .as_ref()
+        .and_then(|meta| meta.get("workflowLaunch"))
+        .filter(|_| {
+            rust_cli_kernel_api::workflow_run::WorkflowRecordSource::is_record_source(source)
+        })
+        .map(|launch| json!({ "workflowLaunch": launch }));
+    save_with(
+        ctx,
+        user.id.as_str(),
+        source,
+        &texts,
+        marker,
+        None,
+        launch.as_ref(),
+    )
 }
 
 /// Fork: the metadata Node writes on a background task notification message
@@ -170,12 +187,15 @@ fn message(
     source: &str,
     selection: Option<&Value>,
     turn: Option<&str>,
-    notice: Option<&Value>,
+    (notice, extra): (Option<&Value>, Option<&Value>),
 ) -> Value {
     let mut out = json!({"id": id, "sessionID": session, "role": "user",
         "time": {"created": created}, "agent": AGENT, "metadata": metadata(source)});
     if let Some(notice) = notice {
         merge(&mut out["metadata"], notice);
+    }
+    if let Some(extra) = extra {
+        merge(&mut out["metadata"], extra);
     }
     if let Some(selection) = selection {
         out["modelSelection"] =
@@ -219,6 +239,20 @@ fn save(
     marker: Value,
     notice: Option<&Value>,
 ) -> Result<(), StoreError> {
+    save_with(ctx, id, source, blocks, marker, notice, None)
+}
+
+/// [`save`] with `extra` metadata merged into the message's and every text part's metadata (9.63), without the
+/// background-result semantics a `notice` brings.
+fn save_with(
+    ctx: &Commit<'_>,
+    id: &str,
+    source: &str,
+    blocks: &[ContentBlock],
+    marker: Value,
+    notice: Option<&Value>,
+    extra: Option<&Value>,
+) -> Result<(), StoreError> {
     let created = created_at(id, ctx.now);
     let selection = state::selection(ctx.conn, ctx.session).storage()?;
     // 锚定当前轮（Node `buildProjectionAnchor(turnTraceContext, "synthetic")`）。
@@ -229,7 +263,7 @@ fn save(
         source,
         selection.as_ref(),
         turn.as_deref(),
-        notice,
+        (notice, extra),
     );
     messages::save_message(ctx.conn, &info, ctx.now as i64).storage()?;
     let mut metadata = metadata(source);
@@ -238,6 +272,9 @@ fn save(
         // runtime message kind of a background notification.
         merge(&mut metadata, notice);
         metadata["runtimeMessage"] = json!({"source": "legacy_synthetic"});
+    }
+    if let Some(extra) = extra {
+        merge(&mut metadata, extra);
     }
     metadata[RUST_CLI] = marker;
     for block in blocks {

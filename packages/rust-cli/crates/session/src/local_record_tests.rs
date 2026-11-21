@@ -355,6 +355,7 @@ async fn an_idle_workflow_record_is_a_meta_message_with_its_source_and_the_next_
             Command::RecordWorkflowTurn {
                 text: "Started the saved workflow \"digest\" (global) as run dwfrun-1.".to_owned(),
                 source: WorkflowRecordSource::Launch,
+                meta: Some(serde_json::json!({"runId": "dwfrun-1"})),
             },
         ))
         .await;
@@ -372,12 +373,19 @@ async fn an_idle_workflow_record_is_a_meta_message_with_its_source_and_the_next_
     let turns = built.store.batch_turns(&crate::test_support::meta().id);
     assert_eq!(turns.last(), turns.get(turns.len() - 2), "{turns:?}");
     match &added[0] {
-        Message::User(user) => assert_eq!(
-            user.origin,
-            UserOrigin::Meta {
-                source: "workflow_launch".to_owned()
-            }
-        ),
+        Message::User(user) => {
+            assert_eq!(
+                user.origin,
+                UserOrigin::Meta {
+                    source: "workflow_launch".to_owned()
+                }
+            );
+            // Fork (9.63): the record's metadata rides on the message for its rows.
+            assert_eq!(
+                user.workflow_meta,
+                Some(serde_json::json!({"workflowLaunch": {"runId": "dwfrun-1"}}))
+            );
+        }
         other => panic!("expected a user message, got {other:?}"),
     }
     built.session.send(submit("c3", "next")).await;
@@ -410,6 +418,7 @@ async fn a_workflow_record_held_during_a_turn_keeps_its_arrival_order_with_local
             Command::RecordWorkflowTurn {
                 text: "workflow first".to_owned(),
                 source: WorkflowRecordSource::Launch,
+                meta: None,
             },
         ))
         .await;

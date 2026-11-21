@@ -120,6 +120,9 @@ impl WorkflowRunService {
                     script_path: draft.map(|path| path.display().to_string()),
                     phase_names: None,
                     phase_alongside: None,
+                    // A hub start runs on the session model; its saved definition names no subagent model.
+                    subagent_model: None,
+                    model_bindings: None,
                 },
                 Some(launch_input_id),
             )
@@ -197,7 +200,11 @@ pub(crate) fn bounded_diagnostics(heading: &str, diagnostics: &[WorkflowDiagnost
             diagnostic.line, diagnostic.column, diagnostic.message
         )
     }));
-    let body = lines.join("\n");
+    bounded_text(lines.join("\n"))
+}
+
+/// The cut of [`bounded_diagnostics`] alone: `body` kept to Node's compile-diagnostics limit, ending in `…` when cut.
+pub(crate) fn bounded_text(body: String) -> String {
     if body.chars().count() <= COMPILE_DIAGNOSTICS_MAX_CHARS {
         return body;
     }

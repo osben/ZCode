@@ -41,7 +41,13 @@ fn names(tools: &[Arc<dyn Tool>]) -> Vec<String> {
 
 #[test]
 fn without_an_analyzer_the_run_tools_and_list_saved_are_wired() {
-    let tools = wired_workflow_tools(None, &PathBuf::from("/home"), no_runs(), None);
+    let tools = wired_workflow_tools(
+        None,
+        &PathBuf::from("/home"),
+        no_runs(),
+        None,
+        Arc::default(),
+    );
     assert_eq!(
         names(&tools),
         [
@@ -57,7 +63,13 @@ fn without_an_analyzer_the_run_tools_and_list_saved_are_wired() {
 #[test]
 fn with_an_analyzer_create_amend_and_save_are_wired_before_the_run_tools_and_list_saved() {
     let analyzer: Arc<dyn WorkflowAnalyzer> = Arc::new(NoAnalyzer);
-    let tools = wired_workflow_tools(Some(analyzer), &PathBuf::from("/home"), no_runs(), None);
+    let tools = wired_workflow_tools(
+        Some(analyzer),
+        &PathBuf::from("/home"),
+        no_runs(),
+        None,
+        Arc::default(),
+    );
     assert_eq!(
         names(&tools),
         [
@@ -92,6 +104,8 @@ async fn a_submit_before_the_late_slot_is_set_is_unsupported_and_a_second_set_is
             script_path: None,
             phase_names: None,
             phase_alongside: None,
+            subagent_model: None,
+            model_bindings: None,
         })
         .await
         .expect_err("no run service is set yet");
@@ -109,6 +123,7 @@ fn the_gate_source_reads_the_shared_table_the_server_records_into() {
         &PathBuf::from("/home"),
         no_runs(),
         None,
+        Arc::default(),
     );
     let open = DynamicWorkflowGate {
         enabled: true,
@@ -159,6 +174,7 @@ fn with_a_snippet_port_eval_is_wired_between_save_and_the_run_tools() {
         &PathBuf::from("/home"),
         no_runs(),
         Some(snippets),
+        Arc::default(),
     );
     assert_eq!(
         names(&tools),
@@ -187,6 +203,7 @@ fn the_gate_source_wires_eval_only_when_it_is_given_a_snippet_port() {
         &PathBuf::from("/home"),
         no_runs(),
         Some(snippets),
+        Arc::default(),
     );
     assert!(names(&source.tools).contains(&"EvalWorkflowSnippet".to_owned()));
 }

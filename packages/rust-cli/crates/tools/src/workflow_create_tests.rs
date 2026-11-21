@@ -63,6 +63,7 @@ impl WorkflowAnalyzer for Checker {
         }
         if script.contains("BROKEN") {
             return Ok(WorkflowAnalysis {
+                model_references: Vec::new(),
                 ok: false,
                 diagnostics: vec![WorkflowDiagnostic {
                     code: 2322,
@@ -73,6 +74,7 @@ impl WorkflowAnalyzer for Checker {
             });
         }
         Ok(WorkflowAnalysis {
+            model_references: script_models(script),
             ok: true,
             diagnostics: Vec::new(),
         })
@@ -81,8 +83,15 @@ impl WorkflowAnalyzer for Checker {
     async fn display(
         &self,
         script: &str,
+        model_bindings: Option<&serde_json::Map<String, serde_json::Value>>,
     ) -> Result<Option<serde_json::Value>, WorkflowAnalysisError> {
         if script.contains("BROKEN") || script.contains("FAIL") {
+            return Ok(None);
+        }
+        // Node's prepareApproval opens no window for a script whose models are not all bound (9.63, 906).
+        if script_models(script).iter().any(|reference| {
+            model_bindings.is_none_or(|table| !table.contains_key(&reference.name))
+        }) {
             return Ok(None);
         }
         Ok(Some(json!({
@@ -1143,11 +1152,14 @@ fn prepared(script: &str) -> Prepared {
             body_offset: 0,
         },
         analysis: WorkflowAnalysis {
+            model_references: Vec::new(),
             ok: true,
             diagnostics: Vec::new(),
         },
         display: None,
         shown: None,
+        subagent_model: None,
+        model_bindings: serde_json::Map::new(),
     }
 }
 
@@ -1293,4 +1305,192 @@ async fn the_ask_of_a_saved_run_shows_its_file_scope_and_defaulted_arguments() {
         .check_permissions(&inline("return 1;"), &inline_ctx)
         .await;
     assert_eq!(harness.tool.ask_input(&inline_ctx.tool_use), None);
+}
+
+/// 9.63: a line `// model: NAME` stands for a persona that names the model NAME (Node `modelReferences`).
+fn script_models(script: &str) -> Vec<rust_cli_kernel_api::workflow_analysis::ModelReference> {
+    script
+        .lines()
+        .enumerate()
+        .filter_map(|(index, line)| {
+            line.trim().strip_prefix("// model: ").map(|name| {
+                rust_cli_kernel_api::workflow_analysis::ModelReference {
+                    name: name.trim().to_owned(),
+                    line: index as i64 + 1,
+                    column: 4,
+                }
+            })
+        })
+        .collect()
+}
+
+/// 9.63: the fixture's catalog, two DeepSeek models with no levels.
+struct Catalog;
+
+#[async_trait]
+impl rust_cli_kernel_api::provider::ModelDirectory for Catalog {
+    async fn catalog(&self) -> rust_cli_kernel_api::provider::ModelCatalog {
+        let model = |name: &str| rust_cli_kernel_api::provider::CatalogModel {
+            provider: "deepseek".to_owned(),
+            provider_name: "DeepSeek".to_owned(),
+            model: name.to_owned(),
+            protocol: rust_cli_kernel_api::provider::WireProtocol::AnthropicMessages,
+            reasoning_levels: Vec::new(),
+            context_window: 1,
+            max_output_tokens: 1,
+            capabilities: Default::default(),
+            connection: None,
+            host: None,
+        };
+        rust_cli_kernel_api::provider::ModelCatalog {
+            revision: 1,
+            models: vec![model("deepseek-v4-flash"), model("deepseek-v4-pro")],
+            default: None,
+        }
+    }
+}
+
+fn with_catalog(port: Option<Arc<FakeRun>>) -> Harness {
+    let mut harness = Harness::new(port);
+    let models = Arc::new(rust_cli_kernel_api::provider::LateModelDirectory::default());
+    assert!(models.set(Arc::new(Catalog)));
+    let runs = harness.port.clone().map(|port| {
+        Arc::new(OneSession(port as Arc<dyn DynamicWorkflowRunPort>))
+            as Arc<dyn DynamicWorkflowRunSessions>
+    });
+    harness.tool =
+        CreateWorkflowTool::new(Arc::new(Checker), runs, harness.home.clone()).with_models(models);
+    harness
+}
+
+const NAMES_A_MODEL: &str = "// model: deepseek-v4-flash\nconst r = await agent(\"a\", { model: \"deepseek-v4-flash\" }).ask(\"do\");\nreturn r;";
+
+/// 9.63 (DWR-04): Node `resolveCreateSubagentModel` with a catalog: the bare name resolves to its canonical form, the
+/// submit carries it, and the result says where the subagents run.
+#[tokio::test]
+async fn a_subagent_model_resolves_against_the_catalog_and_reaches_the_submit_and_the_result() {
+    let harness = with_catalog(Some(FakeRun::new(None, false)));
+    let input = json!({"script": CLEAN, "subagent_model": "deepseek-v4-pro"});
+    let validation = harness
+        .tool
+        .validate_input(&input, &harness.with_skill())
+        .await;
+    assert_eq!(validation, Validation::Ok);
+    let output = harness.run(input).await.expect("the call runs");
+    let text = output_text(&output);
+    let submits = submits_of(&harness);
+    assert_eq!(
+        submits[0].subagent_model.as_deref(),
+        Some("deepseek/deepseek-v4-pro")
+    );
+    assert!(
+        text.contains(" Subagents run on deepseek/deepseek-v4-pro (the main agent stays on the session model)."),
+        "{text}"
+    );
+}
+
+/// 9.63: an unknown subagent model fails the call before any window, with Node's not-found text.
+#[tokio::test]
+async fn an_unknown_subagent_model_is_refused_with_the_catalog_listed() {
+    let harness = with_catalog(None);
+    let input = json!({"script": CLEAN, "subagent_model": "gpt-9"});
+    let validation = harness
+        .tool
+        .validate_input(&input, &harness.with_skill())
+        .await;
+    assert_eq!(
+        validation,
+        Validation::Invalid {
+            message: "No configured model matches `gpt-9`. Available models:\ndeepseek/deepseek-v4-flash\ndeepseek/deepseek-v4-pro\n\nPass one of these ids, or call ListModels.".to_owned(),
+            error_code: Some(400),
+        }
+    );
+}
+
+/// 9.63 (DWR-04, closes 906): the models a script names are bound before the window, the window is drawn with the table,
+/// the submit carries it, and the result lists it.
+#[tokio::test]
+async fn the_models_a_script_names_are_bound_shown_submitted_and_listed() {
+    let harness = with_catalog(Some(FakeRun::new(None, false)));
+    let input = json!({"name": "check", "script": NAMES_A_MODEL});
+    let ctx = harness.with_skill();
+    let decision = harness.tool.check_permissions(&input, &ctx).await;
+    assert!(
+        matches!(decision, PermissionDecision::Ask { .. }),
+        "{decision:?}"
+    );
+    assert!(
+        harness.tool.ask_display(&ctx.tool_use).is_some(),
+        "the window has its graph"
+    );
+    let shown = harness
+        .tool
+        .ask_input(&ctx.tool_use)
+        .expect("the ask shows the resolved input");
+    assert_eq!(
+        shown["model_bindings"],
+        json!({"deepseek-v4-flash": "deepseek/deepseek-v4-flash"})
+    );
+    let (tx, _rx) = mpsc::channel(4);
+    let output = harness
+        .tool
+        .call(input, ctx, tx)
+        .await
+        .expect("the call runs");
+    let text = output_text(&output);
+    let submits = submits_of(&harness);
+    assert_eq!(
+        submits[0].model_bindings.clone().map(Value::Object),
+        Some(json!({"deepseek-v4-flash": "deepseek/deepseek-v4-flash"}))
+    );
+    assert!(
+        text.contains(
+            " Models named in the script: \"deepseek-v4-flash\" = deepseek/deepseek-v4-flash."
+        ),
+        "{text}"
+    );
+}
+
+/// 9.63: a model the script names that does not resolve opens no window; the call reports it as a 9011 diagnostic and
+/// starts nothing. Without a catalog, the same path says the host cannot choose models.
+#[tokio::test]
+async fn an_unresolved_script_model_opens_no_window_and_is_reported_as_9011() {
+    for harness in [
+        with_catalog(Some(FakeRun::new(None, false))),
+        Harness::new(Some(FakeRun::new(None, false))),
+    ] {
+        let input =
+            json!({"name": "check", "script": NAMES_A_MODEL.replace("deepseek-v4-flash", "gpt-9")});
+        let decision = harness.decide(&input).await;
+        assert!(
+            matches!(decision, PermissionDecision::Allow { .. }),
+            "{decision:?}"
+        );
+        let output = harness.run(input).await.expect("the call reports");
+        let text = output_text(&output);
+        assert!(submits_of(&harness).is_empty(), "nothing starts");
+        assert!(
+            text.contains("The model \"gpt-9\" named in the script cannot be used: No configured model matches `gpt-9`.")
+                || text.contains(crate::model_reference::SCRIPT_MODELS_UNAVAILABLE),
+            "{text}"
+        );
+        assert!(
+            text.contains("NOTE: The workflow was NOT executed"),
+            "{text}"
+        );
+    }
+}
+
+/// 9.63 review: a model that does not resolve when the window is prepared (a hook's `updatedInput`, or a catalog that
+/// changed after validation) fails the call as validation would; the run never starts on the session model.
+#[tokio::test]
+async fn a_model_that_stops_resolving_after_validation_starts_nothing() {
+    let harness = with_catalog(Some(FakeRun::new(None, false)));
+    let input = json!({"script": CLEAN, "subagent_model": "gpt-9"});
+    let error = harness.run(input).await.expect_err("the call fails");
+    assert!(
+        message_of(&error).starts_with("No configured model matches `gpt-9`."),
+        "{error:?}"
+    );
+    assert!(submits_of(&harness).is_empty(), "nothing is submitted");
 }

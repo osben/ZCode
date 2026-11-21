@@ -311,6 +311,26 @@ pub trait ModelDirectory: Send + Sync {
     async fn catalog(&self) -> ModelCatalog;
 }
 
+/// Fork (9.63): the model directory the workflow tools and the run service resolve model names against (Node
+/// `ModelCatalogPort`), set once the composition has opened the platform. Unset means the host has no catalog: the
+/// tools refuse `subagent_model` and the models a script names, as Node does without a port.
+#[derive(Default)]
+pub struct LateModelDirectory {
+    directory: std::sync::OnceLock<std::sync::Arc<dyn ModelDirectory>>,
+}
+
+impl LateModelDirectory {
+    /// Sets the directory. A second set is refused and keeps the first.
+    pub fn set(&self, directory: std::sync::Arc<dyn ModelDirectory>) -> bool {
+        self.directory.set(directory).is_ok()
+    }
+
+    /// The directory, when it is set.
+    pub fn get(&self) -> Option<std::sync::Arc<dyn ModelDirectory>> {
+        self.directory.get().cloned()
+    }
+}
+
 /// 压缩用的模型上限（修复线 F61，docs/specs/rust-cli/compact.md §2）：生效配置的 `contextWindow` 与
 /// `optionSpecs.maxOutputTokens.max`。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]

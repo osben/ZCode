@@ -122,7 +122,13 @@ pub fn hydrate(record: &WithParts) -> Option<Message> {
         }),
         META => Message::User(UserMessage {
             stall_execution,
-            workflow_meta,
+            // Fork (9.63): a workflow control record's `workflowLaunch` metadata, which its rows draw.
+            workflow_meta: workflow_meta.or_else(|| {
+                first["metadata"]
+                    .get("workflowLaunch")
+                    .filter(|launch| launch.is_object())
+                    .map(|launch| json!({ "workflowLaunch": launch }))
+            }),
             epilogue_start: None,
             intent: None,
             id,

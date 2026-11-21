@@ -269,6 +269,11 @@ pub struct SubmitRequest {
     pub phase_names: Option<Vec<String>>,
     /// Per named phase, the indexes of the phases that run alongside it (Node `phaseAlongside`). `None` when none does.
     pub phase_alongside: Option<Vec<Vec<usize>>>,
+    /// Fork (9.63): the run's subagent model, canonical `provider/model[$level]` (Node `subagentModel`). `None` runs the
+    /// subagents on the parent's model.
+    pub subagent_model: Option<String>,
+    /// Fork (9.63): the script's model table, name to canonical model (Node `modelBindings`). `None` when it names none.
+    pub model_bindings: Option<Map<String, Value>>,
 }
 
 /// A failed port call that is not a business refusal (a wiring fault, or a missing optional member).
@@ -479,7 +484,9 @@ pub trait DynamicWorkflowRunPort: Send + Sync {
 #[derive(Debug, Clone, PartialEq)]
 pub struct SettingsRequest {
     pub run_id: WorkflowRunId,
-    /// Any value is refused by the run service: a subagent-model change is not built (divergence 663).
+    /// Fork (9.63, closes 663): `None` keeps the run's subagent model, `Some(None)` puts its subagents back on the session
+    /// model, and `Some(Some(name))` is resolved against the catalog (a name that does not resolve refuses the change). A
+    /// model change always amends the run.
     pub subagent_model: Option<Option<String>>,
     pub max_concurrency: Option<Option<f64>>,
 }
@@ -491,11 +498,20 @@ pub struct SettingsChange {
     pub to: Option<f64>,
 }
 
+/// Fork (9.63): one side pair of a subagent-model change (Node `fromTo` of canonical strings).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ModelChange {
+    pub from: Option<String>,
+    pub to: Option<String>,
+}
+
 /// What the settings turn records of the change (the parts of Node's `WorkflowSettingsAmendMeta` this host builds).
 #[derive(Debug, Clone, PartialEq)]
 pub struct SettingsAmend {
     /// Absent for an in-place change: its absence means "applied in place" (Node).
     pub predecessor_run_id: Option<WorkflowRunId>,
+    /// Fork (9.63, closes 663): a subagent-model change, canonical sides; `None` on a side is the session model.
+    pub subagent_model: Option<ModelChange>,
     pub max_concurrency: Option<SettingsChange>,
     /// Node's `ceiling`: the default concurrency at the change.
     pub default_concurrency: f64,
@@ -512,6 +528,54 @@ pub struct SettingsTurn {
     /// The title seed (Node `titleInput`): the run's name, else the run id the change started from.
     pub title_input: String,
     pub amend: SettingsAmend,
+    /// Fork (9.63): the kept script's `create_workflow` display for an amendment (Node `displayOfAnalysis`), which the
+    /// successor's card draws its graph from. `None` in place, or when the checker gave none.
+    pub display: Option<Value>,
+}
+
+impl SettingsTurn {
+    /// Fork (9.63): Node's `boundWorkflowLaunchMeta` of a settings turn, the `workflowLaunch` metadata its rows carry.
+    pub fn workflow_launch_meta(&self) -> Value {
+        let mut meta = Map::new();
+        meta.insert("runId".into(), Value::from(self.run_id.as_str()));
+        meta.insert("toolCallId".into(), Value::from(self.tool_call_id.as_str()));
+        if let Some(name) = &self.name {
+            meta.insert("name".into(), Value::from(name.as_str()));
+        }
+        if let Some(display) = &self.display {
+            meta.insert("display".into(), display.clone());
+        }
+        let mut amend = Map::new();
+        if let Some(predecessor) = &self.amend.predecessor_run_id {
+            amend.insert("predecessorRunId".into(), Value::from(predecessor.as_str()));
+        }
+        if let Some(change) = &self.amend.subagent_model {
+            let mut sides = Map::new();
+            if let Some(from) = &change.from {
+                sides.insert("from".into(), Value::from(from.as_str()));
+            }
+            if let Some(to) = &change.to {
+                sides.insert("to".into(), Value::from(to.as_str()));
+            }
+            amend.insert("subagentModel".into(), Value::Object(sides));
+        }
+        if let Some(change) = self.amend.max_concurrency {
+            let mut sides = Map::new();
+            if let Some(from) = change.from {
+                sides.insert("from".into(), Value::from(from));
+            }
+            if let Some(to) = change.to {
+                sides.insert("to".into(), Value::from(to));
+            }
+            amend.insert("maxConcurrency".into(), Value::Object(sides));
+        }
+        amend.insert(
+            "ceiling".into(),
+            Value::from(self.amend.default_concurrency),
+        );
+        meta.insert("amend".into(), Value::Object(amend));
+        Value::Object(meta)
+    }
 }
 
 /// Fork (W9a, 9.53): a launch turn of the hub start (Node `emitControlOnlyUserTurn` with origin `workflowLaunch`).

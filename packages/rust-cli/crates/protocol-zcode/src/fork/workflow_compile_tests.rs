@@ -349,6 +349,7 @@ fn a_format_analysis_maps_to_the_checker_verdict_and_ignores_the_graph() {
     assert_eq!(
         analysis_from_value(&reply).unwrap(),
         WorkflowAnalysis {
+            model_references: Vec::new(),
             ok: false,
             diagnostics: vec![WorkflowDiagnostic {
                 code: 2322,

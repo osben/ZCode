@@ -30,9 +30,20 @@ pub(crate) fn is_record(user: &UserMessage) -> bool {
 
 /// Fork (W9a, 9.53): one meta user message of a record. Every record message is built here.
 fn meta_message(ids: &dyn Ids, source: String, text: String) -> Message {
+    workflow_message(ids, source, text, None)
+}
+
+/// Fork (9.63): a workflow control record; its `workflowLaunch` metadata rides in `workflow_meta` as
+/// `{"workflowLaunch": meta}`, which the store keeps as the message's `metadata.workflowLaunch`.
+fn workflow_message(
+    ids: &dyn Ids,
+    source: String,
+    text: String,
+    meta: Option<serde_json::Value>,
+) -> Message {
     Message::User(UserMessage {
         stall_execution: None,
-        workflow_meta: None,
+        workflow_meta: meta.map(|meta| serde_json::json!({ "workflowLaunch": meta })),
         epilogue_start: None,
         intent: None,
         id: ids.message(),
@@ -58,6 +69,7 @@ pub(crate) enum HeldRecord {
     Workflow {
         source: WorkflowRecordSource,
         text: String,
+        meta: Option<serde_json::Value>,
     },
 }
 
@@ -65,8 +77,13 @@ impl HeldRecord {
     fn messages(self, ids: &dyn Ids) -> Vec<Message> {
         match self {
             Self::Local(record) => record_messages(ids, &record),
-            Self::Workflow { source, text } => {
-                vec![meta_message(ids, source.as_str().to_owned(), text)]
+            Self::Workflow { source, text, meta } => {
+                vec![workflow_message(
+                    ids,
+                    source.as_str().to_owned(),
+                    text,
+                    meta,
+                )]
             }
         }
     }
@@ -98,13 +115,19 @@ impl Actor {
         command: CommandId,
         text: String,
         source: WorkflowRecordSource,
+        meta: Option<serde_json::Value>,
     ) -> Ack {
         if self.busy() {
             self.held_records
-                .push(HeldRecord::Workflow { source, text });
+                .push(HeldRecord::Workflow { source, text, meta });
             return accepted();
         }
-        let message = meta_message(self.deps.ids.as_ref(), source.as_str().to_owned(), text);
+        let message = workflow_message(
+            self.deps.ids.as_ref(),
+            source.as_str().to_owned(),
+            text,
+            meta,
+        );
         if let Err(reason) = self
             .commit_record_messages(Some(command), vec![message])
             .await

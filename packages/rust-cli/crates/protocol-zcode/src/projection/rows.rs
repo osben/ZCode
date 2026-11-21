@@ -154,6 +154,10 @@ impl Projection {
                 }
                 self.append(key, row, out);
             }
+            // Fork (9.63): a workflow control record with its launch metadata draws Node's control-only turn.
+            Message::User(user) if workflow_launch_of(user).is_some() => {
+                self.workflow_launch_turn(user, now, seq, out);
+            }
             // Fork: a notification that opened the turn titles its header (background_result.rs).
             Message::User(user) if is_task_notification(&user.origin) => {
                 let text = text_of(&user.content);
@@ -678,4 +682,58 @@ fn ask_origin(origin: &rust_cli_kernel_api::orchestration::AskOrigin) -> Value {
         value["parentToolCallId"] = json!(tool_use.as_str());
     }
     value
+}
+
+/// Fork (9.63): the `workflowLaunch` metadata of a workflow control record (Node `workflowLaunchOfMessage`); `None` for
+/// any other message, and for a record that carries none (a hub launch, divergence 916).
+pub(super) fn workflow_launch_of(
+    user: &rust_cli_kernel_api::message::UserMessage,
+) -> Option<&Value> {
+    let UserOrigin::Meta { source } = &user.origin else {
+        return None;
+    };
+    if !rust_cli_kernel_api::workflow_run::WorkflowRecordSource::is_record_source(source) {
+        return None;
+    }
+    user.workflow_meta
+        .as_ref()?
+        .get("workflowLaunch")
+        .filter(|meta| meta.is_object())
+}
+
+impl Projection {
+    /// Fork (9.63): Node's control-only turn of a workflow record (`TurnStarted{inputSource: "workflow_launch",
+    /// executionKind: "controlOnly", workflowLaunch}` then its completion): a header and a user input, both with origin
+    /// `workflowLaunch` and the metadata, which the App draws as the launch or settings card. It runs no model, so it
+    /// opens and settles here without touching the session's phase. Live and cold draw the same rows.
+    fn workflow_launch_turn(
+        &mut self,
+        user: &rust_cli_kernel_api::message::UserMessage,
+        now: u64,
+        seq: u64,
+        out: &mut Vec<Value>,
+    ) {
+        let Some(launch) = workflow_launch_of(user).cloned() else {
+            return;
+        };
+        let turn = format!("{}:turn:workflow", user.id.as_str());
+        let key = super::turn_key(&turn);
+        if self.index.contains_key(&key) {
+            return;
+        }
+        let mut header = self.base(&turn, &turn, RowKind::TurnHeader, now, seq);
+        header.insert("origin".into(), json!("workflowLaunch"));
+        header.insert("executionKind".into(), json!("controlOnly"));
+        header.insert("workflowLaunch".into(), launch.clone());
+        header.insert("state".into(), json!("completedSuccess"));
+        header.insert("startedAt".into(), json!(now));
+        header.insert("endedAt".into(), json!(now));
+        header.insert("activeMs".into(), json!(0));
+        self.append(key, header, out);
+        let mut row = self.base(&turn, user.id.as_str(), RowKind::UserInput, now, seq);
+        row.insert("text".into(), json!(text_of(&user.content)));
+        row.insert("origin".into(), json!("workflowLaunch"));
+        row.insert("workflowLaunch".into(), launch);
+        self.append(format!("user:{}", user.id.as_str()), row, out);
+    }
 }

@@ -1138,58 +1138,233 @@ async fn a_completed_run_is_not_configurable_and_another_sessions_run_is_not_fou
     assert!(sink.turns.lock().unwrap().is_empty());
 }
 
+/// 9.63: the fixture's catalog, two DeepSeek models with no levels.
+struct Catalog;
+
+#[async_trait]
+impl rust_cli_kernel_api::provider::ModelDirectory for Catalog {
+    async fn catalog(&self) -> rust_cli_kernel_api::provider::ModelCatalog {
+        let model = |name: &str| rust_cli_kernel_api::provider::CatalogModel {
+            provider: "deepseek".to_owned(),
+            provider_name: "DeepSeek".to_owned(),
+            model: name.to_owned(),
+            protocol: rust_cli_kernel_api::provider::WireProtocol::AnthropicMessages,
+            reasoning_levels: Vec::new(),
+            context_window: 1,
+            max_output_tokens: 1,
+            capabilities: Default::default(),
+            connection: None,
+            host: None,
+        };
+        rust_cli_kernel_api::provider::ModelCatalog {
+            revision: 1,
+            models: vec![model("deepseek-v4-flash"), model("deepseek-v4-pro")],
+            default: None,
+        }
+    }
+}
+
+fn with_catalog(fx: &Fixture) {
+    let models = Arc::new(rust_cli_kernel_api::provider::LateModelDirectory::default());
+    assert!(models.set(Arc::new(Catalog)));
+    assert!(fx.service.configure_models(models));
+}
+
+/// The successor's `run-launched` payload, once its owner wrote it.
+async fn launch_of(fx: &Fixture, run: &str) -> Value {
+    let path = fx.path.clone();
+    let id = run.to_owned();
+    wait_until("the successor's run-launched event", || {
+        dwf::run_launched_payload(&open(&path), &id)
+            .ok()
+            .flatten()
+            .is_some()
+    })
+    .await;
+    dwf::run_launched_payload(&open(&fx.path), run)
+        .expect("the read")
+        .expect("the launch")
+}
+
+/// 9.63 (DWR-06, closes 663): a subagent-model change always amends (never in place). The successor runs on the
+/// canonical model, the turn records the change, and its text says where the subagents now run.
 #[tokio::test]
-async fn a_subagent_model_change_is_refused_before_anything_changes() {
+async fn a_subagent_model_change_amends_the_run_onto_the_new_model() {
     let fx = fixture(|conn| interrupted(conn, "dwfrun-model", PARENT, "return 1\n"));
+    with_catalog(&fx);
     let sink = Recorder::default();
-    let mut request = settings("dwfrun-model", Some(Some(2.0)));
-    request.subagent_model = Some(Some("provider/model".to_owned()));
+    let mut request = settings("dwfrun-model", None);
+    request.subagent_model = Some(Some("deepseek/deepseek-v4-pro".to_owned()));
     let answer = fx
         .service
         .amend_settings(PARENT, request, &sink)
         .await
         .expect("answers");
-    assert!(
-        matches!(
-            answer,
-            SettingsOutcome::Refused(SettingsRefusal::ModelUnavailable { .. })
-        ),
-        "{answer:?}"
+    let SettingsOutcome::Amended { run_id, .. } = answer else {
+        panic!("a model change amends: {answer:?}");
+    };
+    let launch = launch_of(&fx, run_id.as_str()).await;
+    assert_eq!(launch["subagentModel"], json!("deepseek/deepseek-v4-pro"));
+    let turns = sink.turns.lock().unwrap().clone();
+    assert_eq!(
+        turns[0].amend.subagent_model,
+        Some(rust_cli_kernel_api::workflow_run::ModelChange {
+            from: None,
+            to: Some("deepseek/deepseek-v4-pro".to_owned()),
+        })
     );
-    assert!(fx.fake.launches().is_empty());
-    assert_eq!(row(&fx, "dwfrun-model").status, DwfStatus::Stopped);
-    assert!(sink.turns.lock().unwrap().is_empty());
+    assert_eq!(
+        turns[0].amend.max_concurrency, None,
+        "the limit did not change"
+    );
+    assert!(
+        turns[0]
+            .text
+            .contains("from the GUI: its subagents now run on deepseek/deepseek-v4-pro."),
+        "{}",
+        turns[0].text
+    );
 }
 
+/// 9.63: a model the catalog does not have, or any model with no catalog, is refused before anything changes.
 #[tokio::test]
-async fn a_run_whose_launch_names_models_is_refused_before_the_predecessor_is_stopped() {
+async fn an_unusable_subagent_model_is_refused_before_anything_changes() {
+    for catalog in [true, false] {
+        let fx = fixture(|conn| interrupted(conn, "dwfrun-model", PARENT, "return 1\n"));
+        if catalog {
+            with_catalog(&fx);
+        }
+        let sink = Recorder::default();
+        let mut request = settings("dwfrun-model", Some(Some(2.0)));
+        request.subagent_model = Some(Some("provider/model".to_owned()));
+        let answer = fx
+            .service
+            .amend_settings(PARENT, request, &sink)
+            .await
+            .expect("answers");
+        assert!(
+            matches!(
+                answer,
+                SettingsOutcome::Refused(SettingsRefusal::ModelUnavailable { .. })
+            ),
+            "{answer:?}"
+        );
+        assert!(fx.fake.launches().is_empty());
+        assert_eq!(row(&fx, "dwfrun-model").status, DwfStatus::Stopped);
+        assert!(sink.turns.lock().unwrap().is_empty());
+    }
+}
+
+/// 9.63 (closes 665): the models a run's script named are rebound from its launch, re-resolved, and carried to the
+/// successor; one that no longer resolves refuses the change before the predecessor is touched.
+#[tokio::test]
+async fn a_run_whose_launch_names_models_is_rebound_or_refused_before_the_predecessor_is_stopped() {
+    for (bound, usable) in [
+        ("deepseek/deepseek-v4-flash", true),
+        ("openai/gpt-x", false),
+    ] {
+        let fx = fixture(|conn| {
+            interrupted(conn, "dwfrun-named", PARENT, "return 1\n");
+            dwf::append_event(
+                conn,
+                "dwfrun-named",
+                &json!({ "type": "run-launched", "modelBindings": { "poet": bound } }),
+                2,
+            )
+            .expect("seed the launch event");
+        });
+        with_catalog(&fx);
+        let sink = Recorder::default();
+        let answer = fx
+            .service
+            .amend_settings(PARENT, settings("dwfrun-named", Some(Some(2.0))), &sink)
+            .await
+            .expect("answers");
+        if usable {
+            let SettingsOutcome::Amended { run_id, .. } = answer else {
+                panic!("the bound models are kept: {answer:?}");
+            };
+            let launch = launch_of(&fx, run_id.as_str()).await;
+            assert_eq!(launch["modelBindings"], json!({ "poet": bound }));
+            continue;
+        }
+        let SettingsOutcome::Refused(SettingsRefusal::ModelUnavailable { message }) = answer else {
+            panic!("a bound model that is gone refuses: {answer:?}");
+        };
+        assert!(
+            message.starts_with(
+                "The models named in the script of run dwfrun-named cannot be used now:"
+            ),
+            "{message}"
+        );
+        assert_eq!(row(&fx, "dwfrun-named").superseded_by, None);
+        assert!(fx.fake.launches().is_empty());
+        assert!(sink.turns.lock().unwrap().is_empty());
+    }
+}
+
+/// 9.63 review: the refusal for many models that are gone is bounded as Node bounds compile diagnostics (2000 chars).
+#[tokio::test]
+async fn a_settings_refusal_for_many_unusable_models_is_bounded() {
+    let bindings: serde_json::Map<String, Value> = (0..80)
+        .map(|index| {
+            (
+                format!("persona-{index}"),
+                json!(format!("openai/gpt-{index}")),
+            )
+        })
+        .collect();
     let fx = fixture(|conn| {
-        interrupted(conn, "dwfrun-named", PARENT, "return 1\n");
+        interrupted(conn, "dwfrun-many", PARENT, "return 1\n");
         dwf::append_event(
             conn,
-            "dwfrun-named",
-            &json!({ "type": "run-launched", "modelBindings": { "poet": "openai/gpt-x" } }),
+            "dwfrun-many",
+            &json!({ "type": "run-launched", "modelBindings": bindings }),
             2,
         )
         .expect("seed the launch event");
     });
-    let sink = Recorder::default();
+    with_catalog(&fx);
     let answer = fx
         .service
-        .amend_settings(PARENT, settings("dwfrun-named", Some(Some(2.0))), &sink)
+        .amend_settings(
+            PARENT,
+            settings("dwfrun-many", Some(Some(2.0))),
+            &Recorder::default(),
+        )
         .await
         .expect("answers");
+    let SettingsOutcome::Refused(SettingsRefusal::ModelUnavailable { message }) = answer else {
+        panic!("the gone models refuse: {answer:?}");
+    };
     assert!(
-        matches!(
-            answer,
-            SettingsOutcome::Refused(SettingsRefusal::ModelUnavailable { .. })
-        ),
-        "{answer:?}"
+        message.chars().count() <= 2000,
+        "{} chars",
+        message.chars().count()
     );
-    let predecessor = row(&fx, "dwfrun-named");
-    assert_eq!(predecessor.superseded_by, None);
-    assert!(fx.fake.launches().is_empty());
-    assert!(sink.turns.lock().unwrap().is_empty());
+    assert!(message.ends_with('…'), "{message}");
+    assert!(
+        message
+            .starts_with("The models named in the script of run dwfrun-many cannot be used now:")
+    );
+}
+
+/// 9.63: an amend carries the run's subagent model and the script's table to the successor's launch (Node).
+#[tokio::test]
+async fn an_amend_records_the_subagent_model_and_the_script_models_on_the_successor() {
+    let fx = fixture(|conn| interrupted(conn, "dwfrun-a", PARENT, "return 1\n"));
+    let mut request = amend_request("dwfrun-a", "return 2\n");
+    request.subagent_model = Some(json!("deepseek/deepseek-v4-pro"));
+    request.model_bindings = Some(json!({"checker": "deepseek/deepseek-v4-flash"}));
+    let AmendResult::Started { run_id, .. } = amend(&fx.service, request).await else {
+        panic!("the amend starts");
+    };
+    let launch = launch_of(&fx, run_id.as_str()).await;
+    assert_eq!(launch["subagentModel"], json!("deepseek/deepseek-v4-pro"));
+    assert_eq!(
+        launch["modelBindings"],
+        json!({"checker": "deepseek/deepseek-v4-flash"})
+    );
 }
 
 #[tokio::test]
@@ -1221,6 +1396,7 @@ async fn the_port_retune_answers_not_live_for_a_settled_or_unknown_run() {
 fn the_settings_text_names_the_successor_or_the_in_place_run_as_node_does() {
     let amendment = SettingsAmend {
         predecessor_run_id: Some(WorkflowRunId::new("run_a")),
+        subagent_model: None,
         max_concurrency: Some(SettingsChange {
             from: Some(4.0),
             to: Some(2.0),
@@ -1235,6 +1411,7 @@ fn the_settings_text_names_the_successor_or_the_in_place_run_as_node_does() {
     );
     let in_place = SettingsAmend {
         predecessor_run_id: None,
+        subagent_model: None,
         max_concurrency: Some(SettingsChange {
             from: Some(2.0),
             to: None,
