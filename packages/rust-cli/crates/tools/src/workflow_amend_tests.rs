@@ -916,3 +916,41 @@ async fn an_amend_without_a_loaded_skill_is_refused_when_it_carries_a_script() {
         "a settings-only call reuses the script and needs no skill"
     );
 }
+
+#[tokio::test]
+async fn a_revision_of_this_sessions_own_run_skips_the_window_and_others_still_ask() {
+    // Node `rule.session.workflowOwner`: a run this session started, not stopped by the user, opens no window.
+    let cases = [
+        (
+            json!({"runId": "run-1", "ownedByThisSession": true, "status": "running"}),
+            true,
+        ),
+        (
+            json!({"runId": "run-1", "ownedByThisSession": false, "status": "running"}),
+            false,
+        ),
+        (
+            json!({"runId": "run-1", "ownedByThisSession": true, "status": "stopped", "stopReason": "user"}),
+            false,
+        ),
+        (
+            json!({"runId": "run-1", "ownedByThisSession": true, "status": "stopped", "stopReason": "superseded"}),
+            true,
+        ),
+    ];
+    for (detail, allowed) in cases {
+        let port = FakeRun::with_retune(
+            RetuneOutcome::Refused(RetuneRefusal::NotLive),
+            Some(detail.clone()),
+            Some(CLEAN),
+        );
+        let (tool, ctx, _guard) = harness(port);
+        let input = json!({"run_id": "run-1", "script": REVISED});
+        let decision = tool.check_permissions(&input, &ctx).await;
+        assert_eq!(
+            matches!(decision, PermissionDecision::Allow { .. }),
+            allowed,
+            "{detail}: {decision:?}"
+        );
+    }
+}

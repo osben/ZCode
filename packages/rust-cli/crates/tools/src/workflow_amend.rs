@@ -39,7 +39,8 @@ use crate::workflow_create::{
     diagnostics_note, output_for, write_draft_file,
 };
 use crate::workflow_tools::{
-    Contract, DYNAMIC_WORKFLOW_SKILL, contract, skill_loaded, workspace_dir,
+    Contract, DYNAMIC_WORKFLOW_SKILL, contract, is_amend_workflow_owned_predecessor,
+    owned_run_facts, skill_loaded, workspace_dir,
 };
 use crate::workspace_path::{Refusal, contain};
 
@@ -455,6 +456,14 @@ impl Tool for AmendWorkflowTool {
             },
         );
         if !checks {
+            return PermissionDecision::Allow {
+                updated_input: None,
+            };
+        }
+        // Node `rule.session.workflowOwner`: a revision of a run this session started, that the user did not stop,
+        // opens no window. This host's amend names no new model, so it never introduces a provider.
+        let predecessor = owned_run_facts(port.as_ref(), &input.run_id).await;
+        if is_amend_workflow_owned_predecessor(&predecessor) {
             return PermissionDecision::Allow {
                 updated_input: None,
             };

@@ -27,7 +27,8 @@ use tokio::sync::mpsc;
 use crate::workflow_amend::read_revision_file;
 use crate::workflow_create::{CREATE_MODEL_BYTES, output_for};
 use crate::workflow_tools::{
-    Contract, DYNAMIC_WORKFLOW_SKILL, contract, skill_loaded, workspace_dir,
+    Contract, DYNAMIC_WORKFLOW_SKILL, contract, hole_facts, is_fill_workflow_hole_owned_run,
+    owned_run_facts, skill_loaded, workspace_dir,
 };
 
 /// The skill gate's code, as AmendWorkflow reports it.
@@ -190,15 +191,26 @@ impl Tool for FillWorkflowHoleTool {
         Validation::Ok
     }
 
-    /// Node `alwaysAsk`: the fill asks in every mode; a session allow rule may answer it.
+    /// Node `alwaysAsk`: the fill asks in every mode; a session allow rule may answer it. A hole of this session's own
+    /// run, not stopped by the user, fills without a window (Node `rule.session.workflowOwner`).
     async fn check_permissions(
         &self,
         input: &Value,
-        _context: &ToolUseContext,
+        context: &ToolUseContext,
     ) -> PermissionDecision {
         let Ok(input) = serde_json::from_value::<FillInput>(input.clone()) else {
             return PermissionDecision::Passthrough;
         };
+        let port = self
+            .runs
+            .as_ref()
+            .map(|runs| runs.for_session(&context.session));
+        let run = owned_run_facts(port.as_ref(), &input.run_id).await;
+        if is_fill_workflow_hole_owned_run(&hole_facts(&run)) {
+            return PermissionDecision::Allow {
+                updated_input: None,
+            };
+        }
         PermissionDecision::always_ask(
             format!(
                 "Fill hole {} of workflow run {}",

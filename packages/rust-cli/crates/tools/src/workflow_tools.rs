@@ -15,7 +15,7 @@ use rust_cli_kernel_api::message::{ContentBlock, Message};
 use rust_cli_kernel_api::tool::{Tool, ToolUseContext};
 use rust_cli_kernel_api::tool_names;
 use rust_cli_kernel_api::workflow_analysis::WorkflowAnalyzer;
-use rust_cli_kernel_api::workflow_run::DynamicWorkflowRunSessions;
+use rust_cli_kernel_api::workflow_run::{DynamicWorkflowRunPort, DynamicWorkflowRunSessions};
 use rust_cli_kernel_api::workflow_snippet::WorkflowSnippetPort;
 use serde::Deserialize;
 use serde_json::Value;
@@ -147,6 +147,38 @@ pub fn is_amend_workflow_owned_predecessor(predecessor: &Value) -> bool {
     facts.get("owned_by_this_session") == Some(&Value::Bool(true))
         && facts.get("stop_reason") != Some(&Value::String("user".to_owned()))
         && facts.get("introduces_providers").is_none()
+}
+
+/// The ownership facts of run `run_id` that Node's `resolveInput` backfills (`describePredecessor`): whether this
+/// session started it, and its stop reason. A run that cannot be read is not owned (fail closed: the call asks).
+pub(crate) async fn owned_run_facts(
+    port: Option<&Arc<dyn DynamicWorkflowRunPort>>,
+    run_id: &str,
+) -> Value {
+    let Some(port) = port else {
+        return Value::Null;
+    };
+    let run = rust_cli_kernel_api::ids::WorkflowRunId::new(run_id.to_owned());
+    let Ok(Some(detail)) = port.get_run_detail(&run).await else {
+        return Value::Null;
+    };
+    let mut facts = serde_json::Map::new();
+    facts.insert(
+        "owned_by_this_session".into(),
+        Value::Bool(detail.get("ownedByThisSession") == Some(&Value::Bool(true))),
+    );
+    if let Some(reason) = detail.get("stopReason").filter(|reason| reason.is_string()) {
+        facts.insert("stop_reason".into(), reason.clone());
+    }
+    Value::Object(facts)
+}
+
+/// Node `describeHole`: `owned_by_this_session` folds in both amend-rule conditions (started here, not stopped by the
+/// user), so the fill's decision reads that one bit.
+pub(crate) fn hole_facts(run: &Value) -> Value {
+    serde_json::json!({
+        "owned_by_this_session": is_amend_workflow_owned_predecessor(run),
+    })
 }
 
 /// Node `isFillWorkflowHoleOwnedRun`: a hole of this session's own run, which FillWorkflowHole may fill without asking.

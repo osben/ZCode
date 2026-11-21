@@ -289,3 +289,48 @@ fn the_tool_keeps_the_model_budget_of_its_siblings() {
         Some(CREATE_MODEL_BYTES)
     );
 }
+
+/// A run port whose run detail is `detail`.
+struct Detail(serde_json::Value);
+
+#[async_trait]
+impl DynamicWorkflowRunPort for Detail {
+    async fn get_run_detail(
+        &self,
+        _run_id: &rust_cli_kernel_api::ids::WorkflowRunId,
+    ) -> Result<Option<serde_json::Value>, DynamicWorkflowRunError> {
+        Ok(Some(self.0.clone()))
+    }
+}
+
+#[tokio::test]
+async fn a_hole_of_this_sessions_own_run_fills_without_a_window_and_others_ask() {
+    use rust_cli_kernel_api::permission::PermissionDecision;
+    let cases = [
+        (
+            json!({"runId": "run-1", "ownedByThisSession": true, "status": "running"}),
+            true,
+        ),
+        (
+            json!({"runId": "run-1", "ownedByThisSession": false, "status": "running"}),
+            false,
+        ),
+        (
+            json!({"runId": "run-1", "ownedByThisSession": true, "status": "stopped", "stopReason": "user"}),
+            false,
+        ),
+    ];
+    for (detail, allowed) in cases {
+        let runs: Arc<dyn DynamicWorkflowRunSessions> =
+            Arc::new(OneSession(Arc::new(Detail(detail.clone()))));
+        let tool = tool_with(Some(runs));
+        let ctx = context(Arc::new(SkillLoaded));
+        let input = json!({"run_id": "run-1", "hole_id": "h1", "script": "return 1;"});
+        let decision = tool.check_permissions(&input, &ctx).await;
+        assert_eq!(
+            matches!(decision, PermissionDecision::Allow { .. }),
+            allowed,
+            "{detail}: {decision:?}"
+        );
+    }
+}
