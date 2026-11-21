@@ -434,6 +434,9 @@ pub fn bound_owner_factory<A: ActorAgents + ActorSessionRelease>(
                 anyhow!("the parent session {parent} is not known: its bindings are not read")
             })?;
         let run_id = config.run_id.clone();
+        // Node `workingDirectory: deps.workingDirectory`: an actor's session row is the parent's workspace, not the
+        // directory the app server opened (a multi-workspace server opens one root for all of them).
+        let actor_directory = found.workspace.root.as_str().to_owned();
         let journal = DwfJournal::new(open(&stores)?, stores.clock);
         let journaled = journal.list_events(&run_id)?;
         let facts = launch_facts(&config, &journaled)?;
@@ -486,7 +489,7 @@ pub fn bound_owner_factory<A: ActorAgents + ActorSessionRelease>(
         let sessions = SettingsRecording {
             inner: NodeActorSessions::new(
                 session_conn,
-                &stores.directory,
+                &actor_directory,
                 &stores.version,
                 stores.clock,
                 actor_turns(Arc::new(runner), actor_handle, agents.clone()),

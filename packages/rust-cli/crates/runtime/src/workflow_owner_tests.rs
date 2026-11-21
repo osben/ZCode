@@ -1004,3 +1004,60 @@ async fn a_bound_run_world_read_reaches_the_hosts_ports_at_the_run_cwd() {
     wait_until("the run to settle", || service.run_count() == 0).await;
     let _ = service.close().await;
 }
+
+/// Node `createWorkflowChildRuntime` (`workingDirectory: deps.workingDirectory`): an actor's session row is written in
+/// its parent's workspace, not the directory the app server opened, so the desktop's cold subscribe admits it.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn an_actor_session_row_is_written_in_its_parents_workspace() {
+    let dir = tempfile::tempdir().expect("temp dir");
+    let path = database(dir.path());
+    let agents = RecordingAgents::replying("done");
+    let runner = Arc::new(FakeChildRunner::new());
+    let factory = bound_owner_factory(
+        OwnerStores {
+            directory: "/app-server-root".to_owned(),
+            ..stores(path.clone())
+        },
+        agents,
+        tokio::runtime::Handle::current(),
+        ParentFixture::with(Some(selection("acct-a", "ma"))),
+        Arc::new(FixedClock(1_700_000_000_000)),
+        None,
+    );
+    let service = WorkflowRunService::new(
+        Arc::new(SessionResidency::new()),
+        Arc::new(NoGovernor),
+        runner.clone(),
+        factory,
+    );
+    service
+        .launch(input("wf_1"), launched("wf_1", guarded()))
+        .await
+        .expect("launched");
+    let answer = actor_asks(&runner.launches()[0].handler, "a1", ada(), "do it").await;
+    assert!(answer.is_ok(), "{answer:?}");
+
+    let conn = rusqlite::Connection::open(&path).expect("open");
+    let directories: Vec<(String, String)> = conn
+        .prepare(
+            "select directory, coalesce(path, '') from session where task_type = 'workflow_child'",
+        )
+        .expect("prepare")
+        .query_map([], |row| Ok((row.get(0)?, row.get(1)?)))
+        .expect("query")
+        .collect::<Result<_, _>>()
+        .expect("rows");
+    assert_eq!(directories, vec![("/work".to_owned(), "/work".to_owned())]);
+
+    runner.finish(
+        0,
+        Outcome::Completed(Completion {
+            ok: true,
+            value: Some(json!("done")),
+            error: None,
+        }),
+    );
+    wait_until("the run to settle", || service.run_count() == 0).await;
+    let report = service.close().await;
+    assert!(report.stuck.is_empty());
+}
