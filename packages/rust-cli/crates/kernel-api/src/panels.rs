@@ -185,6 +185,8 @@ pub struct WorkflowRunTask {
     /// 运行的 ID：停止时 `Command::StopTask` 用它（同 TaskStop）。
     pub id: String,
     pub title: String,
+    /// 运行启动时的墙钟时间（epoch 毫秒），照抄 run port 的 `BackgroundRunWork.started_at_ms`（9.52）。
+    /// 现在没有消费方读它（`/tasks` 的行只显示标题），留着给以后按开始时间排序或显示用时。
     pub started_at_ms: i64,
 }
 

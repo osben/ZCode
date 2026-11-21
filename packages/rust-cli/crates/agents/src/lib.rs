@@ -680,7 +680,7 @@ impl AgentSignals for Signals {
                 })
                 .collect(),
             Err(error) => {
-                tracing::debug!(event = "agents.workflow_runs.read_failed", error = %error, "reading the workflow runs for /tasks failed");
+                tracing::warn!(event = "agents.workflow_runs.read_failed", error = %error, "reading the workflow runs for /tasks failed");
                 Vec::new()
             }
         }

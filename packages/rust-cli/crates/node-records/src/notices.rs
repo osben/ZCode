@@ -6,6 +6,7 @@ use rust_cli_kernel_api::message::{
     ATTACHMENT_BLOCKS, AttachmentMessage, ContentBlock, Message, ToolResultContent, UserMessage,
     UserOrigin,
 };
+use rust_cli_kernel_api::workflow_notice_meta::replay_from_origin_meta;
 use serde_json::{Value, json};
 
 use crate::keys;
@@ -60,6 +61,11 @@ pub fn hydrate(record: &WithParts) -> Option<Message> {
             .collect()
     };
     let id = MessageId::new(record.id());
+    // 9.56 (637, 716): a notice's stored `originMeta` carries its stall execution and workflow payload. The projection
+    // needs both to draw the row the live notice drew; Node's cold read takes the stored meta verbatim.
+    let (stall_execution, workflow_meta) = stored_origin_meta(record, first)
+        .map(replay_from_origin_meta)
+        .unwrap_or((None, None));
     // Node 的分叉提示（本工程写的形状相同，没有 `rustCli`）：Node 把它当对话中间的 system 提醒
     // （`rewind_notice`）发给模型，这里还原成同来源的 attachment（session-lifecycle.md §6.5.2）。
     // Fork: the notice's `forkContext` rides along as data, so the projection can draw the fork divider.
@@ -93,8 +99,8 @@ pub fn hydrate(record: &WithParts) -> Option<Message> {
             })
             .collect();
         return Some(Message::User(UserMessage {
-            stall_execution: None,
-            workflow_meta: None,
+            stall_execution,
+            workflow_meta,
             epilogue_start: None,
             intent: None,
             id,
@@ -115,8 +121,8 @@ pub fn hydrate(record: &WithParts) -> Option<Message> {
             ),
         }),
         META => Message::User(UserMessage {
-            stall_execution: None,
-            workflow_meta: None,
+            stall_execution,
+            workflow_meta,
             epilogue_start: None,
             intent: None,
             id,
@@ -171,6 +177,17 @@ fn attachment_blocks(record: &WithParts) -> Vec<ContentBlock> {
             }
         })
         .collect()
+}
+
+/// 9.56: the `originMeta` a notice was stored with, read from the message's metadata and then from its first part's (as
+/// Node's cold read does). `None` for a message stored without one.
+fn stored_origin_meta<'a>(record: &'a WithParts, first: &'a Value) -> Option<&'a Value> {
+    let message = &record.info["metadata"]["originMeta"];
+    if message.is_object() {
+        return Some(message);
+    }
+    let part = &first["metadata"]["originMeta"];
+    part.is_object().then_some(part)
 }
 
 fn with_blocks(mut data: Value, blocks: Vec<ContentBlock>) -> Value {

@@ -203,7 +203,7 @@ pub trait AgentSignals: Send + Sync {
 
     /// 顶层会话 `session` 的子代理条目与在跑的后台子代理（`background` 里只有子代理），出自同一次读取（修复线 F34，
     /// tui-panels.md §0）：列表的行与 pill 里的子代理不会一新一旧。缺省实现依次取 [`AgentSignals::subagents`] 与
-    /// [`AgentSignals::background_entries`]。
+    /// [`AgentSignals::background_entries`]，再取 [`AgentSignals::workflow_runs`]（9.55）。
     async fn tasks_snapshot(&self, session: &SessionId) -> crate::panels::TasksSnapshot {
         crate::panels::TasksSnapshot {
             subagents: self.subagents(session).await,
