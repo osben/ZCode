@@ -461,10 +461,14 @@ async fn run_loop(
             }),
             Arc::new(SubagentContext {
                 inner: core.ports.context.clone(),
-                system: report::system(
-                    &definition.prompt,
-                    core.ports.incognito.get(&agent.child).as_ref(),
-                ),
+                system: if definition.agent_type == crate::actor_turn::WORKFLOW_ACTOR_AGENT_TYPE {
+                    report::workflow_actor_system(&definition.prompt)
+                } else {
+                    report::system(
+                        &definition.prompt,
+                        core.ports.incognito.get(&agent.child).as_ref(),
+                    )
+                },
                 inject_agents_md: agent.definition.inject_agents_md,
             }),
         )
