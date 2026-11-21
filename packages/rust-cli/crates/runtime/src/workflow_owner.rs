@@ -349,12 +349,12 @@ impl<S: ActorSessions> ActorSessions for SettingsRecording<S> {
         if let Some(selection) = &selection {
             self.journal_model(&request.actor, selection)?;
         }
-        let persona = request
-            .persona
-            .get("system")
-            .and_then(Value::as_str)
-            .unwrap_or_default()
-            .to_owned();
+        // The persona's identity (name and system text) becomes the actor's whole identity prompt (Node
+        // `createScriptWorkflowAgentRuntime`'s `workflowActor` config into the context builder's workflow path).
+        let persona = rust_cli_prompts::workflow_actor::identity(
+            request.persona.get("name").and_then(Value::as_str),
+            request.persona.get("system").and_then(Value::as_str),
+        );
         self.settings
             .record(&session, ActorSettings { persona, selection });
         Ok(session)
