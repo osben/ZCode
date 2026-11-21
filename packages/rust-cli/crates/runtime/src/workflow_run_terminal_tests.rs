@@ -123,3 +123,27 @@ fn a_run_without_a_parent_session_posts_nothing_and_an_unnamed_run_is_titled_by_
         json!({"workflowNotification": {"kind": "terminal", "status": "completed", "summary": "dwfrun-1"}}),
     );
 }
+
+/// Fork (9.61): the completion card's time cell reads `durationMs` (Node `workflowNotificationDurationMs`, this
+/// incarnation's settled-at minus started-at). An unknown duration leaves the key out, never 0.
+#[test]
+fn the_terminal_payload_carries_the_runs_wall_clock_duration() {
+    let mut settled = row(RunStatus::Completed);
+    settled.result = Some(json!("done"));
+    let notice = super::with_duration(
+        terminal_notice(&settled).expect("a completed run has a notice"),
+        super::run_duration_ms(1_000, Some(3_500)),
+    );
+    assert_eq!(notice.workflow["workflowNotification"]["durationMs"], 2_500);
+    let unknown = super::with_duration(
+        terminal_notice(&settled).expect("a completed run has a notice"),
+        super::run_duration_ms(0, Some(3_500)),
+    );
+    assert!(
+        unknown.workflow["workflowNotification"]
+            .get("durationMs")
+            .is_none()
+    );
+    assert_eq!(super::run_duration_ms(4_000, Some(3_500)), None);
+    assert_eq!(super::run_duration_ms(1_000, None), None);
+}

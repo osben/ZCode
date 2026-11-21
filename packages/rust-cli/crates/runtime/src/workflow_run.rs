@@ -452,7 +452,7 @@ impl Inner {
 
     /// Posts the terminal notice of a settled run to its parent session (9.51, W8d). Runs on the owner's thread after the
     /// settlement, with no lock held. A row that cannot be read posts nothing; the read failure is logged.
-    fn post_terminal_notice(&self, run_id: &str) {
+    fn post_terminal_notice(&self, run_id: &str, started_at_ms: i64) {
         // No sink is the gate-off default: nothing is posted and nothing is logged.
         let (signals, quota_on) = {
             let setup = self.setup.lock_unpoisoned();
@@ -505,6 +505,12 @@ impl Inner {
         let auto_resumes =
             quota_on && rust_cli_workflow::quota_resume::quota_resume_at(&row).is_some();
         if let Some(notice) = crate::workflow_run_terminal::terminal_notice(&row, auto_resumes) {
+            // Fork (9.61): the card's time cell, this incarnation's life on the injected clock.
+            let settled_at_ms = self.clock.get().map(|clock| clock.now_ms());
+            let notice = crate::workflow_run_terminal::with_duration(
+                notice,
+                crate::workflow_run_terminal::run_duration_ms(started_at_ms, settled_at_ms),
+            );
             signals.workflow_notice(
                 &SessionId::new(notice.parent_session_id),
                 notice.text,
@@ -906,7 +912,7 @@ impl WorkflowRunService {
                 }
                 drop(in_use);
                 // The run's terminal notice (9.51): the row is settled, and it is posted once, on this settlement.
-                settle_inner.post_terminal_notice(&settle_run_id);
+                settle_inner.post_terminal_notice(&settle_run_id, started_at_ms);
                 settle_inner.evict_if_idle(&settle_parent);
                 failures
             }) {

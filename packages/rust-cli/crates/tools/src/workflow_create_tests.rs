@@ -1147,6 +1147,7 @@ fn prepared(script: &str) -> Prepared {
             diagnostics: Vec::new(),
         },
         display: None,
+        shown: None,
     }
 }
 
@@ -1252,4 +1253,44 @@ async fn a_symlink_that_leads_out_of_the_workspace_is_refused_before_it_is_read(
         "{error:?}"
     );
     assert!(submits_of(&harness).is_empty());
+}
+
+/// Fork (9.61): Node's `resolveInput` puts the saved source's facts on the input the ask shows (`saved.path`,
+/// `saved.scope`, the defaulted `saved.args`, the body as `script`, the saved name as `name`), so the window's saved
+/// badge names the file. An inline script asks with the model's input.
+#[tokio::test]
+async fn the_ask_of_a_saved_run_shows_its_file_scope_and_defaulted_arguments() {
+    let harness = Harness::new(Some(FakeRun::new(None, false)));
+    let declared = vec![("n".to_owned(), arg(ArgType::Number, None, Some(json!(3))))];
+    let store = harness.store();
+    store
+        .save(
+            "nightly",
+            &saved_meta(Some(declared)),
+            "return n;",
+            Scope::Project,
+        )
+        .expect("save");
+    let path = store.path(Scope::Project, "nightly");
+    let ctx = harness.with_skill();
+    let input = json!({"saved": {"name": "nightly"}});
+    let _ = harness.tool.check_permissions(&input, &ctx).await;
+    let shown = harness
+        .tool
+        .ask_input(&ctx.tool_use)
+        .expect("the saved ask shows a resolved input");
+    assert_eq!(shown["name"], "nightly", "{shown}");
+    assert_eq!(shown["script"], "return n;", "{shown}");
+    assert_eq!(
+        shown["saved"],
+        json!({"name": "nightly", "args": {"n": 3}, "path": path.display().to_string(), "scope": "project"}),
+        "{shown}"
+    );
+
+    let inline_ctx = harness.with_skill();
+    let _ = harness
+        .tool
+        .check_permissions(&inline("return 1;"), &inline_ctx)
+        .await;
+    assert_eq!(harness.tool.ask_input(&inline_ctx.tool_use), None);
 }

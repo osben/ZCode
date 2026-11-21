@@ -84,6 +84,27 @@ pub fn terminal_notice(row: &RunRow, auto_resumes: bool) -> Option<TerminalNotic
     })
 }
 
+/// Fork (9.61): `notice` with its payload's `durationMs` (Node `workflowNotificationDurationMs`). No duration leaves the
+/// key out, so the card shows a dash, never 0.
+pub fn with_duration(mut notice: TerminalNotice, duration_ms: Option<u64>) -> TerminalNotice {
+    if let Some(ms) = duration_ms
+        && let Some(meta) = notice.workflow.get_mut("workflowNotification")
+    {
+        meta["durationMs"] = Value::from(ms);
+    }
+    notice
+}
+
+/// This incarnation's wall-clock life: `settled_at_ms - started_at_ms`. A start of 0 (no clock at launch), no settle
+/// reading, or a negative difference is unknown. Node takes the larger of this and the lineage's journaled active
+/// duration; Rust has no lineage sum (divergence 907).
+pub fn run_duration_ms(started_at_ms: i64, settled_at_ms: Option<u64>) -> Option<u64> {
+    let started = u64::try_from(started_at_ms)
+        .ok()
+        .filter(|started| *started > 0)?;
+    settled_at_ms?.checked_sub(started)
+}
+
 /// Node `serializeWorkflowArtifact`: a string is the text itself, anything else its JSON.
 fn artifact_text(value: &Value) -> String {
     match value {
