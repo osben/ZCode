@@ -658,12 +658,38 @@ impl WorkflowRunService {
         self.inner.models.set(models).is_ok()
     }
 
-    /// The catalog's entries now, or `None` without one (no session model is marked: the GUI sends a qualified id).
+    /// The catalog's entries now, or `None` without one. Fork (9.65, closes 919): `parent`'s current model is marked
+    /// current (Node's `currentSelection()` in `createModelCatalogPort`), so a bare name prefers the session's
+    /// provider. A parent whose bindings cannot be read marks none (logged): a qualified id still resolves.
     pub(crate) async fn model_entries(
         &self,
+        parent: &str,
     ) -> Option<Vec<rust_cli_tools::model_reference::CatalogEntry>> {
         let directory = self.inner.models.get()?.get()?;
-        rust_cli_tools::model_reference::read_entries(Some(directory.as_ref()), None).await
+        let selection = match self.inner.bindings.get().cloned() {
+            Some(bindings) => {
+                let parent = parent.to_owned();
+                let read =
+                    list::on_blocking_pool(move || Ok(bindings.parent_bindings(&parent))).await;
+                match read {
+                    Ok(Ok(found)) => found.and_then(|bindings| bindings.selection),
+                    Ok(Err(error))
+                    | Err(rust_cli_kernel_api::workflow_run::DynamicWorkflowRunError {
+                        message: error,
+                    }) => {
+                        tracing::warn!(
+                            event = "workflow.run.settings.parent_selection_unread",
+                            %error,
+                            "the parent's model could not be read; no catalog entry is current"
+                        );
+                        None
+                    }
+                }
+            }
+            None => None,
+        };
+        rust_cli_tools::model_reference::read_entries(Some(directory.as_ref()), selection.as_ref())
+            .await
     }
 
     /// Fork (W9a, 9.53): sets the hub start's ports, the user's home (where saved workflows live) and the compile checker

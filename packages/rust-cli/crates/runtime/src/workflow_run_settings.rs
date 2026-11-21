@@ -157,7 +157,7 @@ impl WorkflowRunService {
             .and_then(Value::as_object)
             .filter(|bindings| !bindings.is_empty())
             .cloned();
-        let entries = self.model_entries().await;
+        let entries = self.model_entries(parent).await;
         let requested = request
             .subagent_model
             .clone()

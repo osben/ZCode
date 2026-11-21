@@ -1498,6 +1498,85 @@ async fn the_settings_route_binds_the_compiled_scripts_models_with_their_positio
     assert!(fx.fake.launches().is_empty());
 }
 
+/// 9.65 (919): two providers that both serve `shared`, and the parent's current model on the second.
+struct TwoProviders;
+
+#[async_trait]
+impl rust_cli_kernel_api::provider::ModelDirectory for TwoProviders {
+    async fn catalog(&self) -> rust_cli_kernel_api::provider::ModelCatalog {
+        let model = |provider: &str, name: &str| rust_cli_kernel_api::provider::CatalogModel {
+            provider: provider.to_owned(),
+            provider_name: provider.to_owned(),
+            model: name.to_owned(),
+            protocol: rust_cli_kernel_api::provider::WireProtocol::AnthropicMessages,
+            reasoning_levels: Vec::new(),
+            default_reasoning_level: None,
+            context_window: 1,
+            max_output_tokens: 1,
+            capabilities: Default::default(),
+            connection: None,
+            host: None,
+        };
+        rust_cli_kernel_api::provider::ModelCatalog {
+            revision: 1,
+            models: vec![
+                model("alpha", "shared"),
+                model("beta", "shared"),
+                model("beta", "home"),
+            ],
+            default: None,
+        }
+    }
+}
+
+/// The parent session runs on `beta/home`.
+struct OnBeta;
+
+impl ActorBindingsPort for OnBeta {
+    fn parent_bindings(&self, parent: &str) -> Result<Option<ParentBindings>, String> {
+        Ok((parent == PARENT).then(|| ParentBindings {
+            selection: Some(rust_cli_kernel_api::model::ModelSelection::new(
+                "beta", "home",
+            )),
+            workspace: rust_cli_kernel_api::env::WorkspaceRef {
+                environment: rust_cli_kernel_api::ids::EnvironmentId::new("local"),
+                root: rust_cli_kernel_api::env::EnvPath::new("/work"),
+            },
+            interactions: None,
+        }))
+    }
+
+    fn parent_permission_mode(&self, _parent: &str) -> Result<Option<PermissionMode>, String> {
+        Ok(Some(PermissionMode::Default))
+    }
+}
+
+/// 9.65 (closes 919): the settings route marks the parent session's model as current in the catalog (Node's
+/// `currentSelection()` in `createModelCatalogPort`), so a bare name two providers serve resolves to the session's
+/// provider instead of being refused as ambiguous.
+#[tokio::test]
+async fn a_bare_model_name_prefers_the_parent_sessions_provider() {
+    let fx = fixture_with_bindings(
+        |conn| interrupted(conn, "dwfrun-bare", PARENT, "return 1\n"),
+        Arc::new(OnBeta),
+    );
+    let models = Arc::new(rust_cli_kernel_api::provider::LateModelDirectory::default());
+    assert!(models.set(Arc::new(TwoProviders)));
+    assert!(fx.service.configure_models(models));
+    let mut request = settings("dwfrun-bare", None);
+    request.subagent_model = Some(Some("shared".to_owned()));
+    let answer = fx
+        .service
+        .amend_settings(PARENT, request, &Recorder::default())
+        .await
+        .expect("answers");
+    let SettingsOutcome::Amended { run_id, .. } = answer else {
+        panic!("the session's provider wins: {answer:?}");
+    };
+    let launch = launch_of(&fx, run_id.as_str()).await;
+    assert_eq!(launch["subagentModel"], json!("beta/shared"));
+}
+
 /// 9.63: an amend carries the run's subagent model and the script's table to the successor's launch (Node).
 #[tokio::test]
 async fn an_amend_records_the_subagent_model_and_the_script_models_on_the_successor() {
