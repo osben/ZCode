@@ -117,6 +117,11 @@ impl UserCommands for SkillCommands {
         let Some((name, args)) = parse(text) else {
             return Expansion::NotCommand;
         };
+        // W9b-2 (9.57, ocr #615): a reserved built-in name is never a skill command (Node returns no prompt for it), so a
+        // skill named `workflow` cannot take the built-in's place, whatever the gate.
+        if rust_cli_kernel_api::slash_names::is_reserved_slash_name(name) {
+            return Expansion::NotCommand;
+        }
         let skills = self
             .catalog
             .skills_in(&context.workspace, Some(&context.session))

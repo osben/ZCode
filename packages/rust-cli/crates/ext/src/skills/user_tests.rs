@@ -296,3 +296,17 @@ async fn k9_print_sessions_add_the_unknown_command_note() {
         );
     }
 }
+
+/// W9b-2 (9.57, ocr finding on #615): a user skill named like a reserved built-in (`workflow`) is not a command, as Node's
+/// `resolveZCodeCustomCommandPrompt` returns no prompt for a reserved name. Typing `/workflow` never runs the shadowing skill.
+#[tokio::test]
+async fn a_skill_named_like_a_reserved_built_in_does_not_expand() {
+    let env = Arc::new(
+        MemoryEnvironment::new(facts())
+            .with_file(&format!("{CWD}/.zcode/skills/workflow/SKILL.md"), GREET),
+    );
+    let got = commands(env.clone())
+        .expand("/workflow Ada", tool_context(env, PermissionMode::DontAsk))
+        .await;
+    assert_eq!(got, Expansion::NotCommand);
+}

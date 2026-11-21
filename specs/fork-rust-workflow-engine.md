@@ -4987,6 +4987,14 @@ child (`node --max-old-space-size=256`) was spawned, so no child RSS was observe
 container: `zcode-rs` at most about 70 MB, the wdio runner at most about 920 MB. The W4 measurement (about 56 MB for the Node
 child, the Q8 note under the W4 row in section 3) stands. The packaged-build measure is still open (divergence 896).
 
+**Review of PR #615 (ocr, 7 findings), as fixed.** The reserved set is the full Node set (29 names: the help-entry names,
+their aliases, `compress`, `plan`), moved to `rust_cli_kernel_api::slash_names` so the catalog and the expansion read one list.
+Names are normalized as Node does (trim, drop the leading slashes, lowercase). A skill named like a reserved name does not
+expand (`SkillCommands::expand`, red test first: `/workflow` ran the shadowing skill with the gate closed). The catalog assembly
+is a pure function (`slash_builtins::catalog_commands`), tested for order, the gate and reserved custom names. The module
+declaration in `fork/mod.rs` is back above the doc comment it had split. Still not covered by a unit test: the read of the
+cached gate fact in `read_presentation` (it is `dynamic_workflow_preferences()`, the same read the other gate sites use).
+
 **Node divergences (new in 9.57, numbered from 890).**
 
 890. Classification (7.1): all 26 specs are reusable as is by static review. No spec needs a Rust fixture.
