@@ -218,11 +218,11 @@ async fn without_the_dynamic_workflows_skill_the_call_is_refused_with_428() {
     let (message, code) =
         invalid_message(&validation_of(&harness, &json!({"code": "return 1;"}), Vec::new()).await);
     assert_eq!(code, Some(428));
-    assert!(
-        message.starts_with("EvalWorkflowSnippet needs the `dynamic-workflows` skill loaded"),
-        "{message}"
+    // Node's shared gate text (core `tool/handlers/workflow-skill-gate.ts`; W9h, 9.64).
+    assert_eq!(
+        message,
+        "EvalWorkflowSnippet needs the `dynamic-workflows` skill loaded in this session before it accepts a script. Call the Skill tool with skill \"dynamic-workflows\" first — it carries the facade declarations the script is checked against, the authoring rules and this tool's full contract — then call EvalWorkflowSnippet again. Nothing was started."
     );
-    assert!(message.ends_with("Nothing was started."), "{message}");
 }
 
 // ---- the confirmation (check_permissions) ----

@@ -388,7 +388,7 @@ impl Tool for EvalWorkflowSnippetTool {
         if !skill_loaded(context).await {
             return Validation::Invalid {
                 message: format!(
-                    "EvalWorkflowSnippet needs the `{DYNAMIC_WORKFLOW_SKILL}` skill loaded in this session before it accepts a snippet. Call the Skill tool with skill \"{DYNAMIC_WORKFLOW_SKILL}\" first — it carries the facade declarations the snippet is checked against, the authoring rules and this tool's full contract — then call EvalWorkflowSnippet again. Nothing was started."
+                    "EvalWorkflowSnippet needs the `{DYNAMIC_WORKFLOW_SKILL}` skill loaded in this session before it accepts a script. Call the Skill tool with skill \"{DYNAMIC_WORKFLOW_SKILL}\" first — it carries the facade declarations the script is checked against, the authoring rules and this tool's full contract — then call EvalWorkflowSnippet again. Nothing was started."
                 ),
                 error_code: Some(SKILL_NOT_LOADED_CODE),
             };
