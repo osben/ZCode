@@ -428,7 +428,7 @@ impl Live {
     #[cfg(test)]
     pub(crate) fn snapshot(&self) -> Value {
         let state = self.state();
-        state.projection.snapshot(0, state.log.epoch())
+        snapshot_of(&state, 0)
     }
 
     pub fn topic(&self) -> String {
@@ -451,7 +451,7 @@ impl Live {
             let Some(seq) = state.log.start(subscription) else {
                 return;
             };
-            let mut snapshot = state.projection.snapshot(seq, state.log.epoch());
+            let mut snapshot = snapshot_of(&state, seq);
             if let Some(preparation) = &state.preparation {
                 snapshot["meta"]["submissionPreparation"] = preparation.clone();
             }
@@ -1331,4 +1331,14 @@ impl SessionSink for Live {
         };
         self.write(outgoing).await;
     }
+}
+
+/// The session's snapshot at `seq`. Fork (9.61): it carries the session's `workflowRuns` as folded from the run deltas,
+/// so a subscriber that missed them (a renderer reload) still sees the runs (Node's cold snapshot carries the key).
+fn snapshot_of(state: &State, seq: u64) -> Value {
+    let mut snapshot = state.projection.snapshot(seq, state.log.epoch());
+    if let Some(runs) = &state.workflow_runs {
+        snapshot["workflowRuns"] = runs.to_value();
+    }
+    snapshot
 }

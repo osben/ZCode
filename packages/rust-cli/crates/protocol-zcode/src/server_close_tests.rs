@@ -607,6 +607,31 @@ async fn a_workflow_run_delta_puts_the_run_on_the_sessions_index_row() {
     );
 }
 
+/// Fork (9.61): a renderer that subscribes again (a reload) gets the session's runs in its snapshot. The run deltas it
+/// missed are before the snapshot's sequence, so without the key the run card has nothing to join on (Node's cold
+/// snapshot carries `workflowRuns`).
+#[tokio::test]
+async fn a_new_subscription_snapshot_carries_the_sessions_workflow_runs() {
+    let (_scope, server, _handle, _queries) = open(false).await;
+    let live = server.live(&SessionId::new("s1")).await.unwrap();
+    assert!(live.sink.snapshot().get("workflowRuns").is_none());
+    let born = json!({
+        "op": "workflowRun.updated",
+        "revision": 1,
+        "runId": "run-1",
+        "run": {"runId": "run-1", "toolCallId": "call-1", "status": "running", "usage": {}, "lastEventSequence": 1},
+        "actors": [],
+        "nodes": []
+    });
+    live.sink.workflow_runs_changed(vec![born]).await;
+    let snapshot = live.sink.snapshot();
+    assert_eq!(snapshot["workflowRuns"]["revision"], 1, "{snapshot}");
+    assert_eq!(
+        snapshot["workflowRuns"]["runs"][0]["runId"], "run-1",
+        "{snapshot}"
+    );
+}
+
 /// A deferred close that dropped the draft first wins: the input is refused, not accepted and lost.
 #[tokio::test]
 async fn an_input_after_the_draft_was_dropped_is_refused() {
