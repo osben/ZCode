@@ -39,7 +39,12 @@ fn a_completed_run_posts_its_result_to_the_parent_with_the_terminal_payload() {
     settled.result = Some(json!({"n": 2}));
     let notice = terminal_notice(&settled).expect("a completed run has a notice");
     assert_eq!(notice.parent_session_id, "sess-parent");
-    assert!(notice.text.starts_with(
+    // Node `formatIncomingMessage(.., "task_notification")`: the background-task preamble, then the envelope (9.61).
+    let envelope = notice
+        .text
+        .strip_prefix(rust_cli_prompts::agents::notification_preamble())
+        .expect("the terminal notice opens with the background-task preamble");
+    assert!(envelope.starts_with(
         "<task-notification>\n<task-id>dwfrun-1</task-id>\n<tool-use-id>toolu_1</tool-use-id>\n<status>completed</status>"
     ));
     assert!(notice.text.contains("<result>{&quot;n&quot;:2}</result>"));

@@ -210,7 +210,10 @@ async fn a_settled_run_posts_exactly_one_terminal_notice_to_its_parent() {
     let (session, text, workflow) = &posted[0];
     assert_eq!(session, PARENT);
     assert!(
-        text.starts_with("<task-notification>\n<task-id>wf_1</task-id>"),
+        text.starts_with(&format!(
+            "{}<task-notification>\n<task-id>wf_1</task-id>",
+            rust_cli_prompts::agents::notification_preamble()
+        )),
         "{text}"
     );
     assert!(text.contains("<status>completed</status>"), "{text}");

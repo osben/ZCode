@@ -59,7 +59,10 @@ pub fn terminal_notice(row: &RunRow, auto_resumes: bool) -> Option<TerminalNotic
         (None, Some(message)) => Some(ErrorText::Plain(message)),
         (None, None) => None,
     };
-    let text = terminal(&Terminal {
+    // Fork (9.61): Node delivers the envelope as a `task_notification` input, which `formatIncomingMessage` opens with the
+    // background-task preamble. Node's other preamble, for a notice delivered in the same turn as a user message, is not
+    // chosen here (divergence 909).
+    let envelope = terminal(&Terminal {
         run_id,
         subject,
         tool_use_id: row.tool_call_id.as_deref(),
@@ -69,6 +72,10 @@ pub fn terminal_notice(row: &RunRow, auto_resumes: bool) -> Option<TerminalNotic
         error,
         auto_resumes_after_reset: auto_resumes,
     });
+    let text = format!(
+        "{}{envelope}",
+        rust_cli_prompts::agents::notification_preamble()
+    );
     let workflow = workflow_notice_meta::terminal(&TerminalPayload {
         status,
         stop_reason,
