@@ -299,6 +299,45 @@ async fn k9_print_sessions_add_the_unknown_command_note() {
 
 /// W9b-2 (9.57, ocr finding on #615): a user skill named like a reserved built-in (`workflow`) is not a command, as Node's
 /// `resolveZCodeCustomCommandPrompt` returns no prompt for a reserved name. Typing `/workflow` never runs the shadowing skill.
+/// W9b-2 (9.57, ocr round 2 on #615): `commands` lists every skill, the reserved user skill `dream` too (settings lists them;
+/// the TUI shelf filters reserved names), and marks the runtime's built-in `init` as built-in.
+#[tokio::test]
+async fn commands_lists_every_skill_and_marks_the_built_in_init() {
+    let env = Arc::new(
+        MemoryEnvironment::new(facts())
+            .with_file(&format!("{CWD}/.zcode/skills/dream/SKILL.md"), GREET),
+    );
+    let listed = commands(env)
+        .commands(&crate::test_support::workspace())
+        .await;
+    let dream = listed
+        .iter()
+        .find(|command| command.name == "dream")
+        .expect("the user skill is listed");
+    assert!(!dream.builtin);
+    let init = listed
+        .iter()
+        .find(|command| command.name == "init")
+        .expect("the built-in init is listed");
+    assert!(init.builtin);
+}
+
+/// W9b-2 (9.57, ocr round 2 on #615): the runtime's own built-in skill `init` is not a user skill, so the reserved-name
+/// guard does not refuse it. `/init` expands to its prompt, as `/loop` does.
+#[tokio::test]
+async fn the_built_in_init_skill_still_expands() {
+    let Expansion::Messages { messages, query } = expand("/init notes").await else {
+        panic!("/init should expand to the built-in skill");
+    };
+    assert!(query);
+    assert_eq!(
+        messages[0],
+        input(
+            "<command-message>init</command-message>\n<command-name>/init</command-name>\n<command-args>notes</command-args>"
+        )
+    );
+}
+
 #[tokio::test]
 async fn a_skill_named_like_a_reserved_built_in_does_not_expand() {
     let env = Arc::new(

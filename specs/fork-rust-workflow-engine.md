@@ -4995,6 +4995,16 @@ is a pure function (`slash_builtins::catalog_commands`), tested for order, the g
 declaration in `fork/mod.rs` is back above the doc comment it had split. Still not covered by a unit test: the read of the
 cached gate fact in `read_presentation` (it is `dynamic_workflow_preferences()`, the same read the other gate sites use).
 
+**Review round 2 of PR #615 (ocr, 3 findings), as fixed.** The guard that refused reserved names blocked the runtime's own
+built-in `init`, so `/init` became plain text (high). It now checks the matched skill: a user, project or plugin skill with a
+reserved name is refused, and a built-in skill (`SkillSource::Builtin`) still expands. Red test first (`/init` returned plain
+input). The TUI shelf (`runner/session.rs` `fetch_commands`) does not offer a reserved name that expansion refuses. The filter is
+at that consumer, not in `UserCommands::commands`, because the settings Skills and Commands sections read the same list and
+must keep listing every installed skill. `UserCommand` carries a `builtin` flag (serde default, skipped when false), so the
+desktop catalog keeps the built-in `init` and drops a user `init`. The catalog comment on `init` was wrong (Rust runs `/init`);
+corrected, and divergence 893 says what is listed. Not verified and not changed: whether any other consumer of the list
+(the `$` mention) offers a reserved file skill.
+
 **Node divergences (new in 9.57, numbered from 890).**
 
 890. Classification (7.1): all 26 specs are reusable as is by static review. No spec needs a Rust fixture.
@@ -5003,9 +5013,9 @@ cached gate fact in `read_presentation` (it is `dynamic_workflow_preferences()`,
      and the hub at its first assertion). The Rust result is recorded per spec above. The gate is not green.
 892. **Open, in scope, not built.** Rust does not load the bundled `dynamic-workflows` skill (root cause above). It is the cause
      of 21 of the 25 Rust failures. Node's bundled skill roots are not ported; the fix belongs in the skill catalog (`crates/ext`).
-893. The built-ins in the `/` catalog (`goal`, `workflow` while the gate is open, `compact`) are listed by Rust now. Node also lists
-     `init` and `dream`. Rust has no `dream` command, and `init` is a Rust builtin skill, not a built-in command. Neither is listed,
-     so the catalog still differs from Node for those two. Open.
+893. The `/` catalog lists `goal`, `workflow` (while the gate is open) and `compact` as built-in commands, and `init` as the runtime's
+     built-in skill (`SkillSource::Builtin`, which `/init` still runs as). Node also lists `dream`. Rust has no `dream` command, so
+     `dream` is not listed. The catalog differs from Node only for `dream`. Open.
 894. The catalog refresh after a mode change (DWG-23 in `gray-disabled` and `gray-always-on-user-choice`): after the mode is set, the
      new draft's `/` panel still shows or hides `workflow` as before. Node fails the same assertion in the same container, so this is
      a shared open item, not a Rust-only divergence. The policy update (`dynamic-workflow-policy.ts`) does not republish the catalog

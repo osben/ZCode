@@ -30,6 +30,7 @@ fn greet() -> UserCommand {
         description: "Greet someone".into(),
         argument_hint: None,
         hidden: false,
+        builtin: false,
     }
 }
 

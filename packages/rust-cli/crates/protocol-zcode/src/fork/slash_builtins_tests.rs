@@ -7,8 +7,20 @@ fn names(commands: &[Value]) -> Vec<&str> {
         .collect()
 }
 
-fn custom(name: &str) -> Value {
-    json!({"name": name, "description": "a custom command", "source": "custom"})
+/// A custom command entry (not the runtime's built-in skill).
+fn custom(name: &str) -> (Value, bool) {
+    (
+        json!({"name": name, "description": "a custom command", "source": "custom"}),
+        false,
+    )
+}
+
+/// The runtime's own built-in skill, as the skill catalog reports it (`builtin: true`).
+fn built_in_skill(name: &str) -> (Value, bool) {
+    (
+        json!({"name": name, "description": "a built-in skill", "source": "custom"}),
+        true,
+    )
 }
 
 #[test]
@@ -59,4 +71,14 @@ fn a_custom_command_with_a_reserved_name_is_dropped_whatever_its_case_or_slash()
 fn a_reserved_custom_workflow_stays_out_while_the_gate_is_closed() {
     let commands = catalog_commands(false, [custom("workflow")]);
     assert_eq!(names(&commands), ["goal", "compact"]);
+}
+
+/// W9b-2 (9.57, ocr round 2 on #615): the runtime's built-in `init` skill is listed, though `init` is reserved, because it is
+/// not a user skill and `/init` still runs (ext `user.rs`). A user skill named `init` is still dropped.
+#[test]
+fn the_built_in_init_skill_is_listed_and_a_user_init_is_not() {
+    let listed = catalog_commands(true, [built_in_skill("init")]);
+    assert_eq!(names(&listed), ["goal", "workflow", "compact", "init"]);
+    let dropped = catalog_commands(true, [custom("init")]);
+    assert_eq!(names(&dropped), ["goal", "workflow", "compact"]);
 }

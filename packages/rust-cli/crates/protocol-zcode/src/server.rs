@@ -504,12 +504,13 @@ impl Server {
             .into_iter()
             .filter(|command| !command.hidden && !command.name.is_empty())
             .map(|command| {
+                let builtin = command.builtin;
                 let mut value = json!({"name": command.name, "description": command.description,
                     "source": "custom"});
                 if let Some(hint) = command.argument_hint {
                     value["inputHint"] = json!(hint);
                 }
-                value
+                (value, builtin)
             });
         let commands = crate::fork::slash_builtins::catalog_commands(workflow_enabled, custom);
         json!({"workspace": workspace, "mode": self.defaults.mode.node_name(),
