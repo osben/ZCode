@@ -204,6 +204,12 @@ pub(crate) enum ActorRequest {
     },
     /// The child's `phase-entered` event (W7-5a-2). No answer goes back.
     EnterPhase { name: String },
+    /// The child's `declare-artifact` event (Node `declarePresetArtifact`). No answer goes back; a refusal fails the run.
+    DeclareArtifact {
+        site_id: String,
+        op: String,
+        args: Vec<Value>,
+    },
 }
 
 impl ActorHandle {
@@ -370,6 +376,13 @@ fn dispatch_request<J: JournalPort, S: ActorSessions>(
         } => {
             if let Err(error) = owner.report(&site_id, item, artifact_id.as_deref()) {
                 tracing::warn!("the owner failed to record a workflow report: {error:#}");
+            }
+        }
+        ActorRequest::DeclareArtifact { site_id, op, args } => {
+            if let Err(error) = owner.declare_artifact(&site_id, &op, &args) {
+                tracing::warn!(
+                    "the owner failed to record a workflow artifact declaration: {error:#}"
+                );
             }
         }
         ActorRequest::EnterPhase { name } => {
@@ -765,6 +778,15 @@ impl ActorHandle {
             site_id: site_id.to_owned(),
             item,
             artifact_id: artifact_id.map(str::to_owned),
+        })
+    }
+
+    /// The child's `declare-artifact` event. Posted without an answer, in order with the reports that follow it.
+    pub fn declare_artifact(&self, site_id: &str, op: &str, args: Vec<Value>) -> bool {
+        self.post(ActorRequest::DeclareArtifact {
+            site_id: site_id.to_owned(),
+            op: op.to_owned(),
+            args,
         })
     }
 

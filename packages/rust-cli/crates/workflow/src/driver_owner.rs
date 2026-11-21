@@ -874,6 +874,12 @@ impl<J: JournalPort, S: ActorSessions> ActorDriverOwner<J, S> {
         self.after_engine(result)
     }
 
+    /// The child's declare-artifact event. Node `declarePresetArtifact`: a predeclared artifact the run's reports fill.
+    pub fn declare_artifact(&mut self, site_id: &str, op: &str, args: &[Value]) -> Result<()> {
+        let result = self.engine.declare_artifact(site_id, op, args);
+        self.after_engine(result)
+    }
+
     /// Attach the host's world wiring. Until it is attached, world reads fail with a driver fault.
     pub fn with_world(mut self, wiring: WorldWiring) -> Self {
         self.engine.driver.world = Some(wiring);

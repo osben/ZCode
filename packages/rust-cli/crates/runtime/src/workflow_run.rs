@@ -1221,13 +1221,9 @@ impl ChildHandler for WireBridge {
             ChildEvent::PhaseEntered { name } => {
                 let _ = self.handle.enter_phase(&name);
             }
-            // The mailbox has no declare-artifact request yet (9.23 defers it), so the run fails rather than drop it. The
-            // failure is posted inline, not on the blocking pool: a later `complete` from this child must queue after it.
-            ChildEvent::DeclareArtifact { .. } => {
-                let _ = self.handle.fail_posted(WorkflowError::new(
-                    ErrorCode::DriverError,
-                    "declare-artifact is not wired yet",
-                ));
+            // Posted inline, as a report is: the reports that fill the declared artifact queue after it.
+            ChildEvent::DeclareArtifact { site_id, op, args } => {
+                let _ = self.handle.declare_artifact(&site_id, &op, args);
             }
         }
     }

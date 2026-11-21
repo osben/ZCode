@@ -615,3 +615,29 @@ fn a_report_tagged_with_an_undeclared_preset_fails_the_run_through_the_mailbox()
         other => panic!("expected the run to fail, got {other:?}"),
     }
 }
+
+#[test]
+fn a_declared_preset_through_the_mailbox_takes_its_tagged_reports() {
+    // Node `declarePresetArtifact` then `report(item, id)`: the declaration is journaled and the tagged report lands.
+    let (mut owner, _sessions) = owner();
+    let (mailbox, handle) = ActorMailbox::new();
+    let spec =
+        json!({"title": "Cases", "columns": [{"field": "name", "label": "Case"}], "key": "name"});
+    assert!(handle.declare_artifact("decl", "table", vec![json!("cases"), spec]));
+    mailbox
+        .serve_next(&mut owner)
+        .expect("serve the declaration");
+    assert!(handle.report("site", json!({"name": "alpha"}), Some("cases")));
+    mailbox.serve_next(&mut owner).expect("serve the report");
+    assert!(
+        owner.settlement().is_none(),
+        "the run goes on: {:?}",
+        owner.settlement()
+    );
+    let reports: Vec<Value> = journaled(&owner)
+        .into_iter()
+        .filter(|event| event["type"] == "report")
+        .collect();
+    assert_eq!(reports.len(), 1, "{reports:?}");
+    assert_eq!(reports[0]["artifactId"], "cases");
+}
