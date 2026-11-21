@@ -5605,15 +5605,36 @@ column}`) are bound into `modelBindings` (Node `readScriptModelBindings`); an un
   `a_cold_settings_record_draws_the_same_turn`, `a_workflow_record_keeps_its_launch_metadata_and_reads_it_back`;
   `a_record_without_launch_metadata_draws_no_row` passed before and after.
 
-**questions (DWQ-01), a test-side race that Node shares (recorded, not fixed).** It failed again in the Rust sweep
+**questions (DWQ-01), a test-side race that Node shares (spec fixed by the review round below).** It failed again in the Rust sweep
 (out-w9g-sweep). Three Node runs of the spec in the box on this head (out-w9g-node-q) gave FAIL, PASS, FAIL, and the
 kept Node failure has the same signature as every Rust one: the row's text has the question and the context but not
 the qid. `WorkflowRunQuestionRow` renders the question, the context, the waited label and the qid from one
 `WorkflowRunPendingQuestion` in one render (`data-qid` is already set on the element the test found), so neither
 runtime emits the row before its text. The missing pieces are both in the trailing `shrink-0` span (the waited label is
 missing too), and WebDriver `getText` returns only text it counts as shown. The likely cause is that the read lands
-while the side panel the chip click opens is still laying out, with that span clipped (not proven). The fix belongs in
-the spec, which should wait for the qid text, as it already does for the context; it is not made here.
+while the side panel the chip click opens is still laying out, with that span clipped (not proven).
+
+**Review (ocr of #621).** Seven findings, all valid, all fixed:
+
+- CreateWorkflow's permission decision turned a `subagent_model` that no longer resolves into none, so the run started on
+  the session model. The causes are a hook's `updatedInput` or a catalog that changed after validation. It now denies
+  with the resolver's text, as validation does. Test: `a_model_that_stops_resolving_after_validation_starts_nothing`.
+- AmendWorkflow resolved a revision's models up to four times, on different catalog and detail reads, so the owner
+  exemption could disagree with what the amend submitted. `Pending` now carries the one `models_of` result from the
+  decision, the call's no-approval branch, or the retune fallback, and `finish_revision` submits it. Test:
+  `the_call_submits_the_models_the_decision_resolved`.
+- The settings refusal for unusable script models joined its lines with no bound. It is now cut to Node's
+  compile-diagnostics limit, 2000 chars, by `bounded_text`, which is factored out of `bounded_diagnostics`. The lines keep
+  no `L:C` prefix, because the names come from the launch table and have no position. Test:
+  `a_settings_refusal_for_many_unusable_models_is_bounded`.
+- Docs and dead code: the `SettingsRequest::subagent_model` doc describes its three states. The 9.53 doc is back on
+  `configure_saved_start`, and the `describeWorkflowScriptPath` line is back on `describe_script_path`.
+  `RunStore::launch_binds_models` is removed (default, SQLite impl, lazy-store delegation); nothing called it after the
+  settings path moved to `launch_payload`.
+- The questions spec now waits for the qid text in the row before it reads it, as it already waits for the context. The
+  change is test-only. Box runs after the fix: not run. The box image `zcode-e2e-box:latest` and every `zcode-box-*`
+  volume were gone from the docker host before the first run (not removed by this session), so the Rust and Node re-runs
+  of questions, run-pane-details and save-window are pending.
 
 **Divergences.**
 
