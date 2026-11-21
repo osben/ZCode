@@ -104,6 +104,17 @@ pub trait RunStore: Send + Sync {
         let _ = live_here;
         self.run_detail(run_id, default_concurrency)
     }
+
+    /// Node `replayProgressForSession` (9.62, DWP-02): this parent's journaled runs, oldest first, replayed into the
+    /// `workflowRuns` deltas a cold open folds, so the session's runs read the same before and after a restart. The runs in
+    /// `exclude` (live in this process, whose progress the session already gets) are skipped. Required, not defaulted, like
+    /// `amend_preflight`: the composition's lazy wrapper kept a default once, and a restarted app drew no run card.
+    fn session_progress(
+        &self,
+        parent_session_id: &str,
+        exclude: &std::collections::HashSet<String>,
+        default_concurrency: f64,
+    ) -> Result<Vec<serde_json::Value>>;
 }
 
 /// What one detail read holds, all from one snapshot of the journal (9.42).
@@ -231,6 +242,47 @@ impl RunStore for SqliteRunStore {
         default_concurrency: Option<f64>,
     ) -> Result<Option<RunDetail>> {
         self.run_detail_for(run_id, default_concurrency, true)
+    }
+
+    fn session_progress(
+        &self,
+        parent_session_id: &str,
+        exclude: &std::collections::HashSet<String>,
+        default_concurrency: f64,
+    ) -> Result<Vec<serde_json::Value>> {
+        let limits = &rust_cli_node_store::WORKFLOW_RUN_LIMITS;
+        // One read transaction, so every run's row and events share one WAL snapshot (as `run_detail_for`).
+        let runs = {
+            let conn = self.conn.lock_unpoisoned();
+            let tx = conn.unchecked_transaction()?;
+            // Node bounds the enumeration by the projection's eviction, so the cold state is what a long-lived process keeps.
+            let rows = dwf::list_runs_by_parent_session(&tx, parent_session_id, limits.max_runs)?;
+            let mut runs = Vec::with_capacity(rows.len());
+            // Enumerated newest first; replayed oldest first, so the reducer's eviction follows the live arrival order.
+            // The list row is the run Node replays (`replayRunProgress(row, journal)`); it leaves out the result, which the
+            // replay does not read.
+            for row in rows.into_iter().rev() {
+                if exclude.contains(&row.run.run_id) {
+                    continue;
+                }
+                let events =
+                    dwf::list_events_with_report_cap(&tx, &row.run.run_id, limits.max_reports)?;
+                runs.push((row.run, events));
+            }
+            runs
+        };
+        let mut projection = rust_cli_node_store::LiveProjection::new(*limits);
+        let mut deltas = Vec::new();
+        for (record, events) in &runs {
+            for envelope in
+                rust_cli_node_store::replay_run_envelopes(record, events, default_concurrency)
+            {
+                if let Some(ops) = projection.apply(&envelope) {
+                    deltas.extend(ops);
+                }
+            }
+        }
+        Ok(deltas)
     }
 
     fn run_detail_for(

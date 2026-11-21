@@ -129,6 +129,31 @@ pub fn link(
     messages::save_part(ctx.conn, &part, ctx.now as i64).storage()
 }
 
+/// Fork (9.62, DWL-05): a completed call's result display (`Fact::ToolDisplayed`), kept in the part's
+/// `state.metadata.display` like Node `completedToolPartMetadata`, so Node's hydration and a Rust cold read draw the same
+/// card. Committed after the result, like [`link`]. A part whose result is an error keeps none (Node writes none there).
+pub fn display(ctx: &Commit<'_>, call: &ToolUseId, display: &Value) -> Result<(), StoreError> {
+    let row =
+        messages::last_tool_part_in_session(ctx.conn, ctx.session, call.as_str()).storage()?;
+    // A card is never worth the batch: Node writes it inside the part's own write and has no failure of its own, so a
+    // part this store cannot find keeps the result without its card.
+    let Some((id, message, data)) = row else {
+        tracing::warn!(
+            event = "store.tool_display.no_part",
+            session = %ctx.session,
+            tool_use = %call,
+            "the result display was not stored: no tool part for the call"
+        );
+        return Ok(());
+    };
+    let mut part = decode_part(&data, &id, ctx.session, &message).storage()?;
+    if part["state"]["status"].as_str() != Some("completed") {
+        return Ok(());
+    }
+    part["state"]["metadata"]["display"] = display.clone();
+    messages::save_part(ctx.conn, &part, ctx.now as i64).storage()
+}
+
 #[cfg(test)]
 #[path = "tool_parts_tests.rs"]
 mod tests;

@@ -109,6 +109,11 @@ impl Projection {
                 // Fork: a slash command row shows what the user typed (`/goal <objective>`), like Node.
                 let shown = rust_cli_kernel_api::user_command::display(&shown).unwrap_or(shown);
                 row.insert("text".into(), json!(shown));
+                // Fork (9.62, DWT-03): the engine text's start (Node `projection-rows.ts`), live and cold alike, so the
+                // App folds an actor ask's epilogue under the author's instructions.
+                if let Some(start) = user.epilogue_start {
+                    row.insert("epilogueStart".into(), json!(start));
+                }
                 // Fork: chips come from the stored attachments (live and cold alike), never from the input facts.
                 let chips: Vec<Value> = user
                     .content

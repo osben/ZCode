@@ -2,8 +2,8 @@
 //! `runtime-task/notification.ts`, its summary `buildWorkflowTaskSummary` in `tool/executor/workflow-artifact.ts`, and
 //! the presentation guidance `workflowDeliveryGuidance`). Posted once when the run settles (9.51, W8d).
 //!
-//! Not built here: the `<reports>` and `<artifacts>` sections, `<output-file>`, `scriptPath` (the run has no file this
-//! port names) and the usage block. The guidance takes the "no artifacts, no script file" branches (divergence 720).
+//! Not built here: the `<reports>` and `<artifacts>` sections, `<output-file>` and the usage block. The guidance takes
+//! the "no artifacts" branches (divergence 720); the run's script file is named when the journal has one (9.62).
 
 use crate::workflow_notice::{escape_xml, truncate_task_notification};
 
@@ -30,6 +30,9 @@ pub struct Terminal<'a> {
     pub error: Option<ErrorText<'a>>,
     /// A quota stop with a reset time, which the host resumes by itself (Node `autoResumesAfterReset`).
     pub auto_resumes_after_reset: bool,
+    /// The run's script file as the model should read it (Node `scriptPath`, relative to the working directory when inside
+    /// it). `None` keeps the old wording of the errored and model-stop guidance.
+    pub script_path: Option<&'a str>,
 }
 
 /// Node `buildWorkflowTaskSummary` for a dwf run: one sentence that says how the run ended.
@@ -127,8 +130,11 @@ fn guidance(input: &Terminal<'_>, stop_reason: Option<&str>) -> String {
         .join("\n");
     }
     if stop_reason == Some("model") {
+        let file = input.script_path.map_or_else(String::new, |path| {
+            format!(" Its script is at {path}: edit that file and pass `path`.")
+        });
         return [
-            "You stopped this workflow with TaskStop. If you stopped it to fix the script, do that now: call AmendWorkflow with this run's ID and the corrected script — everything that settled before the stop is imported as cache, and the sooner the fix runs the less it re-pays. (Next time, amend the running run directly: AmendWorkflow stops it for you.)".to_owned(),
+            format!("You stopped this workflow with TaskStop. If you stopped it to fix the script, do that now: call AmendWorkflow with this run's ID and the corrected script — everything that settled before the stop is imported as cache, and the sooner the fix runs the less it re-pays. (Next time, amend the running run directly: AmendWorkflow stops it for you.){file}"),
             "Otherwise present what it finished: the reported items above are finished findings — show them individually with their evidence. Resume it unchanged only if that is what the user wants.".to_owned(),
         ]
         .join("\n");
@@ -168,12 +174,18 @@ fn guidance(input: &Terminal<'_>, stop_reason: Option<&str>) -> String {
         ]
         .join("\n");
     }
-    // errored
-    [
-        "The workflow script failed. Present what it salvaged first: the reported items above are finished findings — show them individually with their evidence. Then explain the failure and what it means for the user's request.".to_owned(),
-        format!(
+    // errored: with a file, how to edit it (path, the `path` argument, no inline script); else Node's old wording.
+    let next = match input.script_path {
+        None => format!(
             "Fix the script and submit it with AmendWorkflow (run_id=\"{run_id}\") so finished work is reused. ResumeWorkflowRun will refuse this run: replaying the same script would fail the same way."
         ),
+        Some(path) => format!(
+            "The run's script is at {path}. Edit that file in place, then call AmendWorkflow (run_id=\"{run_id}\", path=\"{path}\") so finished work is reused — do not paste the script inline. ResumeWorkflowRun will refuse this run: replaying the same script would fail the same way."
+        ),
+    };
+    [
+        "The workflow script failed. Present what it salvaged first: the reported items above are finished findings — show them individually with their evidence. Then explain the failure and what it means for the user's request.".to_owned(),
+        next,
     ]
     .join("\n")
 }

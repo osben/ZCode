@@ -144,7 +144,14 @@ pub(super) fn rows(projection: &mut Projection, view: &SessionView) {
                         let output = rust_cli_kernel_api::tool::ToolOutput {
                             content: content.clone(),
                             is_error: *is_error,
-                            display: cold_display(&super::text_of_result(content)),
+                            // Fork (9.62, DWL-05): a completed call's stored display (Node's hydration restores
+                            // `metadata.display`); an error result has none, as in Node.
+                            display: view
+                                .tool_displays
+                                .get(tool_use_id)
+                                .filter(|_| !*is_error)
+                                .cloned()
+                                .unwrap_or_else(|| cold_display(&super::text_of_result(content))),
                         };
                         let event = SequencedEvent {
                             seq: 0,

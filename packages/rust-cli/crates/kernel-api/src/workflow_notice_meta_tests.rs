@@ -88,6 +88,7 @@ fn a_hole_payload_carries_the_ordinal_the_text_does_not() {
         line: Some(12),
         before: Some("scan"),
         after: None,
+        reached_at: None,
     });
     assert_eq!(
         meta,

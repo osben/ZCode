@@ -324,8 +324,19 @@ impl Server {
             // there is logged by the run service, never raised here.
             if let Some(runs) = self.context.workflow_runs().cloned() {
                 let parent = session.as_str().to_owned();
+                // Fork (9.62, DWP-02): then the session's journaled runs are replayed into its `workflowRuns` (Node's cold
+                // materialization replays them ahead of the memory events), after the sweep, so a run the last process
+                // left unsettled replays as the sweep settled it.
+                let replay = self
+                    .context
+                    .dynamic_workflow_runs()
+                    .map(|sessions| sessions.for_session(session));
+                let live = Arc::downgrade(&live);
                 drop(self.spawner.spawn("workflow-session-open", async move {
                     runs.session_opened(&parent).await;
+                    if let Some(port) = replay {
+                        crate::live::seed_workflow_runs(port, live).await;
+                    }
                 }));
             }
             // Fork: the stored display copy of the session's ACP agent (Node `seedExternalAgentConfig`).

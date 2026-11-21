@@ -128,7 +128,9 @@ pub fn workflow_tools(
             runs.clone(),
         )));
         // FillWorkflowHole sits next to AmendWorkflow (9.45); it stays on the child denylist.
-        tools.push(Arc::new(FillWorkflowHoleTool::new(runs)));
+        tools.push(Arc::new(
+            FillWorkflowHoleTool::new(runs).with_analyzer(analyzer.clone()),
+        ));
         tools.push(Arc::new(SaveWorkflowTool::new(analyzer, home.clone())));
     }
     if let Some(snippets) = snippets {

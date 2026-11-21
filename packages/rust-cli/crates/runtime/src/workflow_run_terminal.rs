@@ -27,7 +27,13 @@ pub fn is_terminal(status: RunStatus) -> bool {
 }
 
 /// The terminal notice of `row`, or `None` when the run is not terminal, has no parent session, or was superseded.
-pub fn terminal_notice(row: &RunRow, auto_resumes: bool) -> Option<TerminalNotice> {
+/// `script_path` is the run's script file as the journal records it (Node `workflowSnapshotScriptPath`: the last fill's
+/// file, else the launch's); the guidance names it relative to the run's directory (Node `describeWorkflowScriptPath`).
+pub fn terminal_notice(
+    row: &RunRow,
+    auto_resumes: bool,
+    script_path: Option<&str>,
+) -> Option<TerminalNotice> {
     if !is_terminal(row.status) {
         return None;
     }
@@ -44,6 +50,13 @@ pub fn terminal_notice(row: &RunRow, auto_resumes: bool) -> Option<TerminalNotic
         .filter(|name| !name.is_empty())
         .unwrap_or(run_id);
     let result = row.result.as_ref().map(artifact_text);
+    let script_path = script_path.filter(|path| !path.is_empty()).map(|path| {
+        let absolute = std::path::Path::new(path);
+        match row.cwd.as_deref().filter(|cwd| !cwd.is_empty()) {
+            Some(cwd) => rust_cli_tools::describe_script_path(absolute, std::path::Path::new(cwd)),
+            None => path.to_owned(),
+        }
+    });
     let result_is_prose = matches!(row.result, Some(Value::String(_)));
     let failure = row.failure.as_ref();
     let message = failure
@@ -71,6 +84,7 @@ pub fn terminal_notice(row: &RunRow, auto_resumes: bool) -> Option<TerminalNotic
         result: result.as_deref(),
         error,
         auto_resumes_after_reset: auto_resumes,
+        script_path: script_path.as_deref(),
     });
     let text = format!(
         "{}{envelope}",

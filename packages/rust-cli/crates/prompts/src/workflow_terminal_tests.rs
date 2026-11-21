@@ -13,6 +13,7 @@ fn run<'a>(status: &'a str) -> Terminal<'a> {
         result: None,
         error: None,
         auto_resumes_after_reset: false,
+        script_path: None,
     }
 }
 
@@ -180,4 +181,27 @@ fn a_stop_reason_is_only_read_from_a_stopped_run() {
 #[test]
 fn an_unknown_status_is_a_failure_and_never_a_completion() {
     assert_eq!(summary("A", "killed", None), "Workflow \"A\" failed.");
+}
+
+#[test]
+fn an_errored_run_with_a_script_file_says_to_edit_it_and_amend_with_path() {
+    let text = terminal(&Terminal {
+        script_path: Some(".zcode/workflow-drafts/a.dwf.ts"),
+        ..run("errored")
+    });
+    assert!(text.ends_with(
+        "The run's script is at .zcode/workflow-drafts/a.dwf.ts. Edit that file in place, then call AmendWorkflow (run_id=\"dwfrun-1\", path=\".zcode/workflow-drafts/a.dwf.ts\") so finished work is reused — do not paste the script inline. ResumeWorkflowRun will refuse this run: replaying the same script would fail the same way."
+    ));
+}
+
+#[test]
+fn a_model_stop_with_a_script_file_names_it_after_the_amend_sentence() {
+    let text = terminal(&Terminal {
+        stop_reason: Some("model"),
+        script_path: Some("/abs/a.dwf.ts"),
+        ..run("stopped")
+    });
+    assert!(text.contains(
+        "(Next time, amend the running run directly: AmendWorkflow stops it for you.) Its script is at /abs/a.dwf.ts: edit that file and pass `path`.\nOtherwise present what it finished"
+    ));
 }

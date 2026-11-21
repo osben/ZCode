@@ -129,7 +129,9 @@ fn user(record: &WithParts) -> Option<Message> {
     Some(Message::User(UserMessage {
         stall_execution: None,
         workflow_meta: None,
-        epilogue_start: None,
+        // Fork (9.62, DWT-03): the turn's stored epilogue boundary (Node `epilogueStartOfMessage`: a non-negative
+        // integer, any other shape is absent), so a cold row folds the engine text like the live one.
+        epilogue_start: (!summary).then(|| epilogue_start_of(info)).flatten(),
         // Fork: an App input's typed text and quotes (Node `inputIntentOfMessage`).
         intent: (!summary)
             .then(|| crate::input_intent::of_message(info))
@@ -143,6 +145,13 @@ fn user(record: &WithParts) -> Option<Message> {
             UserOrigin::Human
         },
     }))
+}
+
+/// Node `epilogueStartOfMessage`: `metadata.epilogueStart` when it is a non-negative integer.
+fn epilogue_start_of(info: &Value) -> Option<usize> {
+    info["metadata"]["epilogueStart"]
+        .as_u64()
+        .and_then(|start| usize::try_from(start).ok())
 }
 
 fn thinking(part: &Value) -> ContentBlock {

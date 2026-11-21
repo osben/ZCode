@@ -389,6 +389,7 @@ impl<C: Borrow<Connection>> JournalPort for DwfJournal<C> {
         Ok(StoredEvent {
             sequence: u64::try_from(stored.sequence)?,
             payload_json: stringify(&stored.event),
+            time_created: Some(stored.time_created),
         })
     }
 
@@ -399,6 +400,7 @@ impl<C: Borrow<Connection>> JournalPort for DwfJournal<C> {
                 Ok(StoredEvent {
                     sequence: u64::try_from(stored.sequence)?,
                     payload_json: stringify(&stored.event),
+                    time_created: Some(stored.time_created),
                 })
             })
             .collect()

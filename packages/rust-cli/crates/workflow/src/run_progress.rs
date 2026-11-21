@@ -223,7 +223,7 @@ pub fn envelope_of(
         fields,
         stored.sequence as f64,
         &event,
-        None,
+        stored.time_created,
     ))
 }
 

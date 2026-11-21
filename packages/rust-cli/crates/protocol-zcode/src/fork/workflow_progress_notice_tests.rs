@@ -305,6 +305,62 @@ impl RunDecisionsSource for WaitingHole {
     }
 }
 
+/// The same waiting hole, with the run's script file the run store names (Node's snapshot `scriptPath`).
+struct WaitingHoleWithDraft;
+
+impl RunDecisionsSource for WaitingHoleWithDraft {
+    fn live_run_ids(&self, _session: &str) -> Vec<String> {
+        vec!["dwfrun-7".to_owned()]
+    }
+
+    fn open(&self, session: &str, run_id: &str) -> Result<Option<OpenDecisions>, String> {
+        let mut open = WaitingHole.open(session, run_id)?.expect("open");
+        open.draft_path = Some("/ws/.zcode/workflow-drafts/a.dwf.ts".to_owned());
+        Ok(Some(open))
+    }
+}
+
+/// 9.62 (DWH-02, closes 488 for the notice): Node `notifyHoleReached` falls back to the snapshot's `scriptPath` for the
+/// draft and to the hole's `since` for `reachedAt`; the desktop's hole row shows both.
+#[test]
+fn a_hole_notice_names_the_runs_script_as_its_draft_and_carries_when_it_was_reached() {
+    let posted = Arc::new(Posted::default());
+    let notices: Arc<dyn WorkflowNotices> = posted.clone();
+    let reminders = Arc::new(WorkflowReminders::new(
+        Arc::new(NoGates),
+        Arc::new(NoTimers),
+        notices,
+    ));
+    assert!(reminders.set_runs(Arc::new(WaitingHoleWithDraft)));
+    WorkflowProgressHost::new(Arc::new(Quiet))
+        .with_notices(posted.clone())
+        .with_reminders(reminders)
+        .record("ses_parent", &reached("Draft the plan"), &[])
+        .expect("recorded");
+    let text = posted.0.lock().expect("posted")[0].1.clone();
+    assert!(
+        text.contains("  <draft>/ws/.zcode/workflow-drafts/a.dwf.ts</draft>"),
+        "{text}"
+    );
+    assert!(
+        text.contains(
+            "Next step: Read the draft at /ws/.zcode/workflow-drafts/a.dwf.ts for the context"
+        ),
+        "{text}"
+    );
+    let workflow = posted.1.lock().expect("workflow")[0]
+        .clone()
+        .expect("a payload");
+    assert_eq!(
+        workflow["workflowNotification"]["draftPath"],
+        "/ws/.zcode/workflow-drafts/a.dwf.ts"
+    );
+    assert_eq!(
+        workflow["workflowNotification"]["reachedAt"],
+        json!(1_700_000_000_000u64)
+    );
+}
+
 struct NoGates;
 
 impl DynamicWorkflowGates for NoGates {

@@ -2722,3 +2722,93 @@ fn a_workflow_launch_ask_carries_its_window_display() {
     let pending = &asked[1]["patch"]["pendingInteractions"][0];
     assert_eq!(pending["payload"]["display"], display);
 }
+
+/// 9.62 (DWL-05): a cold read draws a completed call's stored result display (Node's hydration restores
+/// `metadata.display`), so a reopened session keeps the result card; an error result draws none.
+#[test]
+fn a_cold_tool_row_carries_its_stored_result_display() {
+    let call = |id: &str| ContentBlock::ToolUse {
+        id: ToolUseId::new(id),
+        name: "GetWorkflowRun".into(),
+        input: json!({"run_id": "dwfrun-1"}),
+    };
+    let done = |id: &str, owner: &str, call: &str, error: bool| {
+        Message::User(UserMessage {
+            stall_execution: None,
+            workflow_meta: None,
+            epilogue_start: None,
+            intent: None,
+            id: MessageId::new(id),
+            content: vec![ContentBlock::ToolResult {
+                tool_use_id: ToolUseId::new(call),
+                content: vec![ToolResultContent::Text { text: "ok".into() }],
+                is_error: error,
+            }],
+            origin: UserOrigin::ToolResult {
+                assistant: MessageId::new(owner),
+            },
+        })
+    };
+    let mut cold = view(vec![
+        user("msg_u1", "look"),
+        assistant("msg_a1", vec![call("toolu_1"), call("toolu_2")]),
+        done("msg_r1", "msg_a1", "toolu_1", false),
+        done("msg_r2", "msg_a1", "toolu_2", true),
+        assistant(
+            "msg_a2",
+            vec![ContentBlock::Text {
+                text: "done".into(),
+            }],
+        ),
+    ]);
+    let card = json!({"kind": "get_workflow_run", "runId": "dwfrun-1", "name": "nightly"});
+    cold.tool_displays = [
+        (ToolUseId::new("toolu_1"), card.clone()),
+        (ToolUseId::new("toolu_2"), card.clone()),
+    ]
+    .into_iter()
+    .collect();
+    let snapshot = Projection::from_view(&cold, Followup::Guide, Vec::new()).snapshot(0, "epoch");
+    let tools: Vec<_> = snapshot["rows"]["window"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|row| row["kind"] == "toolCall")
+        .map(|row| row["output"]["display"].clone())
+        .collect();
+    assert_eq!(tools, vec![card, Value::Null]);
+}
+
+/// 9.62 (DWT-03): a user input with an epilogue boundary carries it as the row's `epilogueStart` (Node
+/// `projection-rows.ts`), so the App folds the engine text of an actor's ask; a cold row carries the stored one.
+#[test]
+fn a_user_row_carries_its_epilogue_start() {
+    let mut ask = user("msg_u1", "TASK\n\nengine text");
+    if let Message::User(input) = &mut ask {
+        input.epilogue_start = Some(4);
+    }
+    let projection = Projection::from_view(
+        &view(vec![
+            ask,
+            user("msg_u2", "plain"),
+            assistant(
+                "msg_a1",
+                vec![ContentBlock::Text {
+                    text: "done".into(),
+                }],
+            ),
+        ]),
+        Followup::Guide,
+        Vec::new(),
+    );
+    let snapshot = projection.snapshot(0, "epoch");
+    let inputs: Vec<&Value> = snapshot["rows"]["window"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|row| row["kind"] == "userInput")
+        .collect();
+    assert_eq!(inputs.len(), 2);
+    assert_eq!(inputs[0]["epilogueStart"], json!(4));
+    assert!(inputs[1].get("epilogueStart").is_none());
+}

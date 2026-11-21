@@ -541,6 +541,10 @@ pub struct SessionView {
     /// model switch dividers between turns. Empty when unknown.
     #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
     pub message_models: std::collections::BTreeMap<MessageId, crate::model::ModelSelection>,
+    /// Fork (9.62, DWL-05): the result display of each completed call (stored, or recorded at commit), so a cold
+    /// projection draws the result card Node's hydration restores from `metadata.display`. Empty when unknown.
+    #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
+    pub tool_displays: std::collections::BTreeMap<crate::ids::ToolUseId, serde_json::Value>,
     /// Fork: the hook dispatches the session kept in memory for the cold projection (specs/fork-rust-agent-parity.md
     /// HK-UP-01 Design 4): each anchored to the user message of its turn. In memory only: a process restart loses
     /// them, as Node loses its event store.

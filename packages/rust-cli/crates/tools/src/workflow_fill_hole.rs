@@ -16,7 +16,7 @@ use rust_cli_kernel_api::tool::{
     PromptContext, Tool, ToolError, ToolOutput, ToolProgress, ToolUseContext, Validation, failed,
 };
 use rust_cli_kernel_api::tool_names;
-use rust_cli_kernel_api::workflow_analysis::WorkflowDiagnostic;
+use rust_cli_kernel_api::workflow_analysis::{WorkflowAnalyzer, WorkflowDiagnostic};
 use rust_cli_kernel_api::workflow_run::{
     DynamicWorkflowRunPort, DynamicWorkflowRunSessions, FillHoleOutcome, FillHoleRequest,
     FillRefusalReason,
@@ -60,6 +60,8 @@ pub struct FillWorkflowHoleTool {
     contract: &'static Contract,
     /// The run service's per-session ports: a fill goes through the calling session's port.
     runs: Option<Arc<dyn DynamicWorkflowRunSessions>>,
+    /// Fork (9.62, narrows 514): draws the effective script's causality graph for the fill row's card.
+    analyzer: Option<Arc<dyn WorkflowAnalyzer>>,
 }
 
 impl FillWorkflowHoleTool {
@@ -67,7 +69,14 @@ impl FillWorkflowHoleTool {
         Self {
             contract: contract(tool_names::FILL_WORKFLOW_HOLE),
             runs,
+            analyzer: None,
         }
+    }
+
+    /// The analyzer the fill row's graph is drawn with (Node `analyzeScript` over the port's effective script).
+    pub fn with_analyzer(mut self, analyzer: Arc<dyn WorkflowAnalyzer>) -> Self {
+        self.analyzer = Some(analyzer);
+        self
     }
 
     fn port(&self, context: &ToolUseContext) -> Option<Arc<dyn DynamicWorkflowRunPort>> {
@@ -323,7 +332,23 @@ impl Tool for FillWorkflowHoleTool {
             .await
             .map_err(|error| failed(error.message))?;
         match outcome {
-            FillHoleOutcome::Filled { phases_added, .. } => {
+            FillHoleOutcome::Filled {
+                phases_added,
+                script_text,
+            } => {
+                // Fork (9.62, narrows 514): the card carries the effective script's graph, so the run card swaps in the
+                // filled graph (the desktop's `buildWorkflowFillGraphByRunId`), beside Node's `fill` block. A graph the
+                // analyzer cannot draw leaves the card without one; the fill has joined either way.
+                let display = match &self.analyzer {
+                    Some(analyzer) => analyzer.display(&script_text).await.unwrap_or_else(|error| {
+                        tracing::debug!(%error, "fill display reply dropped; the fill row shows no graph");
+                        None
+                    }),
+                    None => None,
+                };
+                let graph = display
+                    .as_ref()
+                    .and_then(|display| display.get("causalityGraph"));
                 let phases = if phases_added.is_empty() {
                     "It added no phases.".to_owned()
                 } else {
@@ -335,7 +360,7 @@ impl Tool for FillWorkflowHoleTool {
                         input.run_id, input.hole_id
                     ),
                     crate::workflow_card::card_with_fill(
-                        None,
+                        graph,
                         true,
                         &[],
                         Some(&fill_block(&port, &input.run_id, &input.hole_id).await),

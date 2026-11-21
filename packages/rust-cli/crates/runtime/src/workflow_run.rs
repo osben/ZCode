@@ -303,6 +303,9 @@ struct RunEntry {
     serve: Option<JoinHandle<Vec<(String, String)>>>,
     /// What the run's reads need before its row exists (W7-5a-4).
     meta: Arc<list::RunMeta>,
+    /// Fork (9.62 review): the run's script file (Node's snapshot `scriptPath`), kept here so the hole notice and the
+    /// blocked reminder read it from memory. Set at launch; a Rust fill journals no file, so it does not change.
+    script_path: Option<String>,
 }
 
 /// Frees a run id's reservation when its launch ends, however it ends.
@@ -465,6 +468,16 @@ impl Inner {
         let Some(signals) = signals else {
             return;
         };
+        // Fork (9.62, DWP-03): a run the closing service stopped posts nothing, as Node drops a background notification
+        // while its runtime shuts down. The row stays `stopped`, so a restarted app draws the run with no notification.
+        if self.state.lock_unpoisoned().closed {
+            tracing::info!(
+                event = "workflow.run.terminal_notice.shutdown_dropped",
+                run = %run_id,
+                "a workflow run settled while the service closed; its terminal notice is dropped"
+            );
+            return;
+        }
         let Some(store) = self.store.get().cloned() else {
             tracing::warn!(
                 event = "workflow.run.terminal_notice_skipped",
@@ -508,26 +521,31 @@ impl Inner {
         // The resume guidance is true only where the quota module arms the resume: the same predicate, with quota wired.
         let auto_resumes =
             quota_on && rust_cli_workflow::quota_resume::quota_resume_at(&row).is_some();
-        if let Some(notice) = crate::workflow_run_terminal::terminal_notice(&row, auto_resumes) {
+        // Fork (9.61, 9.62): one detail read gives the chips (the journal's published records) and the script file the
+        // guidance names (the roster's `scriptPath`). A read fault posts the notice without either.
+        let detail = match store.run_detail(run_id, None) {
+            Ok(detail) => detail,
+            Err(error) => {
+                tracing::warn!(
+                    event = "workflow.run.terminal_artifacts_unread",
+                    run = %run_id,
+                    error = %error,
+                    "a settled workflow run's detail could not be read, so its terminal notice carries no chips and no script path"
+                );
+                None
+            }
+        };
+        let script_path = detail.as_ref().and_then(roster_script_path);
+        if let Some(notice) =
+            crate::workflow_run_terminal::terminal_notice(&row, auto_resumes, script_path)
+        {
             // Fork (9.61): the card's time cell, this incarnation's life on the injected clock.
             let settled_at_ms = self.clock.get().map(|clock| clock.now_ms());
             let notice = crate::workflow_run_terminal::with_duration(
                 notice,
                 crate::workflow_run_terminal::run_duration_ms(started_at_ms, settled_at_ms),
             );
-            // Fork (9.61): the chips, from the journal's published records (a read fault posts the notice without them).
-            let published = match store.run_detail(run_id, None) {
-                Ok(detail) => detail.map(|detail| Value::Array(detail.published_artifacts)),
-                Err(error) => {
-                    tracing::warn!(
-                        event = "workflow.run.terminal_artifacts_unread",
-                        run = %run_id,
-                        error = %error,
-                        "a settled workflow run's artifacts could not be read, so its terminal notice carries no chips"
-                    );
-                    None
-                }
-            };
+            let published = detail.map(|detail| Value::Array(detail.published_artifacts));
             let notice = crate::workflow_run_terminal::with_artifacts(notice, published.as_ref());
             signals.workflow_notice(
                 &SessionId::new(notice.parent_session_id),
@@ -852,8 +870,27 @@ impl WorkflowRunService {
         // executor (9.30 review). The id stays reserved until this launch returns, so a failure releases it.
         let owners = inner.owners.clone();
         let factory_handle = handle.clone();
-        let built =
-            tokio::task::spawn_blocking(move || (owners)(config, mailbox, factory_handle)).await;
+        let launched_path = config
+            .launch
+            .as_ref()
+            .and_then(|launch| launch.script_path.clone())
+            .filter(|path| !path.is_empty());
+        let journal = launched_path
+            .is_none()
+            .then(|| inner.store.get().cloned())
+            .flatten();
+        let path_run = run_id.clone();
+        let built = tokio::task::spawn_blocking(move || {
+            let script_path = launched_path.or_else(|| {
+                journal.and_then(|store| journaled_script_path(store.as_ref(), &path_run))
+            });
+            ((owners)(config, mailbox, factory_handle), script_path)
+        })
+        .await;
+        let (built, script_path) = match built {
+            Ok((built, script_path)) => (Ok(built), script_path),
+            Err(join) => (Err(join), None),
+        };
         let mut hosted = match built {
             Ok(Ok(hosted)) => hosted,
             Ok(Err(error)) => {
@@ -954,6 +991,7 @@ impl WorkflowRunService {
                 stop: stop.clone(),
                 serve: Some(serve),
                 meta,
+                script_path,
             },
         );
         drop(state);
@@ -1026,6 +1064,14 @@ impl WorkflowRunService {
     /// The number of runs the service holds (live, or settled but not yet collected).
     pub fn run_count(&self) -> usize {
         self.inner.state.lock_unpoisoned().runs.len()
+    }
+
+    /// Fork (9.62, DWH-02): a live run's script file (Node's snapshot `scriptPath`, read by the hole notice and the
+    /// blocked reminder), from the service's memory: these readers run on the async runtime, so no store is read here. A
+    /// run the service does not hold, or one with no file, has none; the notice then falls back to GetWorkflowRun.
+    pub fn run_script_path_of(&self, run_id: &str) -> Option<String> {
+        let state = self.inner.state.lock_unpoisoned();
+        state.runs.get(run_id)?.script_path.clone()
     }
 
     /// Fork (W7-11, 9.44): the ids of one parent session's live runs, the runs the service holds (a settled run is removed).
@@ -1130,6 +1176,36 @@ fn settle_run(
         return Vec::new();
     }
     failures
+}
+
+/// The run's script file in its journal roster (Node `workflowSnapshotScriptPath`: the last fill's file, else the
+/// launch's). An empty path is none. The one rule for the terminal notice and the resume's journal read.
+fn roster_script_path(detail: &rust_cli_workflow::run_store::RunDetail) -> Option<&str> {
+    detail
+        .roster
+        .get("scriptPath")
+        .and_then(Value::as_str)
+        .filter(|path| !path.is_empty())
+}
+
+/// The script file a run's journal records, for a launch that carries none (a resume). Blocking: called on the blocking
+/// pool. A read fault is logged and reads as none.
+pub(crate) fn journaled_script_path(store: &dyn RunStore, run_id: &str) -> Option<String> {
+    match store.run_detail(run_id, None) {
+        Ok(detail) => detail
+            .as_ref()
+            .and_then(roster_script_path)
+            .map(str::to_owned),
+        Err(error) => {
+            tracing::warn!(
+                event = "workflow.run.script_path_unread",
+                run = %run_id,
+                error = %error,
+                "a workflow run's script path could not be read from its journal, so its notices name no file"
+            );
+            None
+        }
+    }
 }
 
 /// The text of a panic payload, for the close failure that reports it.

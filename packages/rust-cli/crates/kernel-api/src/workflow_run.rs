@@ -410,6 +410,12 @@ pub trait DynamicWorkflowRunPort: Send + Sync {
         Ok(Vec::new())
     }
 
+    /// Node `replayProgressForSession` (9.62, DWP-02): this session's journaled runs that are not live in this process,
+    /// replayed into the `workflowRuns` deltas a cold open folds into its snapshot. Empty when the host keeps no journal.
+    async fn replay_progress_for_session(&self) -> Result<Vec<Value>, DynamicWorkflowRunError> {
+        Ok(Vec::new())
+    }
+
     /// Fork (9.52): ticks whenever the host's live run set changes (a run started or settled on its own), so the session
     /// re-reads its background works without a kernel event. `None` when the host keeps no run service.
     fn background_changes(&self) -> Option<tokio::sync::watch::Receiver<u64>> {

@@ -525,6 +525,7 @@ fn a_corrupt_settle_event_names_the_run_and_sequence() {
     let events = vec![StoredEvent {
         sequence: 7,
         payload_json: "{not json".to_owned(),
+        time_created: None,
     }];
     let message = match recover_settle_order("run_bad", &rows, &events) {
         Ok(_) => panic!("a corrupt event must fail the resume"),

@@ -615,3 +615,38 @@ async fn a_run_launched_in_the_composed_service_records_its_progress_to_its_pare
         tokio::time::sleep(Duration::from_millis(5)).await;
     }
 }
+
+/// 9.62 (DWP-02): the composition's lazy store forwards the cold replay to the journal. A wrapper that kept the trait's
+/// default replayed nothing, so a restarted app drew no run card (the E2E's cause); the method is now required.
+#[test]
+fn the_lazy_run_store_replays_the_journal_of_a_parent() {
+    use rust_cli_workflow::run_store::RunStore;
+    let dir = tempfile::tempdir().expect("temp dir");
+    let database = dir.path().join("sessions.db");
+    {
+        let (conn, _) = open_session_database(&database, MIGRATION_LOCK_WAIT, 1).expect("database");
+        add_session(&conn, "ses_p");
+        let run = RunRecord {
+            run_id: "run_1".to_owned(),
+            parent_session_id: Some("ses_p".to_owned()),
+            cwd: Some("/work".to_owned()),
+            script_text: Some("return 1".to_owned()),
+            max_concurrency: 2,
+            status: RunStatus::Completed,
+            ..RunRecord::default()
+        };
+        dwf::create_run(&conn, &run, 5).unwrap();
+        dwf::append_event(
+            &conn,
+            "run_1",
+            &json!({"type": "run-started", "caps": {"maxConcurrency": 2}}),
+            6,
+        )
+        .unwrap();
+    }
+    let store = super::LazyRunStore::new(database);
+    let deltas = store
+        .session_progress("ses_p", &std::collections::HashSet::new(), 4.0)
+        .expect("the replay reads the journal");
+    assert!(!deltas.is_empty(), "the journaled run is replayed");
+}

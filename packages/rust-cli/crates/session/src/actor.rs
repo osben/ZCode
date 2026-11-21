@@ -235,6 +235,9 @@ pub(crate) struct Actor {
     /// Fork: the model of each assistant message, loaded with the session and extended by [`Self::commit`]; only
     /// [`Self::view`] reads it (the cold model switch divider).
     pub(crate) message_models: std::collections::BTreeMap<MessageId, ModelSelection>,
+    /// Fork (9.62, DWL-05): the result display of each completed call, loaded with the session and extended by
+    /// [`Self::commit`] (`Fact::ToolDisplayed`); only [`Self::view`] reads it (the cold result card).
+    pub(crate) tool_displays: std::collections::BTreeMap<ToolUseId, serde_json::Value>,
     pub(crate) selection: ModelSelection,
     /// 执行状态：权限模式 × plan 开关（修复线 F20，shell-permissions.md §4.6）。判决用的模式是 [`Self::mode`]。
     pub(crate) execution: rust_cli_kernel_api::permission::ExecutionState,
@@ -391,6 +394,7 @@ impl Actor {
             earlier: state.earlier,
             commands: state.commands,
             message_models: state.message_models,
+            tool_displays: state.tool_displays,
             selection: state.selection,
             execution: state.mode,
             plan_flags: Default::default(),
@@ -1008,6 +1012,7 @@ impl Actor {
             output_speed: self.output_speed,
             commands: self.commands.clone(),
             message_models: self.message_models.clone(),
+            tool_displays: self.tool_displays.clone(),
             // Fork: only turns still in the conversation carry a summary (a cut removes its rows).
             turn_files: self
                 .turn_files

@@ -217,6 +217,9 @@ fn insert_text(map: &mut Map<String, Value>, key: &str, value: &Option<String>) 
 pub struct StoredEvent {
     pub sequence: u64,
     pub payload_json: String,
+    /// Fork (9.62, DWH-02): the stamp the journal put on the event (epoch milliseconds, Node `timeCreated`), so a live
+    /// `hole-reached` mints the same `reachedAt` as cold replay. `None` from a journal without the column (the memory one).
+    pub time_created: Option<i64>,
 }
 
 /// Node `InstanceRef` / `ActorRef`: `siteId` × per-site ordinal (the ordinal starts at 1).

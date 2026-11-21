@@ -480,7 +480,7 @@ pub(crate) fn resolve_path(
 }
 
 /// Node `describeWorkflowScriptPath`: relative to the working directory when the file is inside it.
-pub(crate) fn describe_script_path(absolute: &Path, cwd: &Path) -> String {
+pub fn describe_script_path(absolute: &Path, cwd: &Path) -> String {
     match absolute.strip_prefix(cwd) {
         Ok(relative) if !relative.as_os_str().is_empty() => relative.display().to_string(),
         _ => absolute.display().to_string(),

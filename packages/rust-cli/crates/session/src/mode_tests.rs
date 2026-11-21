@@ -163,6 +163,7 @@ fn spawn(
             goal_target: None,
             goal_verifications: Vec::new(),
             message_models: Default::default(),
+            tool_displays: Default::default(),
         },
         Opened::Created,
     )

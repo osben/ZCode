@@ -57,6 +57,7 @@ pub fn load(
     let loaded = LoadedSession {
         commands: commands(&records),
         message_models: message_models(&records),
+        tool_displays: tool_displays(&records),
         messages: crate::hydrate::hydrate(&active),
         earlier: crate::hydrate::hydrate(&earlier),
         model,
@@ -158,6 +159,27 @@ fn message_models(
                 ..ModelSelection::new(provider.to_owned(), model.to_owned())
             };
             Some((MessageId::new(record.id()), selection))
+        })
+        .collect()
+}
+
+/// Fork (9.62, DWL-05): the stored display of each completed tool part (Node `metadata.display`, which Node's
+/// `transcript-hydration.ts` restores on the cold card), keyed by its call id. Only an object display with a `kind`.
+fn tool_displays(
+    records: &[messages::WithParts],
+) -> std::collections::BTreeMap<rust_cli_kernel_api::ids::ToolUseId, Value> {
+    records
+        .iter()
+        .flat_map(|record| record.parts.iter())
+        .filter(|part| part["type"] == "tool" && part["state"]["status"] == "completed")
+        .filter_map(|part| {
+            let call = part["callID"].as_str().filter(|id| !id.is_empty())?;
+            let display = &part["state"]["metadata"]["display"];
+            display["kind"].as_str()?;
+            Some((
+                rust_cli_kernel_api::ids::ToolUseId::new(call),
+                display.clone(),
+            ))
         })
         .collect()
 }

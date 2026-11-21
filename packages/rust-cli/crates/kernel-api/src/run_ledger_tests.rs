@@ -70,6 +70,7 @@ fn kinds(facts: &[Fact]) -> Vec<&'static str> {
             Fact::MessageAppended { .. } => "message",
             Fact::CheckpointCreated { .. } => "checkpoint",
             Fact::SubagentLinked { .. } => "link",
+            Fact::ToolDisplayed { .. } => "display",
             Fact::ToolCalled { .. } => "usage",
             _ => "other",
         })
@@ -210,4 +211,37 @@ fn the_turn_moves_only_when_the_batch_is_committed() {
         &ids,
     );
     assert_eq!(next.turn.as_ref(), Some(&turn));
+}
+
+/// 9.62 (DWL-05): a completed call's result card is stored with its result, after the link and before the usage (Node
+/// `completedToolPartMetadata`); an error result, a display without a `kind` and `node_repl_images` store none.
+#[test]
+fn a_completed_result_display_with_a_kind_is_stored_after_the_link() {
+    let mut ledger = RunLedger::default();
+    let ids = SequentialIds::default();
+    let card = json!({"kind": "get_workflow_run", "runId": "dwfrun-1"});
+    ledger.tool_finished(&ToolUseId::new("t_card"), &output(false, card.clone()));
+    ledger.tool_finished(&ToolUseId::new("t_agent"), &output(false, agent_display()));
+    ledger.tool_finished(
+        &ToolUseId::new("t_err"),
+        &output(true, json!({"kind": "bash_output"})),
+    );
+    ledger.tool_finished(
+        &ToolUseId::new("t_img"),
+        &output(false, json!({"kind": "node_repl_images"})),
+    );
+    let settled = ledger.settle(
+        result(&["t_card", "t_agent", "t_err", "t_img"], false),
+        Some(&MessageId::new("u1")),
+        Vec::new(),
+        &ids,
+    );
+    assert_eq!(kinds(&settled.facts), ["message", "link", "display"]);
+    assert_eq!(
+        settled.facts[2],
+        Fact::ToolDisplayed {
+            tool_use: ToolUseId::new("t_card"),
+            display: card,
+        }
+    );
 }

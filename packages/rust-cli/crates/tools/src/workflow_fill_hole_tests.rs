@@ -415,3 +415,59 @@ async fn a_hole_of_another_sessions_live_run_is_refused_before_any_window() {
         Validation::Ok
     ));
 }
+
+/// An analyzer that draws a one-step graph naming the script it was given.
+struct Draws;
+
+#[async_trait]
+impl rust_cli_kernel_api::workflow_analysis::WorkflowAnalyzer for Draws {
+    async fn analyze(
+        &self,
+        _script: &str,
+    ) -> Result<
+        rust_cli_kernel_api::workflow_analysis::WorkflowAnalysis,
+        rust_cli_kernel_api::workflow_analysis::WorkflowAnalysisError,
+    > {
+        Ok(rust_cli_kernel_api::workflow_analysis::WorkflowAnalysis {
+            ok: true,
+            diagnostics: Vec::new(),
+        })
+    }
+
+    async fn display(
+        &self,
+        script: &str,
+    ) -> Result<Option<Value>, rust_cli_kernel_api::workflow_analysis::WorkflowAnalysisError> {
+        Ok(Some(json!({"kind": "create_workflow", "ok": true,
+            "causalityGraph": {"steps": [{"id": script}], "phases": [{"id": "p1", "fill": "hole#1"}]}})))
+    }
+}
+
+/// 9.62 (DWH-03, narrows 514): a fill that joined the run answers with the effective script's causality graph (Node
+/// `boundGraphOfAnalysis(analyzeScript(result.scriptText))`) and the `fill` block that names the hole, so the run card
+/// swaps in the filled graph and draws the fill's head.
+#[tokio::test]
+async fn a_joined_fill_carries_the_effective_scripts_graph_and_its_fill_block() {
+    let port: Arc<dyn DynamicWorkflowRunPort> = Arc::new(Answers(FillHoleOutcome::Filled {
+        phases_added: vec!["collect".to_owned()],
+        script_text: "EFFECTIVE".to_owned(),
+    }));
+    let tool = tool_with(Some(Arc::new(OneSession(port)))).with_analyzer(Arc::new(Draws));
+    let output = tool
+        .call(
+            json!({"run_id": "run-1", "hole_id": "hole#1", "script": "return 1;"}),
+            context(Arc::new(SkillLoaded)),
+            tokio::sync::mpsc::channel(1).0,
+        )
+        .await
+        .expect("the fill is applied");
+    assert_eq!(output.display["kind"], "create_workflow");
+    assert_eq!(
+        output.display["causalityGraph"]["steps"][0]["id"],
+        "EFFECTIVE"
+    );
+    assert_eq!(
+        output.display["fill"],
+        json!({"siteId": "hole#1", "name": "hole#1"})
+    );
+}

@@ -1142,6 +1142,32 @@ impl Drop for Live {
     }
 }
 
+/// Fork (9.62, DWP-02): a cold open's `workflowRuns`, replayed from the journal (Node `replayDynamicWorkflowRunEvents`),
+/// folded in the session's pump like any run delta, so the snapshot and the subscribers see the runs of an earlier
+/// process. A failed replay is logged and leaves the runs as they are: the observation surface never fails an open.
+pub(crate) async fn seed_workflow_runs(
+    port: std::sync::Arc<dyn rust_cli_kernel_api::workflow_run::DynamicWorkflowRunPort>,
+    live: std::sync::Weak<rust_cli_protocol_core::sessions::Bridged<Live>>,
+) {
+    let deltas = match port.replay_progress_for_session().await {
+        Ok(deltas) => deltas,
+        Err(error) => {
+            tracing::warn!(event = "protocol.workflow_runs.replay_failed", error = %error.message, "the session's workflow runs were not replayed");
+            return;
+        }
+    };
+    if deltas.is_empty() {
+        return;
+    }
+    let Some(bridged) = live.upgrade() else {
+        return;
+    };
+    let sink = bridged.sink.clone();
+    bridged.run(Box::pin(async move {
+        sink.workflow_runs_changed(deltas).await;
+    }));
+}
+
 /// Fork (9.52): a run started or settled on its own changes the session's background works; re-read them, as
 /// `watch_subagents` re-reads the subagent table. Ends when the run service or the session is gone.
 pub(crate) async fn watch_background_runs(
