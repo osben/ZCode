@@ -13,6 +13,7 @@ use rust_cli_kernel_api::permission::{FileAccess, PermissionMode, RuleBehavior};
 use crate::check::{AskKind, Check, Inputs};
 use crate::paths::rule_matches;
 use crate::texts;
+use rust_cli_kernel_api::tool_names;
 
 /// 写入要额外确认的位置（危险的文件与目录，配置目录是 `.zcode`）。
 const SENSITIVE_DIRS: &[&str] = &[GIT_DIR, ".vscode", ".idea", DOT_DIR];
@@ -74,6 +75,16 @@ pub(crate) fn matched_path_rule<'a>(
 
 /// 检查一次读或写。`path` 是工具输入里的原样路径（None 表示 cwd）。
 pub fn check(access: FileAccess, path: Option<&str>, inputs: &Inputs<'_>) -> Check {
+    check_tool(access, path, inputs, "")
+}
+
+/// Fork (9.61): [`check`] for a named tool, so Edit and Write into the workflow draft directory are preapproved.
+pub fn check_tool(
+    access: FileAccess,
+    path: Option<&str>,
+    inputs: &Inputs<'_>,
+    tool: &str,
+) -> Check {
     let paths = inputs.paths;
     // 缺陷修复（F14）：工具改成去首尾空白、做 NFC 之后，判定若仍用 `resolve`，
     // `" /etc/hosts"` 会被当成工作区里的相对路径放行，而工具读的是 `/etc/hosts`。两边用同一条规则。
@@ -114,6 +125,11 @@ pub fn check(access: FileAccess, path: Option<&str>, inputs: &Inputs<'_>) -> Che
             if rule(RuleBehavior::Ask) {
                 return ask(texts::file_write_request(&resolved), AskKind::Rule);
             }
+            // Fork (9.61): Node's workflow draft preapproval, after the deny and ask rules and never in plan mode (a draft
+            // is a write too). It comes before the sensitive `.zcode` check, which would otherwise always ask for it.
+            if inputs.mode != PermissionMode::Plan && draft_write(tool, &resolved, inputs) {
+                return Check::Allow;
+            }
             if sensitive(&resolved, paths.style == PathStyle::Windows) {
                 return ask(texts::file_sensitive(&resolved), AskKind::Safety);
             }
@@ -130,6 +146,20 @@ pub fn check(access: FileAccess, path: Option<&str>, inputs: &Inputs<'_>) -> Che
             ask(texts::file_write_request(&resolved), AskKind::Other)
         }
     }
+}
+
+/// Node `isPreapprovedWorkflowDraftWrite`: Edit or Write (one `file_path`; ApplyPatch can touch many files) to a file inside
+/// `<root>/.zcode/workflow-drafts/`. The directory itself is not a draft, and no root means no preapproval. Safe because the
+/// directory is machine-owned and ignored by git, and running a draft still goes through CreateWorkflow's confirmation.
+fn draft_write(tool: &str, resolved: &str, inputs: &Inputs<'_>) -> bool {
+    if !matches!(tool, tool_names::EDIT | tool_names::WRITE) || inputs.root.is_empty() {
+        return false;
+    }
+    let style = inputs.paths.style;
+    let drafts = style.join(inputs.root, &[DOT_DIR, "workflow-drafts"]);
+    style
+        .relative(&drafts, resolved)
+        .is_some_and(|rest| !rest.is_empty())
 }
 
 fn ask(message: String, kind: AskKind) -> Check {

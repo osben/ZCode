@@ -176,3 +176,65 @@ fn file_paths_are_resolved_like_the_tools_resolve_them() {
         Check::Allow
     );
 }
+
+/// 9.61: Edit and Write into the workspace's workflow draft directory are preapproved (Node
+/// `isPreapprovedWorkflowDraftWrite`), after deny and ask rules and never in plan mode. The directory itself, a sibling with
+/// the same prefix, traversal out of it and other tools are not.
+#[test]
+fn edit_and_write_into_the_workflow_draft_directory_are_preapproved() {
+    let draft = |mode, entries: &[(RuleBehavior, &str)], tool: &str, path: &str| {
+        run(mode, entries, |inputs| {
+            check_tool(FileAccess::Write, Some(path), inputs, tool)
+        })
+    };
+    let ok = ".zcode/workflow-drafts/a.dwf.ts";
+    assert_eq!(
+        draft(PermissionMode::Default, &[], "Write", ok),
+        Check::Allow
+    );
+    assert_eq!(
+        draft(
+            PermissionMode::Default,
+            &[],
+            "Edit",
+            "/w/.zcode/workflow-drafts/sub/b.ts"
+        ),
+        Check::Allow
+    );
+    for (tool, path) in [
+        ("ApplyPatch", ok),
+        ("Write", ".zcode/workflow-drafts"),
+        ("Write", ".zcode/workflow-drafts-other/a.ts"),
+        ("Write", ".zcode/workflow-drafts/../x.ts"),
+    ] {
+        assert!(
+            matches!(
+                draft(PermissionMode::Default, &[], tool, path),
+                Check::Ask { .. }
+            ),
+            "{tool} {path}"
+        );
+    }
+    assert!(matches!(
+        draft(PermissionMode::Plan, &[], "Write", ok),
+        Check::Ask { .. }
+    ));
+    assert!(matches!(
+        draft(
+            PermissionMode::Default,
+            &[(RuleBehavior::Deny, "Edit(.zcode/**)")],
+            "Write",
+            ok
+        ),
+        Check::Deny { .. }
+    ));
+    assert!(matches!(
+        draft(
+            PermissionMode::Default,
+            &[(RuleBehavior::Ask, "Edit(.zcode/**)")],
+            "Write",
+            ok
+        ),
+        Check::Ask { .. }
+    ));
+}
