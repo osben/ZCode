@@ -4527,6 +4527,128 @@ in the terminal module, and the two would be edited together only if Node's rule
   `closing_the_host_ticks_the_change_receiver_and_empties_the_background_works` covers the close tick. The close test passed on
   its first run, so no red was captured.
 
+### 9.53 W9a: v4 run commands, settings turn and launch turn (as built, gate off)
+
+**Scope built.** The two v4 run controls are registered and routed, behind the session gate. Both answer through the
+per-session run port, so the run service decides each answer, as Node's runtime methods do.
+
+- `startSavedWorkflow` (`fork/workflow_run_commands.rs`, `start_saved`). Order: the gate and the run sessions (a closed gate,
+  a session with no record, or no run service answers `fault.command.capabilityUnsupported`), the payload (an empty name is
+  `proto.invalidPayload`), the busy check (Phase Running or a queued input answers `session_busy`), then the port's
+  `start_saved`. Success is `{type, runId, toolCallId}` (`launch-` id) in the ack's result. A refusal is `Failed` with
+  `fault.command.savedWorkflowStartRejected.<reason>` and Node's message.
+- The run service's `start_saved` (`runtime/src/workflow_run_start.rs`), in Node's order: resolution and argument checks
+  (`tools/src/workflow_start.rs`, the saved store's and CreateWorkflow's own rules), the compile through the same analyzer
+  CreateWorkflow uses (any diagnostic is `compile_failed` with Node's bounded text), then, with no side effect before it, the
+  parent's activation, the draft copy, the submit with the launch anchor (a UUID v7, recorded as
+  `run-launched.inputId`; the launch turn does not carry it, divergence 774), and the launch turn. A failure after the submit is not rolled back.
+- `amendWorkflowRunSettings` (same file, `amend_settings`). The three-state payload is read from the raw JSON (absent keeps,
+  `null` is the default, a value sets; `settings_request`). The run service's `amend_settings` (9.50) is unchanged in its
+  order. Success is `{type, runId, toolCallId, supersededRunId?}`. A refusal is `Failed` with
+  `fault.command.workflowRunSettingsRejected.<reason>`.
+- The port: `DynamicWorkflowRunPort::amend_settings` and `start_saved` (kernel-api, default unsupported), with the types that
+  9.50 kept in runtime moved to kernel-api (`SettingsRequest`, `SettingsOutcome`, `SettingsRefusal`, `SettingsAmend`,
+  `SettingsChange`, `SettingsTurn`, `LaunchTurn`, `StartSavedRequest`, `StartSavedOutcome`, `StartRefusal`). The sink trait is
+  `WorkflowTurnSink` (`activate`, `settings_turn`, `launch_turn`), replacing `RunSettingsSink`, which had no caller.
+- The production sink (`ParentTurns`, in `workflow_run_commands.rs`): activation through the session gates
+  (`SessionGates::activate`), and both turns as `Command::RecordWorkflowTurn { text, source }` through the session's handle.
+  The session commits it as a meta user message with `UserOrigin::Meta { source }` (`workflow_launch` or
+  `workflow_settings`), idle at once, busy held to the end of the work in flight (`session/src/local_record.rs`). No turn
+  row and no model call: the model reads the text on its next request.
+- Composition: `WorkflowRunService::configure_saved_start(home, analyzer)` (set once), called in `cli` next to the other
+  service configuration with the helper's analyzer. Without a helper the start is unsupported, as the tools are.
+- Provenance on the row: the launch anchor is `run-launched.inputId` (`SubmitRequest` is unchanged; the submit takes the
+  anchor through `submit_run_with_launch`), the tool call id is the run's `toolCallId`, and the draft copy is its
+  `scriptPath`. The platform gets `uuid_v7` (`platform/src/ids.rs`).
+
+**Not wired (the gate stays off).** The gate flip and the policy answer are W9b. Nothing user-visible changes: the run
+controls answer `capabilityUnsupported` while the gate is off.
+
+**Tests (written with the code; no red was observed for them, see the note below).**
+
+- `tools` `workflow_start` (6): an unknown name (both scopes) with Node's text, a saved file resolves with its scope and
+  script, an undeclared argument is `invalid_args`, an invalid name, an out-of-enum scope, a malformed metadata block.
+- `runtime` `workflow_run_start_tests` (8; the seventh checks the run row's v7 anchor and draft path, the eighth lists the hub run as a background work): no ports is unsupported; an unknown name leaves the parent untouched; a script
+  with diagnostics is refused before any activation; a clean start activates once, submits once, and records the launch turn
+  with Node's text and the `launch-` id; the launch text carries the arguments as a JSON block; a long compile text is cut at
+  2000 characters.
+- `runtime` `workflow_run_amend_tests` (existing, nine tests and the W8c ones) still green after the move of the types.
+- `protocol-zcode` `fork::workflow_run_commands::tests` (18): route tests through `crate::commands::command` on a session
+  the legacy harness creates. A closed gate, a session with no record, and no run service each answer
+  `capabilityUnsupported` without asking the run service. An accepted start answers its result and passes the name, the
+  scope and the arguments. A refused start is `Failed` with the reason code. An empty name is `proto.invalidPayload`. A
+  settings change with the gate closed is unsupported. An accepted amendment names the superseded run. A refused change is
+  `Failed` with its code. The three-state payload keeps absent, null and value apart, and a malformed payload is refused.
+- `session` `local_record::tests`: an idle workflow record is one meta message with its source and opens no turn; a record held
+  during a turn keeps its arrival order with a local record; the workflow sources are records, not human input.
+- `platform` `ids::v7_tests`: the layout (time, version 7, variant).
+- `cargo clippy --workspace --all-targets --locked -- -D warnings` clean. The lib suites of `runtime`, `tools`, `platform`,
+  `kernel-api`, `protocol-zcode` and `session` pass, and the cli package filter `workflow` (20) passes.
+
+**Node divergences (new in W9a, numbered from 760).**
+
+760. Verified and closed (PR #611, after #609 merged). A hub-started run, and a settings successor, are cancellable through the
+     user's stop without a kernel task: `cancelBackgroundWork` is `Command::StopTask`, which reaches the agents' `stop_task`
+     and `TaskStopTool::stop`, and `stop` calls `stop_run` first. That asks the session's run port to cancel the run id, with
+     no kernel registry lookup. The existing test `the_user_stops_a_workflow_run_through_the_same_path`
+     (`agents/src/task_stop_run_tests.rs`) covers it. The listing is verified too: a hub-started run is a live run of its
+     session, so `background_runs` lists it, titled by its saved name. The test is
+     `runtime` `workflow_run_start_tests::a_hub_started_run_is_listed_as_a_background_work_of_its_session`. Not a blocker.
+761. A script that names models is not bound and not refused. Node binds them with `bindScriptModels` and reports an unbound
+     name as `compile_failed`. CreateWorkflow in Rust has no binding either (9.39), so the two agree, and both differ from Node.
+762. The launch carries no `phaseNames` or `phaseAlongside` (Node passes the display phases). The run's phase table comes from
+     the compile check only, as CreateWorkflow's does (9.39).
+763. The launch turn and the settings turn are control-only meta records (`Command::RecordWorkflowTurn`), not Node's
+     control-only turns: no turn row, no `executionKind: "controlOnly"`, no run card from the turn. The model reads the text.
+764. The `workflowLaunch` and `workflowSettingsAmend` metadata is not stored on the user row. The provenance that is stored is
+     on the run row (760 names the gap in the registry). The projection and the run card of the launch turn belong to the
+     turn-rendering work after W9a.
+765. The start's busy check is `residency_busy()` or `preparing()` of the session, read once before the run service is asked:
+     a turn running, a queued input, a pending interaction, or an accepted input still being prepared. Node's
+     `hasActiveOrQueuedTurnWork` is the reference. The check is not repeated at the submit, so a turn that starts during the
+     start's file reads, compile and submit is not refused, and its launch record waits behind it. Close before the gate flips
+     (re-check under the session's queue, or route the admission through the actor as `sendText` does).
+     The settings route has no busy check: Node's `amendWorkflowRunSettings` does not call `hasActiveOrQueuedTurnWork`
+     (`dynamic-workflow-run-settings.ts`), so none is made here.
+766. Not verified: Node calls `ensureSessionPersisted(name)` before the submit, because the actor's `session_task_link` needs
+     the parent row. This host relies on the session row that createSession writes. W9b checks a hub start on a fresh session.
+767. A closed gate (or no gate record) answers `fault.command.capabilityUnsupported`, as Node answers a missing capability.
+     Node's exact answer with its feature off was not separately read; the spec's first section says the run controls answer
+     as refused while the gate is off.
+768. The refusal messages of the settings reasons (`not_configurable`, `unchanged`, `script_missing`, `missing_boundaries`) are
+     short host texts. The reason codes are Node's. `model_unavailable` and `start_failed` carry the host's own message.
+769. A failure of the compile analyzer (the helper is not running) is `start_failed` with the checker's message. Node's compile
+     is in process and has no such case.
+770. A compile that the submit rejects after a clean analysis is `start_failed` with the submit's message. Node's submit never
+     sees one, since its compile runs first.
+771. The `args` block of the launch text is serde_json's pretty form. The map's key order is sorted, while Node's
+     `JSON.stringify` keeps insertion order. A workflow with several arguments can order them differently in the text.
+772. The launch anchor's time comes from the production clock (`uuid_v7`). Without a clock the time is zero. The id is then
+     ordered wrong but still unique, and the composition always sets the clock.
+
+773. The parent's records are best effort, and are not acknowledged by the sink. The protocol sends the records a run asked
+     for in order, waits for each command's ack before the start's or change's ack goes out (so a user input sent after the
+     ack queues behind them), and logs a record the session does not accept. An activation that finds no gate record is logged,
+     and the start still answers as it did. Node's settings and launch turns are not checked against the session's answer
+     here; whether Node's turn can fail the start is not verified.
+774. The draft copy of a hub start is best effort, as CreateWorkflow's is: a write that fails is logged (`workflow.run.start.draft_not_written`),
+     and the run starts without `scriptPath`. The launch anchor is recorded only as the run's `run-launched.inputId`; the
+     launch turn does not carry it (Node shares one id), which the module header states.
+
+775. Two texts differ from CreateWorkflow on purpose, and follow Node's hub start (`dynamic-workflow-run-start.ts`). The
+     argument refusal lists the problems under the heading only, without CreateWorkflow's declaration appendix. The unreadable
+     refusal is the bare sentence, without CreateWorkflow's hand-edit hint. The shared texts (the invalid name, the not-found
+     headline, the unreadable sentence) are written once in `saved_workflow.rs` and used by both callers.
+776. The workflow control record source is a closed kernel-api enum (`WorkflowRecordSource`, with `as_str` and
+     `is_record_source`). The session's record filter and the protocol sink share that set. A producer cannot name a source
+     the filter does not recognize.
+777. The sink's drain-once contract: `deliver` takes the records once, after the port answers. A record offered after that is
+     logged (`workflow.run.turn.after_delivery`) and not sent. The run service pushes every record before it answers, so the
+     case does not arise for it.
+
+**Red, honestly.** The tests above were written after the code they cover, and I did not observe any of them fail first. The
+brief asked for red first; that was not done in this round, and the W9b agent should not count these tests as red-first.
+
 ## 10. Open questions
 
 Each has a recommendation. The user decides. Until decided, the recommendation is the default.

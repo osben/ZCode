@@ -30,8 +30,8 @@ use serde_json::{Map, Value, json};
 use tokio::sync::mpsc;
 
 use crate::saved_workflow::{
-    ArgDecl, ArgType, FILE_EXTENSION, ResolveRefusal, Scope, Store, parse as parse_saved,
-    starts_with_sentinel,
+    ArgDecl, ArgType, FILE_EXTENSION, ResolveRefusal, Scope, Store, invalid_name_text,
+    not_found_headline, parse as parse_saved, starts_with_sentinel, unreadable_text,
 };
 use crate::workflow_tools::{
     Contract, DYNAMIC_WORKFLOW_SKILL, contract, skill_loaded, workspace_dir,
@@ -329,22 +329,14 @@ fn describe_refusal(
     scope: Option<Scope>,
 ) -> String {
     match refusal {
-        ResolveRefusal::InvalidName => format!(
-            "'{name}' is not a usable workflow name: workflow names may only contain letters, digits, '.', '-' and '_', and must be 1-64 characters"
-        ),
+        ResolveRefusal::InvalidName => invalid_name_text(name),
         ResolveRefusal::Parse { path, detail } => format!(
             "The saved workflow '{name}' at {} could not be read: {detail}\n\nIts metadata block is malformed — most likely hand-edited. Fix the file, or save the workflow again.",
             path.display()
         ),
-        ResolveRefusal::Read { path, detail } => format!(
-            "The saved workflow '{name}' at {} could not be read: {detail}",
-            path.display()
-        ),
+        ResolveRefusal::Read { path, detail } => unreadable_text(name, &path, &detail),
         ResolveRefusal::NotFound => {
-            let headline = match scope {
-                Some(scope) => format!("No {} workflow named '{name}'.", scope.as_str()),
-                None => format!("No saved workflow named '{name}' in this project or globally."),
-            };
+            let headline = not_found_headline(name, scope);
             let entries = store.list().entries;
             let tagged: Vec<String> = entries
                 .iter()

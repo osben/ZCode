@@ -55,6 +55,8 @@ mod resume;
 mod retune;
 #[path = "workflow_run_settings.rs"]
 mod settings;
+#[path = "workflow_run_start.rs"]
+mod start;
 #[path = "workflow_run_submit.rs"]
 mod submit;
 
@@ -197,6 +199,12 @@ pub struct WorkflowRunService {
     inner: Arc<Inner>,
 }
 
+/// Fork (W9a, 9.53): the ports of a hub start (`configure_saved_start`).
+pub(crate) struct SavedStartPorts {
+    pub(crate) home: std::path::PathBuf,
+    pub(crate) analyzer: Arc<dyn rust_cli_kernel_api::workflow_analysis::WorkflowAnalyzer>,
+}
+
 impl Inner {
     /// Fork (9.52): the live run set changed; the watchers re-read their sessions' background works.
     fn runs_changed(&self) {
@@ -232,6 +240,9 @@ struct Inner {
     bindings: OnceLock<Arc<dyn ActorBindingsPort>>,
     /// Node `defaultConcurrency()` (9.39): the caps default of a submit. Set once by the composition.
     default_concurrency: OnceLock<f64>,
+    /// Fork (W9a, 9.53): the saved-workflow store's home and the compile checker of a hub start. Set once by the
+    /// composition; without it a hub start is unsupported.
+    saved_start: OnceLock<SavedStartPorts>,
     /// Serializes FillWorkflowHole calls (9.45): a fill reads the run's script, and the next fill must read the one the
     /// previous fill wrote. One permit, held across the helper's call and the owner's apply (a semaphore, since a tokio guard
     /// may not be held across an await).
@@ -583,11 +594,33 @@ impl WorkflowRunService {
                 before_quota_module: Mutex::new(None),
                 bindings: OnceLock::new(),
                 default_concurrency: OnceLock::new(),
+                saved_start: OnceLock::new(),
                 fills: Arc::new(tokio::sync::Semaphore::new(1)),
                 changes: tokio::sync::watch::channel(0).0,
                 resolves: Mutex::new(()),
             }),
         }
+    }
+
+    /// Fork (W9a, 9.53): sets the hub start's ports, the user's home (where saved workflows live) and the compile checker
+    /// (the same analyzer CreateWorkflow uses). Set once: a second call is a wiring fault, logged, and keeps the first.
+    pub fn configure_saved_start(
+        &self,
+        home: std::path::PathBuf,
+        analyzer: Arc<dyn rust_cli_kernel_api::workflow_analysis::WorkflowAnalyzer>,
+    ) -> bool {
+        let first = self
+            .inner
+            .saved_start
+            .set(SavedStartPorts { home, analyzer })
+            .is_ok();
+        if !first {
+            tracing::warn!(
+                event = "workflow.run.saved_start_set_twice",
+                "the saved-start ports were set twice; the first ones stay"
+            );
+        }
+        first
     }
 
     /// Fork (9.52): a receiver that ticks on every change of the live run set, for a session's background watcher.
@@ -1328,3 +1361,6 @@ mod submit_tests;
 #[cfg(test)]
 #[path = "workflow_run_amend_tests.rs"]
 mod amend_tests;
+#[cfg(test)]
+#[path = "workflow_run_start_tests.rs"]
+mod start_tests;

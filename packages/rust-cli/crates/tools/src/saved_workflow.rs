@@ -28,6 +28,29 @@ pub const GLOBAL_DIR: &str = ".zcode/workflows";
 /// Longest usable name (a file name on every platform, and descriptive).
 pub const MAX_NAME_CHARS: usize = 64;
 
+/// Node's text for a name the rules refuse. CreateWorkflow and the hub start both send it, so it is written once.
+pub(crate) fn invalid_name_text(name: &str) -> String {
+    format!(
+        "'{name}' is not a usable workflow name: workflow names may only contain letters, digits, '.', '-' and '_', and must be 1-64 characters"
+    )
+}
+
+/// The first line of Node's not-found text: the scope named, or the project and global scopes. Shared by both callers.
+pub(crate) fn not_found_headline(name: &str, scope: Option<Scope>) -> String {
+    match scope {
+        Some(scope) => format!("No {} workflow named '{name}'.", scope.as_str()),
+        None => format!("No saved workflow named '{name}' in this project or globally."),
+    }
+}
+
+/// Node's text for a saved file that exists but cannot be read (or whose metadata block does not parse), with the store's detail.
+pub(crate) fn unreadable_text(name: &str, path: &std::path::Path, detail: &str) -> String {
+    format!(
+        "The saved workflow '{name}' at {} could not be read: {detail}",
+        path.display()
+    )
+}
+
 /// Whether a name can identify a saved workflow. The character rule is the path-traversal defense: names are file names.
 pub fn is_valid_name(name: &str) -> bool {
     if name.is_empty() || name.chars().count() > MAX_NAME_CHARS {

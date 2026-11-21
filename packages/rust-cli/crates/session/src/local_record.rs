@@ -2,6 +2,7 @@
 //! 消息都是 meta user 消息（不是人类输入：不开轮次、不改标题），模型下一个请求看得到。
 //!
 //! 时机（§11.3）：空闲时马上提交一批；回合或压缩在跑时留在这里，这次工作收尾、开下一个回合之前提交（`start_next`）。
+//! Fork (W9a, 9.53): 工作流的控制记录（启动轮、设置轮）也是 meta 消息，与本地命令记录共用这一个留存队列，按到达顺序提交。
 
 use rust_cli_kernel_api::clock::Ids;
 use rust_cli_kernel_api::ids::CommandId;
@@ -12,10 +13,11 @@ use rust_cli_kernel_api::user_command::{
     LOCAL_COMMAND_CAVEAT_SOURCE, LOCAL_COMMAND_INPUT_SOURCE, LOCAL_COMMAND_META_SOURCE,
     LOCAL_COMMAND_OUTPUT_SOURCE, LocalCommandRecord,
 };
+use rust_cli_kernel_api::workflow_run::WorkflowRecordSource;
 
 use crate::actor::{Actor, accepted};
 
-/// 这条 user 消息是本地命令的记录（固定说明、命令输入、输出或记录带的 meta）。
+/// 这条 user 消息是本地命令的记录（固定说明、命令输入、输出或记录带的 meta），或工作流的控制记录：都不是人类输入。
 pub(crate) fn is_record(user: &UserMessage) -> bool {
     matches!(&user.origin, UserOrigin::Meta { source } if [
         LOCAL_COMMAND_CAVEAT_SOURCE,
@@ -23,7 +25,20 @@ pub(crate) fn is_record(user: &UserMessage) -> bool {
         LOCAL_COMMAND_OUTPUT_SOURCE,
         LOCAL_COMMAND_META_SOURCE,
     ]
-    .contains(&source.as_str()))
+    .contains(&source.as_str()) || WorkflowRecordSource::is_record_source(source))
+}
+
+/// Fork (W9a, 9.53): one meta user message of a record. Every record message is built here.
+fn meta_message(ids: &dyn Ids, source: String, text: String) -> Message {
+    Message::User(UserMessage {
+        stall_execution: None,
+        workflow_meta: None,
+        epilogue_start: None,
+        intent: None,
+        id: ids.message(),
+        content: vec![ContentBlock::Text { text }],
+        origin: UserOrigin::Meta { source },
+    })
 }
 
 /// 一条记录的消息，按提交顺序。
@@ -31,20 +46,30 @@ pub(crate) fn record_messages(ids: &dyn Ids, record: &LocalCommandRecord) -> Vec
     record
         .texts()
         .into_iter()
-        .map(|(source, text)| {
-            Message::User(UserMessage {
-                stall_execution: None,
-                workflow_meta: None,
-                epilogue_start: None,
-                intent: None,
-                id: ids.message(),
-                content: vec![ContentBlock::Text { text }],
-                origin: UserOrigin::Meta {
-                    source: source.to_owned(),
-                },
-            })
-        })
+        .map(|(source, text)| meta_message(ids, source.to_owned(), text))
         .collect()
+}
+
+/// Fork (W9a, 9.53): a record held while a turn runs. Local records and workflow control records share one queue, so they
+/// commit in the order they arrived.
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) enum HeldRecord {
+    Local(LocalCommandRecord),
+    Workflow {
+        source: WorkflowRecordSource,
+        text: String,
+    },
+}
+
+impl HeldRecord {
+    fn messages(self, ids: &dyn Ids) -> Vec<Message> {
+        match self {
+            Self::Local(record) => record_messages(ids, &record),
+            Self::Workflow { source, text } => {
+                vec![meta_message(ids, source.as_str().to_owned(), text)]
+            }
+        }
+    }
 }
 
 impl Actor {
@@ -56,7 +81,7 @@ impl Actor {
         record: LocalCommandRecord,
     ) -> Ack {
         if self.busy() {
-            self.held_records.push(record);
+            self.held_records.push(HeldRecord::Local(record));
             return accepted();
         }
         let messages = record_messages(self.deps.ids.as_ref(), &record);
@@ -66,18 +91,41 @@ impl Actor {
         accepted()
     }
 
+    /// Fork (W9a, 9.53): `Command::RecordWorkflowTurn`. A workflow control record is a meta user message (no turn, no model
+    /// call). Busy: it joins the held queue behind the records already waiting. Always `Accepted`; a failed store is logged.
+    pub(crate) async fn record_workflow_turn(
+        &mut self,
+        command: CommandId,
+        text: String,
+        source: WorkflowRecordSource,
+    ) -> Ack {
+        if self.busy() {
+            self.held_records
+                .push(HeldRecord::Workflow { source, text });
+            return accepted();
+        }
+        let message = meta_message(self.deps.ids.as_ref(), source.as_str().to_owned(), text);
+        if let Err(reason) = self
+            .commit_record_messages(Some(command), vec![message])
+            .await
+        {
+            tracing::warn!(%reason, source = source.as_str(), "the workflow control record could not be stored");
+        }
+        accepted()
+    }
+
     /// 回合或压缩收尾后：把这期间到达的记录按到达顺序一批提交。
     pub(crate) async fn flush_held_records(&mut self) {
         if self.busy() || self.held_records.is_empty() {
             return;
         }
-        let records = std::mem::take(&mut self.held_records);
-        let messages = records
-            .iter()
-            .flat_map(|record| record_messages(self.deps.ids.as_ref(), record))
+        let held = std::mem::take(&mut self.held_records);
+        let messages: Vec<Message> = held
+            .into_iter()
+            .flat_map(|record| record.messages(self.deps.ids.as_ref()))
             .collect();
         if let Err(reason) = self.commit_record_messages(None, messages).await {
-            tracing::warn!(%reason, "the held local command records could not be stored");
+            tracing::warn!(%reason, "the held local and workflow records could not be stored (the records are lost for the model)");
         }
     }
 

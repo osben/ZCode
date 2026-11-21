@@ -428,6 +428,31 @@ pub trait DynamicWorkflowRunPort: Send + Sync {
         Err(DynamicWorkflowRunError::unsupported("resume"))
     }
 
+    /// Node `amendWorkflowRunSettings` (9.53, W9a): the GUI "Configure" change of a run, in place or by amendment. The
+    /// settings turn and the activation go through `sink`. A refusal is a result; a failed amend is a refusal too.
+    async fn amend_settings(
+        &self,
+        request: SettingsRequest,
+        sink: Arc<dyn WorkflowTurnSink>,
+    ) -> Result<SettingsOutcome, DynamicWorkflowRunError> {
+        let _ = (request, sink);
+        Err(DynamicWorkflowRunError::unsupported(
+            "amendWorkflowRunSettings",
+        ))
+    }
+
+    /// Node `startSavedWorkflowRun` (9.53, W9a): the hub's direct start of a saved workflow in this session. The session
+    /// busy check is the caller's (it reads the session); the saved resolution, arguments, compile, activation, submit
+    /// and launch turn are the port's. A refusal is a result, not an error.
+    async fn start_saved(
+        &self,
+        request: StartSavedRequest,
+        sink: Arc<dyn WorkflowTurnSink>,
+    ) -> Result<StartSavedOutcome, DynamicWorkflowRunError> {
+        let _ = (request, sink);
+        Err(DynamicWorkflowRunError::unsupported("startSavedWorkflow"))
+    }
+
     /// Node `resolveQuestion`: answer an escalated question by its qid.
     async fn resolve_question(
         &self,
@@ -437,6 +462,165 @@ pub trait DynamicWorkflowRunPort: Send + Sync {
         let _ = (qid, answer);
         Err(DynamicWorkflowRunError::unsupported("resolveQuestion"))
     }
+}
+
+/// Fork (W9a, 9.53): the GUI "Configure" change (Node `AmendWorkflowRunSettingsInput`). An omitted field keeps the run's
+/// setting. Inside a `Some`, `None` returns the setting to the default (Node's `null`) and a value sets it.
+#[derive(Debug, Clone, PartialEq)]
+pub struct SettingsRequest {
+    pub run_id: WorkflowRunId,
+    /// Any value is refused by the run service: a subagent-model change is not built (divergence 663).
+    pub subagent_model: Option<Option<String>>,
+    pub max_concurrency: Option<Option<f64>>,
+}
+
+/// One side of a limit change. `None` is the default, which Node leaves absent from its metadata.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct SettingsChange {
+    pub from: Option<f64>,
+    pub to: Option<f64>,
+}
+
+/// What the settings turn records of the change (the parts of Node's `WorkflowSettingsAmendMeta` this host builds).
+#[derive(Debug, Clone, PartialEq)]
+pub struct SettingsAmend {
+    /// Absent for an in-place change: its absence means "applied in place" (Node).
+    pub predecessor_run_id: Option<WorkflowRunId>,
+    pub max_concurrency: Option<SettingsChange>,
+    /// Node's `ceiling`: the default concurrency at the change.
+    pub default_concurrency: f64,
+}
+
+/// A settings turn, as the parent receives it: the model-facing text and the card's metadata.
+#[derive(Debug, Clone, PartialEq)]
+pub struct SettingsTurn {
+    pub text: String,
+    /// The run the card is about: the successor for an amendment, the run itself for an in-place change.
+    pub run_id: WorkflowRunId,
+    pub tool_call_id: String,
+    pub name: Option<String>,
+    /// The title seed (Node `titleInput`): the run's name, else the run id the change started from.
+    pub title_input: String,
+    pub amend: SettingsAmend,
+}
+
+/// Fork (W9a, 9.53): a launch turn of the hub start (Node `emitControlOnlyUserTurn` with origin `workflowLaunch`).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LaunchTurn {
+    pub text: String,
+    pub run_id: WorkflowRunId,
+    pub tool_call_id: String,
+    pub name: String,
+}
+
+/// The origin a workflow control record carries on the parent's transcript: a closed set, so a producer names one of these
+/// and the session's record filter (`is_record_source`) recognizes exactly these. `Launch` is a hub start's record (Node's
+/// `workflowLaunch` origin); `Settings` is a GUI settings change's record (Node's settings turn).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum WorkflowRecordSource {
+    Launch,
+    Settings,
+}
+
+impl WorkflowRecordSource {
+    /// The stored origin text: the meta user message's `source`.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Launch => "workflow_launch",
+            Self::Settings => "workflow_settings",
+        }
+    }
+
+    /// Whether a stored meta `source` is a workflow control record's. The one place the recognized set is listed.
+    pub fn is_record_source(source: &str) -> bool {
+        [Self::Launch, Self::Settings]
+            .into_iter()
+            .any(|record| record.as_str() == source)
+    }
+}
+
+/// The parent's side of a run's turns (Node `activateDynamicWorkflowTools`, `enqueueSettingsTurn` and the launch turn).
+/// The sink belongs to one parent session: the port that receives it is that session's, so no method names the session.
+///
+/// The records are handed over once, before the port's answer: a record offered after the answer is not sent (the protocol logs
+/// it). A port must push each record before it resolves its start or change.
+///
+/// The records are best effort and are not acknowledged to the caller: a record that the session cannot store is logged
+/// by the sink, and the start or the change still answers as it did (divergence 773 in the W9a spec section).
+pub trait WorkflowTurnSink: Send + Sync {
+    /// A successful start or configuration activates the workflow tools (Node, `source: "run_control"`). `false` when the
+    /// session has no gate record to activate in.
+    fn activate(&self) -> bool;
+    /// Queues the settings turn to the parent as a control-only turn, after the work in flight.
+    fn settings_turn(&self, turn: SettingsTurn);
+    /// Records the launch turn of a hub start as a control-only turn, after the work in flight.
+    fn launch_turn(&self, turn: LaunchTurn);
+}
+
+/// Node's answer of a settings change. A refusal changes nothing, with one exception: `Refused(StartFailed)` can follow an
+/// amend that already stopped and superseded a live predecessor (the amend's message says so).
+#[derive(Debug, Clone, PartialEq)]
+pub enum SettingsOutcome {
+    /// Applied in place: the same run, with no stop and no successor.
+    Retuned {
+        run_id: WorkflowRunId,
+        tool_call_id: String,
+    },
+    /// The run was amended: a successor started, and the predecessor it superseded if it was live.
+    Amended {
+        run_id: WorkflowRunId,
+        tool_call_id: String,
+        superseded_run_id: Option<WorkflowRunId>,
+    },
+    Refused(SettingsRefusal),
+}
+
+/// Why a settings change is refused, in Node's vocabulary minus `compile_failed` (divergence 674). Node's shared schema
+/// also lists `compile_failed`: it answers a stored script that no longer compiles at the step-8 pre-compile. This host
+/// has no such pre-compile; a script that fails inside the amend's probe is `start_failed` (divergence 675).
+/// Serialized reasons: `not_found`, `not_configurable`, `unchanged`, `script_missing`, `model_unavailable`,
+/// `missing_boundaries`, `start_failed`.
+#[derive(Debug, Clone, PartialEq)]
+pub enum SettingsRefusal {
+    NotFound,
+    NotConfigurable,
+    Unchanged,
+    ScriptMissing,
+    ModelUnavailable { message: String },
+    MissingBoundaries,
+    StartFailed { message: String },
+}
+
+/// Fork (W9a, 9.53): the hub's direct start (Node `startSavedWorkflowRun`'s input). `scope` is `project` or `global` when
+/// given. The session's working directory is the one the saved workflow is resolved in.
+#[derive(Debug, Clone, PartialEq)]
+pub struct StartSavedRequest {
+    pub cwd: String,
+    pub name: String,
+    pub scope: Option<String>,
+    pub args: Option<Map<String, Value>>,
+}
+
+/// The answer of a hub start. The busy refusal is the caller's (the session has work in flight, Node `session_busy`).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum StartSavedOutcome {
+    Started {
+        run_id: WorkflowRunId,
+        tool_call_id: String,
+    },
+    Refused(StartRefusal),
+}
+
+/// Why a hub start is refused, in Node's vocabulary (`invalid_name`, `not_found`, `invalid_args`, `compile_failed`,
+/// `start_failed`). Each message is the text Node sends in the ack.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum StartRefusal {
+    InvalidName { message: String },
+    NotFound { message: String },
+    InvalidArgs { message: String },
+    CompileFailed { message: String },
+    StartFailed { message: String },
 }
 
 /// The run service's lifecycle as the composition root holds it (specs/fork-rust-workflow-engine.md, 9.30). The

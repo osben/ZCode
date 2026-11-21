@@ -840,10 +840,12 @@ async fn the_successor_inherits_the_predecessor_limit_unless_one_is_given() {
 use rust_cli_kernel_api::workflow_run::{RetuneOutcome, RetuneRefusal, RetuneRequest};
 use std::sync::Mutex as TestMutex;
 
-use super::settings::{
-    Change, RunSettingsSink, SettingsAmend, SettingsOutcome, SettingsRefusal, SettingsRequest,
-    SettingsTurn, settings_message_text,
+use rust_cli_kernel_api::workflow_run::{
+    LaunchTurn, SettingsAmend, SettingsChange, SettingsOutcome, SettingsRefusal, SettingsRequest,
+    SettingsTurn, WorkflowTurnSink,
 };
+
+use super::settings::settings_message_text;
 
 /// The parent's side as a test sees it: the activations and the settings turns, in order.
 #[derive(Default)]
@@ -852,14 +854,17 @@ struct Recorder {
     turns: TestMutex<Vec<SettingsTurn>>,
 }
 
-impl RunSettingsSink for Recorder {
-    fn activate(&self, _parent: &SessionId) {
+impl WorkflowTurnSink for Recorder {
+    fn activate(&self) -> bool {
         *self.activations.lock().unwrap() += 1;
+        true
     }
 
-    fn settings_turn(&self, _parent: &SessionId, turn: SettingsTurn) {
+    fn settings_turn(&self, turn: SettingsTurn) {
         self.turns.lock().unwrap().push(turn);
     }
+
+    fn launch_turn(&self, _turn: LaunchTurn) {}
 }
 
 /// A stopped run with its stored arguments, as an earlier process interrupted it.
@@ -941,7 +946,7 @@ async fn a_concurrency_change_on_a_live_run_is_applied_in_place_with_one_setting
     assert_eq!(turns[0].amend.predecessor_run_id, None);
     assert_eq!(
         turns[0].amend.max_concurrency,
-        Some(Change {
+        Some(SettingsChange {
             from: Some(4.0),
             to: Some(2.0)
         })
@@ -1023,7 +1028,11 @@ async fn a_change_to_a_settled_run_amends_it_and_the_successor_inherits_the_argu
     let turns = sink.turns.lock().unwrap();
     assert_eq!(turns[0].run_id, run_id);
     assert_eq!(
-        turns[0].amend.predecessor_run_id.as_deref(),
+        turns[0]
+            .amend
+            .predecessor_run_id
+            .as_ref()
+            .map(WorkflowRunId::as_str),
         Some("dwfrun-settled-cfg")
     );
     assert_eq!(
@@ -1176,8 +1185,8 @@ async fn the_port_retune_answers_not_live_for_a_settled_or_unknown_run() {
 #[test]
 fn the_settings_text_names_the_successor_or_the_in_place_run_as_node_does() {
     let amendment = SettingsAmend {
-        predecessor_run_id: Some("run_a".to_owned()),
-        max_concurrency: Some(Change {
+        predecessor_run_id: Some(WorkflowRunId::new("run_a")),
+        max_concurrency: Some(SettingsChange {
             from: Some(4.0),
             to: Some(2.0),
         }),
@@ -1191,7 +1200,7 @@ fn the_settings_text_names_the_successor_or_the_in_place_run_as_node_does() {
     );
     let in_place = SettingsAmend {
         predecessor_run_id: None,
-        max_concurrency: Some(Change {
+        max_concurrency: Some(SettingsChange {
             from: Some(2.0),
             to: None,
         }),

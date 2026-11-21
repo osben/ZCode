@@ -54,6 +54,13 @@ pub(crate) async fn decide(
             super::external_agent_config::set_option(server, live, envelope, revision).await
         }
         "cancelBackgroundWork" => background_work::cancel(live, envelope, revision).await,
+        // Fork (W9a, 9.53): the hub's start and the GUI configure of a workflow run (fork/workflow_run_commands.rs).
+        "startSavedWorkflow" => {
+            super::workflow_run_commands::start_saved(server, live, envelope, revision).await
+        }
+        "amendWorkflowRunSettings" => {
+            super::workflow_run_commands::amend_settings(server, live, envelope, revision).await
+        }
         "stopSubagent" => background_work::stop_subagent(live, envelope, revision).await,
         // Fork: the prepared worktree's compare-and-set update (crate::worktree).
         "updateWorktreePreparation" => {

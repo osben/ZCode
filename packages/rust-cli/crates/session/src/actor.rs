@@ -281,7 +281,8 @@ pub(crate) struct Actor {
     /// Fork (desktop App): the running goal completion verification (its job is `job`).
     pub(crate) goal_verify: Option<crate::goal_verify::Pending>,
     /// 回合或压缩在跑时到达的本地命令记录（修复线 L-A，local_record.rs）：收尾后按到达顺序提交。
-    pub(crate) held_records: Vec<rust_cli_kernel_api::user_command::LocalCommandRecord>,
+    /// Fork (W9a, 9.53): the records held while a turn runs, local and workflow ones in arrival order.
+    pub(crate) held_records: Vec<crate::local_record::HeldRecord>,
     seen: HashSet<CommandId>,
     /// 续写时补在内存里、还没落库的消息，按历史里的顺序：末尾未结调用的中断结果（session-lifecycle.md §6.3，工作线
     /// F81）与 `No response requested.`（§6.3.1，工作线 F77）。第一批带消息的提交把它们排在最前面，成功后清掉；
@@ -895,6 +896,9 @@ impl Actor {
                 self.change_directory(id, root, Some(record)).await
             }
             Command::RecordLocalCommand { record } => self.record_local_command(id, record).await,
+            Command::RecordWorkflowTurn { text, source } => {
+                self.record_workflow_turn(id, text, source).await
+            }
             Command::BackgroundForeground { reason } => self.background_foreground(reason).await,
             Command::StoreResumeSentinel => self.store_resume_sentinel(id).await,
             Command::Dequeue { command } => self.dequeue(&command),
