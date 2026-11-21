@@ -1760,6 +1760,34 @@ async fn background_works_follow_launch_order_and_name_and_tick_on_change() {
     );
 }
 
+/// Fork (9.52): closing the host is a change of the live run set. The receiver ticks, and the session's background works
+/// are empty at once, so a session's list does not keep a run the host has already taken down.
+#[tokio::test]
+async fn closing_the_host_ticks_the_change_receiver_and_empties_the_background_works() {
+    use rust_cli_kernel_api::ids::SessionId;
+    use rust_cli_kernel_api::workflow_run::DynamicWorkflowRunSessions;
+    let h = harness();
+    let own = h.service.for_session(&SessionId::new("ses_p"));
+    h.service
+        .launch(input("wf_1"), config("wf_1", Some("ses_p")))
+        .await
+        .expect("launched");
+    let mut changes = own
+        .background_changes()
+        .expect("a run service keeps changes");
+    changes.borrow_and_update();
+    assert_eq!(own.background_runs().await.expect("listed").len(), 1);
+    let _report = h.service.close().await;
+    assert!(
+        changes.has_changed().expect("open"),
+        "the close ticks the receiver"
+    );
+    assert!(
+        own.background_runs().await.expect("listed").is_empty(),
+        "a closed host lists no background run"
+    );
+}
+
 /// Node's retired-question table (W8a, 9.48, divergence 391): a question withdrawn with its run is `run_not_in_flight`, an
 /// answered one is `already_resolved`, and an id it never held is `unknown_question`.
 #[tokio::test]

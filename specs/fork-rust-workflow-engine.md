@@ -4409,6 +4409,10 @@ at the session's next turn edge (9.47's note on 501). 682. The erase test checks
 - Review round (ocr on #609, eleven findings, 747 to 754). New tests: the retry takes the revision route (`name`), an unreadable
   detail on a retune, the launch-order and name test with the change tick (`background_works_follow_launch_order_and_name_and_tick_on_change`).
   The retry and detail tests were written with their fixes, so no behaviour red was captured for them.
+- Second ocr round on #609 (four items): `Live`'s Drop now aborts the run-set watcher (it parks on a server-scoped channel);
+  the doc line of `watch_subagents` is back on that function; the `shell_table` doc link points at `background_table`; and
+  `closing_the_host_ticks_the_change_receiver_and_empties_the_background_works` covers the close tick. The close test passed on
+  its first run, so no red was captured.
 
 ## 10. Open questions
 

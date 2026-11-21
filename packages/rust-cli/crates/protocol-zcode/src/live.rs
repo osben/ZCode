@@ -1119,10 +1119,13 @@ impl Drop for Live {
         if let Some(watcher) = self.state().watcher.take() {
             watcher.abort();
         }
+        // Fork (9.52): the run-set watcher parks on the server-scoped change channel, so it must end with the session.
+        if let Some(watcher) = self.state().runs_watcher.take() {
+            watcher.abort();
+        }
     }
 }
 
-/// Fork: forwards the kernel's subagent table changes to the session's pump task while the session is open.
 /// Fork (9.52): a run started or settled on its own changes the session's background works; re-read them, as
 /// `watch_subagents` re-reads the subagent table. Ends when the run service or the session is gone.
 pub(crate) async fn watch_background_runs(
@@ -1138,6 +1141,7 @@ pub(crate) async fn watch_background_runs(
     }
 }
 
+/// Fork: forwards the kernel's subagent table changes to the session's pump task while the session is open.
 pub(crate) async fn watch_subagents(
     mut changes: futures_util::stream::BoxStream<'static, ()>,
     live: std::sync::Weak<rust_cli_protocol_core::sessions::Bridged<Live>>,

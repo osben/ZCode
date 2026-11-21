@@ -2,7 +2,7 @@
 //! `onBackgroundTaskLifecycle` for `kind: "bash"`; specs/fork-rust-agent-parity.md).
 //!
 //! The kernel's background ledger (`SessionHandle::background_tasks`) owns the commands; the adapter re-reads
-//! it after the events that can change it ([`super::Projection::shell_table`]). The list holds the running
+//! it after the events that can change it ([`super::Projection::background_table`]). The list holds the running
 //! commands only: an ended command leaves it, as the UI reads only running works.
 
 use std::collections::HashMap;
