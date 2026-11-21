@@ -623,6 +623,44 @@ async fn a_global_save_writes_under_the_home_directory() {
     );
 }
 
+/// Node `resolveSaveWorkflowInput`: the confirmation window reads the destination, the overwrite fact, the shadowing
+/// fact and the resolved script from the asked input (desktop `readSaveWorkflowInput`), not from the message.
+#[tokio::test]
+async fn the_asked_input_carries_the_destination_and_the_overwrite_facts() {
+    let harness = Harness::new("ask-input");
+    let store = Store::new(&harness.dirs.cwd, &harness.dirs.home);
+    let meta = Meta {
+        description: "g".to_owned(),
+        when_to_use: None,
+        args: None,
+    };
+    store
+        .save("dup", &meta, "return 1;", Scope::Global)
+        .expect("seed global");
+    store
+        .save("dup", &meta, "return 1;", Scope::Project)
+        .expect("seed project");
+    let ctx = harness.with_skill();
+    let input = json!({"name": "dup", "description": "p", "script": CLEAN, "scope": "project"});
+    assert!(matches!(
+        harness.tool.check_permissions(&input, &ctx).await,
+        PermissionDecision::Ask { .. }
+    ));
+    let shown = harness
+        .tool
+        .ask_input(&ctx.tool_use)
+        .expect("the asked input");
+    assert_eq!(shown["name"], "dup");
+    assert_eq!(shown["description"], "p");
+    assert_eq!(shown["script"], CLEAN);
+    assert_eq!(
+        shown["path"],
+        json!(store.path(Scope::Project, "dup").display().to_string())
+    );
+    assert_eq!(shown["overwrite"], json!(true));
+    assert_eq!(shown["shadowing"], "hides_global");
+}
+
 #[tokio::test]
 async fn the_confirmation_names_an_overwrite_and_a_shadowed_copy() {
     let harness = Harness::new("message");
@@ -846,7 +884,13 @@ fn the_pending_table_evicts_the_oldest_decision_only() {
     let id = |n: usize| ToolUseId::new(format!("toolu_{n}"));
     let mut table = PendingTable::default();
     for n in 0..=PENDING_CAP {
-        table.insert(id(n), Pending::Approved(n.to_string()));
+        table.insert(
+            id(n),
+            Pending::Approved {
+                script: n.to_string(),
+                shown: Value::Null,
+            },
+        );
     }
     assert!(table.take(&id(0)).is_none(), "the oldest is evicted");
     assert!(table.take(&id(1)).is_some(), "the second oldest stays");

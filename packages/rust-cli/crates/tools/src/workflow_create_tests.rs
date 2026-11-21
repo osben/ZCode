@@ -621,7 +621,20 @@ async fn the_window_and_the_result_carry_the_scripts_display() {
     assert_eq!(output.display["kind"], "create_workflow");
     assert_eq!(output.display["errorCount"], 0);
     assert_eq!(output.display["causalityGraph"]["steps"][0]["id"], "ask-1");
-    assert_eq!(output.display["backgroundTaskId"], "run-1");
+    // Node `createCreateWorkflowDisplay`: the card's field set is frozen (the desktop parses it strictly), so the
+    // handler's `status` / `backgroundTaskId` never reach it.
+    let mut keys: Vec<&str> = output
+        .display
+        .as_object()
+        .expect("an object")
+        .keys()
+        .map(String::as_str)
+        .collect();
+    keys.sort_unstable();
+    assert_eq!(
+        keys,
+        ["causalityGraph", "diagnostics", "errorCount", "kind", "ok"]
+    );
 }
 
 /// The run is launched with the script's named phases, in declaration order, and the "running alongside" indexes that
@@ -666,9 +679,9 @@ async fn a_clean_inline_script_is_drafted_asked_and_started_in_the_background() 
         ),
         "{text}"
     );
-    assert_eq!(output.display["status"], "backgrounded");
-    assert_eq!(output.display["backgroundTaskId"], "run-1");
     assert_eq!(output.display["ok"], true);
+    assert!(output.display.get("status").is_none());
+    assert!(output.display.get("backgroundTaskId").is_none());
     let draft = harness.draft("pr-review.dwf.ts");
     assert_eq!(fs::read_to_string(&draft).expect("draft"), CLEAN);
     let submits = submits_of(&harness);
@@ -745,6 +758,10 @@ async fn a_script_that_does_not_check_gets_file_line_diagnostics_and_no_run() {
         "{text}"
     );
     assert_eq!(output.display["ok"], false);
+    // Node `createCreateWorkflowDisplay`: the draft row is a `create_workflow` card with the error count.
+    assert_eq!(output.display["kind"], "create_workflow");
+    assert_eq!(output.display["errorCount"], 1);
+    assert_eq!(output.display["diagnostics"][0]["line"], 1);
     assert_eq!(
         fs::read_to_string(harness.draft("pr-review.dwf.ts")).expect("draft"),
         script
@@ -1130,6 +1147,7 @@ fn prepared(script: &str) -> Prepared {
             diagnostics: Vec::new(),
         },
         display: None,
+        shown: None,
     }
 }
 
@@ -1235,4 +1253,44 @@ async fn a_symlink_that_leads_out_of_the_workspace_is_refused_before_it_is_read(
         "{error:?}"
     );
     assert!(submits_of(&harness).is_empty());
+}
+
+/// Fork (9.61): Node's `resolveInput` puts the saved source's facts on the input the ask shows (`saved.path`,
+/// `saved.scope`, the defaulted `saved.args`, the body as `script`, the saved name as `name`), so the window's saved
+/// badge names the file. An inline script asks with the model's input.
+#[tokio::test]
+async fn the_ask_of_a_saved_run_shows_its_file_scope_and_defaulted_arguments() {
+    let harness = Harness::new(Some(FakeRun::new(None, false)));
+    let declared = vec![("n".to_owned(), arg(ArgType::Number, None, Some(json!(3))))];
+    let store = harness.store();
+    store
+        .save(
+            "nightly",
+            &saved_meta(Some(declared)),
+            "return n;",
+            Scope::Project,
+        )
+        .expect("save");
+    let path = store.path(Scope::Project, "nightly");
+    let ctx = harness.with_skill();
+    let input = json!({"saved": {"name": "nightly"}});
+    let _ = harness.tool.check_permissions(&input, &ctx).await;
+    let shown = harness
+        .tool
+        .ask_input(&ctx.tool_use)
+        .expect("the saved ask shows a resolved input");
+    assert_eq!(shown["name"], "nightly", "{shown}");
+    assert_eq!(shown["script"], "return n;", "{shown}");
+    assert_eq!(
+        shown["saved"],
+        json!({"name": "nightly", "args": {"n": 3}, "path": path.display().to_string(), "scope": "project"}),
+        "{shown}"
+    );
+
+    let inline_ctx = harness.with_skill();
+    let _ = harness
+        .tool
+        .check_permissions(&inline("return 1;"), &inline_ctx)
+        .await;
+    assert_eq!(harness.tool.ask_input(&inline_ctx.tool_use), None);
 }

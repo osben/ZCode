@@ -5,6 +5,10 @@
 //! implementation means no progress is delivered.
 
 /// Delivers one run's progress to its parent session.
+/// Fork (9.61): the key the run's progress sink adds to `progress` for a named run, so the host's notices call the run by
+/// its name (Node's registry description). Not part of Node's payload; the delivery never sends `progress` on.
+pub const RUN_NAME_KEY: &str = "runName";
+
 pub trait WorkflowRunProgressPort: Send + Sync {
     /// Hands the projection `deltas` of one journal event to `parent_session_id`'s open stream. `progress` is the Node
     /// `DynamicWorkflowRunProgressPayload` shape of the same event; the delivery does not persist it. An error is logged

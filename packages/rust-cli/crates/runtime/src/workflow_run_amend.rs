@@ -21,7 +21,7 @@ use rust_cli_workflow::actor_mailbox::ActorMailbox;
 use rust_cli_workflow::engine::EngineConfig;
 use rust_cli_workflow::event::LaunchFields;
 use rust_cli_workflow::import_build::{BuildOutcome, ImportRefusal};
-use rust_cli_workflow::model::Caps;
+use rust_cli_workflow::model::{Caps, RunStatus};
 use serde_json::Value;
 
 use super::list::on_blocking_pool;
@@ -127,7 +127,14 @@ impl WorkflowRunService {
             Ok(row) => row,
             Err(reason) => return Ok(AmendResult::Refused(refusal_of(reason))),
         };
-        if row.parent_session_id.as_deref() != Some(parent) {
+        // Node's run service is the app's: another session's settled run is amended into a successor of this session
+        // (DWW-06). One that has not settled is not this session's to stop, so it stays unknown here.
+        if row.parent_session_id.as_deref() != Some(parent)
+            && !matches!(
+                row.status,
+                RunStatus::Completed | RunStatus::Errored | RunStatus::Stopped
+            )
+        {
             return Ok(AmendResult::Refused(AmendRefusalReason::RunNotFound));
         }
 

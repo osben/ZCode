@@ -274,6 +274,7 @@ fn a_launch_progress_records_under_its_session_with_the_launched_fields() {
         subagent_model: Some("claude-sonnet".into()),
         model_bindings: None,
         default_concurrency: 6.0,
+        run_name: Some("E2E 提问工作流".into()),
         projection: fresh_projection(),
         port: port.clone(),
     }
@@ -288,6 +289,8 @@ fn a_launch_progress_records_under_its_session_with_the_launched_fields() {
         json!("claude-sonnet")
     );
     assert_eq!(calls[0].1["payload"]["concurrencyCeiling"], json!(6));
+    // 9.61: the run's name rides on the progress for the host's notices.
+    assert_eq!(calls[0].1["runName"], json!("E2E 提问工作流"));
 }
 
 #[test]

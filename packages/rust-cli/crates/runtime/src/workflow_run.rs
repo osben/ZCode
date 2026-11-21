@@ -323,6 +323,8 @@ impl Drop for Reservation {
 
 /// The launch facts the progress sink reads, taken from the config before the config moves into the owner factory.
 struct LaunchFacts {
+    /// Fork (9.61): the run's user-given name, for the progress notices.
+    run_name: Option<String>,
     parent_session_id: Option<String>,
     run_id: String,
     tool_call_id: Option<String>,
@@ -345,6 +347,7 @@ impl LaunchFacts {
             None => (None, None),
         };
         Self {
+            run_name: config.name.clone(),
             parent_session_id: config.parent_session_id.clone(),
             run_id: config.run_id.clone(),
             tool_call_id: config.tool_call_id.clone(),
@@ -385,6 +388,7 @@ fn session_hooks(
             subagent_model: facts.subagent_model,
             model_bindings: facts.model_bindings,
             default_concurrency,
+            run_name: facts.run_name,
             projection: hooks
                 .projection
                 .get_or_insert_with(shared_projection)
@@ -452,7 +456,7 @@ impl Inner {
 
     /// Posts the terminal notice of a settled run to its parent session (9.51, W8d). Runs on the owner's thread after the
     /// settlement, with no lock held. A row that cannot be read posts nothing; the read failure is logged.
-    fn post_terminal_notice(&self, run_id: &str) {
+    fn post_terminal_notice(&self, run_id: &str, started_at_ms: i64) {
         // No sink is the gate-off default: nothing is posted and nothing is logged.
         let (signals, quota_on) = {
             let setup = self.setup.lock_unpoisoned();
@@ -505,6 +509,26 @@ impl Inner {
         let auto_resumes =
             quota_on && rust_cli_workflow::quota_resume::quota_resume_at(&row).is_some();
         if let Some(notice) = crate::workflow_run_terminal::terminal_notice(&row, auto_resumes) {
+            // Fork (9.61): the card's time cell, this incarnation's life on the injected clock.
+            let settled_at_ms = self.clock.get().map(|clock| clock.now_ms());
+            let notice = crate::workflow_run_terminal::with_duration(
+                notice,
+                crate::workflow_run_terminal::run_duration_ms(started_at_ms, settled_at_ms),
+            );
+            // Fork (9.61): the chips, from the journal's published records (a read fault posts the notice without them).
+            let published = match store.run_detail(run_id, None) {
+                Ok(detail) => detail.map(|detail| Value::Array(detail.published_artifacts)),
+                Err(error) => {
+                    tracing::warn!(
+                        event = "workflow.run.terminal_artifacts_unread",
+                        run = %run_id,
+                        error = %error,
+                        "a settled workflow run's artifacts could not be read, so its terminal notice carries no chips"
+                    );
+                    None
+                }
+            };
+            let notice = crate::workflow_run_terminal::with_artifacts(notice, published.as_ref());
             signals.workflow_notice(
                 &SessionId::new(notice.parent_session_id),
                 notice.text,
@@ -561,6 +585,7 @@ impl LaunchFacts {
     /// Facts for a hook that carries no run (the quota module alone).
     fn none() -> Self {
         Self {
+            run_name: None,
             parent_session_id: None,
             run_id: String::new(),
             tool_call_id: None,
@@ -906,7 +931,7 @@ impl WorkflowRunService {
                 }
                 drop(in_use);
                 // The run's terminal notice (9.51): the row is settled, and it is posted once, on this settlement.
-                settle_inner.post_terminal_notice(&settle_run_id);
+                settle_inner.post_terminal_notice(&settle_run_id, started_at_ms);
                 settle_inner.evict_if_idle(&settle_parent);
                 failures
             }) {
@@ -1196,13 +1221,9 @@ impl ChildHandler for WireBridge {
             ChildEvent::PhaseEntered { name } => {
                 let _ = self.handle.enter_phase(&name);
             }
-            // The mailbox has no declare-artifact request yet (9.23 defers it), so the run fails rather than drop it. The
-            // failure is posted inline, not on the blocking pool: a later `complete` from this child must queue after it.
-            ChildEvent::DeclareArtifact { .. } => {
-                let _ = self.handle.fail_posted(WorkflowError::new(
-                    ErrorCode::DriverError,
-                    "declare-artifact is not wired yet",
-                ));
+            // Posted inline, as a report is: the reports that fill the declared artifact queue after it.
+            ChildEvent::DeclareArtifact { site_id, op, args } => {
+                let _ = self.handle.declare_artifact(&site_id, &op, args);
             }
         }
     }

@@ -437,8 +437,20 @@ fn pending_question(question: &Value) -> Value {
 /// The gap form's detail: the list item plus the usage object (the registry has the spent tokens, and no node counts).
 fn detail_with_usage(mut item: Value) -> Value {
     let spent = item["spentTokens"].clone();
-    item["usage"] = json!({ "spentTokens": spent });
+    item["usage"] = usage_without_nodes(spent);
     item
+}
+
+/// Node's usage before any node is counted (the gap copy, and a row whose journal has no projected state): the tokens and
+/// four zero node counts, so the desktop's strict usage schema holds. A projected state overwrites the counts.
+fn usage_without_nodes(spent: Value) -> Value {
+    json!({
+        "spentTokens": spent,
+        "nodesObserved": 0,
+        "nodesRunning": 0,
+        "nodesCompleted": 0,
+        "nodesFailed": 0,
+    })
 }
 
 fn to_run_status(status: LifecycleStatus) -> RunStatus {
@@ -768,11 +780,14 @@ impl WorkflowRunService {
             .progress
             .as_ref()
             .map(|progress| progress.default_concurrency);
-        let Some(detail) = store.run_detail(run_id, default).map_err(store_error)? else {
+        let live_here = live.is_some();
+        let Some(detail) = store
+            .run_detail_for(run_id, default, live_here)
+            .map_err(store_error)?
+        else {
             // The gap form: this session's launched run whose row is not written yet (Node's registry gap copy).
             return Ok(live.map(|run| detail_with_usage(gap_item(&run.run_id, &run.meta))));
         };
-        let live_here = live.is_some();
         let mut listed = detail.run;
         let spent = js_number(listed.run.spent_tokens);
         let max_concurrency = listed.run.caps.max_concurrency;
@@ -780,7 +795,7 @@ impl WorkflowRunService {
         let result = listed.run.result.take();
         let failure = listed.run.failure.take();
         let mut item = list_item(&listed, live_here, parent);
-        item["usage"] = json!({ "spentTokens": spent });
+        item["usage"] = usage_without_nodes(json!(spent));
         if let Some(result) = result {
             item["result"] = result;
         }
@@ -804,6 +819,12 @@ impl WorkflowRunService {
         // model bindings, as the workflow crate builds them from the same read.
         for (key, value) in detail.roster {
             item[key] = value;
+        }
+        // Node `pendingQuestionsOf`: questions this read cannot know are left out, not reported as none (DWL-02).
+        if item["health"]["pendingQuestionsKnown"] == Value::Bool(false)
+            && let Some(fields) = item.as_object_mut()
+        {
+            fields.remove("pendingQuestions");
         }
         Ok(Some(item))
     }

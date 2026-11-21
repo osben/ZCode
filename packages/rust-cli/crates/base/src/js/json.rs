@@ -150,6 +150,50 @@ pub fn write(out: &mut String, value: &Value) {
     }
 }
 
+/// `JSON.stringify(value, null, 2)`: the same text as [`stringify`] with two-space indentation. An empty array or object
+/// stays `[]` / `{}`, as in JS.
+pub fn stringify_indented(value: &Value) -> String {
+    let mut out = String::new();
+    write_indented(&mut out, value, 0);
+    out
+}
+
+fn write_indented(out: &mut String, value: &Value, depth: usize) {
+    let newline = |out: &mut String, depth: usize| {
+        out.push('\n');
+        out.push_str(&"  ".repeat(depth));
+    };
+    match value {
+        Value::Array(items) if !items.is_empty() => {
+            out.push('[');
+            for (i, item) in items.iter().enumerate() {
+                if i > 0 {
+                    out.push(',');
+                }
+                newline(out, depth + 1);
+                write_indented(out, item, depth + 1);
+            }
+            newline(out, depth);
+            out.push(']');
+        }
+        Value::Object(map) if !map.is_empty() => {
+            out.push('{');
+            for (i, (key, value)) in properties(map).enumerate() {
+                if i > 0 {
+                    out.push(',');
+                }
+                newline(out, depth + 1);
+                write_str(out, key);
+                out.push_str(": ");
+                write_indented(out, value, depth + 1);
+            }
+            newline(out, depth);
+            out.push('}');
+        }
+        other => write(out, other),
+    }
+}
+
 /// JS 对象的属性遍历顺序：数组下标键按数值升序在前，其余按插入顺序。
 pub fn properties(map: &Map<String, Value>) -> impl Iterator<Item = (&String, &Value)> {
     let mut index: Vec<(u32, &String, &Value)> = map

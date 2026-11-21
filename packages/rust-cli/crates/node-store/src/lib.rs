@@ -55,6 +55,9 @@ pub use workflow_runs::replay::{
 };
 // The live progress path (9.31): the same projection and envelope the replay folds, so a live run and a cold one agree.
 pub use workflow_runs::projection::LiveProjection;
+// The session sessions-index row folds the run deltas it forwards (9.61).
+pub use workflow_runs::State as WorkflowRunsState;
+pub use workflow_runs::delta::apply_all as apply_workflow_run_deltas;
 pub use workflow_runs::{
     Envelope as WorkflowRunEnvelope, Limits as WorkflowRunLimits, PRODUCTION as WORKFLOW_RUN_LIMITS,
 };

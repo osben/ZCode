@@ -49,18 +49,27 @@ struct ScriptedAgents {
     /// Whether each turn runs a workspace-mutating call, in the order the turns run (the child calls the turn's gate
     /// before it). A turn past the queue runs no write.
     mutating: Mutex<VecDeque<bool>>,
+    /// Whether each turn reports its model request to the turn's observer (the real child does, once per request).
+    requests: bool,
 }
 
 /// Builds a [`ScriptedAgents`] whose turns need more than the plain replies: the per-turn write flags.
 struct ScriptedBuilder {
     replies: Vec<ActorTurnEnd>,
     mutating: Vec<bool>,
+    requests: bool,
 }
 
 impl ScriptedBuilder {
     /// Whether each turn runs a write, in turn order.
     fn mutating(mut self, turns: impl IntoIterator<Item = bool>) -> Self {
         self.mutating = turns.into_iter().collect();
+        self
+    }
+
+    /// Every turn reports one model request.
+    fn requests(mut self) -> Self {
+        self.requests = true;
         self
     }
 
@@ -76,6 +85,7 @@ impl ScriptedBuilder {
             escalated: Mutex::new(Vec::new()),
             stats: None,
             mutating: Mutex::new(self.mutating.into()),
+            requests: self.requests,
         })
     }
 }
@@ -85,6 +95,7 @@ impl ScriptedAgents {
         ScriptedBuilder {
             replies,
             mutating: Vec::new(),
+            requests: false,
         }
     }
 
@@ -100,6 +111,7 @@ impl ScriptedAgents {
             escalated: Mutex::new(Vec::new()),
             stats: None,
             mutating: Mutex::new(VecDeque::new()),
+            requests: false,
         })
     }
 
@@ -119,6 +131,7 @@ impl ScriptedAgents {
             escalated: Mutex::new(Vec::new()),
             stats: Some(stats),
             mutating: Mutex::new(VecDeque::new()),
+            requests: false,
         })
     }
 
@@ -135,6 +148,7 @@ impl ScriptedAgents {
             escalated: Mutex::new(Vec::new()),
             stats: None,
             mutating: Mutex::new(VecDeque::new()),
+            requests: false,
         })
     }
 
@@ -151,6 +165,7 @@ impl ScriptedAgents {
             escalated: Mutex::new(Vec::new()),
             stats: None,
             mutating: Mutex::new(VecDeque::new()),
+            requests: false,
         })
     }
 }
@@ -172,6 +187,12 @@ impl ActorAgents for ScriptedAgents {
             .unwrap_or(false);
         if writes && let Some(gate) = run.on_mutating.clone() {
             gate.mutating().await;
+        }
+        // The child sends its model request (Node `askExecuting`'s source).
+        if self.requests
+            && let Some(requests) = run.on_request.clone()
+        {
+            requests.request_started();
         }
         self.runs.lock().expect("runs").push(run);
         if let Some(port) = port.as_ref().map(|port| &port.port) {
@@ -861,6 +882,30 @@ async fn a_mutating_call_of_an_ask_reaches_the_owner_through_the_bridge() {
     assert_eq!(
         closed, 1,
         "the first mutating call of the ask closes the cache"
+    );
+}
+
+/// Node `askExecuting`: the child's model request reaches the owner, which records `node-executing`, so the run card
+/// draws the asking actor as running. Before, no turn side posted it and the node stayed `dispatched` (pending).
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_model_request_of_an_ask_is_recorded_as_executing_through_the_bridge() {
+    let agents = ScriptedAgents::builder(vec![ActorTurnEnd::Text("done".into())])
+        .requests()
+        .build();
+    let (mut owner, mailbox) = owner_over(agents);
+    let actor = owner.create_actor("site", None, None).expect("actor");
+    owner.ask("site", &actor, "do it").expect("ask");
+    owner.drain().expect("drain");
+    serve_until_settled(&mailbox, &mut owner, 1);
+    let executing = owner
+        .events()
+        .expect("events")
+        .iter()
+        .filter(|stored| stored.payload_json.contains("node-executing"))
+        .count();
+    assert!(
+        executing >= 1,
+        "the ask's model request is recorded as executing"
     );
 }
 

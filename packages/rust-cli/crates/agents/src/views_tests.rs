@@ -21,6 +21,7 @@ fn running(agent: &str, root: &str) -> crate::live::LiveAgent {
     crate::live::LiveAgent {
         last_turn_messages: None,
         on_mutating: None,
+        on_request: None,
         off_peak_execution: None,
         admission_run: None,
         machine: Default::default(),

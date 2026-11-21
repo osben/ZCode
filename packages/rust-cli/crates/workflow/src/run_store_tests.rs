@@ -335,3 +335,41 @@ fn run_detail_replays_the_same_state_as_a_full_read_over_more_than_the_report_ca
     assert_eq!(reports.len(), cap, "the run keeps the first {cap} reports");
     assert_eq!(reports[0]["preview"], json!("report 0"));
 }
+
+/// 9.61: the detail carries each published artifact's latest record in first-publication order, with the description the
+/// projection drops (Node's port detail keeps it). The terminal notice's chips read it, with no configured default.
+#[test]
+fn run_detail_carries_the_latest_record_of_each_published_artifact() {
+    let conn = database();
+    add_session(&conn, "ses_p");
+    dwf::create_run(&conn, &run("run_1", "ses_p", "/w", DwfStatus::Running), 7).unwrap();
+    let published = |id: &str, version: u64, description: Option<&str>| {
+        let mut artifact = json!({"id": id, "kind": "markdown", "version": version});
+        if let Some(description) = description {
+            artifact["description"] = json!(description);
+        }
+        json!({"type": "artifact-published", "instance": {"siteId": "a#1", "ordinal": version}, "artifact": artifact})
+    };
+    for (sequence, event) in [
+        published("notes", 1, Some("first")),
+        published("notes", 2, Some("second")),
+        published("board", 1, Some("gone")),
+        published("board", 2, None),
+    ]
+    .iter()
+    .enumerate()
+    {
+        dwf::append_event(&conn, "run_1", event, 10 + sequence as i64).unwrap();
+    }
+    let detail = store(conn)
+        .run_detail("run_1", None)
+        .unwrap()
+        .expect("held");
+    assert_eq!(
+        detail.published_artifacts,
+        vec![
+            json!({"id": "notes", "kind": "markdown", "version": 2, "description": "second"}),
+            json!({"id": "board", "kind": "markdown", "version": 2}),
+        ]
+    );
+}

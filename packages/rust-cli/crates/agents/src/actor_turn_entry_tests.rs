@@ -27,6 +27,7 @@ fn selection() -> ModelSelection {
 fn run_for(child: &SessionId, parent: &SessionId) -> ActorRun {
     ActorRun {
         on_mutating: None,
+        on_request: None,
         admission_run: None,
         child: child.clone(),
         parent: parent.clone(),
@@ -725,4 +726,37 @@ async fn a_finished_actor_session_is_released_once_and_releasing_again_is_ok() {
     h.agents
         .release_actor_session(&child)
         .expect("releasing again does nothing");
+}
+
+/// Counts the model requests an actor turn reports (the bridge's `askExecuting` source).
+#[derive(Debug, Default)]
+struct CountingRequests(std::sync::atomic::AtomicUsize);
+
+impl crate::actor_turn::RequestNotify for CountingRequests {
+    fn request_started(&self) {
+        self.0.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+    }
+}
+
+/// Node `askExecuting`: each model request of an actor's turn reaches the turn's observer, once per request.
+#[tokio::test]
+async fn each_model_request_of_an_actor_turn_reaches_its_observer() {
+    let h = harness(None);
+    let parent = SessionId::new("ses_parent");
+    let child = SessionId::new("sess_actor_child");
+    create_child(h.store.as_ref(), &child, &parent).await;
+    let requests = Arc::new(CountingRequests::default());
+    let run = ActorRun {
+        on_request: Some(requests.clone()),
+        ..run_for(&child, &parent)
+    };
+    h.agents
+        .run_actor_turn(run, "do it", CancellationToken::new())
+        .await;
+    assert_eq!(
+        requests.0.load(std::sync::atomic::Ordering::SeqCst),
+        h.seen.lock().expect("seen").len(),
+        "one report per model request"
+    );
+    assert_eq!(requests.0.load(std::sync::atomic::Ordering::SeqCst), 1);
 }

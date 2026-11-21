@@ -26,7 +26,7 @@ use rust_cli_kernel_api::workflow_analysis::{
 use rust_cli_kernel_api::workflow_run::{DynamicWorkflowRunSessions, SubmitRequest};
 use serde::Deserialize;
 use serde::de::IgnoredAny;
-use serde_json::{Map, Value, json};
+use serde_json::{Map, Value};
 use tokio::sync::mpsc;
 
 use crate::saved_workflow::{
@@ -51,7 +51,7 @@ const DRAFT_ATTEMPTS: usize = 1_000;
 /// Node `WORKFLOW_DRAFT_MAX_SLUG_CHARS` (the same cap as a saved name).
 pub(crate) const DRAFT_SLUG_CHARS: usize = 64;
 /// Node `WORKFLOW_DRAFTS_DIR`.
-pub(crate) const DRAFTS_DIR: &str = ".zcode/workflow-drafts";
+pub(crate) const DRAFTS_DIR: &str = rust_cli_base::names::PROJECT_WORKFLOW_DRAFTS_DIR;
 /// Node `DIAGNOSTICS_NOT_EXECUTED_NOTE`: diagnostics with no script file to point at.
 pub(crate) const DIAGNOSTICS_NOT_EXECUTED_NOTE: &str =
     "NOTE: The workflow was NOT executed — fix the errors above and resubmit.";
@@ -107,6 +107,7 @@ pub(crate) enum Origin {
         name: String,
         file_text: String,
         path: PathBuf,
+        scope: Scope,
     },
     /// A file the model named: the file is the working copy.
     Path { absolute: PathBuf },
@@ -135,6 +136,8 @@ pub(crate) struct Prepared {
     /// The script's `create_workflow` display (the confirmation window's graph, Node `displayOfAnalysis`), read once
     /// for a script that checks. `None` when the helper gave none.
     pub(crate) display: Option<Value>,
+    /// Fork (9.61): the input the ask shows, Node's resolved input (`shown_input`). `None` shows the model's input.
+    pub(crate) shown: Option<Value>,
 }
 
 /// The kept decisions. A full table evicts its oldest entry (never the others), and a taken entry leaves at once.
@@ -281,9 +284,45 @@ fn resolve_saved(
             name: found.name.clone(),
             file_text: found.source.clone(),
             path: found.path.clone(),
+            scope: found.scope,
         },
         body_offset: found.body_line_offset,
     })
+}
+
+/// Node `resolveCreateWorkflowInput` (saved): the input the ask shows carries the run label as `name`, the body as
+/// `script`, and the definition's facts as `saved` (its name, the validated and defaulted arguments, its file and scope),
+/// with `script_line_offset` when the body does not start the file. Node also names the working copy (`saved.draft`); Rust
+/// writes it at the call, so the ask has none (divergence 908). An inline or path source shows the model's input.
+fn shown_input(raw: &Value, resolved: &Resolved) -> Option<Value> {
+    let Origin::Saved {
+        name, path, scope, ..
+    } = &resolved.origin
+    else {
+        return None;
+    };
+    let mut shown = raw.as_object().cloned().unwrap_or_default();
+    shown.insert(
+        "name".to_owned(),
+        Value::String(resolved.name.clone().unwrap_or_else(|| name.clone())),
+    );
+    shown.insert("script".to_owned(), Value::String(resolved.script.clone()));
+    shown.insert(
+        "saved".to_owned(),
+        serde_json::json!({
+            "name": name,
+            "args": resolved.args.clone().unwrap_or_default(),
+            "path": path.display().to_string(),
+            "scope": scope.as_str(),
+        }),
+    );
+    if resolved.body_offset > 0 {
+        shown.insert(
+            "script_line_offset".to_owned(),
+            Value::from(resolved.body_offset),
+        );
+    }
+    Some(Value::Object(shown))
 }
 
 impl CreateWorkflowTool {
@@ -787,6 +826,13 @@ impl Tool for CreateWorkflowTool {
         self.kept_display(tool_use)
     }
 
+    fn ask_input(&self, tool_use: &ToolUseId) -> Option<Value> {
+        self.approvals()
+            .by_id
+            .get(tool_use)
+            .and_then(|prepared| prepared.shown.clone())
+    }
+
     fn allow_session(&self) -> bool {
         true
     }
@@ -892,6 +938,7 @@ impl Tool for CreateWorkflowTool {
         input: &Value,
         context: &ToolUseContext,
     ) -> PermissionDecision {
+        let raw = input;
         let Ok(input) = serde_json::from_value::<CreateInput>(input.clone()) else {
             return PermissionDecision::Passthrough;
         };
@@ -916,16 +963,24 @@ impl Tool for CreateWorkflowTool {
         let name = resolved.name.clone();
         // A display the helper cannot give leaves the window without a graph; it never blocks the ask.
         let display = if checks {
-            self.analyzer.display(&resolved.script).await.ok().flatten()
+            match self.analyzer.display(&resolved.script).await {
+                Ok(display) => display,
+                Err(error) => {
+                    tracing::debug!(%error, "create_workflow display reply dropped; the window shows no graph");
+                    None
+                }
+            }
         } else {
             None
         };
+        let shown = shown_input(raw, &resolved);
         self.remember(
             context.tool_use.clone(),
             Prepared {
                 resolved,
                 analysis,
                 display,
+                shown,
             },
         );
         if !checks {
@@ -977,6 +1032,7 @@ impl Tool for CreateWorkflowTool {
                     resolved,
                     analysis,
                     display: None,
+                    shown: None,
                 }
             }
         };
@@ -984,6 +1040,7 @@ impl Tool for CreateWorkflowTool {
             resolved,
             analysis,
             display,
+            ..
         } = prepared;
         let draft = self.write_draft(&resolved, &cwd).await;
         let location = self.location(&resolved, draft.as_deref(), &cwd);
@@ -1001,21 +1058,9 @@ impl Tool for CreateWorkflowTool {
             body.extend(lines);
             body.push(String::new());
             body.push(diagnostics_note(&resolved, location.as_ref(), &cwd));
-            let diagnostics: Vec<Value> = analysis
-                .diagnostics
-                .iter()
-                .map(|diagnostic| {
-                    json!({
-                        "code": diagnostic.code,
-                        "column": diagnostic.column,
-                        "line": diagnostic.line,
-                        "message": diagnostic.message,
-                    })
-                })
-                .collect();
             return Ok(output_for(
                 body.join("\n"),
-                json!({"diagnostics": diagnostics, "ok": false}),
+                crate::workflow_card::card(None, false, &analysis.diagnostics),
             ));
         }
         let Some(port) = self
@@ -1025,7 +1070,7 @@ impl Tool for CreateWorkflowTool {
         else {
             return Ok(output_for(
                 format!("The workflow script compiled cleanly.\n\n{EXECUTION_UNAVAILABLE_NOTE}"),
-                json!({"diagnostics": [], "ok": true}),
+                crate::workflow_card::card(graph_of(display.as_ref()), true, &[]),
             ));
         };
         let script_path = match &resolved.origin {
@@ -1062,26 +1107,21 @@ impl Tool for CreateWorkflowTool {
             ),
         };
         let run_id = run_id.to_string();
-        // The result card is the script's `create_workflow` display (Node's result display), so the card has its graph
-        // and the run card can find it by the call id. The model-facing keys stay on the same object.
-        let mut card = match display {
-            Some(Value::Object(map)) => map,
-            _ => serde_json::Map::new(),
-        };
-        card.entry("kind")
-            .or_insert_with(|| json!("create_workflow"));
-        card.insert("ok".to_owned(), json!(true));
-        card.insert("errorCount".to_owned(), json!(0));
-        card.entry("diagnostics").or_insert_with(|| json!([]));
-        card.insert("status".to_owned(), json!("backgrounded"));
-        card.insert("backgroundTaskId".to_owned(), json!(run_id));
+        // The result card carries the script's graph, so the run card can find it by the call id. The run id travels in
+        // the text and the run projection, never on the card (crate::workflow_card).
+        let card = crate::workflow_card::card(graph_of(display.as_ref()), true, &[]);
         Ok(output_for(
             format!(
                 "The workflow script compiled cleanly and the run started in the background with ID: {run_id}. It is still running — you will be notified with the final output when it completes. Do not wait for it or poll it with TaskOutput; continue with other work unless the user asked you to wait.{settings}{where_}"
             ),
-            Value::Object(card),
+            card,
         ))
     }
+}
+
+/// The causality graph of the analyzer's window display, when it drew one.
+fn graph_of(display: Option<&Value>) -> Option<&Value> {
+    display.and_then(|display| display.get("causalityGraph"))
 }
 
 fn invalid(code: Option<i32>, message: &str) -> Validation {

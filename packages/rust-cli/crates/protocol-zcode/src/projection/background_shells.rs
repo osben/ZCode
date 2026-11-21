@@ -97,7 +97,7 @@ impl Projection {
     }
 
     /// The snapshot `backgroundWorks`: shell commands, then workflow runs, then background subagents.
-    pub(super) fn background_works_value(&self) -> Value {
+    pub(crate) fn background_works_value(&self) -> Value {
         Value::Array(
             self.shells
                 .works

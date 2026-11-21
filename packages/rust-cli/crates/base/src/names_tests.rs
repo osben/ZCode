@@ -13,6 +13,8 @@ fn the_names_keep_their_values() {
     assert_eq!(LOCAL_RULES_FILE, "AGENTS.local.md");
     assert_eq!(WORKTREES_DIR, "worktrees");
     assert_eq!(AGENTS_DIR, "agents");
+    assert_eq!(WORKFLOW_DRAFTS_DIR, "workflow-drafts");
+    assert_eq!(PROJECT_WORKFLOW_DRAFTS_DIR, ".zcode/workflow-drafts");
     assert_eq!(SCHEDULED_TASKS_FILE, "scheduled_tasks.json");
     assert_eq!(CLIENT_NAME, "zcode");
     assert_eq!(OFFICIAL_MARKETPLACE, "zcode-plugins-official");

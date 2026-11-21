@@ -59,7 +59,10 @@ pub fn terminal_notice(row: &RunRow, auto_resumes: bool) -> Option<TerminalNotic
         (None, Some(message)) => Some(ErrorText::Plain(message)),
         (None, None) => None,
     };
-    let text = terminal(&Terminal {
+    // Fork (9.61): Node delivers the envelope as a `task_notification` input, which `formatIncomingMessage` opens with the
+    // background-task preamble. Node's other preamble, for a notice delivered in the same turn as a user message, is not
+    // chosen here (divergence 909).
+    let envelope = terminal(&Terminal {
         run_id,
         subject,
         tool_use_id: row.tool_call_id.as_deref(),
@@ -69,6 +72,10 @@ pub fn terminal_notice(row: &RunRow, auto_resumes: bool) -> Option<TerminalNotic
         error,
         auto_resumes_after_reset: auto_resumes,
     });
+    let text = format!(
+        "{}{envelope}",
+        rust_cli_prompts::agents::notification_preamble()
+    );
     let workflow = workflow_notice_meta::terminal(&TerminalPayload {
         status,
         stop_reason,
@@ -84,12 +91,126 @@ pub fn terminal_notice(row: &RunRow, auto_resumes: bool) -> Option<TerminalNotic
     })
 }
 
-/// Node `serializeWorkflowArtifact`: a string is the text itself, anything else its JSON.
-fn artifact_text(value: &Value) -> String {
-    match value {
-        Value::String(text) => text.clone(),
-        other => other.to_string(),
+/// Fork (9.61): `notice` with its payload's `durationMs` (Node `workflowNotificationDurationMs`). No duration leaves the
+/// key out, so the card shows a dash, never 0.
+pub fn with_duration(mut notice: TerminalNotice, duration_ms: Option<u64>) -> TerminalNotice {
+    if let Some(ms) = duration_ms
+        && let Some(meta) = notice.workflow.get_mut("workflowNotification")
+    {
+        meta["durationMs"] = Value::from(ms);
     }
+    notice
+}
+
+/// This incarnation's wall-clock life: `settled_at_ms - started_at_ms`. A start of 0 (no clock at launch), no settle
+/// reading, or a negative difference is unknown. Node takes the larger of this and the lineage's journaled active
+/// duration; Rust has no lineage sum (divergence 907).
+pub fn run_duration_ms(started_at_ms: i64, settled_at_ms: Option<u64>) -> Option<u64> {
+    let started = u64::try_from(started_at_ms)
+        .ok()
+        .filter(|started| *started > 0)?;
+    settled_at_ms?.checked_sub(started)
+}
+
+/// Fork (9.61): `notice` with the run's user-facing artifact chips (Node `buildWorkflowArtifactsManifestSection`): the
+/// deliverable first, at most 8, and `artifactsTruncated` when any published artifact is not shown (cut by the limit or
+/// dropped for an unknown kind, an empty or overlong id, or a bad version). `artifacts` is the projected run's list; none,
+/// or no valid entry, leaves both keys out.
+pub fn with_artifacts(mut notice: TerminalNotice, artifacts: Option<&Value>) -> TerminalNotice {
+    let Some(published) = artifacts
+        .and_then(Value::as_array)
+        .filter(|list| !list.is_empty())
+    else {
+        return notice;
+    };
+    let is_primary = |artifact: &&Value| artifact.get("primary") == Some(&Value::Bool(true));
+    let ordered = published
+        .iter()
+        .filter(is_primary)
+        .chain(published.iter().filter(|artifact| !is_primary(artifact)));
+    let mut chips = Vec::new();
+    for artifact in ordered {
+        if chips.len() >= MANIFEST_MAX_ARTIFACTS {
+            break;
+        }
+        if let Some(chip) = manifest_chip(artifact) {
+            chips.push(chip);
+        }
+    }
+    if chips.is_empty() {
+        return notice;
+    }
+    let truncated = chips.len() < published.len();
+    if let Some(meta) = notice.workflow.get_mut("workflowNotification") {
+        meta["artifacts"] = Value::Array(chips);
+        if truncated {
+            meta["artifactsTruncated"] = Value::Bool(true);
+        }
+    }
+    notice
+}
+
+const MANIFEST_MAX_ARTIFACTS: usize = 8;
+/// JavaScript's `Number.MAX_SAFE_INTEGER`: below it an integral version converts to `u64` exactly.
+const MAX_SAFE_INTEGER: f64 = 9_007_199_254_740_991.0;
+const MANIFEST_KINDS: [&str; 6] = ["file", "markdown", "chart", "table", "metrics", "board"];
+
+/// One chip, or `None` for an entry the manifest drops whole (Node keeps zod from rejecting the payload).
+fn manifest_chip(artifact: &Value) -> Option<Value> {
+    let id = artifact.get("id").and_then(Value::as_str)?;
+    let kind = artifact
+        .get("kind")
+        .and_then(Value::as_str)
+        .filter(|kind| MANIFEST_KINDS.contains(kind))?;
+    if id.is_empty() || id.encode_utf16().count() > 64 {
+        return None;
+    }
+    let version = artifact
+        .get("version")
+        .and_then(Value::as_f64)
+        .filter(|version| version.fract() == 0.0 && *version >= 1.0)?;
+    let mut chip = serde_json::Map::new();
+    chip.insert("id".into(), Value::from(id));
+    chip.insert("kind".into(), Value::from(kind));
+    let text = |key: &str, max: usize| {
+        artifact
+            .get(key)
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .filter(|text| !text.is_empty())
+            // Node `slice(0, max)` counts UTF-16 units; the cut keeps a character whole (divergence 365).
+            .map(|text| rust_cli_base::js::string::utf16_prefix(text, max).to_owned())
+    };
+    if let Some(title) = text("title", 120) {
+        chip.insert("title".into(), Value::from(title));
+    }
+    // Node passes any integer through; a version past JavaScript's safe integers stays the number it is rather than
+    // saturating at `u64::MAX`.
+    let version = if version <= MAX_SAFE_INTEGER {
+        Value::from(version as u64)
+    } else {
+        Value::from(version)
+    };
+    chip.insert("version".into(), version);
+    if let Some(content_type) = artifact
+        .get("contentType")
+        .and_then(Value::as_str)
+        .filter(|content_type| content_type.encode_utf16().count() <= 255)
+    {
+        chip.insert("contentType".into(), Value::from(content_type));
+    }
+    if artifact.get("primary") == Some(&Value::Bool(true)) {
+        chip.insert("primary".into(), Value::Bool(true));
+        if let Some(description) = text("description", 500) {
+            chip.insert("description".into(), Value::from(description));
+        }
+    }
+    Some(Value::Object(chip))
+}
+
+/// Node `serializeWorkflowArtifact`: a string is the text itself, anything else `JSON.stringify(value, null, 2)`.
+fn artifact_text(value: &Value) -> String {
+    rust_cli_kernel_api::workflow_notice_meta::artifact_text(value)
 }
 
 #[cfg(test)]

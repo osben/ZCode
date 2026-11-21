@@ -220,6 +220,59 @@ async fn a_filled_hole_reports_the_phases_it_added() {
     let text = output_text(&output);
     assert!(text.contains("It added the phases review."), "{text}");
     assert!(text.contains("the run keeps going"), "{text}");
+    // The fill row is the shared `create_workflow` card (Node `createCreateWorkflowDisplay`).
+    assert_eq!(output.display["kind"], "create_workflow");
+    assert_eq!(output.display["ok"], true);
+    // Node `fillBlock`: with no hole entry to read, the row is named by the hole id.
+    assert_eq!(
+        output.display["fill"],
+        json!({"siteId": "hole#1", "name": "hole#1"})
+    );
+}
+
+/// A run port whose fill answers `outcome` and whose detail is `detail`.
+struct FillWithDetail(FillHoleOutcome, serde_json::Value);
+
+#[async_trait]
+impl DynamicWorkflowRunPort for FillWithDetail {
+    async fn fill_hole(
+        &self,
+        _request: FillHoleRequest,
+    ) -> Result<FillHoleOutcome, DynamicWorkflowRunError> {
+        Ok(self.0.clone())
+    }
+    async fn get_run_detail(
+        &self,
+        _run_id: &rust_cli_kernel_api::ids::WorkflowRunId,
+    ) -> Result<Option<serde_json::Value>, DynamicWorkflowRunError> {
+        Ok(Some(self.1.clone()))
+    }
+}
+
+/// Node `fillBlock` (ocr #619): the fill row is named by the hole's own name, from the run's hole entry, so the desktop's
+/// fill row does not show the raw site id.
+#[tokio::test]
+async fn a_filled_hole_names_the_fill_row_by_the_holes_name() {
+    let port: Arc<dyn DynamicWorkflowRunPort> = Arc::new(FillWithDetail(
+        FillHoleOutcome::Filled {
+            phases_added: Vec::new(),
+            script_text: "return 1;".to_owned(),
+        },
+        json!({"status": "running", "holes": [{"siteId": "hole#1", "name": "决定分组", "state": "waiting"}]}),
+    ));
+    let tool = tool_with(Some(Arc::new(OneSession(port))));
+    let output = tool
+        .call(
+            json!({"run_id": "run-1", "hole_id": "hole#1", "script": "return 1;"}),
+            context(Arc::new(SkillLoaded)),
+            tokio::sync::mpsc::channel(1).0,
+        )
+        .await
+        .expect("the fill is applied");
+    assert_eq!(
+        output.display["fill"],
+        json!({"siteId": "hole#1", "name": "决定分组"})
+    );
 }
 
 #[tokio::test]
@@ -231,18 +284,27 @@ async fn a_compile_refusal_lists_its_diagnostics_one_per_line() {
     }));
     let tool = tool_with(Some(Arc::new(OneSession(port))));
     let ctx = context(Arc::new(SkillLoaded));
-    let error = tool
+    // Node: a body that does not compile answers with the card (`ok: false`, its diagnostics, the fill block), not a
+    // failure, so the desktop draws the fill row for it too (ocr #619).
+    let output = tool
         .call(
             json!({"run_id": "run-1", "hole_id": "hole#1", "script": "return 1;"}),
             ctx,
             tokio::sync::mpsc::channel(1).0,
         )
-        .await;
-    let text = match error {
-        Err(ToolError::Failed { message }) => message,
-        other => panic!("a refusal is a failure: {other:?}"),
-    };
-    assert_eq!(text, "workflow_fill_refused: does not compile\nL3:C5 bad");
+        .await
+        .expect("a compile refusal answers with its card");
+    assert_eq!(
+        output_text(&output),
+        "workflow_fill_refused: does not compile\nL3:C5 bad"
+    );
+    assert_eq!(output.display["ok"], false);
+    assert_eq!(output.display["errorCount"], 1);
+    assert_eq!(output.display["diagnostics"][0]["code"], 9001);
+    assert_eq!(
+        output.display["fill"],
+        json!({"siteId": "hole#1", "name": "hole#1"})
+    );
 }
 
 #[test]
@@ -285,4 +347,71 @@ fn the_tool_keeps_the_model_budget_of_its_siblings() {
         tool.result_budget_truncate_bytes(),
         Some(CREATE_MODEL_BYTES)
     );
+}
+
+/// A run port whose run detail is `detail`.
+struct Detail(serde_json::Value);
+
+#[async_trait]
+impl DynamicWorkflowRunPort for Detail {
+    async fn get_run_detail(
+        &self,
+        _run_id: &rust_cli_kernel_api::ids::WorkflowRunId,
+    ) -> Result<Option<serde_json::Value>, DynamicWorkflowRunError> {
+        Ok(Some(self.0.clone()))
+    }
+}
+
+#[tokio::test]
+async fn a_hole_of_this_sessions_own_run_fills_without_a_window_and_others_ask() {
+    use rust_cli_kernel_api::permission::PermissionDecision;
+    let cases = [
+        (
+            json!({"runId": "run-1", "ownedByThisSession": true, "status": "running"}),
+            true,
+        ),
+        (
+            json!({"runId": "run-1", "ownedByThisSession": false, "status": "running"}),
+            false,
+        ),
+        (
+            json!({"runId": "run-1", "ownedByThisSession": true, "status": "stopped", "stopReason": "user"}),
+            false,
+        ),
+    ];
+    for (detail, allowed) in cases {
+        let runs: Arc<dyn DynamicWorkflowRunSessions> =
+            Arc::new(OneSession(Arc::new(Detail(detail.clone()))));
+        let tool = tool_with(Some(runs));
+        let ctx = context(Arc::new(SkillLoaded));
+        let input = json!({"run_id": "run-1", "hole_id": "h1", "script": "return 1;"});
+        let decision = tool.check_permissions(&input, &ctx).await;
+        assert_eq!(
+            matches!(decision, PermissionDecision::Allow { .. }),
+            allowed,
+            "{detail}: {decision:?}"
+        );
+    }
+}
+
+#[tokio::test]
+async fn a_hole_of_another_sessions_live_run_is_refused_before_any_window() {
+    // Node `findWaitingHole` with `liveInThisProcess === false`: only the starting session reaches the engine.
+    let live = json!({"runId": "run-1", "ownedByThisSession": false, "status": "running"});
+    let runs: Arc<dyn DynamicWorkflowRunSessions> = Arc::new(OneSession(Arc::new(Detail(live))));
+    let tool = tool_with(Some(runs));
+    let ctx = context(Arc::new(SkillLoaded));
+    let input = json!({"run_id": "run-1", "hole_id": "h1", "script": "return 1;"});
+    let message = invalid_message(tool.validate_input(&input, &ctx).await);
+    assert_eq!(
+        message,
+        "hole_not_waiting: run run-1 is not running in this session's process, so this session cannot reach its engine. Only the session that started it can fill h1: ask the user to do it there. If that session has exited, the run is interrupted; ResumeWorkflowRun brings the hole back. Nothing was filled."
+    );
+    let own = json!({"runId": "run-1", "ownedByThisSession": true, "status": "running"});
+    let runs: Arc<dyn DynamicWorkflowRunSessions> = Arc::new(OneSession(Arc::new(Detail(own))));
+    let tool = tool_with(Some(runs));
+    assert!(matches!(
+        tool.validate_input(&input, &ctx).await,
+        Validation::Ok
+    ));
 }

@@ -19,6 +19,7 @@ fn live_at(now: u64) -> Live {
 fn run(child: &str) -> ActorRun {
     ActorRun {
         on_mutating: None,
+        on_request: None,
         admission_run: None,
         child: SessionId::new(child),
         parent: SessionId::new("ses_parent"),

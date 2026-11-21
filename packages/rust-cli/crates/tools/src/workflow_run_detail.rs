@@ -189,7 +189,7 @@ fn utf16_prefix(text: &str, limit: usize) -> String {
 
 /// Node `buildWorkflowRunSummary`: one sentence from the detail's facts. The status and the step clauses are kept; the
 /// optional clauses are dropped from the end when the sentence is over the budget, and a last cut adds an ellipsis.
-fn summary(detail: &Value, now: i64) -> String {
+pub(crate) fn summary(detail: &Value, now: i64) -> String {
     let status = text_of(detail, "status").unwrap_or_default();
     let terminal = is_terminal(status);
     let mut required = vec![format!(
@@ -1016,11 +1016,8 @@ pub fn provider_stop_text(stop: &Value, run_id: &str) -> String {
 fn outcome_blocks(detail: &Value, run_id: &str) -> Vec<String> {
     let mut blocks = Vec::new();
     if let Some(result) = detail.get("result") {
-        // Verbatim, as Node's `<result>`: a string is the text itself, anything else its JSON.
-        let body = match result {
-            Value::String(text) => text.clone(),
-            other => other.to_string(),
-        };
+        // Node's `<result>` (`serializeWorkflowArtifact`): a string is the text itself, anything else its indented JSON.
+        let body = rust_cli_kernel_api::workflow_notice_meta::artifact_text(result);
         blocks.push(format!("<result>\n{body}\n</result>"));
     }
     if let Some(error) = detail.get("error") {

@@ -22,6 +22,7 @@ use rust_cli_kernel_api::permission::PermissionMode;
 use rust_cli_node_store::{MIGRATION_LOCK_WAIT, open_session_database};
 use rust_cli_workflow::actor_sessions::NodeActorSessions;
 use rust_cli_workflow::actor_turns::{TurnInput, TurnRunner};
+use rust_cli_workflow::artifact_publish::{ArtifactFsPort, ArtifactStorePort};
 use rust_cli_workflow::driver_owner::{ActorDriverOwner, ActorSessionRequest, ActorSessions};
 use rust_cli_workflow::driver_rules::subagent_permission_mode_of;
 use rust_cli_workflow::engine::{AskMessage, EngineConfig};
@@ -30,6 +31,8 @@ use rust_cli_workflow::journal::JournalPort;
 use rust_cli_workflow::journal_dwf::DwfJournal;
 use rust_cli_workflow::model::{Ref, StoredEvent};
 use rust_cli_workflow::model_failure::TurnFailure;
+use rust_cli_workflow::world_host::{ArtifactWiring, WorldWiring};
+use rust_cli_workflow::world_read::WorldReadRoots;
 use serde_json::{Map, Value};
 
 use crate::actor_turns::{
@@ -393,6 +396,17 @@ impl<S: ActorSessions> ActorSessions for SettingsRecording<S> {
     }
 }
 
+/// Fork (9.61): the host's world ports a run's world reads and artifact publishes reach. Node's run host gets them from
+/// its tool context; here the composition hands them to the factory, which roots the reads at each run's cwd.
+#[derive(Clone)]
+pub struct RunWorld {
+    pub roots: Arc<dyn WorldReadRoots>,
+    pub fs: Arc<dyn ArtifactFsPort>,
+    pub store: Option<Arc<dyn ArtifactStorePort>>,
+    /// The publication time of a run's artifacts, in milliseconds (the engine has no clock).
+    pub now_ms: fn() -> u64,
+}
+
 /// The owner factory of a run whose actor turns run on the agents (9.33). Each launch reads its parent's bindings, the
 /// launch facts (its own, or the journal's on a resume), and builds the turn side: the workspace and interactions as read
 /// at launch, the run's recorded permission mode, and each actor's persona and model as resolved when its session is
@@ -406,6 +420,7 @@ pub fn bound_owner_factory<A: ActorAgents + ActorSessionRelease>(
     handle: tokio::runtime::Handle,
     bindings: Arc<dyn ActorBindingsPort>,
     clock: Arc<dyn Clock>,
+    world: Option<RunWorld>,
 ) -> OwnerFactory {
     Arc::new(move |config: EngineConfig, mailbox, actor_handle| {
         let parent = config
@@ -419,6 +434,9 @@ pub fn bound_owner_factory<A: ActorAgents + ActorSessionRelease>(
                 anyhow!("the parent session {parent} is not known: its bindings are not read")
             })?;
         let run_id = config.run_id.clone();
+        // Node `workingDirectory: deps.workingDirectory`: an actor's session row is the parent's workspace, not the
+        // directory the app server opened (a multi-workspace server opens one root for all of them).
+        let actor_directory = found.workspace.root.as_str().to_owned();
         let journal = DwfJournal::new(open(&stores)?, stores.clock);
         let journaled = journal.list_events(&run_id)?;
         let facts = launch_facts(&config, &journaled)?;
@@ -431,6 +449,26 @@ pub fn bound_owner_factory<A: ActorAgents + ActorSessionRelease>(
         );
         // The base's selection is the fallback for a runner with no settings; every actor of this run has settings, so
         // each turn takes its own actor's selection.
+        // The run's reads are rooted at its cwd (Node's tool context cwd); a config without one reads the workspace.
+        let world_wiring = world.as_ref().map(|world| {
+            let cwd = PathBuf::from(
+                config
+                    .cwd
+                    .clone()
+                    .unwrap_or_else(|| found.workspace.root.as_str().to_owned()),
+            );
+            WorldWiring {
+                reads: world.roots.at(&cwd),
+                cwd,
+                artifacts: Some(ArtifactWiring {
+                    fs: world.fs.clone(),
+                    store: world.store.clone(),
+                    parent_session_id: Some(parent.clone()),
+                    now_ms: world.now_ms,
+                }),
+                done: actor_handle.clone(),
+            }
+        });
         let base = ActorRunBase {
             parent: SessionId::new(&parent),
             workspace: found.workspace,
@@ -451,7 +489,7 @@ pub fn bound_owner_factory<A: ActorAgents + ActorSessionRelease>(
         let sessions = SettingsRecording {
             inner: NodeActorSessions::new(
                 session_conn,
-                &stores.directory,
+                &actor_directory,
                 &stores.version,
                 stores.clock,
                 actor_turns(Arc::new(runner), actor_handle, agents.clone()),
@@ -463,7 +501,10 @@ pub fn bound_owner_factory<A: ActorAgents + ActorSessionRelease>(
             facts,
             journal: settings_journal,
         };
-        let owner = ActorDriverOwner::new(config, journal, sessions)?;
+        let mut owner = ActorDriverOwner::new(config, journal, sessions)?;
+        if let Some(wiring) = world_wiring {
+            owner = owner.with_world(wiring);
+        }
         Ok(Box::new(Hosted::new(owner, mailbox)) as Box<dyn HostedOwner>)
     })
 }

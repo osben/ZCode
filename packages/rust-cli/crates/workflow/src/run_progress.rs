@@ -50,6 +50,8 @@ pub struct LaunchProgress {
     /// The run's model bindings (`run-launched` `modelBindings`), as the host gave them.
     pub model_bindings: Option<Map<String, Value>>,
     pub default_concurrency: f64,
+    /// Fork (9.61): the run's user-given name, added to each progress under `RUN_NAME_KEY` for the host's notices.
+    pub run_name: Option<String>,
     pub projection: SharedProjection,
     pub port: Arc<dyn WorkflowRunProgressPort>,
 }
@@ -64,13 +66,15 @@ impl LaunchProgress {
             model_bindings: self.model_bindings,
             default_concurrency: self.default_concurrency,
         };
-        Box::new(ProgressSink::new(
+        let mut sink = ProgressSink::new(
             self.owned_session,
             self.parent_session_id,
             fields,
             self.projection,
             self.port,
-        ))
+        );
+        sink.run_name = self.run_name.filter(|name| !name.is_empty());
+        Box::new(sink)
     }
 }
 
@@ -88,6 +92,8 @@ pub struct ProgressSink {
     fields: RunProgressFields,
     projection: Arc<Mutex<LiveProjection>>,
     port: Arc<dyn WorkflowRunProgressPort>,
+    /// Fork (9.61): the run's name, added to each progress under `RUN_NAME_KEY`.
+    run_name: Option<String>,
 }
 
 impl ProgressSink {
@@ -104,6 +110,7 @@ impl ProgressSink {
             fields,
             projection,
             port,
+            run_name: None,
         }
     }
 
@@ -123,7 +130,11 @@ impl ProgressSink {
                 .unwrap_or_else(PoisonError::into_inner);
             projection.apply(envelope).unwrap_or_default()
         };
-        let progress = progress_payload(envelope, sequence);
+        let mut progress = progress_payload(envelope, sequence);
+        if let Some(name) = &self.run_name {
+            progress[rust_cli_kernel_api::workflow_run_progress::RUN_NAME_KEY] =
+                Value::String(name.clone());
+        }
         self.port
             .record(self.recording_session(), &progress, &deltas)
     }

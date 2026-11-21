@@ -22,7 +22,7 @@ use rust_cli_workflow::residency::SessionResidency;
 use std::sync::Mutex;
 use tokio_util::sync::CancellationToken;
 
-use super::{ActorBindingsPort, ParentBindings, bound_owner_factory};
+use super::{ActorBindingsPort, ParentBindings, RunWorld, bound_owner_factory};
 use crate::actor_turns::ActorAgents;
 use crate::workflow_assembly::ActorSessionRelease;
 use rust_cli_workflow::run_concurrency::{ConcurrencyListener, RunConcurrency};
@@ -347,6 +347,20 @@ fn bound_service(
     Arc<FakeChildRunner>,
     Arc<SessionResidency>,
 ) {
+    bound_service_with(path, parent, agents, None)
+}
+
+/// A run service over the bound factory with the host's world ports (9.61), or none.
+fn bound_service_with(
+    path: std::path::PathBuf,
+    parent: Arc<ParentFixture>,
+    agents: Arc<RecordingAgents>,
+    world: Option<RunWorld>,
+) -> (
+    WorkflowRunService,
+    Arc<FakeChildRunner>,
+    Arc<SessionResidency>,
+) {
     let runner = Arc::new(FakeChildRunner::new());
     let residency = Arc::new(SessionResidency::new());
     let factory = bound_owner_factory(
@@ -355,6 +369,7 @@ fn bound_service(
         tokio::runtime::Handle::current(),
         parent,
         Arc::new(FixedClock(1_700_000_000_000)),
+        world,
     );
     let service = WorkflowRunService::new(
         residency.clone(),
@@ -860,4 +875,189 @@ async fn an_amended_actor_keeps_its_predecessors_model_over_the_parents() {
         "the predecessor's pinned model, not the parent's current one"
     );
     let _ = service.close().await;
+}
+
+/// The world read port of the run tests: a glob answers the files it was built with, and it records the root it was
+/// asked at.
+struct GlobRoots {
+    asked: Mutex<Vec<std::path::PathBuf>>,
+}
+
+struct GlobPort;
+
+impl rust_cli_workflow::world_read::WorldReadPorts for GlobPort {
+    fn glob(
+        &self,
+        _pattern: &str,
+        _limit: usize,
+    ) -> Result<rust_cli_workflow::world_read::GlobHits, String> {
+        Ok(rust_cli_workflow::world_read::GlobHits {
+            files: vec!["a.md".to_owned()],
+            total: 1,
+        })
+    }
+
+    fn read_text(&self, _path: &str) -> Result<String, String> {
+        Err("read is not used here".to_owned())
+    }
+
+    fn grep(
+        &self,
+        _pattern: &str,
+        _glob: Option<&str>,
+        _head_limit: usize,
+    ) -> Result<rust_cli_workflow::world_read::GrepHits, String> {
+        Err("grep is not used here".to_owned())
+    }
+
+    fn run(
+        &self,
+        _request: &rust_cli_workflow::world_read::RunRequest,
+    ) -> Result<rust_cli_workflow::world_read::RunOutcome, String> {
+        Err("run is not used here".to_owned())
+    }
+}
+
+impl rust_cli_workflow::world_read::WorldReadRoots for GlobRoots {
+    fn at(&self, root: &Path) -> Arc<dyn rust_cli_workflow::world_read::WorldReadPorts> {
+        self.asked.lock().expect("asked").push(root.to_path_buf());
+        Arc::new(GlobPort)
+    }
+}
+
+struct NoArtifactFs;
+
+impl rust_cli_workflow::artifact_publish::ArtifactFsPort for NoArtifactFs {
+    fn read_file(
+        &self,
+        _path: &Path,
+        _max_bytes: usize,
+    ) -> Result<Vec<u8>, rust_cli_workflow::artifact_publish::FsFault> {
+        Err(rust_cli_workflow::artifact_publish::FsFault::NotFound)
+    }
+
+    fn real_path(
+        &self,
+        _path: &Path,
+    ) -> Result<std::path::PathBuf, rust_cli_workflow::artifact_publish::FsFault> {
+        Err(rust_cli_workflow::artifact_publish::FsFault::NotFound)
+    }
+}
+
+/// Fork (9.61): a run launched through the bound factory reaches the host's world ports. Before, nothing attached them,
+/// so a script's world read never settled and the desktop run stayed on its running node.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_bound_run_world_read_reaches_the_hosts_ports_at_the_run_cwd() {
+    let dir = tempfile::tempdir().expect("temp dir");
+    let path = database(dir.path());
+    let roots = Arc::new(GlobRoots {
+        asked: Mutex::new(Vec::new()),
+    });
+    let world = RunWorld {
+        roots: roots.clone(),
+        fs: Arc::new(NoArtifactFs),
+        store: None,
+        now_ms: || 7,
+    };
+    let (service, runner, _residency) = bound_service_with(
+        path,
+        ParentFixture::with(Some(selection("acct-a", "ma"))),
+        RecordingAgents::replying("done"),
+        Some(world),
+    );
+    let mut config = launched("wf_w", guarded());
+    config.cwd = Some("/work/run".to_owned());
+    service
+        .launch(input("wf_w"), config)
+        .await
+        .expect("launched");
+    let read: ChildRequest = serde_json::from_value(json!({
+        "id": "r-glob",
+        "type": "world-read",
+        "siteId": "files",
+        "op": "glob",
+        "args": ["*.md"],
+    }))
+    .expect("world read");
+    let answer = tokio::time::timeout(
+        Duration::from_secs(5),
+        runner.launches()[0].handler.request(read, None),
+    )
+    .await
+    .expect("the world read settles");
+    let value = answer.expect("the world read is answered by the host port");
+    assert_eq!(value, json!(["a.md"]), "{value}");
+    assert_eq!(
+        roots.asked.lock().expect("asked").clone(),
+        vec![std::path::PathBuf::from("/work/run")],
+        "the ports are rooted at the run's cwd"
+    );
+
+    runner.finish(
+        0,
+        Outcome::Completed(Completion {
+            ok: true,
+            value: None,
+            error: None,
+        }),
+    );
+    wait_until("the run to settle", || service.run_count() == 0).await;
+    let _ = service.close().await;
+}
+
+/// Node `createWorkflowChildRuntime` (`workingDirectory: deps.workingDirectory`): an actor's session row is written in
+/// its parent's workspace, not the directory the app server opened, so the desktop's cold subscribe admits it.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn an_actor_session_row_is_written_in_its_parents_workspace() {
+    let dir = tempfile::tempdir().expect("temp dir");
+    let path = database(dir.path());
+    let agents = RecordingAgents::replying("done");
+    let runner = Arc::new(FakeChildRunner::new());
+    let factory = bound_owner_factory(
+        OwnerStores {
+            directory: "/app-server-root".to_owned(),
+            ..stores(path.clone())
+        },
+        agents,
+        tokio::runtime::Handle::current(),
+        ParentFixture::with(Some(selection("acct-a", "ma"))),
+        Arc::new(FixedClock(1_700_000_000_000)),
+        None,
+    );
+    let service = WorkflowRunService::new(
+        Arc::new(SessionResidency::new()),
+        Arc::new(NoGovernor),
+        runner.clone(),
+        factory,
+    );
+    service
+        .launch(input("wf_1"), launched("wf_1", guarded()))
+        .await
+        .expect("launched");
+    let answer = actor_asks(&runner.launches()[0].handler, "a1", ada(), "do it").await;
+    assert!(answer.is_ok(), "{answer:?}");
+
+    let conn = rusqlite::Connection::open(&path).expect("open");
+    let directories: Vec<(String, String)> = conn
+        .prepare(
+            "select directory, coalesce(path, '') from session where task_type = 'workflow_child'",
+        )
+        .expect("prepare")
+        .query_map([], |row| Ok((row.get(0)?, row.get(1)?)))
+        .expect("query")
+        .collect::<Result<_, _>>()
+        .expect("rows");
+    assert_eq!(directories, vec![("/work".to_owned(), "/work".to_owned())]);
+
+    runner.finish(
+        0,
+        Outcome::Completed(Completion {
+            ok: true,
+            value: Some(json!("done")),
+            error: None,
+        }),
+    );
+    wait_until("the run to settle", || service.run_count() == 0).await;
+    let report = service.close().await;
+    assert!(report.stuck.is_empty());
 }

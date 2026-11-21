@@ -239,8 +239,12 @@ impl Pipeline {
         // 修复线 F20：guarded 的危险命令只批准这一次（Node `approvalMode: "user-once"` 时 `runHooks: false`）：
         // 不跑 PermissionRequest hooks，hook 不能替用户批准；没有“总是允许”（判决链不给建议规则）。工作线 F137：这个事实
         // 随判决给出（`Ask.once`），不再另问判决链（以前的 `ask_once` 又取一次执行环境的路径风格）。
+        // Fork (9.61): the window and the PermissionRequest hook read the tool's resolved input when it has one (Node
+        // `resolveInput`, SaveWorkflow's destination facts); the call itself runs on the admitted input.
+        let resolved = tool.ask_input(&context.tool_use);
+        let shown = resolved.as_ref().unwrap_or(input);
         if !once {
-            let mut payload = hooks::permission_request(tool.name(), input, &suggestions);
+            let mut payload = hooks::permission_request(tool.name(), shown, &suggestions);
             // Node's PermissionRequest input carries the call id (`toolCallId`, alias `tool_use_id`).
             if self.node_hooks {
                 payload["tool_use_id"] = Value::from(context.tool_use.as_str());
@@ -268,7 +272,7 @@ impl Pipeline {
             origin: None,
             tool_use: context.tool_use.clone(),
             tool: tool.name().to_owned(),
-            input: input.clone(),
+            input: shown.clone(),
             message: message.clone(),
             suggestions,
             rule_seed,

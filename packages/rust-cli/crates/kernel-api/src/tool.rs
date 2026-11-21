@@ -253,6 +253,13 @@ pub trait Tool: Send + Sync {
         None
     }
 
+    /// Fork (9.61): the input the confirmation window and the PermissionRequest hook read for the ask this tool raised
+    /// in `tool_use` (Node `resolveInput`'s normalized input, e.g. SaveWorkflow's destination and overwrite facts).
+    /// Read once when the ask is raised; `None` shows the call's input.
+    fn ask_input(&self, _tool_use: &ToolUseId) -> Option<Value> {
+        None
+    }
+
     fn is_enabled(&self) -> bool {
         true
     }

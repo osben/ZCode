@@ -17,7 +17,9 @@ use rust_cli_node_store::{MIGRATION_LOCK_WAIT, open_session_database};
 use rust_cli_protocol_zcode::{OpenDecisions, RunDecisionsSource, open_decisions_of};
 use rust_cli_runtime::actor_turns::ActorAgents;
 use rust_cli_runtime::workflow_assembly::ActorSessionRelease;
-use rust_cli_runtime::workflow_owner::{ActorBindingsPort, OwnerStores, bound_owner_factory};
+use rust_cli_runtime::workflow_owner::{
+    ActorBindingsPort, OwnerStores, RunWorld, bound_owner_factory,
+};
 use rust_cli_runtime::workflow_quota::StoreQuotaReads;
 use rust_cli_runtime::workflow_run::WorkflowRunService;
 use rust_cli_workflow::import_build::{BuildOutcome, ImportRefusal};
@@ -32,7 +34,8 @@ use super::workflow_governor::GovernorRunConcurrency;
 /// `database` is the session database the app opened; `directory` is the workspace the runs write their rows under;
 /// `progress` is where each run's progress goes (the parent session's entry and the Host's stream, 9.34). `agents`,
 /// `bindings` and `handle` are the actor side (9.35): each actor's turn runs on the agents under its parent's bindings,
-/// and `handle` is the runtime the bindings are awaited on (the caller passes its own).
+/// and `handle` is the runtime the bindings are awaited on (the caller passes its own). `world` is the host's world ports
+/// the runs' reads and artifact publishes reach (9.61).
 #[expect(
     clippy::too_many_arguments,
     reason = "the composition root's build takes each port it wires (9.34, 9.35); a struct would only rename them"
@@ -47,6 +50,7 @@ pub(crate) fn build<A: ActorAgents + ActorSessionRelease>(
     handle: tokio::runtime::Handle,
     progress: Arc<dyn WorkflowRunProgressPort>,
     gates: Arc<dyn DynamicWorkflowGates>,
+    world: Option<RunWorld>,
 ) -> Option<WorkflowRunService> {
     let runner = runner?;
     let resume_handle = handle.clone();
@@ -65,6 +69,7 @@ pub(crate) fn build<A: ActorAgents + ActorSessionRelease>(
         handle,
         bindings,
         Arc::new(SystemClock::utc()),
+        world,
     );
     let concurrency = Arc::new(GovernorRunConcurrency::new(
         rust_cli_model::governor::process(),
@@ -168,6 +173,16 @@ impl RunStore for LazyRunStore {
     ) -> Result<Option<rust_cli_workflow::run_store::RunDetail>> {
         self.get()?.run_detail(run_id, default_concurrency)
     }
+
+    fn run_detail_for(
+        &self,
+        run_id: &str,
+        default_concurrency: Option<f64>,
+        live_here: bool,
+    ) -> Result<Option<rust_cli_workflow::run_store::RunDetail>> {
+        self.get()?
+            .run_detail_for(run_id, default_concurrency, live_here)
+    }
 }
 
 /// Fork (W7-11, 9.44, closes 414): the reminder clocks' run source over the service. The live runs and each run's open
@@ -201,7 +216,7 @@ fn now_ms() -> i64 {
 }
 
 /// The same reading as `now_ms`, for the database open's ledger stamp.
-fn now_ms_u64() -> u64 {
+pub(crate) fn now_ms_u64() -> u64 {
     SystemClock::utc().now_ms()
 }
 

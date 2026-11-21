@@ -39,7 +39,8 @@ use crate::workflow_create::{
     diagnostics_note, output_for, write_draft_file,
 };
 use crate::workflow_tools::{
-    Contract, DYNAMIC_WORKFLOW_SKILL, contract, skill_loaded, workspace_dir,
+    Contract, DYNAMIC_WORKFLOW_SKILL, contract, is_amend_workflow_owned_predecessor,
+    live_elsewhere, owned_run_facts, run_detail, skill_loaded, workspace_dir,
 };
 use crate::workspace_path::{Refusal, contain};
 
@@ -55,6 +56,13 @@ const SUBAGENT_MODEL_UNAVAILABLE: &str =
     "This host cannot choose a subagent model; omit subagent_model.";
 const SOURCE_CONFLICT: &str = "Provide at most one script source: `script` for the whole revised script inline, or `path` for its file. Passing both is ambiguous.";
 const RETUNE_UNAVAILABLE: &str = "workflow_retune_unavailable: this host cannot change the parallelism of a live run in place, so this call has nothing to change. Nothing was stopped, created or changed.";
+
+/// Node `heldElsewhereFailure`: the revision of another session's running run.
+fn held_elsewhere(run_id: &str) -> String {
+    format!(
+        "workflow_run_held_elsewhere: run {run_id} is running in another session's process, so this session cannot stop it to start a revision. Nothing was stopped or created. Amend it from the session that started it, or amend it from here once it has ended."
+    )
+}
 
 /// The input (Node `AmendWorkflowInputSchema`, as the model sends it).
 #[derive(Debug, Clone, Deserialize)]
@@ -407,6 +415,14 @@ impl Tool for AmendWorkflowTool {
                 error_code: Some(SKILL_NOT_LOADED_CODE),
             };
         }
+        // Node `heldElsewhereFailure`, after the retune route: another session's run in flight (running, pending or parked at
+        // a hole) cannot be stopped from here.
+        if !input.is_concurrency_only()
+            && let Some(detail) = run_detail(self.port(context).as_ref(), &input.run_id).await
+            && live_elsewhere(&detail)
+        {
+            return invalid(Some(FAILURE_CODE), &held_elsewhere(&input.run_id));
+        }
         Validation::Ok
     }
 
@@ -455,6 +471,14 @@ impl Tool for AmendWorkflowTool {
             },
         );
         if !checks {
+            return PermissionDecision::Allow {
+                updated_input: None,
+            };
+        }
+        // Node `rule.session.workflowOwner`: a revision of a run this session started, that the user did not stop,
+        // opens no window. This host's amend names no new model, so it never introduces a provider.
+        let predecessor = owned_run_facts(port.as_ref(), &input.run_id).await;
+        if is_amend_workflow_owned_predecessor(&predecessor) {
             return PermissionDecision::Allow {
                 updated_input: None,
             };
@@ -752,7 +776,7 @@ impl AmendWorkflowTool {
                 format!(
                     "The revised workflow script compiled cleanly.\n\n{EXECUTION_UNAVAILABLE_NOTE}"
                 ),
-                json!({"diagnostics": [], "ok": true}),
+                crate::workflow_card::card(None, true, &[]),
             ));
         };
 
@@ -827,12 +851,8 @@ impl AmendWorkflowTool {
             format!(
                 "{superseded_sentence} {started} It is still running — you will be notified with the final output when it completes. Do not wait for it or poll it with TaskOutput; continue with other work unless the user asked you to wait.{settings}{where_}"
             ),
-            json!({
-                "diagnostics": [],
-                "ok": true,
-                "status": "backgrounded",
-                "backgroundTaskId": run_id,
-            }),
+            // The run id is in the text; the card has no graph here (the amend path draws no window display).
+            crate::workflow_card::card(None, true, &[]),
         ))
     }
 }
@@ -861,25 +881,13 @@ fn compile_failure(
         }
         None => DIAGNOSTICS_NOT_EXECUTED_NOTE.to_owned(),
     };
-    let diagnostics: Vec<Value> = analysis
-        .diagnostics
-        .iter()
-        .map(|diagnostic| {
-            json!({
-                "code": diagnostic.code,
-                "column": diagnostic.column,
-                "line": diagnostic.line,
-                "message": diagnostic.message,
-            })
-        })
-        .collect();
     let mut body = vec![lead];
     body.extend(diagnostic_lines(&analysis.diagnostics, location));
     body.push(String::new());
     body.push(format!("{note} Run {} was not touched.", input.run_id));
     output_for(
         body.join("\n"),
-        json!({"diagnostics": diagnostics, "ok": false}),
+        crate::workflow_card::card(None, false, &analysis.diagnostics),
     )
 }
 

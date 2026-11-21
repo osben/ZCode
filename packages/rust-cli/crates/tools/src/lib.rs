@@ -58,6 +58,8 @@ mod workflow_list;
 mod workflow_save;
 // Fork: the containment check for a path the model names (SaveWorkflow and CreateWorkflow).
 mod workspace_path;
+// Fork (9.61): the `create_workflow` result card the three launch tools share.
+mod workflow_card;
 // Fork: CreateWorkflow (W7-8a).
 mod workflow_create;
 /// Fork (W9a, 9.53): the hub's saved-start resolution (Node `startSavedWorkflowRun` steps 1 and 2).
@@ -71,6 +73,7 @@ mod workflow_eval_snippet;
 // Fork: ListWorkflowRuns, ResumeWorkflowRun and ResolveWorkflowQuestion (W7-9, specs/fork-rust-workflow-engine.md, 9.40).
 mod workflow_run_tools;
 // Fork: GetWorkflowRun's model text (W7-9b, specs/fork-rust-workflow-engine.md, 9.42).
+mod workflow_observation_display;
 mod workflow_run_detail;
 // Fork: the `LSP` agent tool (specs/fork-rust-lsp.md "Tool (D2)").
 mod lsp_tool;

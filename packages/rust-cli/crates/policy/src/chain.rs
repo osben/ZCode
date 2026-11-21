@@ -104,7 +104,7 @@ pub fn builtin(
     match subject {
         Some(PermissionSubject::Shell { command }) => bash::check(command, inputs),
         Some(PermissionSubject::Path { access, path }) => {
-            files::check(*access, path.as_deref(), inputs)
+            files::check_tool(*access, path.as_deref(), inputs, called.tool)
         }
         Some(PermissionSubject::Url { url }) => web_fetch(url, inputs),
         Some(PermissionSubject::Skill { name }) => skill::check(name, inputs),

@@ -303,7 +303,11 @@ async fn an_amend_with_a_script_stops_the_predecessor_and_reports_the_successor(
         "{text}"
     );
     assert!(text.contains("you will be notified"), "{text}");
-    assert_eq!(output.display["backgroundTaskId"], json!("run-2"));
+    // Node's display field set is frozen and parsed strictly: the run id is in the text, not on the card.
+    assert_eq!(output.display["kind"], "create_workflow");
+    assert_eq!(output.display["ok"], json!(true));
+    assert!(output.display.get("backgroundTaskId").is_none());
+    assert!(output.display.get("status").is_none());
 }
 
 #[tokio::test]
@@ -342,6 +346,8 @@ async fn a_revision_that_does_not_check_is_reported_and_stops_nothing() {
     assert!(text.contains("L1:C7 Type 'string'"), "{text}");
     assert!(text.contains("Run run-1 was not touched."), "{text}");
     assert_eq!(output.display["ok"], json!(false));
+    assert_eq!(output.display["kind"], "create_workflow");
+    assert_eq!(output.display["errorCount"], json!(1));
     assert!(port.amends().is_empty(), "nothing is stopped or started");
 }
 
@@ -909,4 +915,80 @@ async fn an_amend_without_a_loaded_skill_is_refused_when_it_carries_a_script() {
         matches!(inherited, Validation::Ok),
         "a settings-only call reuses the script and needs no skill"
     );
+}
+
+#[tokio::test]
+async fn a_revision_of_this_sessions_own_run_skips_the_window_and_others_still_ask() {
+    // Node `rule.session.workflowOwner`: a run this session started, not stopped by the user, opens no window.
+    let cases = [
+        (
+            json!({"runId": "run-1", "ownedByThisSession": true, "status": "running"}),
+            true,
+        ),
+        (
+            json!({"runId": "run-1", "ownedByThisSession": false, "status": "running"}),
+            false,
+        ),
+        (
+            json!({"runId": "run-1", "ownedByThisSession": true, "status": "stopped", "stopReason": "user"}),
+            false,
+        ),
+        (
+            json!({"runId": "run-1", "ownedByThisSession": true, "status": "stopped", "stopReason": "superseded"}),
+            true,
+        ),
+    ];
+    for (detail, allowed) in cases {
+        let port = FakeRun::with_retune(
+            RetuneOutcome::Refused(RetuneRefusal::NotLive),
+            Some(detail.clone()),
+            Some(CLEAN),
+        );
+        let (tool, ctx, _guard) = harness(port);
+        let input = json!({"run_id": "run-1", "script": REVISED});
+        let decision = tool.check_permissions(&input, &ctx).await;
+        assert_eq!(
+            matches!(decision, PermissionDecision::Allow { .. }),
+            allowed,
+            "{detail}: {decision:?}"
+        );
+    }
+}
+
+#[tokio::test]
+async fn a_revision_of_another_sessions_live_run_is_refused_before_any_window() {
+    // Node `heldElsewhereFailure`: the run's engine is its starting session's; this session cannot stop it.
+    let live = json!({"runId": "run-1", "ownedByThisSession": false, "status": "running"});
+    let port = FakeRun::with_retune(
+        RetuneOutcome::Refused(RetuneRefusal::NotLive),
+        Some(live),
+        Some(CLEAN),
+    );
+    let (tool, ctx, _guard) = harness(port.clone());
+    let input = json!({"run_id": "run-1", "script": REVISED});
+    let Validation::Invalid { message, .. } = tool.validate_input(&input, &ctx).await else {
+        panic!("another session's live run is refused");
+    };
+    assert!(
+        message.starts_with(
+            "workflow_run_held_elsewhere: run run-1 is running in another session's process"
+        ),
+        "{message}"
+    );
+    assert!(
+        message.contains("Amend it from the session that started it"),
+        "{message}"
+    );
+    // A settled run of another session is amended as usual (after its window).
+    let settled = json!({"runId": "run-1", "ownedByThisSession": false, "status": "completed"});
+    let port = FakeRun::with_retune(
+        RetuneOutcome::Refused(RetuneRefusal::NotLive),
+        Some(settled),
+        Some(CLEAN),
+    );
+    let (tool, ctx, _guard) = harness(port);
+    assert!(matches!(
+        tool.validate_input(&input, &ctx).await,
+        Validation::Ok
+    ));
 }

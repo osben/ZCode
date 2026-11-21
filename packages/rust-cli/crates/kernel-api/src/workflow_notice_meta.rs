@@ -178,3 +178,12 @@ fn bound_units(value: &str, max: usize) -> String {
 #[cfg(test)]
 #[path = "workflow_notice_meta_tests.rs"]
 mod tests;
+
+/// Node `serializeWorkflowArtifact`: a string is the text itself, anything else `JSON.stringify(value, null, 2)` (JS number
+/// text and key order, two-space indent). The terminal notice, the GetWorkflowRun text and its card share it.
+pub fn artifact_text(value: &Value) -> String {
+    match value {
+        Value::String(text) => text.clone(),
+        other => rust_cli_base::js::json::stringify_indented(other),
+    }
+}

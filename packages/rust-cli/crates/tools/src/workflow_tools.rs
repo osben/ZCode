@@ -15,7 +15,7 @@ use rust_cli_kernel_api::message::{ContentBlock, Message};
 use rust_cli_kernel_api::tool::{Tool, ToolUseContext};
 use rust_cli_kernel_api::tool_names;
 use rust_cli_kernel_api::workflow_analysis::WorkflowAnalyzer;
-use rust_cli_kernel_api::workflow_run::DynamicWorkflowRunSessions;
+use rust_cli_kernel_api::workflow_run::{DynamicWorkflowRunPort, DynamicWorkflowRunSessions};
 use rust_cli_kernel_api::workflow_snippet::WorkflowSnippetPort;
 use serde::Deserialize;
 use serde_json::Value;
@@ -147,6 +147,54 @@ pub fn is_amend_workflow_owned_predecessor(predecessor: &Value) -> bool {
     facts.get("owned_by_this_session") == Some(&Value::Bool(true))
         && facts.get("stop_reason") != Some(&Value::String("user".to_owned()))
         && facts.get("introduces_providers").is_none()
+}
+
+/// The ownership facts of run `run_id` that Node's `resolveInput` backfills (`describePredecessor`): whether this
+/// session started it, and its stop reason. A run that cannot be read is not owned (fail closed: the call asks).
+pub(crate) async fn owned_run_facts(
+    port: Option<&Arc<dyn DynamicWorkflowRunPort>>,
+    run_id: &str,
+) -> Value {
+    let Some(detail) = run_detail(port, run_id).await else {
+        return Value::Null;
+    };
+    let mut facts = serde_json::Map::new();
+    facts.insert(
+        "owned_by_this_session".into(),
+        Value::Bool(detail.get("ownedByThisSession") == Some(&Value::Bool(true))),
+    );
+    if let Some(reason) = detail.get("stopReason").filter(|reason| reason.is_string()) {
+        facts.insert("stop_reason".into(), reason.clone());
+    }
+    Value::Object(facts)
+}
+
+/// The run's detail through the session's port; `None` when there is no port, the run is unknown, or the read fails.
+pub(crate) async fn run_detail(
+    port: Option<&Arc<dyn DynamicWorkflowRunPort>>,
+    run_id: &str,
+) -> Option<Value> {
+    let run = rust_cli_kernel_api::ids::WorkflowRunId::new(run_id.to_owned());
+    port?.get_run_detail(&run).await.ok().flatten()
+}
+
+/// Node `liveInThisProcess === false`: a run in flight that another session started. Node keys the refusal on the
+/// process that holds the engine; one Rust app server holds every session's runs, so the starting session stands in
+/// for that process (divergence 910).
+pub(crate) fn live_elsewhere(detail: &Value) -> bool {
+    detail.get("ownedByThisSession") == Some(&Value::Bool(false))
+        && !matches!(
+            detail.get("status").and_then(Value::as_str),
+            Some("stopped" | "completed" | "errored")
+        )
+}
+
+/// Node `describeHole`: `owned_by_this_session` folds in both amend-rule conditions (started here, not stopped by the
+/// user), so the fill's decision reads that one bit.
+pub(crate) fn hole_facts(run: &Value) -> Value {
+    serde_json::json!({
+        "owned_by_this_session": is_amend_workflow_owned_predecessor(run),
+    })
 }
 
 /// Node `isFillWorkflowHoleOwnedRun`: a hole of this session's own run, which FillWorkflowHole may fill without asking.

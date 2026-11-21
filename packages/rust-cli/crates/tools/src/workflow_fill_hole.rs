@@ -16,6 +16,7 @@ use rust_cli_kernel_api::tool::{
     PromptContext, Tool, ToolError, ToolOutput, ToolProgress, ToolUseContext, Validation, failed,
 };
 use rust_cli_kernel_api::tool_names;
+use rust_cli_kernel_api::workflow_analysis::WorkflowDiagnostic;
 use rust_cli_kernel_api::workflow_run::{
     DynamicWorkflowRunPort, DynamicWorkflowRunSessions, FillHoleOutcome, FillHoleRequest,
     FillRefusalReason,
@@ -27,7 +28,8 @@ use tokio::sync::mpsc;
 use crate::workflow_amend::read_revision_file;
 use crate::workflow_create::{CREATE_MODEL_BYTES, output_for};
 use crate::workflow_tools::{
-    Contract, DYNAMIC_WORKFLOW_SKILL, contract, skill_loaded, workspace_dir,
+    Contract, DYNAMIC_WORKFLOW_SKILL, contract, hole_facts, is_fill_workflow_hole_owned_run,
+    live_elsewhere, owned_run_facts, run_detail, skill_loaded, workspace_dir,
 };
 
 /// The skill gate's code, as AmendWorkflow reports it.
@@ -87,6 +89,47 @@ fn refusal_text(reason: FillRefusalReason, run_id: &str, message: &str) -> Strin
         ),
         FillRefusalReason::CompileFailed => format!("workflow_fill_refused: {message}"),
     }
+}
+
+/// Node `fillBlock`: the hole the fill names, by its own name from the run's hole entry, else by its site id. Node also
+/// carries the hole's draft path and line; the Rust hole projection holds neither, so they are left out (both optional).
+async fn fill_block(port: &Arc<dyn DynamicWorkflowRunPort>, run_id: &str, hole_id: &str) -> Value {
+    let detail = run_detail(Some(port), run_id).await;
+    let name = detail
+        .as_ref()
+        .and_then(|detail| detail.get("holes"))
+        .and_then(Value::as_array)
+        .and_then(|holes| {
+            holes
+                .iter()
+                .find(|hole| hole.get("siteId").and_then(Value::as_str) == Some(hole_id))
+        })
+        .and_then(|hole| hole.get("name"))
+        .and_then(Value::as_str)
+        .unwrap_or(hole_id);
+    json!({"siteId": hole_id, "name": name})
+}
+
+/// The refused body's diagnostics as the card carries them.
+fn card_diagnostics(diagnostics: Option<&Value>) -> Vec<WorkflowDiagnostic> {
+    diagnostics
+        .and_then(Value::as_array)
+        .map(|items| {
+            items
+                .iter()
+                .map(|item| WorkflowDiagnostic {
+                    code: item.get("code").and_then(Value::as_i64).unwrap_or(0),
+                    line: item.get("line").and_then(Value::as_i64).unwrap_or(0),
+                    column: item.get("column").and_then(Value::as_i64).unwrap_or(0),
+                    message: item
+                        .get("message")
+                        .and_then(Value::as_str)
+                        .unwrap_or("")
+                        .to_owned(),
+                })
+                .collect()
+        })
+        .unwrap_or_default()
 }
 
 /// The diagnostics of a refused body, one per line, as `L{line}:C{column} {message}`.
@@ -187,18 +230,46 @@ impl Tool for FillWorkflowHoleTool {
                 error_code: Some(SKILL_NOT_LOADED_CODE),
             };
         }
+        // Node `findWaitingHole`: a hole of another session's run in flight is out of this session's reach (no window).
+        let port = self
+            .runs
+            .as_ref()
+            .map(|runs| runs.for_session(&context.session));
+        if let Some(detail) = run_detail(port.as_ref(), &input.run_id).await
+            && live_elsewhere(&detail)
+        {
+            return invalid(
+                None,
+                &format!(
+                    "hole_not_waiting: run {run} is not running in this session's process, so this session cannot reach its engine. Only the session that started it can fill {hole}: ask the user to do it there. If that session has exited, the run is interrupted; ResumeWorkflowRun brings the hole back. Nothing was filled.",
+                    run = input.run_id,
+                    hole = input.hole_id
+                ),
+            );
+        }
         Validation::Ok
     }
 
-    /// Node `alwaysAsk`: the fill asks in every mode; a session allow rule may answer it.
+    /// Node `alwaysAsk`: the fill asks in every mode; a session allow rule may answer it. A hole of this session's own
+    /// run, not stopped by the user, fills without a window (Node `rule.session.workflowOwner`).
     async fn check_permissions(
         &self,
         input: &Value,
-        _context: &ToolUseContext,
+        context: &ToolUseContext,
     ) -> PermissionDecision {
         let Ok(input) = serde_json::from_value::<FillInput>(input.clone()) else {
             return PermissionDecision::Passthrough;
         };
+        let port = self
+            .runs
+            .as_ref()
+            .map(|runs| runs.for_session(&context.session));
+        let run = owned_run_facts(port.as_ref(), &input.run_id).await;
+        if is_fill_workflow_hole_owned_run(&hole_facts(&run)) {
+            return PermissionDecision::Allow {
+                updated_input: None,
+            };
+        }
         PermissionDecision::always_ask(
             format!(
                 "Fill hole {} of workflow run {}",
@@ -212,7 +283,8 @@ impl Tool for FillWorkflowHoleTool {
         )
     }
 
-    /// Reads the body, then asks the run port to fill the hole. A refusal is a failure with the port's text.
+    /// Reads the body, then asks the run port to fill the hole. A refusal is a failure with the port's text, except a body
+    /// that does not compile, which answers with the card as Node does.
     async fn call(
         &self,
         input: Value,
@@ -262,7 +334,12 @@ impl Tool for FillWorkflowHoleTool {
                         "The fill joined run {} at hole \"{}\"; the branch parked there has resumed and the run keeps going in the background. {phases} Do not wait for the run.",
                         input.run_id, input.hole_id
                     ),
-                    json!({"ok": true}),
+                    crate::workflow_card::card_with_fill(
+                        None,
+                        true,
+                        &[],
+                        Some(&fill_block(&port, &input.run_id, &input.hole_id).await),
+                    ),
                 ))
             }
             FillHoleOutcome::Refused {
@@ -272,7 +349,20 @@ impl Tool for FillWorkflowHoleTool {
             } => {
                 let text = refusal_text(reason, &input.run_id, &message)
                     + &diagnostic_lines(diagnostics.as_ref());
-                Err(failed(text))
+                // Node answers a body that does not compile with the card (ok false, its diagnostics, the fill block)
+                // rather than an error; the other refusals stay errors with no card.
+                if reason != FillRefusalReason::CompileFailed {
+                    return Err(failed(text));
+                }
+                Ok(output_for(
+                    text,
+                    crate::workflow_card::card_with_fill(
+                        None,
+                        false,
+                        &card_diagnostics(diagnostics.as_ref()),
+                        Some(&fill_block(&port, &input.run_id, &input.hole_id).await),
+                    ),
+                ))
             }
         }
     }

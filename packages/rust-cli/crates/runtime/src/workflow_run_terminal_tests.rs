@@ -39,13 +39,22 @@ fn a_completed_run_posts_its_result_to_the_parent_with_the_terminal_payload() {
     settled.result = Some(json!({"n": 2}));
     let notice = terminal_notice(&settled).expect("a completed run has a notice");
     assert_eq!(notice.parent_session_id, "sess-parent");
-    assert!(notice.text.starts_with(
+    // Node `formatIncomingMessage(.., "task_notification")`: the background-task preamble, then the envelope (9.61).
+    let envelope = notice
+        .text
+        .strip_prefix(rust_cli_prompts::agents::notification_preamble())
+        .expect("the terminal notice opens with the background-task preamble");
+    assert!(envelope.starts_with(
         "<task-notification>\n<task-id>dwfrun-1</task-id>\n<tool-use-id>toolu_1</tool-use-id>\n<status>completed</status>"
     ));
-    assert!(notice.text.contains("<result>{&quot;n&quot;:2}</result>"));
+    assert!(
+        notice
+            .text
+            .contains("<result>{\n  &quot;n&quot;: 2\n}</result>")
+    );
     assert_eq!(
         notice.workflow,
-        json!({"workflowNotification": {"kind": "terminal", "status": "completed", "summary": "Audit", "result": "{\"n\":2}", "resultForm": "json"}})
+        json!({"workflowNotification": {"kind": "terminal", "status": "completed", "summary": "Audit", "result": "{\n  \"n\": 2\n}", "resultForm": "json"}})
     );
 }
 
@@ -122,4 +131,95 @@ fn a_run_without_a_parent_session_posts_nothing_and_an_unnamed_run_is_titled_by_
         notice.workflow,
         json!({"workflowNotification": {"kind": "terminal", "status": "completed", "summary": "dwfrun-1"}}),
     );
+}
+
+/// Fork (9.61): the completion card's time cell reads `durationMs` (Node `workflowNotificationDurationMs`, this
+/// incarnation's settled-at minus started-at). An unknown duration leaves the key out, never 0.
+#[test]
+fn the_terminal_payload_carries_the_runs_wall_clock_duration() {
+    let mut settled = row(RunStatus::Completed);
+    settled.result = Some(json!("done"));
+    let notice = super::with_duration(
+        terminal_notice(&settled).expect("a completed run has a notice"),
+        super::run_duration_ms(1_000, Some(3_500)),
+    );
+    assert_eq!(notice.workflow["workflowNotification"]["durationMs"], 2_500);
+    let unknown = super::with_duration(
+        terminal_notice(&settled).expect("a completed run has a notice"),
+        super::run_duration_ms(0, Some(3_500)),
+    );
+    assert!(
+        unknown.workflow["workflowNotification"]
+            .get("durationMs")
+            .is_none()
+    );
+    assert_eq!(super::run_duration_ms(4_000, Some(3_500)), None);
+    assert_eq!(super::run_duration_ms(1_000, None), None);
+}
+
+#[test]
+fn the_terminal_payload_carries_the_runs_artifact_chips_primary_first_and_bounded() {
+    let base = terminal_notice(&row(RunStatus::Completed)).expect("a completed run posts");
+    let mut published = vec![
+        json!({"id": "notes", "kind": "markdown", "version": 2, "title": " E2E notes ", "contentType": "text/markdown", "bytes": 40}),
+        json!({"id": "odd", "kind": "video", "version": 1}),
+        json!({"id": "board", "kind": "board", "version": 1, "primary": true, "description": " the board "}),
+    ];
+    for index in 0..8 {
+        published.push(json!({"id": format!("f{index}"), "kind": "file", "version": 1}));
+    }
+    let notice = super::with_artifacts(base.clone(), Some(&json!(published)));
+    let meta = &notice.workflow["workflowNotification"];
+    let chips = meta["artifacts"].as_array().expect("chips");
+    assert_eq!(chips.len(), 8);
+    assert_eq!(
+        chips[0],
+        json!({"id": "board", "kind": "board", "version": 1, "primary": true, "description": "the board"})
+    );
+    assert_eq!(
+        chips[1],
+        json!({"id": "notes", "kind": "markdown", "version": 2, "title": "E2E notes", "contentType": "text/markdown"})
+    );
+    assert_eq!(chips[2]["id"], "f0");
+    assert_eq!(meta["artifactsTruncated"], true);
+
+    let two = super::with_artifacts(
+        base.clone(),
+        Some(
+            &json!([{"id": "a", "kind": "file", "version": 1}, {"id": "b", "kind": "file", "version": 3}]),
+        ),
+    );
+    assert_eq!(
+        two.workflow["workflowNotification"]["artifacts"]
+            .as_array()
+            .map(Vec::len),
+        Some(2)
+    );
+    assert!(
+        two.workflow["workflowNotification"]
+            .get("artifactsTruncated")
+            .is_none()
+    );
+
+    let none = super::with_artifacts(base.clone(), Some(&json!([])));
+    assert_eq!(none, base);
+    assert_eq!(super::with_artifacts(base.clone(), None), base);
+}
+
+/// Node cuts a chip's title and description with `slice`, in UTF-16 units; Rust keeps a character whole, so an astral
+/// character across the cap is left out (divergence 365). A version past `u64` is carried as JavaScript's number
+/// rather than saturated (ocr #619).
+#[test]
+fn a_chip_cuts_its_title_in_utf16_units_and_keeps_a_large_version() {
+    let base = terminal_notice(&row(RunStatus::Completed)).expect("a completed run posts");
+    let title = format!("{}\u{1F600}", "a".repeat(119));
+    let description = "\u{1F600}".repeat(260);
+    let published = json!([
+        {"id": "doc", "kind": "file", "version": 1e20, "title": title, "primary": true, "description": description},
+    ]);
+    let notice = super::with_artifacts(base, Some(&published));
+    let chip = &notice.workflow["workflowNotification"]["artifacts"][0];
+    assert_eq!(chip["title"], json!("a".repeat(119)));
+    assert_eq!(chip["description"], json!("\u{1F600}".repeat(250)));
+    assert_eq!(chip["version"], json!(1e20));
 }

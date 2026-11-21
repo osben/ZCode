@@ -90,6 +90,7 @@ impl RunConcurrency for NoConcurrency {
 
 struct Fixture {
     _dir: tempfile::TempDir,
+    path: PathBuf,
     service: WorkflowRunService,
     fake: Arc<FakeChildRunner>,
     recorder: Arc<Recorder>,
@@ -116,7 +117,7 @@ fn fixture(configured: bool) -> Fixture {
     });
     let factory = production_owner_factory(
         OwnerStores {
-            database: path,
+            database: path.clone(),
             directory: "project".to_owned(),
             version: "test".to_owned(),
             clock: || 1,
@@ -137,6 +138,7 @@ fn fixture(configured: bool) -> Fixture {
     }
     Fixture {
         _dir: dir,
+        path,
         service,
         fake,
         recorder,
@@ -208,7 +210,10 @@ async fn a_settled_run_posts_exactly_one_terminal_notice_to_its_parent() {
     let (session, text, workflow) = &posted[0];
     assert_eq!(session, PARENT);
     assert!(
-        text.starts_with("<task-notification>\n<task-id>wf_1</task-id>"),
+        text.starts_with(&format!(
+            "{}<task-notification>\n<task-id>wf_1</task-id>",
+            rust_cli_prompts::agents::notification_preamble()
+        )),
         "{text}"
     );
     assert!(text.contains("<status>completed</status>"), "{text}");
@@ -230,5 +235,55 @@ async fn a_service_without_terminal_notices_settles_the_run_and_posts_nothing() 
     assert!(
         f.recorder.0.lock().expect("notices").is_empty(),
         "an unconfigured service has no sink, so nothing is posted"
+    );
+}
+
+/// 9.61: the terminal payload carries the run's artifact chips, read from the journal's published records, with the
+/// deliverable's description.
+#[tokio::test]
+async fn the_terminal_notice_carries_the_runs_published_artifact_chips() {
+    let f = fixture(true);
+    f.service
+        .launch(input("wf_1"), config("wf_1"))
+        .await
+        .expect("launched");
+    let conn = rust_cli_node_store::open_session_database(&f.path, Duration::from_secs(1), 0)
+        .expect("a second connection")
+        .0;
+    wait_until("the run row", || {
+        rust_cli_node_store::dwf::get_run(&conn, "wf_1")
+            .ok()
+            .flatten()
+            .is_some()
+    })
+    .await;
+    for (id, primary) in [("notes", false), ("board", true)] {
+        let mut artifact = json!({"id": id, "kind": "markdown", "version": 1, "title": id});
+        if primary {
+            artifact["primary"] = json!(true);
+            artifact["description"] = json!("the deliverable");
+        }
+        rust_cli_node_store::dwf::append_event(
+            &conn,
+            "wf_1",
+            &json!({"type": "artifact-published", "instance": {"siteId": id, "ordinal": 1}, "artifact": artifact}),
+            3,
+        )
+        .expect("an artifact event");
+    }
+    f.fake.finish(0, completed(json!("done")));
+
+    wait_until("the terminal notice", || {
+        !f.recorder.0.lock().expect("notices").is_empty()
+    })
+    .await;
+    let posted = f.recorder.0.lock().expect("notices").clone();
+    let workflow = posted[0].2.as_ref().expect("the terminal payload");
+    assert_eq!(
+        workflow["workflowNotification"]["artifacts"],
+        json!([
+            {"id": "board", "kind": "markdown", "title": "board", "version": 1, "primary": true, "description": "the deliverable"},
+            {"id": "notes", "kind": "markdown", "title": "notes", "version": 1},
+        ])
     );
 }

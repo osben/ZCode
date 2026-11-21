@@ -406,7 +406,7 @@ impl Tool for RunTool {
                     .await
                     .map_err(|error| port_failure(error, LIST_UNAVAILABLE, "ListWorkflowRuns"))?;
                 let mut output = text(format_list(&page));
-                output.display = page;
+                output.display = crate::workflow_observation_display::list_display(&page);
                 Ok(output)
             }
             Parsed::Get(run_id) => {
@@ -429,7 +429,7 @@ impl Tool for RunTool {
                 }
                 let now = i64::try_from(SystemClock::utc().now_ms()).unwrap_or(i64::MAX);
                 let mut output = text(format_detail(&detail, now));
-                output.display = detail;
+                output.display = crate::workflow_observation_display::get_display(&detail, now);
                 Ok(output)
             }
             Parsed::Resume(run_id) => {

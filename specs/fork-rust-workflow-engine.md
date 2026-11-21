@@ -5227,6 +5227,156 @@ protocol-zcode 1060, workflow 422, node-store 463.
 
 **Not done.** DWR-01 fix. The remaining specs in the brief's list (run-permissions onward). The Q8 measurement.
 
+### 9.61 W9e: the workflow run card and the next desktop E2E clusters under zcode-rs (as built, gate on)
+
+Status: the main spec (`gray-always-on-run`) passes under zcode-rs (out-rust-14, 15, 16 and 17; last on ea46ad5a5). The full
+sweep (out-rust-15, head c256b60b0) and the re-runs of the specs fixed after it are in the table below. The Node column is out-node-3 (the W9b-2 Node run of the same list); Node was not re-run
+for this section.
+
+**Box, the sweep.** OrbStack Linux box, `run-e2e-box-w9d.sh rust`, one spec at a time, `ZCODE_RUST=1`.
+
+| Spec                            | Node (out-node-3) | Rust (out-rust-15) | Rust re-run (out-rust-16/17) | Rust failure, cause                                                                                                                                               |
+| ------------------------------- | ----------------- | ------------------ | ---------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| gray-always-on-run (main)       | PASS              | PASS               | PASS (16, 17)                |                                                                                                                                                                   |
+| gray-always-on                  | PASS              | PASS               |                              |                                                                                                                                                                   |
+| gray-always-on-amend            | PASS              | PASS               | PASS (17)                    |                                                                                                                                                                   |
+| gray-always-on-artifacts        | PASS              | PASS               | PASS (17)                    |                                                                                                                                                                   |
+| gray-always-on-compile          | PASS              | PASS               |                              |                                                                                                                                                                   |
+| gray-always-on-overflow         | PASS              | PASS               |                              |                                                                                                                                                                   |
+| gray-always-on-questions        | PASS              | PASS               | PASS (17)                    |                                                                                                                                                                   |
+| gray-always-on-run-permissions  | PASS              | PASS               |                              |                                                                                                                                                                   |
+| gray-always-on-save-from-chat   | PASS              | PASS               |                              |                                                                                                                                                                   |
+| gray-always-on-save-window      | PASS              | PASS               |                              |                                                                                                                                                                   |
+| gray-always-on-cross-session    | PASS              | FAIL               | PASS (16, 17)                | DWW-06: another session's settled run was unknown to the amend (fixed below)                                                                                      |
+| gray-always-on-lookup           | PASS              | FAIL               | FAIL (17: DWL-01..04 pass)   | DWL-02: questions of another session's live run reported as known; DWL-03: an object result dropped from the card (both fixed below); DWL-05/06 cold cards (open) |
+| gray-always-on-stop             | PASS              | FAIL               | PASS (16)                    | DWX-01/02: the stop click reached no Rust log line; passed on re-run (flake, also PASS in out-rust-12)                                                            |
+| gray-always-on-notify           | PASS              | FAIL               | FAIL (17)                    | DWN-02: the errored notice has no script-path guidance (open)                                                                                                     |
+| gray-always-on-run-pane-details | PASS              | FAIL               |                              | DWR-04 `subagent_model`, DWR-06 settings row (open)                                                                                                               |
+| gray-always-on-transcript       | PASS              | FAIL               |                              | DWT-03: the actor pane opens but draws no ask bubble (open)                                                                                                       |
+| gray-always-on-restart          | PASS              | FAIL               |                              | DWP-02/03: cold replay (open, 298)                                                                                                                                |
+| dynamic-workflow-holes          | PASS              | FAIL               |                              | DWH-02: no draft path on the hole notice (488); DWH-03/04 follow it                                                                                               |
+| gray-always-on-confirm          | FAIL              | FAIL               |                              | shared                                                                                                                                                            |
+| gray-always-on-english-dark     | FAIL              | FAIL               |                              | shared                                                                                                                                                            |
+| gray-always-on-resume           | FAIL              | FAIL               |                              | shared                                                                                                                                                            |
+| gray-always-on-snippet          | FAIL              | FAIL               |                              | shared                                                                                                                                                            |
+| gray-always-on-user-choice      | FAIL              | FAIL               |                              | shared                                                                                                                                                            |
+| gray-disabled                   | FAIL              | FAIL               |                              | shared                                                                                                                                                            |
+| gray-on-demand                  | FAIL              | FAIL               |                              | shared                                                                                                                                                            |
+| automations-workflows-hub       | FAIL              | FAIL               |                              | shared                                                                                                                                                            |
+
+Counts: Node 18/26. Rust 12/26 in out-rust-15 (head c256b60b0); with the re-runs on f8df25f04 (16) and ea46ad5a5 (17), 14/26 (cross-session and stop added). All eight shared failures fail under Node too.
+
+The holes FAIL in out-rust-12 was a wrong spec path (`gray-always-on-holes` does not exist; the spec is
+`dynamic-workflow-holes`, "did not match any file"), not a failure of the run.
+
+**Causes and fixes (each fix has a test seen red first).**
+
+- **DWR-01/02, the run card** (1809884ee, 69017165e, 35c710ec6). The create_workflow result card carried keys outside the
+  desktop's strict schema (`status`, `backgroundTaskId`), so the whole card was dropped and the digest had no graph. The card
+  is now `workflow_card::card` (Node `createCreateWorkflowDisplay`'s five keys). A new subscription's snapshot now carries the
+  session's `workflowRuns`. The run world ports (reads, artifact publish) are wired, with the publication time taken from
+  the composition.
+- **DWR-03 and DWT-03, the actor transcript.** The actor's session row was written under the directory the app server opened
+  (`<home>/.zcode`), not the parent's workspace, so the desktop's cold subscribe of `sess_dwf-…` was refused with
+  `project.session-lineage-invalid`. `bound_owner_factory` now writes the row in the parent's workspace (Node
+  `workingDirectory: deps.workingDirectory`). Test: `an_actor_session_row_is_written_in_its_parents_workspace`.
+- **The terminal notice.** `durationMs` from the run's settle and start times (divergence 907). The text opens with the
+  background-task preamble (divergence 909). The payload carries the run's artifact chips, read from the journal's
+  `artifact-published` records (primary first, at most 8, the strict chip fields), for DWK-01.
+- **SaveWorkflow ask** shows the resolved destination and overwrite facts (`Tool::ask_input`; divergence 908).
+- **DWL-01..04.** GetWorkflowRun and ListWorkflowRuns set their strict result cards (`get_workflow_run`,
+  `list_workflow_runs`; new `workflow_observation_display.rs`).
+- **DWE-01/03.** Edit and Write into `<root>/.zcode/workflow-drafts` are preapproved outside plan mode (Node
+  `isPreapprovedWorkflowDraftWrite`); the Edit not-read check is then skipped as for any auto-allowed write.
+- **DWQ-01, DWN.** The escalation, stall and hole notices call a named run by its name (`runName` on the progress rows).
+- **DWA-02, DWW-05, holes.** AmendWorkflow and FillWorkflowHole of a run this session started, not stopped by the user, open
+  no window (Node `rule.session.workflowOwner`). The facts are read from the run detail at the decision. This host's amend
+  names no new model, so it never introduces a provider.
+- **DWW-03/04.** A fill or a revision of another session's run in flight is refused before any window, with Node's
+  `hole_not_waiting` and `workflow_run_held_elsewhere` texts (divergence 910).
+- **DWK-03/04.** The child's `declare-artifact` event reaches the owner (`ActorRequest::DeclareArtifact`), so preset boards
+  (table, metrics, chart, board) are declared and their tagged reports land. Before, the run failed with
+  `declare-artifact is not wired yet`.
+- **DWW-06.** A revision of another session's settled run starts a successor owned by the revising session (Node's run
+  service is the app's). The preflight refuses only another session's run that has not settled. This narrows 394 for
+  amend. Tests: `a_settled_predecessor_of_another_session_is_amended_into_a_run_of_this_one`,
+  `an_unsettled_predecessor_of_another_session_is_unknown_to_this_one`.
+- **DWL-02.** The run detail follows Node `pendingQuestionsOf`: the pending questions are known only when the run is live in
+  the reading session or terminal. Otherwise `health.pendingQuestionsKnown` is false, `pendingQuestions` is left out and no
+  subagent is parked (`RunStore::run_detail_for`, `RosterFacts::questions_known`). Test:
+  `a_run_live_in_another_session_has_unknown_questions_and_no_parked_subagent`.
+- **DWL-03.** A run result that is not a string is serialized as Node `serializeWorkflowArtifact` does
+  (`JSON.stringify(value, null, 2)`), on the GetWorkflowRun card (before, only a string result was carried, so the result
+  panel was missing), in its `<result>` text and in the terminal notice (before, compact JSON). One helper:
+  `workflow_notice_meta::artifact_text`. Tests: `the_status_card_carries_an_object_result_as_indented_json`, and
+  `a_completed_run_posts_its_result_to_the_parent_with_the_terminal_payload` now expects Node's form.
+- **The create_workflow display reply.** A display the helper cannot give is logged at debug before the window opens
+  without a graph (it was dropped by `.ok()` with no trace). The merged W9d card kept `status` and `backgroundTaskId` on
+  the display, which the desktop's strict schema rejects whole; this branch's `workflow_card::card` (five keys; the key set is
+  frozen by `the_window_and_the_result_carry_the_scripts_display`) is the one kept at the merge.
+- **Review of #619 (ocr).**
+  - A gap or no-state run's detail `usage` carries the four node counts at zero next to `spentTokens`; the desktop's
+    strict usage schema dropped the card without them (`usage_without_nodes`; the gap test asserts the whole object).
+  - `artifact_text` writes numbers as JavaScript does (`1`, not `1.0`; `1e+21`), through a new indented form of the JS
+    stringify (`rust_cli_base::js::json::stringify_indented`, the same number and key-order rules). Test:
+    `an_artifact_is_indented_json_with_js_numbers`.
+  - FillWorkflowHole's card carries Node's `fill` block `{siteId, name}`; the name comes from the run's hole entry, else
+    the site id. A body that does not compile answers with the card (`ok: false`, its diagnostics, the fill block), as Node
+    does; the other refusals stay errors with no card. Node's optional `draftPath` and `line` are left out: the Rust hole
+    projection holds neither (488). Tests: `a_filled_hole_names_the_fill_row_by_the_holes_name`,
+    `a_compile_refusal_lists_its_diagnostics_one_per_line`, `a_filled_hole_reports_the_phases_it_added`.
+  - The terminal notice's artifact chips cut the title and description in UTF-16 units (whole characters, 365), and a
+    version past JavaScript's safe integers stays a number instead of saturating at `u64::MAX`. Test:
+    `a_chip_cuts_its_title_in_utf16_units_and_keeps_a_large_version`.
+  - The drafts directory name is defined once, in `rust_cli_base::names` (`WORKFLOW_DRAFTS_DIR`,
+    `PROJECT_WORKFLOW_DRAFTS_DIR`), for policy's preapproval and the tools' draft writes.
+
+**Divergences.**
+
+907. The terminal notice's `durationMs` is the run's own settle minus start. Node takes the larger of that and the lineage's
+     journaled active duration; Rust has no lineage sum.
+908. The SaveWorkflow ask has no `saved.draft`: Rust writes the working copy at the call, after the ask.
+909. The terminal notice always opens with the background-task preamble. Node has a second, in-human-turn variant; Rust has
+     no in-human-turn delivery of the notice.
+910. Node refuses a cross-session fill or revision because the run's engine is in another process
+     (`liveInThisProcess === false`). One Rust app server holds every session's runs, so Rust keys the same refusal on the run's
+     starting session: a run in flight that another session started.
+911. The session's `backgroundWorks` lists only live runs: a settled run leaves the list instead of staying as an ended
+     work, so the desktop's background panel shows no finished run (Node keeps ended tracker entries). This narrows 609 for
+     live runs. Keeping them needs the run's status and end time on `BackgroundRunWork` and Node's retention of ended
+     works.
+
+**Open (recorded, not fixed here).**
+
+- DWR-04: `subagent_model` is refused (this host has no model catalog), so a run that names a subagent model never asks.
+- DWR-06: the GUI settings turn records only its text. `ParentTurns::settings_turn` drops `turn.amend`, so the recorded turn
+  has no `workflowLaunch.amend` and the desktop never draws the row-only settings row. The hub launch turn has the same gap.
+- DWL-05/06: Rust writes `{schemaVersion:1}` into a tool part's metadata, Node `{schemaVersion:1, display}`, so a cold reload
+  loses the result cards.
+- Restart DWP-02/03: cold replay of run notices (open 298).
+- The unwired world-read path in `production_owner_factory` can hang a read; production uses `bound_owner_factory`.
+- DWN-02: the errored notice has no script-path guidance. Node names the run's script file and `path=` for AmendWorkflow;
+  the path is only in the journal's `run-launched` event, which the terminal notice does not read.
+- DWT-03: the actor transcript pane opens (the lineage fix holds; the row has the ask text and `metadata.epilogueStart`),
+  but the ask bubble with the folded epilogue is not drawn when the pane is opened after the run ended. Not traced past
+  the store.
+- DWH-02: the hole notice has no draft path (488). Node falls back to the run's script path; DWH-03/04 follow it.
+- DWX-01/02 failed once (out-rust-15: the stop click left no line in the Rust log) and passed on the re-run; recorded as a
+  flake.
+- An actor row written before this fix keeps `<home>/.zcode` and is still refused on a cold subscribe (no parent walk;
+  Node walks an auxiliary session to its parent).
+
+**Q8 (child RSS), measured in out-rust-12 (lookup spec).** The workflow child (Electron as Node, `--max-old-space-size=256`)
+read 93,512 KB at the first sample after the first actor turn ended (`subagent.end` 14:40:05.714 UTC, sample 14:40:09).
+It rose to 95,492 KB by 14:40:39 and stayed at 95,556 KB until the next ask at 14:42:23. Across the out-rust-12 runs the
+child read 93,284 to 95,556 KB while live. The child is one per live run, a child of the helper. The plugin MCP servers
+under the app server read 145 to 163 MB each, flat. This is the box build, not the packaged desktop build (896 stands for
+that).
+
+**Gate.** `cargo fmt --all --check` clean. `cargo clippy --workspace --all-targets --locked -- -D warnings` rc 0 (no allow
+attributes added). Lib tests: tools 698, protocol-zcode 1069, runtime 386, kernel-api 459, node-store 363 (1 ignored,
+existing), workflow 466, policy 227, agents 351, session 422; cli bin tests 564 (on ea46ad5a5, after the merge of fork at aaad5fe16).
+
 ## 10. Open questions
 
 Each has a recommendation. The user decides. Until decided, the recommendation is the default.

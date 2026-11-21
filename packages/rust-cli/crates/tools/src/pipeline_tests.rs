@@ -991,3 +991,75 @@ async fn a_create_workflow_ask_offers_the_session_option() {
     };
     assert!(*session_allow, "the session option is offered");
 }
+
+/// A tool whose ask shows a resolved input (Node `resolveInput`), like SaveWorkflow's destination facts.
+struct ResolvingTool;
+
+#[async_trait]
+impl Tool for ResolvingTool {
+    fn name(&self) -> &str {
+        "Resolving"
+    }
+
+    fn input_schema(&self) -> Value {
+        json!({"type": "object", "properties": {"name": {"type": "string"}}})
+    }
+
+    fn description(&self, _context: &rust_cli_kernel_api::tool::PromptContext) -> String {
+        "resolving".to_owned()
+    }
+
+    fn ask_input(&self, _tool_use: &rust_cli_kernel_api::ids::ToolUseId) -> Option<Value> {
+        Some(json!({"name": "n", "path": "/w/.zcode/workflows/n.dwf.ts"}))
+    }
+
+    async fn check_permissions(
+        &self,
+        _input: &Value,
+        _context: &ToolUseContext,
+    ) -> PermissionDecision {
+        PermissionDecision::ask("Save it?", Vec::new())
+    }
+
+    async fn call(
+        &self,
+        input: Value,
+        _context: ToolUseContext,
+        _progress: mpsc::Sender<rust_cli_kernel_api::tool::ToolProgress>,
+    ) -> Result<ToolOutput, rust_cli_kernel_api::tool::ToolError> {
+        Ok(ToolOutput {
+            content: vec![ToolResultContent::Text {
+                text: input.to_string(),
+            }],
+            is_error: false,
+            display: Value::Null,
+        })
+    }
+}
+
+/// Fork (9.61): the confirmation window gets the tool's resolved input; the call still runs on the model's input.
+#[tokio::test]
+async fn the_ask_shows_the_tools_resolved_input_and_the_call_keeps_the_models() {
+    let gate = Arc::new(FixedGate(PermissionDecision::Passthrough));
+    let pipeline = Pipeline::new(gate, Arc::new(RecordingHooks::default()));
+    let asked = Arc::new(ScriptedInteractions::allowing());
+    let mut context = context(PermissionAnswer::Unavailable);
+    context.interactions = asked.clone();
+    let (progress, _updates) = mpsc::channel(4);
+    let output = pipeline
+        .execute(
+            Arc::new(ResolvingTool),
+            json!({"name": "n"}),
+            context,
+            progress,
+            no_tool_start(),
+        )
+        .await
+        .output;
+    assert_eq!(text(&output), r#"{"name":"n"}"#);
+    let requests = asked.asked();
+    let InteractionRequest::Permission { input, .. } = &requests[0] else {
+        panic!("expected a permission ask: {requests:?}");
+    };
+    assert_eq!(input["path"], "/w/.zcode/workflows/n.dwf.ts");
+}

@@ -102,3 +102,14 @@ fn strings_escape_exactly_like_serde_json() {
         );
     }
 }
+
+#[test]
+fn indented_matches_json_stringify_with_two_spaces() {
+    // Oracle: node -e 'JSON.stringify({"b":1,"10":2,"a":{},"0":[],"n":[1.5,1e21,{"x":null}]},null,2)'.
+    let value: Value =
+        serde_json::from_str(r#"{"b":1,"10":2,"a":{},"0":[],"n":[1.5,1e21,{"x":null}]}"#).unwrap();
+    assert_eq!(
+        stringify_indented(&value),
+        "{\n  \"0\": [],\n  \"10\": 2,\n  \"b\": 1,\n  \"a\": {},\n  \"n\": [\n    1.5,\n    1e+21,\n    {\n      \"x\": null\n    }\n  ]\n}"
+    );
+}

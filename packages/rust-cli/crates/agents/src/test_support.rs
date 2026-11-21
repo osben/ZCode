@@ -165,6 +165,8 @@ impl QueryRunner for FakeRunner {
             system,
             request,
         });
+        // The model request is sent, as the real loop reports it (`respond`).
+        sink.request_started().await;
         let gate = match &self.gate {
             Some(Gate::Shared(gate)) => Some(gate.clone()),
             Some(Gate::PerSession(gates)) => Some(gates.of(&session)),

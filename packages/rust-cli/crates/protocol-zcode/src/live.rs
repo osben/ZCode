@@ -88,6 +88,8 @@ struct State {
     facts: Vec<Value>,
     /// Fork: model request metrics waiting for the next write, in order (`v4/telemetry/model-request-metrics`).
     metrics: Vec<Value>,
+    /// Fork (9.61): the session's `workflowRuns`, folded from the run progress deltas, for the row's `workflowActivity`.
+    workflow_runs: Option<rust_cli_node_store::WorkflowRunsState>,
 }
 
 /// 锁里算好、锁外写出的东西：（订阅、区间、payload）与变了的会话列表行。
@@ -223,6 +225,7 @@ impl Live {
                 watches: std::collections::HashMap::new(),
                 facts: Vec::new(),
                 metrics: Vec::new(),
+                workflow_runs: None,
             }),
             context,
             topics,
@@ -425,7 +428,7 @@ impl Live {
     #[cfg(test)]
     pub(crate) fn snapshot(&self) -> Value {
         let state = self.state();
-        state.projection.snapshot(0, state.log.epoch())
+        snapshot_of(&state, 0)
     }
 
     pub fn topic(&self) -> String {
@@ -448,7 +451,7 @@ impl Live {
             let Some(seq) = state.log.start(subscription) else {
                 return;
             };
-            let mut snapshot = state.projection.snapshot(seq, state.log.epoch());
+            let mut snapshot = snapshot_of(&state, seq);
             if let Some(preparation) = &state.preparation {
                 snapshot["meta"]["submissionPreparation"] = preparation.clone();
             }
@@ -657,6 +660,10 @@ impl Live {
     pub async fn workflow_runs_changed(&self, deltas: Vec<Value>) {
         let outgoing = {
             let mut state = self.state();
+            state.workflow_runs = rust_cli_node_store::apply_workflow_run_deltas(
+                state.workflow_runs.as_ref(),
+                &deltas,
+            );
             state.log.record(deltas);
             self.collect(&mut state)
         };
@@ -931,6 +938,15 @@ impl Live {
             row["sessionEnded"] = json!(false);
         }
         state.worktree.decorate_row(&mut row);
+        // Fork (9.61): the sidebar's run line; the key is left out while the session has no run (Node).
+        if let Some(activity) = state.workflow_runs.as_ref().and_then(|runs| {
+            crate::fork::workflow_activity::activity(
+                &runs.runs,
+                &state.projection.background_works_value(),
+            )
+        }) {
+            row["workflowActivity"] = activity;
+        }
         row
     }
 
@@ -1315,4 +1331,14 @@ impl SessionSink for Live {
         };
         self.write(outgoing).await;
     }
+}
+
+/// The session's snapshot at `seq`. Fork (9.61): it carries the session's `workflowRuns` as folded from the run deltas,
+/// so a subscriber that missed them (a renderer reload) still sees the runs (Node's cold snapshot carries the key).
+fn snapshot_of(state: &State, seq: u64) -> Value {
+    let mut snapshot = state.projection.snapshot(seq, state.log.epoch());
+    if let Some(runs) = &state.workflow_runs {
+        snapshot["workflowRuns"] = runs.to_value();
+    }
+    snapshot
 }
