@@ -5734,7 +5734,9 @@ which keeps the launch facts. Test: `a_fill_carries_the_runs_model_bindings_to_t
 `{"…": "arguments omitted (N bytes)"}`. A description over 500 chars is cut to 499 plus `…`. A script over 256000 chars
 is left out. The projection draws the control-only launch turn from the metadata whatever the record's source, so the hub
 launch now draws the launch card. Tests: `a_launch_record_carries_nodes_workflow_launch_metadata` (red: `None`),
-`the_launch_metadata_is_bounded_as_node_bounds_it`, `the_launch_turn_carries_the_definition_and_its_create_window`.
+`the_launch_metadata_is_bounded_as_node_bounds_it`, `the_launch_turn_carries_the_definition_and_its_create_window`,
+`a_hub_launch_record_draws_the_launch_turn_live_and_cold`. The node-store and the projection already treat both record
+sources alike (`is_record_source`), so the stored record keeps `metadata.workflowLaunch`.
 
 **911, closed: a settled run stays in `backgroundWorks`.** When a run settles, `settle_run` reads its journal row before
 taking the lock and keeps an ended entry: one per run id, with the first start time, the title and the end time. The
@@ -5742,8 +5744,10 @@ status maps like Node's tracker: completed is `resultPending`, stopped is `cance
 unreadable row, is `failed`. A live run of the same id hides its ended entry. A close clears the entries with the live
 runs. `BackgroundRunWork` gains `status` and `ended_at_ms`. The projection writes the status, adds `endedAt`, and sets
 `cancellable` only while the run is running, as Node's `backgroundInfoFromRuntimeTask` does. `/tasks` still lists only
-running runs. Tests: `a_settled_run_stays_listed_as_an_ended_background_work` (red with the retention off),
-`an_ended_run_is_an_ended_work_with_its_end_and_no_cancel`.
+running runs. A settled row that is not terminal reads as `failed` and is logged
+(`workflow.run.background_status_not_terminal`). Tests: `a_settled_run_stays_listed_as_an_ended_background_work` (red
+with the retention off), `a_completed_hub_run_stays_listed_as_result_pending_over_the_real_journal` (the production
+owner and journal: the row is settled before the read), `an_ended_run_is_an_ended_work_with_its_end_and_no_cancel`.
 
 **DWN-02** stays closed in 9.62 (71bdad10c), and nothing changes here.
 

@@ -438,3 +438,43 @@ async fn a_hub_started_run_is_listed_as_a_background_work_of_its_session() {
         .unwrap_or_else(|| panic!("the hub run is a work of its session: {listed:?}"));
     assert_eq!(work.title, "digest");
 }
+
+/// 9.65 (closes 911), over the production owner and journal: the settled row is written before the settlement reads it,
+/// so a completed run stays listed as `resultPending` with its end, not as `failed`.
+#[tokio::test]
+async fn a_completed_hub_run_stays_listed_as_result_pending_over_the_real_journal() {
+    use rust_cli_kernel_api::ids::SessionId;
+    use rust_cli_kernel_api::workflow_child::{Completion, Outcome};
+    use rust_cli_kernel_api::workflow_run::{BackgroundRunStatus, DynamicWorkflowRunSessions};
+    let fx = fixture(Some(clean()));
+    save_global(&fx, "digest", SAVED);
+    fx.service
+        .start_saved(PARENT, request(&fx.cwd, "digest"), &Recorder::default())
+        .await
+        .expect("the start answers");
+    fx.fake.finish(
+        0,
+        Outcome::Completed(Completion {
+            ok: true,
+            value: Some(json!(2)),
+            error: None,
+        }),
+    );
+    let deadline = std::time::Instant::now() + Duration::from_secs(5);
+    while fx.service.run_count() > 0 {
+        assert!(
+            std::time::Instant::now() < deadline,
+            "the completed run settles"
+        );
+        tokio::time::sleep(Duration::from_millis(5)).await;
+    }
+    let listed = fx
+        .service
+        .for_session(&SessionId::new(PARENT))
+        .background_runs()
+        .await
+        .expect("the works are listed");
+    assert_eq!(listed.len(), 1, "{listed:?}");
+    assert_eq!(listed[0].status, BackgroundRunStatus::ResultPending);
+    assert!(listed[0].ended_at_ms.is_some());
+}

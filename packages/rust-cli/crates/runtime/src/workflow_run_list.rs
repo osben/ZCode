@@ -172,7 +172,13 @@ pub(crate) fn ended_status(inner: &Inner, run_id: &str) -> Option<BackgroundRunS
         Ok(Some(row)) => match row.status {
             RunStatus::Completed => BackgroundRunStatus::ResultPending,
             RunStatus::Stopped => BackgroundRunStatus::Cancelled,
-            RunStatus::Errored | RunStatus::Pending | RunStatus::Running => {
+            RunStatus::Errored => BackgroundRunStatus::Failed,
+            RunStatus::Pending | RunStatus::Running => {
+                tracing::warn!(
+                    event = "workflow.run.background_status_not_terminal",
+                    run = %run_id,
+                    "a settled workflow run's row is not terminal, so its background work reads as failed"
+                );
                 BackgroundRunStatus::Failed
             }
         },
