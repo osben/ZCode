@@ -25,10 +25,10 @@ use rust_cli_kernel_api::workflow_snippet::{
     SnippetCheck, SnippetOutcome, SnippetRequest, WorkflowSnippetPort,
 };
 use serde::{Deserialize, Deserializer};
-use serde_json::{Value, json};
+use serde_json::Value;
 use tokio::sync::mpsc;
 
-use crate::workflow_save::{describe, diagnostic_value};
+use crate::workflow_save::describe;
 use crate::workflow_tools::{
     Contract, DYNAMIC_WORKFLOW_SKILL, contract, skill_loaded, workspace_dir,
 };
@@ -308,13 +308,13 @@ fn output_of(outcome: SnippetOutcome, described: Option<&str>, duration_ms: u64)
         }
     };
     let mut output = text(response.clone());
-    output.display = json!({
-        "ok": ok,
-        "diagnostics": diagnostics.iter().map(diagnostic_value).collect::<Vec<_>>(),
-        "logs": logs,
-        "response": response,
-        "durationMs": duration_ms,
-    });
+    output.display = crate::workflow_observation_display::snippet_display(
+        ok,
+        &diagnostics,
+        &logs,
+        &response,
+        duration_ms,
+    );
     output
 }
 

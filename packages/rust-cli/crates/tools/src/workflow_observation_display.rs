@@ -245,6 +245,56 @@ fn order(mut map: Map<String, Value>, keys: &[&str]) -> Value {
     Value::Object(out)
 }
 
+/// Node `createEvalWorkflowSnippetDisplay` (W9h, 9.64): the snippet card. At most
+/// [`crate::workflow_card::MAX_DIAGNOSTICS`] diagnostics with bounded messages, the last [`MAX_LOG_ENTRIES`] logs each
+/// within [`MAX_LOG_BYTES`], the response within [`MAX_RESULT_BYTES`], and `truncated: true` when anything was cut.
+pub(crate) fn snippet_display(
+    ok: bool,
+    diagnostics: &[rust_cli_kernel_api::workflow_analysis::WorkflowDiagnostic],
+    logs: &[String],
+    response: &str,
+    duration_ms: u64,
+) -> Value {
+    use crate::workflow_card::{MAX_DIAGNOSTICS, MAX_MESSAGE_UNITS, cut_units};
+    let mut truncated = diagnostics.len() > MAX_DIAGNOSTICS;
+    let diagnostics: Vec<Value> = diagnostics
+        .iter()
+        .take(MAX_DIAGNOSTICS)
+        .map(|diagnostic| {
+            json!({
+                "line": diagnostic.line,
+                "column": diagnostic.column,
+                "code": diagnostic.code,
+                "message": cut_units(&diagnostic.message, MAX_MESSAGE_UNITS),
+            })
+        })
+        .collect();
+    let dropped = logs.len().saturating_sub(MAX_LOG_ENTRIES);
+    truncated |= dropped > 0;
+    let logs: Vec<Value> = logs[dropped..]
+        .iter()
+        .map(|entry| {
+            let (value, cut) = bound(entry, MAX_LOG_BYTES);
+            truncated |= cut;
+            Value::String(value)
+        })
+        .collect();
+    let (response, cut) = bound(response, MAX_RESULT_BYTES);
+    truncated |= cut;
+    let mut card = json!({
+        "kind": "eval_workflow_snippet",
+        "ok": ok,
+        "diagnostics": diagnostics,
+        "logs": logs,
+        "response": response,
+        "durationMs": duration_ms,
+    });
+    if truncated {
+        card["truncated"] = json!(true);
+    }
+    card
+}
+
 /// Node `boundDisplayText`: within `max_bytes` UTF-8 bytes, the cut ending in the truncation suffix.
 fn bound(text: &str, max_bytes: usize) -> (String, bool) {
     if text.len() <= max_bytes {

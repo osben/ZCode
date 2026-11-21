@@ -416,6 +416,38 @@ async fn a_completed_snippet_reports_its_return_value_and_logs() {
     assert_eq!(output.display["logs"], json!(["step one"]));
 }
 
+// Fork (W9h, 9.64): Node `createEvalWorkflowSnippetDisplay` names the card kind, so the projection carries the display
+// on the row and the card shows `工作流片段 · N ms` (desktop E2E DWY-01). Without `kind` the row had no display.
+#[tokio::test]
+async fn the_display_names_its_kind_and_carries_the_duration() {
+    let harness = Harness::new(FakePort::answering(completed(Some(json!(1)), &[])));
+    let output = harness
+        .run(json!({"code": READ_ONLY}))
+        .await
+        .expect("the snippet runs");
+    assert_eq!(output.display["kind"], json!("eval_workflow_snippet"));
+    assert!(output.display["durationMs"].is_u64(), "{}", output.display);
+    assert!(output.display.get("truncated").is_none());
+}
+
+// Node keeps the last 40 log entries, each within 1,024 bytes, and the response within 4,000 bytes, and marks the
+// display `truncated` when it cut anything.
+#[tokio::test]
+async fn the_display_keeps_the_log_tail_and_marks_a_cut() {
+    let many: Vec<String> = (0..45).map(|index| format!("log {index}")).collect();
+    let refs: Vec<&str> = many.iter().map(String::as_str).collect();
+    let harness = Harness::new(FakePort::answering(completed(None, &refs)));
+    let output = harness
+        .run(json!({"code": READ_ONLY}))
+        .await
+        .expect("the snippet runs");
+    let logs = output.display["logs"].as_array().expect("logs");
+    assert_eq!(logs.len(), 40);
+    assert_eq!(logs[0], json!("log 5"));
+    assert_eq!(logs[39], json!("log 44"));
+    assert_eq!(output.display["truncated"], json!(true));
+}
+
 #[tokio::test]
 async fn a_string_return_value_is_shown_unquoted_and_no_value_is_said_so() {
     let harness = Harness::new(FakePort::answering(completed(Some(json!("done")), &[])));
