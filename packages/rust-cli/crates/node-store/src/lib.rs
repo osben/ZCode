@@ -50,7 +50,8 @@ mod workflow_runs;
 // The actor session id (`mintActorSessionId`) and its segment sanitiser: one implementation, shared by the
 // replay envelope and the workflow driver (W6a), so the detail page opens the session the driver created.
 pub use workflow_runs::replay::{
-    RunProgressFields, mint_actor_session_id, progress_envelope, replay_state as replay_run_state,
+    RunProgressFields, mint_actor_session_id, progress_envelope,
+    replay_envelopes as replay_run_envelopes, replay_state as replay_run_state,
     sanitize_id_segment,
 };
 // The live progress path (9.31): the same projection and envelope the replay folds, so a live run and a cold one agree.

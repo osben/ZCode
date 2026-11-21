@@ -582,6 +582,13 @@ impl DynamicWorkflowRunPort for SessionRuns {
         Some(self.service.run_changes())
     }
 
+    /// Node `replayProgressForSession` (9.62, DWP-02): the journal's runs of this session, less the live ones.
+    async fn replay_progress_for_session(&self) -> Result<Vec<Value>, DynamicWorkflowRunError> {
+        let service = self.service.clone();
+        let parent = self.parent.clone();
+        on_blocking_pool(move || Ok(service.session_progress_of(&parent))).await
+    }
+
     /// Node `retuneConcurrency` (9.50): a live run of this session changes its limit in place.
     async fn retune_concurrency(
         &self,
@@ -623,6 +630,34 @@ impl DynamicWorkflowRunSessions for WorkflowRunService {
 
 impl WorkflowRunService {
     /// The live runs of one parent session. Taken under the lock; the lock is released before any journal read.
+    /// The `workflowRuns` deltas of this parent's journaled runs that are not live here (Node `replayProgressForSession`).
+    /// A failed read replays nothing and is logged: the observation surface never fails a cold open (Node). With no
+    /// configured default concurrency there is no replay, since the `run-started` payload needs it and none is fabricated.
+    pub(crate) fn session_progress_of(&self, parent: &str) -> Vec<Value> {
+        let (Some(store), Some(default)) =
+            (self.inner.store.get(), self.default_concurrency_value())
+        else {
+            return Vec::new();
+        };
+        let live: HashSet<String> = self
+            .live_runs_of(parent)
+            .into_iter()
+            .map(|run| run.run_id)
+            .collect();
+        match store.session_progress(parent, &live, default) {
+            Ok(deltas) => deltas,
+            Err(error) => {
+                tracing::warn!(
+                    event = "workflow.run.replay_failed",
+                    session = %parent,
+                    error = %format!("{error:#}"),
+                    "the session's workflow runs could not be replayed"
+                );
+                Vec::new()
+            }
+        }
+    }
+
     pub(crate) fn live_runs_of(&self, parent: &str) -> Vec<LiveRun> {
         let state = self.inner.state.lock_unpoisoned();
         state

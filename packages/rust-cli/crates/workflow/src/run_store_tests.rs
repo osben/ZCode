@@ -373,3 +373,58 @@ fn run_detail_carries_the_latest_record_of_each_published_artifact() {
         ]
     );
 }
+
+/// 9.62 (DWP-02, closes 298 for the projection): a cold open replays this parent's journaled runs into `workflowRuns` deltas,
+/// oldest first, as Node `replayProgressForSession` does. A run the caller excludes (live in this process) and another
+/// parent's run are not replayed.
+#[test]
+fn session_progress_replays_this_parents_journaled_runs_into_workflow_runs_deltas() {
+    let conn = database();
+    add_session(&conn, "ses_p");
+    add_session(&conn, "ses_q");
+    for (id, parent, at) in [
+        ("run_old", "ses_p", 7),
+        ("run_new", "ses_p", 8),
+        ("run_live", "ses_p", 9),
+        ("run_other", "ses_q", 10),
+    ] {
+        dwf::create_run(&conn, &run(id, parent, "/w", DwfStatus::Completed), at).unwrap();
+        dwf::append_event(
+            &conn,
+            id,
+            &json!({"type": "run-launched", "inputId": "in-1", "phaseNames": ["Survey"]}),
+            at,
+        )
+        .unwrap();
+        dwf::append_event(
+            &conn,
+            id,
+            &json!({"type": "run-started", "caps": {"maxConcurrency": 2}}),
+            at,
+        )
+        .unwrap();
+    }
+    let store = store(conn);
+    let exclude = std::collections::HashSet::from(["run_live".to_owned()]);
+    let deltas = store
+        .session_progress("ses_p", &exclude, 4.0)
+        .expect("the replay reads the journal");
+    let state = rust_cli_node_store::apply_workflow_run_deltas(None, &deltas).expect("a state");
+    let value = state.to_value();
+    let ids: Vec<&str> = value["runs"]
+        .as_array()
+        .expect("runs")
+        .iter()
+        .map(|run| run["runId"].as_str().unwrap_or(""))
+        .collect();
+    let mut sorted = ids.clone();
+    sorted.sort_unstable();
+    assert_eq!(sorted, ["run_new", "run_old"]);
+    assert!(
+        value["runs"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|run| run["status"] == "completed")
+    );
+}
