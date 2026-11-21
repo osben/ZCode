@@ -4450,7 +4450,7 @@ in the terminal module, and the two would be edited together only if Node's rule
 
 **Not built.**
 
-- The TUI `/tasks` entries. The kernel's `BackgroundKind` has no workflow variant, and 55 match sites in `tui`, `agents`, `tools` and
+- The TUI `/tasks` entries (closed by 9.55). The kernel's `BackgroundKind` has no workflow variant, and 55 match sites in `tui`, `agents`, `tools` and
   `executor-host` depend on its shape. A new variant is a shared-enum change for a separate PR (divergence 741).
 - Terminal notification and GUI notice payloads (W8d), the v4 settings and start commands (W9a): not in this row.
 
@@ -4477,7 +4477,7 @@ in the terminal module, and the two would be edited together only if Node's rule
 739. Closed (see 749). The list used to refresh only on the commands' flush; a run that settled with none of those events stayed listed.
 740. `cancellable` is true for every listed run. Node's `canCancelBackgroundTask` for the run's tool is not checked against a live
      Node session.
-741. The TUI `/tasks` list does not show runs (see Not built).
+741. The TUI `/tasks` list does not show runs. Closed by 9.55 (divergences 850–859).
 742. The snapshot row has no `childSessionId`, `blocked` or `endedAt`. A run has no child session in this host, and the run's blocked
      state is not projected here.
 743. The `startedAt` is the run's launch time (`RunMeta.started_at_ms`), kept across refreshes. Node's tracker start time is not compared.
@@ -4648,6 +4648,86 @@ controls answer `capabilityUnsupported` while the gate is off.
 
 **Red, honestly.** The tests above were written after the code they cover, and I did not observe any of them fail first. The
 brief asked for red first; that was not done in this round, and the W9b agent should not count these tests as red-first.
+
+### 9.55 Workflow runs in /tasks (as built, gate off)
+
+**Scope built.**
+
+- The `/tasks` card (tui-tasks.md §3, the Puffin card) has a fourth kind, Workflows, after Todos. It is in the kinds row only while
+  a run is live here; with none, the row and the card are what they were before (`task_card.rs`, `task_card_rows.rs`). Each row is a
+  live run: its title (the name, else the run id) with the `○` of a command. The count after the kind is the number of live runs.
+- ^X on a run emits `Manage::StopTask { id: run id }`, the same command a command or subagent uses. `Command::StopTask` reaches
+  `Agents::stop_task`, then `TaskStop`'s `stop_run`, which calls `port.cancel(User)` (9.48). Nothing new is routed. The user's route
+  has a test (`task_stop_run_tests::the_user_stops_a_workflow_run_through_the_same_path`).
+- ⏎ on a run opens nothing. A run has no output in this list.
+- The snapshot: `TasksSnapshot.workflows: Vec<WorkflowRunTask { id, title, started_at_ms }>`, filled by the agents' `tasks_snapshot`
+  from the session's run port (`background_runs`, the 9.52 list in launch order). The session's `snapshot()` passes it through.
+- Refresh: the run port's `background_changes` watch (9.52, 749) is merged into the session's `subagent_changes`. A run that starts or
+  settles on its own re-reads the card's snapshot, as a subagent change does.
+
+**Why a separate list, not a `BackgroundKind::Workflow` variant.** The enum in `kernel-api::manage` (`Shell`, `Agent`, `Monitor`) is
+matched in 16 non-test sites across 9 files. (9.52 said 55 for the enum; that count also included `env_shell::BackgroundKind`, a
+different enum with the same name.) A variant would not just add a match arm. Every consumer of `snapshots.background` and of the
+protocol's `shell_deltas` (which already reads `background_tasks()` and `background_runs()` side by side) would count a run as a
+background entry: the footer pill, the notify quiet check, the program status and the protocol's background table would list it
+twice or change meaning. A run also has none of a command's fields (output tail, machine, reconnecting, child session). A separate
+list in the snapshot keeps the shared enum and the protocol unchanged, and each consumer of `background` keeps its meaning. It costs
+one field in `TasksSnapshot` (serde default, so an older reply reads as no runs) and one kind in the card.
+
+**Node's shape.** Node's TUI has no `/tasks` list (divergence 851). The row shape is taken from Node's background tracker entry for a
+`local_dynamic_workflow` (`background-tasks.ts`, `backgroundTaskPayload`): description (Node's `workflowTaskSubject`), status
+`running`, `cancellable: true`, and the stop through `stopBackgroundTask` (`background-stop-dynamic-workflow.ts`). The GUI's Workflows
+section is the same tracker entry.
+
+**Not built.** Runs are not counted in the task line above the draft, the footer pill, the terminal notify quiet check or the program
+status (they count commands and subagents, as before). Node's `/tasks` is not verified (851). The run's blocked state and its child
+session are not shown (as 9.52's 742).
+
+**Node divergences (new in 9.55, numbered from 850).**
+
+850. The list is a separate snapshot field, not a `BackgroundKind` variant. Reason above. Node's tracker has one list for every
+     background task. The protocol's background table and the TUI keep their shapes.
+851. Node's TUI has no `/tasks` list (the `tui` package has no `/tasks` command or task list). The reference is Node's background
+     tracker entry and its GUI Workflows section. The fourth kind and its place in the card follow tui-tasks.md §3 ("the fourth kind when
+     workflows come to this CLI"), a Rust spec.
+852. The kind shows only while a run is live. Node's GUI shows its Workflows section for runs only, so this matches. It is a choice for
+     the Rust card: with the gate off, no run exists and the card is unchanged.
+853. The title is the run's name, else its run id. Node's `workflowTaskSubject` also falls back to the script path. The run's launch
+     metadata does not keep the path here (737).
+854. ⏎ on a run does nothing. Node's GUI has no output for a run in its list; the run's journal is read through GetWorkflowRun. Rust's
+     card has no run-detail panel, so ⏎ opens nothing here.
+855. Runs are not counted in the task line, the footer pill, the terminal notify quiet check or the program status. Node's pill and
+     notify wording for runs is not checked. This keeps the background consumers' meaning unchanged (850).
+856. A run that starts or settles on its own re-reads the card, through the run port's change watch merged into the session's subagent
+     changes (749 for the TUI). Node's `/tasks` is not compared.
+857. A failed run read answers no runs for that refresh and logs it. 752 keeps the last published list in the protocol. The TUI's
+     snapshot has no last list, so a failed read empties the Workflows kind until the next good read.
+858. ^X on a run that settled a moment before the stop answers TaskStop's strict text, "Task <id> is not running (status: <status>)".
+     Node's background stop is lenient for the GUI cancel (an already-terminal task is success) and strict for TaskStop (not_running).
+     The `/tasks` path is the same as TaskStop's here, so it answers the strict text (9.48). The GUI's lenient success is not reached.
+859. The 55-site count in 9.52's "Not built" was wrong: the manage enum has 16 non-test sites in 9 files. The conclusion of 9.52 (a
+     shared-enum change is a separate decision) still holds for the reasons in 850; 741 is closed by this section.
+
+**Tests.**
+
+- `tui` `task_card_tests::workflows_are_a_kind_only_while_a_run_is_live`: red before the implementation (the kinds row read
+  `Workflows` quiet with no run; the expected row had none). Green after.
+- `tui` `task_card_tests::a_workflow_run_is_listed_and_stopped_from_the_card`: red (the kind did not exist), green after. Covers the row
+  text, ⏎ opening nothing and ^X's `StopTask` with the run id.
+- `tui` `task_card_tests::arrows_reach_workflows_and_the_card_follows_the_snapshot`: red (`StopTask` for the second run was None), green
+  after. The kind leaves the card when the runs settle.
+- `agents` `workflow_tasks_tests::the_snapshot_lists_the_live_runs_in_launch_order_and_drops_a_settled_one`: red (the list was empty),
+  green after. The run is not a background command.
+- `agents` `workflow_tasks_tests::a_run_that_settles_on_its_own_is_a_change_of_the_session`: red (`workflow_changes` was None), green
+  after.
+- `agents` `workflow_tasks_tests::no_run_port_means_no_workflows_and_no_change_stream`: green before and after (gate-off behaviour).
+- `session` `tasks_tests::the_tasks_snapshot_has_the_commands_and_the_agents_in_one_reply`: extended with a run from the fake agents; it
+  passed on the first run, since the pass-through was written with the field. No behavioural red was captured for it.
+- `kernel-api` `panels_tests::tasks_snapshots_round_trip`: extended with a run and its JSON key. The round trip and the empty
+  default pass.
+- `session` `tasks::tests::the_change_stream_carries_a_workflow_run_change_only_when_there_is_a_run_port` (ocr review of #614): a run
+  change ticks the session's `subagent_changes` with a run port and stays silent without one. Written with the merge, so no red captured.
+- The `tui` kinds-row test (`the_kinds_row_reads_like_puffins_card`) and the Chinese row test keep their text with no runs.
 
 ### 9.56 Cold replay of run notices (as built, gate off)
 

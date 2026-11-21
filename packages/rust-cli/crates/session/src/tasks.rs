@@ -77,6 +77,7 @@ pub(crate) async fn snapshot(
     TasksSnapshot {
         subagents: agents.subagents,
         background,
+        workflows: agents.workflows,
     }
 }
 

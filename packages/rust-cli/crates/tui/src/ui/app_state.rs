@@ -73,6 +73,8 @@ pub struct Snapshots {
     pub tasks: super::tasks::TaskPanel,
     /// 后台任务的最新快照（与 `agents` 同一份快照、同一个回执，tui-display.md §2.3，修复线 F34）。
     pub background: Vec<rust_cli_kernel_api::manage::BackgroundEntry>,
+    /// 本会话还在跑的工作流运行（`/tasks` 的 Workflows，9.55）：与 `background` 同一份快照。
+    pub workflows: Vec<rust_cli_kernel_api::panels::WorkflowRunTask>,
     /// `/stats` 卡的请求统计（缓存命中率与速度）的最后一份回执（tui-display.md §2.6，F27）。
     pub request_stats: super::footer_stats::FooterStats,
     /// 子代理的最后一份快照（与 `background` 同一份快照，tui-panels.md §0、§1）。
