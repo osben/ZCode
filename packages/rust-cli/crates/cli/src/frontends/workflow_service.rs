@@ -196,8 +196,9 @@ impl RunStore for LazyRunStore {
 }
 
 /// Fork (W7-11, 9.44, closes 414): the reminder clocks' run source over the service. The live runs and each run's open
-/// decisions are read from the service's memory (its run table and its parent's projection), and the script path from the
-/// run store's journal (9.62), so the synchronous reminder never waits on the owner thread.
+/// decisions and the script path are read from the service's memory (its run table and its parent's projection; the
+/// script path is kept on the run entry, 9.62 review), so the synchronous reminder never waits on the owner thread or the
+/// store.
 ///
 /// The service is held weakly. The service reaches the reminders through its progress port, so a strong hold here closes a
 /// cycle that nothing breaks. When the service is gone, no run is live (the same answer as an unset source).
