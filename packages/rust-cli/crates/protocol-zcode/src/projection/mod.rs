@@ -44,6 +44,21 @@ use state::{ActiveWork, Followup, LastError, Phase};
 /// Node's `PROTOCOL_V4_LIMITS.snapshotTailWindowRows`: the snapshot's row window; older rows come from `rowsRange`.
 const WINDOW_ROWS: usize = 60;
 
+/// The result display kinds a settled tool row also carries as its own `display` (Node `toProtocolToolCallDisplay`).
+const ROW_DISPLAY_KINDS: [&str; 11] = [
+    "node_repl_images",
+    "task_output",
+    "respond_to_coordinator",
+    "mcp_tool",
+    "create_workflow",
+    "get_workflow_run",
+    "list_workflow_runs",
+    "eval_workflow_snippet",
+    "saved_workflow_list",
+    "list_models",
+    "resume_workflow_run",
+];
+
 /// sendText 带来的输入的事实（行与队列项要用）。
 #[derive(Debug, Clone, PartialEq)]
 pub struct InputMeta {
@@ -990,6 +1005,12 @@ impl Projection {
                 if !output.display.is_null() && output.display["kind"] != "node_repl_images" {
                     settled["display"] = output.display.clone();
                 }
+                // Fork: Node's `toProtocolToolCallDisplay` also puts the kinds the v4 row carries on the row's own
+                // `display`; the desktop finds a workflow launch's graph there (`workflowGraphOfRow`).
+                let row_display = output.display["kind"]
+                    .as_str()
+                    .is_some_and(|kind| ROW_DISPLAY_KINDS.contains(&kind))
+                    .then(|| output.display.clone());
                 // Fork: a plan-mode policy denial is Node's `PermissionDenied` (`settlePermission(.., "cancelled")`):
                 // the row is cancelled without output, not a failed tool. The stored result carries only its text,
                 // so the cold read settles it by the same text.
@@ -1024,6 +1045,9 @@ impl Projection {
                             // output or error.
                             if !subagent_stopped {
                                 row.insert("output".into(), settled);
+                            }
+                            if let Some(display) = row_display {
+                                row.insert("display".into(), display);
                             }
                             row.insert("endedAt".into(), json!(now));
                         }

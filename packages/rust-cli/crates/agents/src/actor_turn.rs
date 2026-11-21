@@ -142,9 +142,17 @@ pub struct ActorRun {
     pub epilogue_start: Option<usize>,
     /// The turn's first-write gate (Node `onMutating`). None when the caller does not track writes.
     pub on_mutating: Option<Arc<FirstMutating>>,
+    /// The turn's model-request observer (Node `askExecuting`'s source). None when the caller does not observe requests.
+    pub on_request: Option<Arc<dyn RequestNotify>>,
     /// The workflow run the actor belongs to: its model requests are admitted under that run (W6b part 2b). None
     /// outside a run.
     pub admission_run: Option<WorkflowRunId>,
+}
+
+/// Told each time an actor's turn sends a model request (Node `createActorModelActivity`'s request start, which reports
+/// `askExecuting`). It must not wait: the turn calls it on the request path.
+pub trait RequestNotify: Send + Sync + std::fmt::Debug {
+    fn request_started(&self);
 }
 
 /// Forwards an ask's first workspace write to its owner (Node `sink.askMutating`).
@@ -208,6 +216,7 @@ impl std::fmt::Debug for ActorRun {
             .field("selection", &self.selection)
             .field("mode", &self.mode)
             .field("on_mutating", &self.on_mutating)
+            .field("on_request", &self.on_request.as_ref().map(|_| "present"))
             .field("admission_run", &self.admission_run)
             .field("port", &self.port.as_ref().map(|_| "present"))
             .field("epilogue_start", &self.epilogue_start)
@@ -367,6 +376,7 @@ impl LiveAgent {
             actor_port: run.port,
             last_turn_messages: None,
             on_mutating: run.on_mutating,
+            on_request: run.on_request,
             last_turn_stats: None,
             state: AgentState::Finished(Ending::Completed),
             result: None,
@@ -401,6 +411,7 @@ impl crate::Agents {
         let epilogue_start = run.epilogue_start;
         let submit = run.port.clone();
         let gate = run.on_mutating.clone();
+        let requests = run.on_request.clone();
         let admission_run = run.admission_run.clone();
         // The first-use check, the insert, the refresh and the run start share one lock section (`Live::begin_actor_run`).
         let started = core.live.begin_actor_run(
@@ -415,6 +426,7 @@ impl crate::Agents {
                 entry.asks = asks;
                 entry.actor_port = submit;
                 entry.on_mutating = gate;
+                entry.on_request = requests;
                 entry.admission_run = admission_run;
             },
             execution_id,

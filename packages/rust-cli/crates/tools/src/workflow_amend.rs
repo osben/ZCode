@@ -752,7 +752,7 @@ impl AmendWorkflowTool {
                 format!(
                     "The revised workflow script compiled cleanly.\n\n{EXECUTION_UNAVAILABLE_NOTE}"
                 ),
-                json!({"diagnostics": [], "ok": true}),
+                crate::workflow_card::card(None, true, &[]),
             ));
         };
 
@@ -827,12 +827,8 @@ impl AmendWorkflowTool {
             format!(
                 "{superseded_sentence} {started} It is still running — you will be notified with the final output when it completes. Do not wait for it or poll it with TaskOutput; continue with other work unless the user asked you to wait.{settings}{where_}"
             ),
-            json!({
-                "diagnostics": [],
-                "ok": true,
-                "status": "backgrounded",
-                "backgroundTaskId": run_id,
-            }),
+            // The run id is in the text; the card has no graph here (the amend path draws no window display).
+            crate::workflow_card::card(None, true, &[]),
         ))
     }
 }
@@ -861,25 +857,13 @@ fn compile_failure(
         }
         None => DIAGNOSTICS_NOT_EXECUTED_NOTE.to_owned(),
     };
-    let diagnostics: Vec<Value> = analysis
-        .diagnostics
-        .iter()
-        .map(|diagnostic| {
-            json!({
-                "code": diagnostic.code,
-                "column": diagnostic.column,
-                "line": diagnostic.line,
-                "message": diagnostic.message,
-            })
-        })
-        .collect();
     let mut body = vec![lead];
     body.extend(diagnostic_lines(&analysis.diagnostics, location));
     body.push(String::new());
     body.push(format!("{note} Run {} was not touched.", input.run_id));
     output_for(
         body.join("\n"),
-        json!({"diagnostics": diagnostics, "ok": false}),
+        crate::workflow_card::card(None, false, &analysis.diagnostics),
     )
 }
 

@@ -21,7 +21,7 @@ use rust_cli_kernel_api::workflow_run::{
     FillRefusalReason,
 };
 use serde::Deserialize;
-use serde_json::{Value, json};
+use serde_json::Value;
 use tokio::sync::mpsc;
 
 use crate::workflow_amend::read_revision_file;
@@ -262,7 +262,7 @@ impl Tool for FillWorkflowHoleTool {
                         "The fill joined run {} at hole \"{}\"; the branch parked there has resumed and the run keeps going in the background. {phases} Do not wait for the run.",
                         input.run_id, input.hole_id
                     ),
-                    json!({"ok": true}),
+                    crate::workflow_card::card(None, true, &[]),
                 ))
             }
             FillHoleOutcome::Refused {

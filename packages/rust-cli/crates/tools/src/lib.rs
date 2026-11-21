@@ -58,6 +58,8 @@ mod workflow_list;
 mod workflow_save;
 // Fork: the containment check for a path the model names (SaveWorkflow and CreateWorkflow).
 mod workspace_path;
+// Fork (9.61): the `create_workflow` result card the three launch tools share.
+mod workflow_card;
 // Fork: CreateWorkflow (W7-8a).
 mod workflow_create;
 /// Fork (W9a, 9.53): the hub's saved-start resolution (Node `startSavedWorkflowRun` steps 1 and 2).

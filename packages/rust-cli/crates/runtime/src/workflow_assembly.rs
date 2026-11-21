@@ -123,6 +123,13 @@ impl AskObserver {
         }
     }
 
+    /// The ask's model request was sent (Node `reportExecuting`): reported on the transition only.
+    pub fn request_started(&mut self) {
+        if let Some(event) = self.feed.executing() {
+            self.post(event);
+        }
+    }
+
     /// One notice of the session's model stream (a retry, a stall, or a resume).
     pub fn notice(&mut self, notice: &ModelNotice) {
         for event in self.feed.notice(notice) {

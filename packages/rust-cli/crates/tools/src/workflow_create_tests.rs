@@ -621,7 +621,20 @@ async fn the_window_and_the_result_carry_the_scripts_display() {
     assert_eq!(output.display["kind"], "create_workflow");
     assert_eq!(output.display["errorCount"], 0);
     assert_eq!(output.display["causalityGraph"]["steps"][0]["id"], "ask-1");
-    assert_eq!(output.display["backgroundTaskId"], "run-1");
+    // Node `createCreateWorkflowDisplay`: the card's field set is frozen (the desktop parses it strictly), so the
+    // handler's `status` / `backgroundTaskId` never reach it.
+    let mut keys: Vec<&str> = output
+        .display
+        .as_object()
+        .expect("an object")
+        .keys()
+        .map(String::as_str)
+        .collect();
+    keys.sort_unstable();
+    assert_eq!(
+        keys,
+        ["causalityGraph", "diagnostics", "errorCount", "kind", "ok"]
+    );
 }
 
 /// The run is launched with the script's named phases, in declaration order, and the "running alongside" indexes that
@@ -666,9 +679,9 @@ async fn a_clean_inline_script_is_drafted_asked_and_started_in_the_background() 
         ),
         "{text}"
     );
-    assert_eq!(output.display["status"], "backgrounded");
-    assert_eq!(output.display["backgroundTaskId"], "run-1");
     assert_eq!(output.display["ok"], true);
+    assert!(output.display.get("status").is_none());
+    assert!(output.display.get("backgroundTaskId").is_none());
     let draft = harness.draft("pr-review.dwf.ts");
     assert_eq!(fs::read_to_string(&draft).expect("draft"), CLEAN);
     let submits = submits_of(&harness);
@@ -745,6 +758,10 @@ async fn a_script_that_does_not_check_gets_file_line_diagnostics_and_no_run() {
         "{text}"
     );
     assert_eq!(output.display["ok"], false);
+    // Node `createCreateWorkflowDisplay`: the draft row is a `create_workflow` card with the error count.
+    assert_eq!(output.display["kind"], "create_workflow");
+    assert_eq!(output.display["errorCount"], 1);
+    assert_eq!(output.display["diagnostics"][0]["line"], 1);
     assert_eq!(
         fs::read_to_string(harness.draft("pr-review.dwf.ts")).expect("draft"),
         script

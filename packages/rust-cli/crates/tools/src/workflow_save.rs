@@ -78,8 +78,9 @@ struct SaveInput {
 /// What the permission decision leaves for the call with the same tool-use id.
 #[derive(Debug, Clone)]
 enum Pending {
-    /// The script the user approved (it checked clean); the call writes these bytes.
-    Approved(String),
+    /// The script the user is asked to approve (it checked clean; the call writes these bytes), and the input the
+    /// confirmation window shows (Node `resolveSaveWorkflowInput`).
+    Approved { script: String, shown: Value },
     /// The checker's diagnostics for a script that did not check; the call returns them without checking again.
     Failed(Vec<WorkflowDiagnostic>),
 }
@@ -103,6 +104,10 @@ impl PendingTable {
                 self.entries.remove(&oldest);
             }
         }
+    }
+
+    fn get(&self, id: &ToolUseId) -> Option<&Pending> {
+        self.entries.get(id)
     }
 
     fn take(&mut self, id: &ToolUseId) -> Option<Pending> {
@@ -335,6 +340,33 @@ fn args_from_json(value: &Value) -> Result<Vec<(String, ArgDecl)>, String> {
 }
 
 /// The confirmation's text: the destination, and what the write would replace or hide.
+/// Node `resolveSaveWorkflowInput`: the call's input with the resolved script, the destination, whether a copy is
+/// replaced and the shadowing fact (left out when no other copy has the name). The desktop's confirmation block reads
+/// these from the asked input; the file is still written from the approved bytes and `overwritten` is decided again
+/// at write time.
+fn shown_input(
+    raw: &Value,
+    script: &str,
+    path: &Path,
+    overwrite: bool,
+    shadowing: Option<Shadowing>,
+) -> Value {
+    let mut shown = raw.clone();
+    shown["script"] = json!(script);
+    shown["path"] = json!(path.display().to_string());
+    shown["overwrite"] = json!(overwrite);
+    match shadowing {
+        Some(Shadowing::HidesGlobal) => shown["shadowing"] = json!("hides_global"),
+        Some(Shadowing::HiddenByProject) => shown["shadowing"] = json!("hidden_by_project"),
+        None => {
+            if let Some(object) = shown.as_object_mut() {
+                object.remove("shadowing");
+            }
+        }
+    }
+    shown
+}
+
 fn confirmation_message(
     name: &str,
     path: &Path,
@@ -430,6 +462,14 @@ impl Tool for SaveWorkflowTool {
         self.contract.search_hint.as_deref()
     }
 
+    /// The confirmation reads the resolved destination facts from its input (Node `resolveInput`).
+    fn ask_input(&self, tool_use: &ToolUseId) -> Option<Value> {
+        match self.pending().get(tool_use) {
+            Some(Pending::Approved { shown, .. }) => Some(shown.clone()),
+            _ => None,
+        }
+    }
+
     /// Writes the user's repository, so it is never read-only and never concurrency safe (Node `readOnly: false`).
     fn is_read_only(&self, _input: &Value) -> bool {
         self.contract.read_only
@@ -483,6 +523,7 @@ impl Tool for SaveWorkflowTool {
         input: &Value,
         context: &ToolUseContext,
     ) -> PermissionDecision {
+        let raw = input;
         let Ok(input) = serde_json::from_value::<SaveInput>(input.clone()) else {
             return PermissionDecision::Passthrough;
         };
@@ -527,8 +568,11 @@ impl Tool for SaveWorkflowTool {
                 message: "SaveWorkflow could not read the saved workflows".to_owned(),
             };
         };
-        self.pending()
-            .insert(context.tool_use.clone(), Pending::Approved(script));
+        let shown = shown_input(raw, &script, &path, overwrite, shadowing);
+        self.pending().insert(
+            context.tool_use.clone(),
+            Pending::Approved { script, shown },
+        );
         // Node `alwaysAsk` with `allowAlways: false`: asked in every mode, and no always-allow is offered.
         PermissionDecision::always_ask(
             confirmation_message(&input.name, &path, overwrite, shadowing),
@@ -559,7 +603,7 @@ impl Tool for SaveWorkflowTool {
         // The guard is a statement temporary: it is released before the next await.
         let taken = self.pending().take(&context.tool_use);
         let script = match taken {
-            Some(Pending::Approved(script)) => script,
+            Some(Pending::Approved { script, .. }) => script,
             Some(Pending::Failed(diagnostics)) => {
                 return Ok(self.failing_output(&input.name, scope, &cwd, &diagnostics));
             }

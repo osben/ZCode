@@ -25,7 +25,7 @@ use std::time::Duration;
 use async_trait::async_trait;
 use rust_cli_agents::actor_turn::{
     ActorEscalation, ActorPort, ActorQuestion, ActorRun, ActorSubmit, ActorTurnEnd, ActorViolation,
-    FirstMutating, MutatingNotify, SubmitPort,
+    FirstMutating, MutatingNotify, RequestNotify, SubmitPort,
 };
 use rust_cli_kernel_api::clock::Clock;
 use rust_cli_kernel_api::env::WorkspaceRef;
@@ -44,6 +44,8 @@ use rust_cli_workflow::model_failure::TurnFailure;
 use serde_json::Value;
 use tokio::runtime::Handle;
 use tokio_util::sync::CancellationToken;
+
+use crate::workflow_assembly::AskObserver;
 
 /// How often the bridge checks the ask's cancel flag while a turn runs. Cancels are human-scale, so 20 ms is
 /// imperceptible and keeps the wakeup rate low.
@@ -239,6 +241,25 @@ impl MutatingNotify for MailboxGate {
     }
 }
 
+/// The turn's model requests over the mailbox (Node `askExecuting`): the observer reports the transition once and posts
+/// without waiting, so the request path never blocks on the owner.
+struct MailboxRequests(Mutex<AskObserver>);
+
+impl std::fmt::Debug for MailboxRequests {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("MailboxRequests")
+    }
+}
+
+impl RequestNotify for MailboxRequests {
+    fn request_started(&self) {
+        self.0
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .request_started();
+    }
+}
+
 /// The submit port of one turn over the workflow's mailbox (Node `workflowSubmitPort`). The engine decides the result on
 /// the owner's thread, so the call waits on the blocking pool, not on a runtime worker.
 struct MailboxPort {
@@ -351,6 +372,11 @@ impl<A: ActorAgents> TurnRunner for AgentTurnRunner<A> {
             mailbox: self.mailbox.clone(),
             session: session.to_owned(),
         })));
+        // One observer per turn, bound to this turn's session, as the gate is: the owner finds the ask by session.
+        let requests = Arc::new(MailboxRequests(Mutex::new(AskObserver::new(
+            self.mailbox.clone(),
+            session,
+        ))));
         let run = ActorRun {
             child: SessionId::new(session),
             parent: self.base.parent.clone(),
@@ -372,6 +398,7 @@ impl<A: ActorAgents> TurnRunner for AgentTurnRunner<A> {
             // Every turn of the bridge has a boundary, so it is stored, a nudged turn's 0 included.
             epilogue_start: Some(turn.epilogue_start),
             on_mutating: Some(gate),
+            on_request: Some(requests),
             admission_run: self.base.admission_run.clone(),
         };
         let end = self.handle.block_on(async {

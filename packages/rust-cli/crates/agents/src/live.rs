@@ -107,6 +107,8 @@ pub(crate) struct LiveAgent {
     pub(crate) last_turn_messages: Option<u64>,
     /// A workflow actor's first-write gate for its ask (None for every other agent).
     pub(crate) on_mutating: Option<Arc<crate::actor_turn::FirstMutating>>,
+    /// A workflow actor's model-request observer for its ask (None for every other agent).
+    pub(crate) on_request: Option<Arc<dyn crate::actor_turn::RequestNotify>>,
     /// A workflow actor's last finished turn: what it counted (None until a turn ends, and for every other agent).
     pub(crate) last_turn_stats: Option<crate::child::RunStats>,
     pub(crate) state: AgentState,
@@ -480,6 +482,7 @@ impl Live {
                 entry.state = AgentState::Finished(ending);
                 entry.actor_port = None;
                 entry.on_mutating = None;
+                entry.on_request = None;
                 entry.admission_run = None;
                 entry.last_turn_stats = stats;
                 entry.last_turn_messages = messages;
@@ -668,6 +671,7 @@ impl Live {
             // A resume is never a workflow turn, so a restarted entry holds no submit port.
             entry.actor_port = None;
             entry.on_mutating = None;
+            entry.on_request = None;
             entry.admission_run = None;
             entry.begin_run(abort, Vec::new(), execution_id);
             Some(routes.claim(&entry.child, &entry.root))

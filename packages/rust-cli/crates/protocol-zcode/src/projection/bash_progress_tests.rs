@@ -218,3 +218,44 @@ fn the_settled_row_output_carries_the_bash_output_display() {
         json!({"text": "hi", "display": display})
     );
 }
+
+/// Node `toProtocolToolCallDisplay`: a settled row whose result display is one of the kinds the v4 row carries (a
+/// workflow launch's `create_workflow` card among them) also has it as the row's own `display`, which the desktop reads
+/// for the run card's graph. A kind outside that list (Bash's `bash_output`) stays on the output only.
+#[test]
+fn a_create_workflow_display_is_also_the_rows_display() {
+    let mut feed = Feed::new();
+    turn(&mut feed);
+    feed.start("toolu_dwr", "CreateWorkflow");
+    let display = json!({
+        "kind": "create_workflow",
+        "ok": true,
+        "errorCount": 0,
+        "diagnostics": [],
+        "causalityGraph": {"steps": [{"id": "ask-1", "kind": "ask", "label": "a", "lane": "main"}]},
+    });
+    feed.apply(KernelEvent::ToolDone {
+        tool_use: ToolUseId::new("toolu_dwr"),
+        output: ToolOutput {
+            content: vec![ToolResultContent::Text {
+                text: "started".into(),
+            }],
+            is_error: false,
+            display: display.clone(),
+        },
+    });
+    let row = feed.stored("toolu_dwr");
+    assert_eq!(row["display"], display);
+    assert_eq!(row["output"]["display"], display);
+
+    feed.start("toolu_1", "Bash");
+    feed.apply(KernelEvent::ToolDone {
+        tool_use: ToolUseId::new("toolu_1"),
+        output: ToolOutput {
+            content: vec![ToolResultContent::Text { text: "hi".into() }],
+            is_error: false,
+            display: json!({"kind": "bash_output", "output": "hi\n", "truncated": false}),
+        },
+    });
+    assert!(feed.stored("toolu_1").get("display").is_none());
+}

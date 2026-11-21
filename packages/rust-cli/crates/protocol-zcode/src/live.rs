@@ -88,6 +88,8 @@ struct State {
     facts: Vec<Value>,
     /// Fork: model request metrics waiting for the next write, in order (`v4/telemetry/model-request-metrics`).
     metrics: Vec<Value>,
+    /// Fork (9.61): the session's `workflowRuns`, folded from the run progress deltas, for the row's `workflowActivity`.
+    workflow_runs: Option<rust_cli_node_store::WorkflowRunsState>,
 }
 
 /// 锁里算好、锁外写出的东西：（订阅、区间、payload）与变了的会话列表行。
@@ -223,6 +225,7 @@ impl Live {
                 watches: std::collections::HashMap::new(),
                 facts: Vec::new(),
                 metrics: Vec::new(),
+                workflow_runs: None,
             }),
             context,
             topics,
@@ -657,6 +660,10 @@ impl Live {
     pub async fn workflow_runs_changed(&self, deltas: Vec<Value>) {
         let outgoing = {
             let mut state = self.state();
+            state.workflow_runs = rust_cli_node_store::apply_workflow_run_deltas(
+                state.workflow_runs.as_ref(),
+                &deltas,
+            );
             state.log.record(deltas);
             self.collect(&mut state)
         };
@@ -931,6 +938,15 @@ impl Live {
             row["sessionEnded"] = json!(false);
         }
         state.worktree.decorate_row(&mut row);
+        // Fork (9.61): the sidebar's run line; the key is left out while the session has no run (Node).
+        if let Some(activity) = state.workflow_runs.as_ref().and_then(|runs| {
+            crate::fork::workflow_activity::activity(
+                &runs.runs,
+                &state.projection.background_works_value(),
+            )
+        }) {
+            row["workflowActivity"] = activity;
+        }
         row
     }
 

@@ -303,7 +303,11 @@ async fn an_amend_with_a_script_stops_the_predecessor_and_reports_the_successor(
         "{text}"
     );
     assert!(text.contains("you will be notified"), "{text}");
-    assert_eq!(output.display["backgroundTaskId"], json!("run-2"));
+    // Node's display field set is frozen and parsed strictly: the run id is in the text, not on the card.
+    assert_eq!(output.display["kind"], "create_workflow");
+    assert_eq!(output.display["ok"], json!(true));
+    assert!(output.display.get("backgroundTaskId").is_none());
+    assert!(output.display.get("status").is_none());
 }
 
 #[tokio::test]
@@ -342,6 +346,8 @@ async fn a_revision_that_does_not_check_is_reported_and_stops_nothing() {
     assert!(text.contains("L1:C7 Type 'string'"), "{text}");
     assert!(text.contains("Run run-1 was not touched."), "{text}");
     assert_eq!(output.display["ok"], json!(false));
+    assert_eq!(output.display["kind"], "create_workflow");
+    assert_eq!(output.display["errorCount"], json!(1));
     assert!(port.amends().is_empty(), "nothing is stopped or started");
 }
 

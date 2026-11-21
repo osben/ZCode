@@ -26,7 +26,7 @@ use rust_cli_kernel_api::workflow_analysis::{
 use rust_cli_kernel_api::workflow_run::{DynamicWorkflowRunSessions, SubmitRequest};
 use serde::Deserialize;
 use serde::de::IgnoredAny;
-use serde_json::{Map, Value, json};
+use serde_json::{Map, Value};
 use tokio::sync::mpsc;
 
 use crate::saved_workflow::{
@@ -1001,21 +1001,9 @@ impl Tool for CreateWorkflowTool {
             body.extend(lines);
             body.push(String::new());
             body.push(diagnostics_note(&resolved, location.as_ref(), &cwd));
-            let diagnostics: Vec<Value> = analysis
-                .diagnostics
-                .iter()
-                .map(|diagnostic| {
-                    json!({
-                        "code": diagnostic.code,
-                        "column": diagnostic.column,
-                        "line": diagnostic.line,
-                        "message": diagnostic.message,
-                    })
-                })
-                .collect();
             return Ok(output_for(
                 body.join("\n"),
-                json!({"diagnostics": diagnostics, "ok": false}),
+                crate::workflow_card::card(None, false, &analysis.diagnostics),
             ));
         }
         let Some(port) = self
@@ -1025,7 +1013,7 @@ impl Tool for CreateWorkflowTool {
         else {
             return Ok(output_for(
                 format!("The workflow script compiled cleanly.\n\n{EXECUTION_UNAVAILABLE_NOTE}"),
-                json!({"diagnostics": [], "ok": true}),
+                crate::workflow_card::card(graph_of(display.as_ref()), true, &[]),
             ));
         };
         let script_path = match &resolved.origin {
@@ -1062,26 +1050,21 @@ impl Tool for CreateWorkflowTool {
             ),
         };
         let run_id = run_id.to_string();
-        // The result card is the script's `create_workflow` display (Node's result display), so the card has its graph
-        // and the run card can find it by the call id. The model-facing keys stay on the same object.
-        let mut card = match display {
-            Some(Value::Object(map)) => map,
-            _ => serde_json::Map::new(),
-        };
-        card.entry("kind")
-            .or_insert_with(|| json!("create_workflow"));
-        card.insert("ok".to_owned(), json!(true));
-        card.insert("errorCount".to_owned(), json!(0));
-        card.entry("diagnostics").or_insert_with(|| json!([]));
-        card.insert("status".to_owned(), json!("backgrounded"));
-        card.insert("backgroundTaskId".to_owned(), json!(run_id));
+        // The result card carries the script's graph, so the run card can find it by the call id. The run id travels in
+        // the text and the run projection, never on the card (crate::workflow_card).
+        let card = crate::workflow_card::card(graph_of(display.as_ref()), true, &[]);
         Ok(output_for(
             format!(
                 "The workflow script compiled cleanly and the run started in the background with ID: {run_id}. It is still running — you will be notified with the final output when it completes. Do not wait for it or poll it with TaskOutput; continue with other work unless the user asked you to wait.{settings}{where_}"
             ),
-            Value::Object(card),
+            card,
         ))
     }
+}
+
+/// The causality graph of the analyzer's window display, when it drew one.
+fn graph_of(display: Option<&Value>) -> Option<&Value> {
+    display.and_then(|display| display.get("causalityGraph"))
 }
 
 fn invalid(code: Option<i32>, message: &str) -> Validation {

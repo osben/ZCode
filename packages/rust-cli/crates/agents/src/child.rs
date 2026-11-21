@@ -144,6 +144,8 @@ pub(crate) struct ChildSink {
     /// Fork: the workflow ask's first-write gate (Node `onMutating`), set for a workflow actor only. An admitted
     /// workspace-mutating call reaches it through `RunSink::tool_mutating`.
     mutating: Option<Arc<crate::actor_turn::FirstMutating>>,
+    /// Fork: the workflow ask's model-request observer (Node `askExecuting`), set for a workflow actor only.
+    requests: Option<Arc<dyn crate::actor_turn::RequestNotify>>,
 }
 
 impl ChildSink {
@@ -171,7 +173,17 @@ impl ChildSink {
             core: None,
             execution: 0,
             mutating: None,
+            requests: None,
         }
+    }
+
+    /// The ask's model-request observer of a workflow actor (None for every other agent).
+    pub(crate) fn with_requests(
+        mut self,
+        requests: Option<Arc<dyn crate::actor_turn::RequestNotify>>,
+    ) -> Self {
+        self.requests = requests;
+        self
     }
 
     /// The ask's first-write gate of a workflow actor (None for every other agent).
@@ -542,6 +554,9 @@ impl RunSink for ChildSink {
 
     async fn request_started(&self) {
         self.live.progress(&self.agent, self.execution);
+        if let Some(requests) = &self.requests {
+            requests.request_started();
+        }
     }
 
     async fn tool_scheduled(

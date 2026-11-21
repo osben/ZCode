@@ -220,6 +220,9 @@ async fn a_filled_hole_reports_the_phases_it_added() {
     let text = output_text(&output);
     assert!(text.contains("It added the phases review."), "{text}");
     assert!(text.contains("the run keeps going"), "{text}");
+    // The fill row is the shared `create_workflow` card (Node `createCreateWorkflowDisplay`).
+    assert_eq!(output.display["kind"], "create_workflow");
+    assert_eq!(output.display["ok"], true);
 }
 
 #[tokio::test]
