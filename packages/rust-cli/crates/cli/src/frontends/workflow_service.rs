@@ -1,7 +1,7 @@
 //! Fork: the composition of the workflow run service (specs/fork-rust-workflow-engine.md, 9.30, W7-5a-4). The composition
 //! root builds the service over the process's real ports: the child runner the node helper composed, the process
-//! governor, the kernel's residency ledger, and the production owner factory. Nothing calls `launch` yet (the gate is
-//! off), so building the service opens no database and starts no child.
+//! governor, the kernel's residency ledger, and the production owner factory. A run starts only through an open session gate
+//! (9.54), so building the service opens no database and starts no child.
 
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, Weak};

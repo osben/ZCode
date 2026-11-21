@@ -6,7 +6,6 @@
 //! 所有函数都是同步的，只在存储的阻塞线程里调用。
 pub use rust_cli_node_records::codecs;
 // W2 library: the running agent calls it through the engine core (W5a) and the run service (9.54).
-#[allow(dead_code)]
 pub mod dwf;
 pub mod entries;
 pub mod messages;

@@ -188,6 +188,35 @@ async fn input_queued_while_verifying_runs_first() {
     assert!(is_verification(&requests[3]));
 }
 
+/// W9b-1 (9.54, divergence 765): a verification the actor runs is work in flight for a start, although no turn runs.
+/// The view's `running` is false here, so only the actor's busy answer (which counts the job) reports it.
+#[tokio::test]
+async fn a_verification_in_flight_is_busy_for_a_start_though_no_turn_runs() {
+    let gate = Arc::new(Notify::new());
+    let model = Arc::new(
+        ScriptedModel::new(vec![text_response(&["reply 0"]), text_response(&[NOT_MET])])
+            .gated_at(1, gate.clone()),
+    );
+    let built = desktop(model).await;
+    let mut events = built.session.subscribe(None);
+    built.session.send(submit("c1", "/goal tests pass")).await;
+    until(&mut events, |event| is_goal(event, GoalPhase::Verifying)).await;
+    assert!(
+        !built.session.view().await.unwrap().running,
+        "no turn runs during the verification"
+    );
+    assert!(
+        built.session.busy().await.unwrap(),
+        "the verification job makes the session busy"
+    );
+    gate.notify_one();
+    until(&mut events, |event| {
+        matches!(event, KernelEvent::GoalVerification { verification, .. }
+            if verification.status == VerificationStatus::Completed)
+    })
+    .await;
+}
+
 /// Plan mode skips the verification: a turn of a not-met goal is verified only with plan off.
 #[tokio::test]
 async fn plan_mode_skips_the_verification() {

@@ -473,6 +473,10 @@ impl SessionHandle for Session {
         self.ask(|reply| Request::View { reply }).await
     }
 
+    async fn busy(&self) -> Result<bool, KernelError> {
+        self.ask(|reply| Request::Busy { reply }).await
+    }
+
     /// SessionEnd 在关闭任务里跑（hook 只读 meta），不占用 actor（spec §3.3）。之后关闭 actor、释放执行环境
     /// 与定时任务、交组装方释放按会话的表；只关一次，关闭任务不依赖调用方（[`closing`]，§3.3.1）。
     ///

@@ -12,7 +12,7 @@ use std::sync::{Arc, Mutex};
 
 use rust_cli_base::sync::LockUnpoisoned;
 use rust_cli_kernel_api::ids::{SessionId, WorkflowRunId};
-use rust_cli_kernel_api::session_api::{Ack as KernelAck, Command, SessionHandle, SessionView};
+use rust_cli_kernel_api::session_api::{Ack as KernelAck, Command, SessionHandle};
 use rust_cli_kernel_api::workflow_run::{
     LaunchTurn, SettingsOutcome, SettingsRefusal, SettingsRequest, SettingsTurn, StartRefusal,
     StartSavedOutcome, StartSavedRequest, WorkflowRecordSource, WorkflowTurnSink,
@@ -132,23 +132,32 @@ impl WorkflowTurnSink for ParentTurns {
     }
 }
 
-/// Node `hasActiveOrQueuedTurnWork` at the point of start (divergence 765, 9.54): the session actor's own view decides,
-/// because the protocol projection is updated only when the pump applies events and can lag an input the actor already
-/// accepted. A first submission still preparing is busy too. A view the actor cannot give is busy: the start fails closed.
+/// Node `hasActiveOrQueuedTurnWork` at the point of start (divergence 765, 9.54): the session actor answers, because the
+/// protocol projection is updated only when the pump applies events and can lag an input the actor already accepted. The
+/// actor's answer counts its jobs too (goal verification, a rewind), as Node's does through `activeForegroundExecution`.
+/// A first submission still preparing is busy. An answer the actor cannot give is busy, and is logged: the start fails closed.
 ///
 /// Read once, before the run service is asked. Node checks once too, and its awaits between the check and the submit
-/// are the same window here (divergence 765, shared with Node).
+/// are the same window here (divergence 802, shared with Node).
 async fn busy(live: &Bridged<Live>) -> bool {
-    let view = live.handle.view().await.ok();
-    busy_from(view.as_ref(), live.sink.preparing())
+    let answer = match live.handle.busy().await {
+        Ok(busy) => Some(busy),
+        Err(error) => {
+            tracing::warn!(
+                event = "workflow.run.start.busy_unknown",
+                session = %live.handle.id().as_str(),
+                error = %error,
+                "the session did not answer its busy state; the start is refused as busy"
+            );
+            None
+        }
+    };
+    busy_from(answer, live.sink.preparing())
 }
 
-/// The decision of [`busy`], from the actor's view alone: a running turn, a pending interaction or a queued input is busy,
-/// as is a first submission still preparing. `None` (no view) is busy.
-pub(crate) fn busy_from(view: Option<&SessionView>, preparing: bool) -> bool {
-    preparing
-        || view
-            .is_none_or(|view| view.running || !view.pending.is_empty() || !view.queue.is_empty())
+/// The decision of [`busy`]: the actor's answer, or busy when it gave none, and busy while a first submission is preparing.
+pub(crate) fn busy_from(actor_busy: Option<bool>, preparing: bool) -> bool {
+    preparing || actor_busy.unwrap_or(true)
 }
 
 /// Node's `fault.command.capabilityUnsupported` ack, for a session without the capability.

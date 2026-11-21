@@ -1,5 +1,5 @@
 //! Projection hook for the `workflowRuns` snapshot key and its two deltas (W3, W7-0). Not called from
-//! `protocol-zcode` yet: the Rust server answers the snapshot from the run service (9.29) for
+//! `protocol-zcode` directly: the Rust server answers the snapshot from the run service (9.29) for
 //! `v4/conversation/workflowRuns` (`protocol-zcode/src/fork/methods.rs`).
 //!
 //! `LiveProjection` is the per-session holder the run service (W7-5) feeds. It keeps the current

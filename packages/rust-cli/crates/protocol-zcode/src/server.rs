@@ -596,8 +596,12 @@ impl Server {
                 // The inbound schema has already refused any other value; an absent mode is None.
                 let mode =
                     serde_json::from_value::<DynamicWorkflowMode>(params["mode"].clone()).ok();
-                self.preferences().dynamic_workflow.set(enabled, mode);
-                let gate = resolve_gate(None, None, &self.dynamic_workflow_preferences());
+                // One guard for the write and the read of the answer, so a concurrent update cannot change it in between.
+                let gate = {
+                    let mut preferences = self.preferences();
+                    preferences.dynamic_workflow.set(enabled, mode);
+                    resolve_gate(None, None, &preferences.dynamic_workflow)
+                };
                 reply(json!({"workspace": params["workspace"], "enabled": gate.enabled}))
             }
             "workspace/readPresentation" => reply(self.read_presentation(&params).await),

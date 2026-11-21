@@ -687,13 +687,17 @@ async fn the_dynamic_workflow_policy_caches_the_host_fact_and_answers_with_it() 
     let mut expected = DynamicWorkflowPreferences::default();
     expected.set(true, Some(DynamicWorkflowMode::OnDemand));
     assert_eq!(server.dynamic_workflow_preferences(), expected);
-    call(
+    let disabled_reply = call(
         &server,
         "workspace/updateDynamicWorkflowPolicy",
         json!({"workspace": workspace, "enabled": false, "mode": "onDemand"}),
     )
     .await
     .unwrap();
+    assert_eq!(
+        disabled_reply,
+        json!({"workspace": workspace, "enabled": false})
+    );
     let mut disabled = DynamicWorkflowPreferences::default();
     disabled.set(false, None);
     assert_eq!(server.dynamic_workflow_preferences(), disabled);

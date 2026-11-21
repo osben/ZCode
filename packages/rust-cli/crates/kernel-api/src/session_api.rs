@@ -681,6 +681,14 @@ pub trait SessionHandle: Send + Sync {
 
     async fn view(&self) -> Result<SessionView, KernelError>;
 
+    /// W9b-1 (9.54, divergence 765): whether the session has work in flight for a start (Node
+    /// `hasActiveOrQueuedTurnWork`): a turn, a job the actor runs (goal verification, a rewind), a pending interaction or
+    /// a queued input. The default reads the view; the session answers from its actor without building the view.
+    async fn busy(&self) -> Result<bool, KernelError> {
+        let view = self.view().await?;
+        Ok(view.running || !view.pending.is_empty() || !view.queue.is_empty())
+    }
+
     /// 前端离开会话时调用：运行 SessionEnd hook，返回只给用户看的提示（失败的 hook）。
     async fn close(&self, reason: EndReason) -> Vec<String>;
 
