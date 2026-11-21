@@ -692,7 +692,9 @@ pub(crate) fn diagnostics_note(
 /// Node `createWorkflowPhaseNames` and `createWorkflowPhaseAlongside` over the window graph's `phases`: the named phases in
 /// declaration order (capped at Node's `CREATE_WORKFLOW_GRAPH_MAX_PHASES`), and for each the indexes of the named phases
 /// that run alongside it. Each is absent when the graph names no phase, or no phase runs alongside another.
-pub(crate) fn phase_table(display: Option<&Value>) -> (Option<Vec<String>>, Option<Vec<Vec<i64>>>) {
+pub(crate) fn phase_table(
+    display: Option<&Value>,
+) -> (Option<Vec<String>>, Option<Vec<Vec<usize>>>) {
     const MAX_PHASES: usize = 32;
     let Some(phases) = display
         .and_then(|display| display.get("causalityGraph"))
@@ -725,11 +727,11 @@ pub(crate) fn phase_table(display: Option<&Value>) -> (Option<Vec<String>>, Opti
         })
         .collect();
     let mut any = false;
-    let alongside: Vec<Vec<i64>> = named
+    let alongside: Vec<Vec<usize>> = named
         .iter()
         .enumerate()
         .map(|(own, phase)| {
-            let mut indexes: Vec<i64> = Vec::new();
+            let mut indexes: Vec<usize> = Vec::new();
             for id in phase
                 .get("alongside")
                 .and_then(Value::as_array)
@@ -739,9 +741,9 @@ pub(crate) fn phase_table(display: Option<&Value>) -> (Option<Vec<String>>, Opti
             {
                 if let Some(&index) = index_of.get(id)
                     && index != own
-                    && !indexes.contains(&(index as i64))
+                    && !indexes.contains(&index)
                 {
-                    indexes.push(index as i64);
+                    indexes.push(index);
                 }
             }
             any = any || !indexes.is_empty();
@@ -1062,9 +1064,10 @@ impl Tool for CreateWorkflowTool {
         let run_id = run_id.to_string();
         // The result card is the script's `create_workflow` display (Node's result display), so the card has its graph
         // and the run card can find it by the call id. The model-facing keys stay on the same object.
-        let mut card = display
-            .and_then(|value| value.as_object().cloned())
-            .unwrap_or_default();
+        let mut card = match display {
+            Some(Value::Object(map)) => map,
+            _ => serde_json::Map::new(),
+        };
         card.entry("kind")
             .or_insert_with(|| json!("create_workflow"));
         card.insert("ok".to_owned(), json!(true));
