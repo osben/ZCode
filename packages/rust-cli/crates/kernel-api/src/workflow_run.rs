@@ -247,8 +247,8 @@ pub enum ResolveQuestionResult {
     },
 }
 
-/// Node `DynamicWorkflowRunSubmitRequest`, for the fields CreateWorkflow (W7-8a) can fill. The trace, the launch input,
-/// the launch input and the model selections are not here yet: the run service (W7-5) and the model catalog own them, and
+/// Node `DynamicWorkflowRunSubmitRequest`, for the fields CreateWorkflow (W7-8a) can fill. The trace, the launch input
+/// and the model selections are not here yet: the run service (W7-5) and the model catalog own them, and
 /// each adds its field with its own PR. The phase table is here: `phase_names` and `phase_alongside` (from the window graph).
 #[derive(Debug, Clone, PartialEq)]
 pub struct SubmitRequest {

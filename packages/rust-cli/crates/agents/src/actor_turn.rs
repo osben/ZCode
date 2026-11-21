@@ -307,6 +307,9 @@ pub(crate) fn actor_asks(
     interactions.and_then(|parent| parent.lasting()).map(Asks)
 }
 
+/// The agent type of a workflow actor turn; `spawn` keys the actor system prompt on it.
+pub(crate) const WORKFLOW_ACTOR_AGENT_TYPE: &str = "workflow_actor";
+
 /// The tools an actor is denied: Node `workflowActorToolPolicy` (`ACTOR_DISALLOWED_TOOLS`). The plan pair has nobody to
 /// approve it in a headless child. The questions to the user go through `escalate`, so only the main session answers
 /// them. The meta tools would let an actor submit or amend another workflow, and the topic resource belongs to the
@@ -346,7 +349,7 @@ impl LiveAgent {
             late_messages: Vec::new(),
             description: run.interaction_description,
             definition: Arc::new(AgentDefinition {
-                agent_type: "workflow_actor".to_owned(),
+                agent_type: WORKFLOW_ACTOR_AGENT_TYPE.to_owned(),
                 when_to_use: String::new(),
                 tools: None,
                 disallowed_tools: WORKFLOW_ACTOR_DISALLOWED_TOOLS
