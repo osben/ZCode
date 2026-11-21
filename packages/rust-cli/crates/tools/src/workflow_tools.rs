@@ -155,11 +155,7 @@ pub(crate) async fn owned_run_facts(
     port: Option<&Arc<dyn DynamicWorkflowRunPort>>,
     run_id: &str,
 ) -> Value {
-    let Some(port) = port else {
-        return Value::Null;
-    };
-    let run = rust_cli_kernel_api::ids::WorkflowRunId::new(run_id.to_owned());
-    let Ok(Some(detail)) = port.get_run_detail(&run).await else {
+    let Some(detail) = run_detail(port, run_id).await else {
         return Value::Null;
     };
     let mut facts = serde_json::Map::new();
@@ -171,6 +167,26 @@ pub(crate) async fn owned_run_facts(
         facts.insert("stop_reason".into(), reason.clone());
     }
     Value::Object(facts)
+}
+
+/// The run's detail through the session's port; `None` when there is no port, the run is unknown, or the read fails.
+pub(crate) async fn run_detail(
+    port: Option<&Arc<dyn DynamicWorkflowRunPort>>,
+    run_id: &str,
+) -> Option<Value> {
+    let run = rust_cli_kernel_api::ids::WorkflowRunId::new(run_id.to_owned());
+    port?.get_run_detail(&run).await.ok().flatten()
+}
+
+/// Node `liveInThisProcess === false`: a run in flight that another session started. Node keys the refusal on the
+/// process that holds the engine; one Rust app server holds every session's runs, so the starting session stands in
+/// for that process (divergence 910).
+pub(crate) fn live_elsewhere(detail: &Value) -> bool {
+    detail.get("ownedByThisSession") == Some(&Value::Bool(false))
+        && !matches!(
+            detail.get("status").and_then(Value::as_str),
+            Some("stopped" | "completed" | "errored")
+        )
 }
 
 /// Node `describeHole`: `owned_by_this_session` folds in both amend-rule conditions (started here, not stopped by the

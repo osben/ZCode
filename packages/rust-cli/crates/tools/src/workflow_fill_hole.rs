@@ -28,7 +28,7 @@ use crate::workflow_amend::read_revision_file;
 use crate::workflow_create::{CREATE_MODEL_BYTES, output_for};
 use crate::workflow_tools::{
     Contract, DYNAMIC_WORKFLOW_SKILL, contract, hole_facts, is_fill_workflow_hole_owned_run,
-    owned_run_facts, skill_loaded, workspace_dir,
+    live_elsewhere, owned_run_facts, run_detail, skill_loaded, workspace_dir,
 };
 
 /// The skill gate's code, as AmendWorkflow reports it.
@@ -187,6 +187,23 @@ impl Tool for FillWorkflowHoleTool {
                 ),
                 error_code: Some(SKILL_NOT_LOADED_CODE),
             };
+        }
+        // Node `findWaitingHole`: a hole of another session's run in flight is out of this session's reach (no window).
+        let port = self
+            .runs
+            .as_ref()
+            .map(|runs| runs.for_session(&context.session));
+        if let Some(detail) = run_detail(port.as_ref(), &input.run_id).await
+            && live_elsewhere(&detail)
+        {
+            return invalid(
+                None,
+                &format!(
+                    "hole_not_waiting: run {run} is not running in this session's process, so this session cannot reach its engine. Only the session that started it can fill {hole}: ask the user to do it there. If that session has exited, the run is interrupted; ResumeWorkflowRun brings the hole back. Nothing was filled.",
+                    run = input.run_id,
+                    hole = input.hole_id
+                ),
+            );
         }
         Validation::Ok
     }

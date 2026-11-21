@@ -334,3 +334,25 @@ async fn a_hole_of_this_sessions_own_run_fills_without_a_window_and_others_ask()
         );
     }
 }
+
+#[tokio::test]
+async fn a_hole_of_another_sessions_live_run_is_refused_before_any_window() {
+    // Node `findWaitingHole` with `liveInThisProcess === false`: only the starting session reaches the engine.
+    let live = json!({"runId": "run-1", "ownedByThisSession": false, "status": "running"});
+    let runs: Arc<dyn DynamicWorkflowRunSessions> = Arc::new(OneSession(Arc::new(Detail(live))));
+    let tool = tool_with(Some(runs));
+    let ctx = context(Arc::new(SkillLoaded));
+    let input = json!({"run_id": "run-1", "hole_id": "h1", "script": "return 1;"});
+    let message = invalid_message(tool.validate_input(&input, &ctx).await);
+    assert_eq!(
+        message,
+        "hole_not_waiting: run run-1 is not running in this session's process, so this session cannot reach its engine. Only the session that started it can fill h1: ask the user to do it there. If that session has exited, the run is interrupted; ResumeWorkflowRun brings the hole back. Nothing was filled."
+    );
+    let own = json!({"runId": "run-1", "ownedByThisSession": true, "status": "running"});
+    let runs: Arc<dyn DynamicWorkflowRunSessions> = Arc::new(OneSession(Arc::new(Detail(own))));
+    let tool = tool_with(Some(runs));
+    assert!(matches!(
+        tool.validate_input(&input, &ctx).await,
+        Validation::Ok
+    ));
+}

@@ -40,7 +40,7 @@ use crate::workflow_create::{
 };
 use crate::workflow_tools::{
     Contract, DYNAMIC_WORKFLOW_SKILL, contract, is_amend_workflow_owned_predecessor,
-    owned_run_facts, skill_loaded, workspace_dir,
+    live_elsewhere, owned_run_facts, run_detail, skill_loaded, workspace_dir,
 };
 use crate::workspace_path::{Refusal, contain};
 
@@ -56,6 +56,13 @@ const SUBAGENT_MODEL_UNAVAILABLE: &str =
     "This host cannot choose a subagent model; omit subagent_model.";
 const SOURCE_CONFLICT: &str = "Provide at most one script source: `script` for the whole revised script inline, or `path` for its file. Passing both is ambiguous.";
 const RETUNE_UNAVAILABLE: &str = "workflow_retune_unavailable: this host cannot change the parallelism of a live run in place, so this call has nothing to change. Nothing was stopped, created or changed.";
+
+/// Node `heldElsewhereFailure`: the revision of another session's running run.
+fn held_elsewhere(run_id: &str) -> String {
+    format!(
+        "workflow_run_held_elsewhere: run {run_id} is running in another session's process, so this session cannot stop it to start a revision. Nothing was stopped or created. Amend it from the session that started it, or amend it from here once it has ended."
+    )
+}
 
 /// The input (Node `AmendWorkflowInputSchema`, as the model sends it).
 #[derive(Debug, Clone, Deserialize)]
@@ -407,6 +414,14 @@ impl Tool for AmendWorkflowTool {
                 ),
                 error_code: Some(SKILL_NOT_LOADED_CODE),
             };
+        }
+        // Node `heldElsewhereFailure`, after the retune route: another session's running run cannot be stopped from here.
+        if !input.is_concurrency_only()
+            && let Some(detail) = run_detail(self.port(context).as_ref(), &input.run_id).await
+            && detail.get("status").and_then(Value::as_str) == Some("running")
+            && live_elsewhere(&detail)
+        {
+            return invalid(Some(FAILURE_CODE), &held_elsewhere(&input.run_id));
         }
         Validation::Ok
     }

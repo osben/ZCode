@@ -954,3 +954,41 @@ async fn a_revision_of_this_sessions_own_run_skips_the_window_and_others_still_a
         );
     }
 }
+
+#[tokio::test]
+async fn a_revision_of_another_sessions_live_run_is_refused_before_any_window() {
+    // Node `heldElsewhereFailure`: the run's engine is its starting session's; this session cannot stop it.
+    let live = json!({"runId": "run-1", "ownedByThisSession": false, "status": "running"});
+    let port = FakeRun::with_retune(
+        RetuneOutcome::Refused(RetuneRefusal::NotLive),
+        Some(live),
+        Some(CLEAN),
+    );
+    let (tool, ctx, _guard) = harness(port.clone());
+    let input = json!({"run_id": "run-1", "script": REVISED});
+    let Validation::Invalid { message, .. } = tool.validate_input(&input, &ctx).await else {
+        panic!("another session's live run is refused");
+    };
+    assert!(
+        message.starts_with(
+            "workflow_run_held_elsewhere: run run-1 is running in another session's process"
+        ),
+        "{message}"
+    );
+    assert!(
+        message.contains("Amend it from the session that started it"),
+        "{message}"
+    );
+    // A settled run of another session is amended as usual (after its window).
+    let settled = json!({"runId": "run-1", "ownedByThisSession": false, "status": "completed"});
+    let port = FakeRun::with_retune(
+        RetuneOutcome::Refused(RetuneRefusal::NotLive),
+        Some(settled),
+        Some(CLEAN),
+    );
+    let (tool, ctx, _guard) = harness(port);
+    assert!(matches!(
+        tool.validate_input(&input, &ctx).await,
+        Validation::Ok
+    ));
+}
