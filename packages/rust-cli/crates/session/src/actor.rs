@@ -49,6 +49,11 @@ pub(crate) enum Request {
     View {
         reply: oneshot::Sender<SessionView>,
     },
+    /// W9b-1 (9.54, divergence 765): the start's busy answer. The actor's own `busy()` (a turn, or a job such as goal
+    /// verification or a rewind), a pending interaction or a queued input. Cheaper than [`Request::View`].
+    Busy {
+        reply: oneshot::Sender<bool>,
+    },
     Meta {
         reply: oneshot::Sender<SessionMeta>,
     },
@@ -653,6 +658,17 @@ impl Actor {
             Request::View { reply } => {
                 let _ = reply.send(self.view().await);
                 self.attach_child_live();
+            }
+            Request::Busy { reply } => {
+                // The mirror counts: a child run this side is showing is a turn in flight (as `status_now` and the view's
+                // `running` count it), and a user turn would be held behind it. Attach a pending feed first, so the first
+                // answer already sees a child run that has not been attached yet.
+                self.attach_child_live();
+                let busy = self.busy()
+                    || self.mirror.running()
+                    || !self.pending.is_empty()
+                    || !self.inbox.queued().is_empty();
+                let _ = reply.send(busy);
             }
             Request::Meta { reply } => {
                 let _ = reply.send(self.meta.clone());

@@ -132,13 +132,36 @@ impl WorkflowTurnSink for ParentTurns {
     }
 }
 
-/// Whether a control must wait: the session runs a turn, holds a queued input, has a pending interaction, or is preparing
-/// an accepted input (the set `residency_busy` and `preparing` name, which the other session controls read as well).
+/// The `session_busy` message. It holds when the session is busy and when its busy state is unknown (the actor gave no
+/// answer), since both refuse the start with the same reason code (divergence 803, 9.54).
+const BUSY_MESSAGE: &str = "the session has work in flight or its busy state is unknown";
+
+/// Node `hasActiveOrQueuedTurnWork` at the point of start (divergence 765, 9.54): the session actor answers, because the
+/// protocol projection is updated only when the pump applies events and can lag an input the actor already accepted. The
+/// actor's answer counts its jobs too (goal verification, a rewind), as Node's does through `activeForegroundExecution`.
+/// A first submission still preparing is busy. An answer the actor cannot give is busy, and is logged: the start fails closed.
 ///
-/// This is read before the run service is asked, and it is not re-read at the submit: a turn that starts in between is not
-/// refused (divergence 765 names the window).
-fn busy(live: &Bridged<Live>) -> bool {
-    live.sink.residency_busy() || live.sink.preparing()
+/// Read once, before the run service is asked. Node checks once too, and its awaits between the check and the submit
+/// are the same window here (divergence 802, shared with Node).
+async fn busy(live: &Bridged<Live>) -> bool {
+    let answer = match live.handle.busy().await {
+        Ok(busy) => Some(busy),
+        Err(error) => {
+            tracing::warn!(
+                event = "workflow.run.start.busy_unknown",
+                session = %live.handle.id().as_str(),
+                error = %error,
+                "the session did not answer its busy state; the start is refused as busy"
+            );
+            None
+        }
+    };
+    busy_from(answer, live.sink.preparing())
+}
+
+/// The decision of [`busy`]: the actor's answer, or busy when it gave none, and busy while a first submission is preparing.
+pub(crate) fn busy_from(actor_busy: Option<bool>, preparing: bool) -> bool {
+    preparing || actor_busy.unwrap_or(true)
 }
 
 /// Node's `fault.command.capabilityUnsupported` ack, for a session without the capability.
@@ -227,13 +250,8 @@ pub(crate) async fn start_saved(
             revision,
         );
     };
-    if busy(live) {
-        return refused_start(
-            envelope,
-            revision,
-            "session_busy",
-            "the session has work in flight",
-        );
+    if busy(live).await {
+        return refused_start(envelope, revision, "session_busy", BUSY_MESSAGE);
     }
     let port = runs.for_session(&session);
     let request = StartSavedRequest {

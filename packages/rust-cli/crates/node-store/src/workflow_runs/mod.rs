@@ -4,7 +4,7 @@
 //! take the prior state to it come out (or `None` for a semantic no-op, which leaves the state as it
 //! was). The module is pure: no clock, no randomness, no I/O. Its output is compared byte for
 //! byte with Node's by the goldens in `fixtures/workflow-runs/goldens.json` (see the spec, section
-//! 9.4). Nothing calls it yet: the gate stays off (W3).
+//! 9.4). The gate (9.54) reaches it through the run service.
 
 pub mod caps;
 pub mod delta;

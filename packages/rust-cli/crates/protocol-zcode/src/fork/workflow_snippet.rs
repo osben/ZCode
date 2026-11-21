@@ -3,8 +3,8 @@
 //! `kernel-api` defines the port ([`WorkflowSnippetRunner`]), so the runtime's snippet service can run a snippet without
 //! depending on this crate. This module implements it over the pieces the protocol crate owns: the helper's snippet compile
 //! (`workflow_compile::eval_snippet`), the entry writer and the child launcher (`workflow_runner::launch_compiled`). A snippet
-//! has no run row: its entry file carries the run id the caller gives, and nothing is journalled here. Nothing starts a
-//! snippet yet; the gate is off.
+//! has no run row: its entry file carries the run id the caller gives, and nothing is journalled here. A snippet starts only
+//! through the gate, when the helper exists (9.54).
 
 use std::path::PathBuf;
 use std::sync::Arc;

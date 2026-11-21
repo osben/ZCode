@@ -2,7 +2,7 @@
 //!
 //! Deterministic state machine: identity, input hashing, run lifecycle, the ask scheduler, world nodes, replay,
 //! settlement, and the amend-resume import cache. It reads no clock and draws no random numbers; its only I/O is
-//! the journal port and the driver port. Nothing here is wired into a session yet (the gate stays off until W9).
+//! the journal port and the driver port. Sessions reach it through the gate (9.54).
 
 pub mod actor_feed;
 pub mod actor_mailbox;

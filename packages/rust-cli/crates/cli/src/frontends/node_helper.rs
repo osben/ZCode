@@ -321,7 +321,7 @@ pub(crate) fn install(
     );
     context.set_node_helper(helper.clone());
     // W7-5a-1: the child runner port over the same helper and launcher, for the run service to reach through kernel-api.
-    // Nothing calls it yet (gate off).
+    // Called by the run service through the gate (9.54).
     context.set_workflow_runner(Arc::new(ProtocolChildRunner::new(
         helper.clone(),
         child_launcher,

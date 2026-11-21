@@ -299,8 +299,8 @@ async fn serve(
     if let Some(configs) = built.kernel.external_agent_configs() {
         context.set_external_agent_configs(configs);
     }
-    // Fork (9.30): the workflow run service, over the kernel's residency ledger and the helper's child runner. Nothing
-    // starts a run yet (the gate is off), so building it opens no database and starts no child.
+    // Fork (9.30): the workflow run service, over the kernel's residency ledger and the helper's child runner. A run
+    // starts only through an open session gate (9.54), so building it opens no database and starts no child.
     let workflow_handle = tokio::runtime::Handle::current();
     // Fork (9.44, closes 412): the sessions' blocked-run reminder clocks. Built before the run service, since the progress
     // host takes them; their run source is set once the service exists (below).

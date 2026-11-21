@@ -48,10 +48,10 @@ pub struct Context {
     /// configured a helper command (specs/fork-rust-node-helper.md).
     node_helper: std::sync::OnceLock<Arc<crate::fork::node_helper::NodeHelper>>,
     /// Fork: starts the sandbox children of dynamic workflow runs (specs/fork-rust-workflow-engine.md, 4.1); set once by
-    /// the composition root when the helper command is configured. Nothing starts a run yet (gate off).
+    /// the composition root when the helper command is configured. A run starts only through a session whose gate is open (9.54).
     workflow_child: std::sync::OnceLock<Arc<dyn crate::fork::workflow_child::ChildLauncher>>,
     /// Fork (specs/fork-rust-workflow-engine.md, 9.22 W7-5a-1): the child runner port the runtime reaches through
-    /// kernel-api; set once by the composition root beside the launcher. Nothing calls it yet (gate off).
+    /// kernel-api; set once by the composition root beside the launcher. Called only by a session whose gate is open (9.54).
     workflow_runner:
         std::sync::OnceLock<Arc<dyn rust_cli_kernel_api::workflow_child::WorkflowChildRunner>>,
     /// Fork (specs/fork-rust-workflow-engine.md, 9.44 W7-11): the sessions' blocked-run reminder clocks. The turn edges of

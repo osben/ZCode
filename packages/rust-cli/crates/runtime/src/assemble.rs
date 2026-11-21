@@ -231,7 +231,7 @@ pub(crate) fn base_tools(
             .with_tools(rust_cli_tools::worktree_tools(&worktrees)),
     );
     // Fork (W7-1): the dynamic-workflow tools reach a session only through its recorded gate (`GatedRegistry`). With no
-    // gate source none are registered, so the gate stays off by default.
+    // gate source none are registered, so the gate stays closed by default.
     let registry: Arc<dyn ToolRegistry> = match &extensions.dynamic_workflow {
         Some(gating) => Arc::new(crate::workflow_gate::GatedRegistry::new(
             registry,
