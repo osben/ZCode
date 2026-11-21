@@ -4899,6 +4899,121 @@ and the stall execution).
 projection test), runtime (379) and workflow (463) lib tests pass. `cargo fmt --all --check` and `cargo clippy --workspace --all-targets
 --locked -- -D warnings` are clean.
 
+### 9.57 W9b-2: E2E classification, runs and doc updates (as built, gate on)
+
+Scope: the classification of the workflow desktop E2E specs (section 7.1), their runs under `zcode-rs` and under Node in the
+OrbStack Linux box (never on the Mac desktop), the divergence 801 check, the Q8 measurement, and the doc updates. The gate has
+been on since W9b-1 (9.54). **The Rust E2E gate is not green.** Of the 26 specs, one passes on Rust after the catalog fix (`gray-always-on`).
+The other 25 fail. Most of them share one missing Rust feature, the bundled `dynamic-workflows` skill (divergence 892, open). One
+in-scope Rust fix landed (the built-ins in the `/` catalog, divergence 893).
+
+**Classification (section 7.1).** All 26 specs are "reusable as is": the 25 conversation-session specs and the workflows hub.
+Static review of the specs and helpers (`helpers/dynamic-workflow-gray.ts`, `helpers/dynamic-workflow-config-mock-server.ts`)
+found no read of the journal database, the `dwf_*` rows, or a Node-only trace. The journal mentions in the specs are in test
+names and comments. The Node child that the hub's direct-launch group needs runs through the helper's `execPath` on both
+runtimes (Q9), so it is not Node-only. No spec needs a Rust fixture by this rule. The failures are product gaps, not fixture gaps.
+
+| Spec (suffix after `conversation-session-dynamic-workflow-` unless noted) | Class          | Rust (box, `zcode-rs`)                                               | Node (box)                                  |
+| ------------------------------------------------------------------------- | -------------- | -------------------------------------------------------------------- | ------------------------------------------- |
+| `gray-disabled`                                                           | reusable as is | FAIL at DWG-23, the catalog refresh after a mode change (894)        | FAIL, same assertion                        |
+| `gray-on-demand`                                                          | reusable as is | FAIL at DWO-01, DWO-02, DWO-03 (unknown skill, 892)                  | not run                                     |
+| `gray-always-on`                                                          | reusable as is | PASS after the catalog fix (893)                                     | not run                                     |
+| `gray-always-on-english-dark`                                             | reusable as is | FAIL (unknown skill, 892)                                            | not run                                     |
+| `gray-always-on-confirm`                                                  | reusable as is | FAIL: timeout waiting for the confirm window (unknown skill, 892)    | not run                                     |
+| `gray-always-on-compile`                                                  | reusable as is | FAIL (unknown skill, 892)                                            | not run                                     |
+| `gray-always-on-save-window`                                              | reusable as is | FAIL (unknown skill, 892)                                            | not run                                     |
+| `gray-always-on-user-choice`                                              | reusable as is | FAIL at DWG-23, the catalog refresh (894)                            | FAIL, same assertion                        |
+| `gray-always-on-lookup`                                                   | reusable as is | FAIL (unknown skill, 892)                                            | not run                                     |
+| `gray-always-on-snippet`                                                  | reusable as is | FAIL (unknown skill, 892)                                            | not run                                     |
+| `gray-always-on-transcript`                                               | reusable as is | FAIL (unknown skill, 892)                                            | not run                                     |
+| `gray-always-on-run`                                                      | reusable as is | FAIL (unknown skill, 892)                                            | PASS                                        |
+| `gray-always-on-run-pane-details`                                         | reusable as is | FAIL (unknown skill, 892)                                            | not run                                     |
+| `gray-always-on-artifacts`                                                | reusable as is | FAIL (unknown skill, 892)                                            | not run                                     |
+| `gray-always-on-notify`                                                   | reusable as is | FAIL (unknown skill, 892)                                            | not run                                     |
+| `gray-always-on-overflow`                                                 | reusable as is | FAIL (unknown skill, 892)                                            | not run                                     |
+| `gray-always-on-questions`                                                | reusable as is | FAIL (unknown skill, 892)                                            | not run                                     |
+| `holes`                                                                   | reusable as is | FAIL (unknown skill, 892)                                            | not run                                     |
+| `gray-always-on-stop`                                                     | reusable as is | FAIL (unknown skill, 892)                                            | not run                                     |
+| `gray-always-on-resume`                                                   | reusable as is | FAIL (unknown skill, 892)                                            | not run                                     |
+| `gray-always-on-restart`                                                  | reusable as is | FAIL (unknown skill, 892)                                            | not run                                     |
+| `gray-always-on-amend`                                                    | reusable as is | FAIL (unknown skill, 892)                                            | not run                                     |
+| `gray-always-on-cross-session`                                            | reusable as is | FAIL (unknown skill, 892)                                            | not run                                     |
+| `gray-always-on-run-permissions`                                          | reusable as is | FAIL: the workflow confirm window never appears (unknown skill, 892) | not run                                     |
+| `gray-always-on-save-from-chat`                                           | reusable as is | FAIL (unknown skill, 892)                                            | not run                                     |
+| `automations/workflows/automations-workflows-hub` (all groups)            | reusable as is | FAIL: "工作流页没有出现默认工作区的项目组" (no unknown-skill lines)  | FAIL, same first message (environment, 895) |
+
+"Unknown skill" means the line `Unknown skill: dynamic-workflows` in the Rust runtime log of that spec. 21 specs have it, 1 to 5
+times each. The four without it are the catalog cases (`gray-always-on`, `gray-disabled`, `gray-always-on-user-choice`) and the
+hub. The Rust sweep is `out-rust-2` (built 05:59, before the built-in order fix, so the 26 specs did not see the final order).
+Re-run after the order fix: `out-rust-3` (three specs). The Node baseline is `out-node-1` (three specs) and `out-node-2`
+(one spec).
+
+**Runs (box, one at a time).** Runner: `~/Dev/zcode-qa/e2e-box/run-e2e-box.sh`, copied into the scratchpad with its scratch
+mount pointed at the scratchpad. Keys `BOX_RUST_KEY=w9b2` and `BOX_SRC_KEY=w9b2`. The stale-binary check was run on the
+volume for the second sweep: the string `workflow.run.start.busy_unknown` (9.54) is in `zcode-rs` built at 05:59. Disk: 480 GB
+free before and during the runs. Only one box ran at a time. The first sweep was stopped with `docker stop` on its own container
+after eight specs, because the rebuild with the catalog fix was needed for the rest.
+
+**Root cause of the Rust failures (open, divergence 892).** Node injects the bundled skill pack
+(`apps/zcode-cli/packages/bundled-skills`, `skills/dynamic-workflows/SKILL.md`) as a skill root, through `resolveBundledSkillRoots`
+in `packages/bootstrap/src/app/bundled-skills.ts`. The Rust skill catalog (`crates/ext/src/skills/builtin.rs`, `mod.rs`) registers
+only `/loop`, `/init` and `/security-review`. So the `Skill` tool answers `Unknown skill: dynamic-workflows`, and `CreateWorkflow`
+refuses a script until that skill is loaded. Every later step (the confirm window, the run, the permission ask) then never starts,
+which is why the specs fail at different points with the same symptom ("v4 权限弹窗没有出现"). The fix is a Rust skill root for the
+bundled pack, found the way Node finds it, ordered after the plugin roots. It was not built in this PR: it needs a new root kind in
+the skill catalog and a path that works in the box, in development, and in the packaged app. It is the first item for the next PR,
+followed by a full Rust re-run of section 7.1.
+
+**Fixed in this PR (in scope).**
+
+- The `/` panel and the `+` menu list the app built-ins the runtime runs: `goal`, `workflow` (only while the gate is open), and
+  `compact`, in Node's order (`APP_PROTOCOL_VISIBLE_BUILTIN_SLASH_COMMAND_NAMES`: goal, workflow, compact, init, dream). Before
+  this, `readPresentation` listed only custom commands, so the catalog barrier `slash:goal` never arrived. Module
+  `protocol-zcode/src/fork/slash_builtins.rs`, tests in `slash_builtins_tests.rs`. The order test was seen red first (left
+  `["goal","compact","workflow"]`, right `["goal","workflow","compact"]`). The other two tests were written with the code, not seen red.
+- Built-in names are reserved from custom commands (Node's reserved filter), for the names the module lists.
+- Result: `gray-always-on` passes on Rust after the order fix (`out-rust-3`). The barrier now clears in the other specs too.
+
+**Divergence 801 (answered).** An input admitted behind a running turn, and held in the queue before that turn ends, leaves the
+session with nothing running and one queued input. The test `session` `start_busy_tests::an_admitted_turn_held_in_the_queue_is_busy_for_a_start`
+checks that the busy answer is true, that `view.running` is false, that the queue holds one input, and that the model has one
+request. It passes. It is red when the queued-input arm of `Request::Busy` is removed (checked by hand, then restored). So a start
+is refused while an admitted, not-started turn sits in the queue. The actor handles requests one at a time, and `submit_with`
+finishes its admission before it reads the next request, so a `Busy` request cannot see an input between admission and start.
+The box did not show this state; the answer comes from the unit test.
+
+**Q8 memory (not measured for the child).** No run reached the child. Every run stopped at the CreateWorkflow refusal before the
+child (`node --max-old-space-size=256`) was spawned, so no child RSS was observed. The samples taken every 15 s with `ps` in the
+container: `zcode-rs` at most about 70 MB, the wdio runner at most about 920 MB. The W4 measurement (about 56 MB for the Node
+child, the Q8 note under the W4 row in section 3) stands. The packaged-build measure is still open (divergence 896).
+
+**Node divergences (new in 9.57, numbered from 890).**
+
+890. Classification (7.1): all 26 specs are reusable as is by static review. No spec needs a Rust fixture.
+891. Rust sweep: one spec passes after the catalog fix (`gray-always-on`). The other 25 fail, 21 of them on the bundled skill (892).
+     Node's baseline on four specs: 1 pass (`gray-always-on-run`), 3 fail (`gray-disabled`, `gray-always-on-user-choice` at DWG-23,
+     and the hub at its first assertion). The Rust result is recorded per spec above. The gate is not green.
+892. **Open, in scope, not built.** Rust does not load the bundled `dynamic-workflows` skill (root cause above). It is the cause
+     of 21 of the 25 Rust failures. Node's bundled skill roots are not ported; the fix belongs in the skill catalog (`crates/ext`).
+893. The built-ins in the `/` catalog (`goal`, `workflow` while the gate is open, `compact`) are listed by Rust now. Node also lists
+     `init` and `dream`. Rust has no `dream` command, and `init` is a Rust builtin skill, not a built-in command. Neither is listed,
+     so the catalog still differs from Node for those two. Open.
+894. The catalog refresh after a mode change (DWG-23 in `gray-disabled` and `gray-always-on-user-choice`): after the mode is set, the
+     new draft's `/` panel still shows or hides `workflow` as before. Node fails the same assertion in the same container, so this is
+     a shared open item, not a Rust-only divergence. The policy update (`dynamic-workflow-policy.ts`) does not republish the catalog
+     on Node either.
+895. The hub spec (all groups) fails on Rust and on Node at the same first assertion ("工作流页没有出现默认工作区的项目组", the default
+     workspace group). It is an environment or fixture issue in the container, shared with Node. The Rust hub run has no
+     unknown-skill lines, so the bundled skill is not its cause.
+896. Q8: the child RSS is not measured in the box (no run reached a child). Open. The packaged-build measure is still due.
+897. Divergence 801: answered (above). The queued-input arm is covered by a unit test that is red when the arm is removed.
+898. The stale-binary check: the W9b string was found in the `zcode-rs` on the volume for the second sweep. The third sweep rebuilt
+     from the same worktree after the order fix, and the binary was not re-checked.
+899. Parent docs (section 11): the F2 row and the hub note of `specs/fork-rust-node-helper.md`, and the F5 status sentences of
+     `specs/fork-rust-agent-parity.md`, no longer say the gate is off or pending. The W9 row and rule W4 say the gate is on.
+900. Open for the next PR: the bundled skill root (892); DWG-23 (894); `init` and `dream` in the catalog (893); Q8 child RSS on the
+     packaged build (896); a full Rust re-run of section 7.1 after 892. The order fix (893) is in this PR; the full re-run was not done.
+
 ## 10. Open questions
 
 Each has a recommendation. The user decides. Until decided, the recommendation is the default.
