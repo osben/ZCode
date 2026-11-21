@@ -148,6 +148,24 @@ pub fn blocked(questions: usize, holes: usize, since_ms: u64) -> Value {
     })
 }
 
+/// 9.56 (637, 716): what a stored notice's `originMeta` gives back on a cold open, as Node's cold read takes the stored meta
+/// verbatim. Returns the stall execution (`subagentStall.executionId`) and the workflow fragment (`workflowNotification` and
+/// `workflowBlocked`, whichever the meta carries; `None` when neither is there). Feeding both to `origin_meta_for` with the
+/// notice's text gives the live meta again, so the cold row equals the live row.
+pub fn replay_from_origin_meta(meta: &Value) -> (Option<String>, Option<Value>) {
+    let execution = meta["subagentStall"]["executionId"]
+        .as_str()
+        .map(str::to_owned);
+    let mut fragment = serde_json::Map::new();
+    for key in ["workflowNotification", "workflowBlocked"] {
+        if let Some(payload @ Value::Object(_)) = meta.get(key) {
+            fragment.insert(key.to_owned(), payload.clone());
+        }
+    }
+    let workflow = (!fragment.is_empty()).then_some(Value::Object(fragment));
+    (execution, workflow)
+}
+
 /// Node `length` in UTF-16 code units, and the bound: the shared helpers keep a character whole (divergence 365 of 9.38).
 fn units(value: &str) -> usize {
     rust_cli_base::js::string::utf16_len(value)

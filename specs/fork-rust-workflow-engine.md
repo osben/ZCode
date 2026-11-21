@@ -4649,6 +4649,65 @@ controls answer `capabilityUnsupported` while the gate is off.
 **Red, honestly.** The tests above were written after the code they cover, and I did not observe any of them fail first. The
 brief asked for red first; that was not done in this round, and the W9b agent should not count these tests as red-first.
 
+### 9.56 Cold replay of run notices (as built, gate off)
+
+**Scope built.** A reopened session draws the run notice rows the live session drew: the terminal, escalation, hole, stall,
+blocked and reminder rows. The stored record already had the payload (9.51, 716); the cold read dropped it.
+
+- **Node's cold read.** `transcript-hydration.ts` (`backgroundResultOriginMetaOfMessage`) takes the stored `originMeta` from the
+  message's metadata, or else the first text part's, and reads it verbatim. It keeps `workflowNotification`, `workflowBlocked` and
+  `subagentResult` (zod-validated; a malformed payload is dropped and the base kept). Node's row comes from that stored meta, not from
+  the text.
+- **Rust's cold read** (`node-records/src/notices.rs`, `hydrate`). For a notice message the stored `originMeta` is read the same
+  way (message metadata first, then the first part), and `replay_from_origin_meta` (`kernel-api/src/workflow_notice_meta.rs`) gives
+  back the stall execution (`subagentStall.executionId`) and the workflow fragment (`workflowNotification` and `workflowBlocked`,
+  whichever is present). Both are set on the message the node-store read returns (`UserMessage::stall_execution`,
+  `workflow_meta`), in the META branch that Rust writes and in the Node-written background branch. The projection is unchanged: it
+  already merges a `workflow` fragment and an execution into the base it reads from the text (`origin_meta_for`).
+- **Gate, policy, busy check and `/tasks` are untouched.** The change is in the cold read and in tests.
+
+**Closed here.** 637 (the notices are drawn again on a reopen; see 876 for what is not re-sent). 716 (the cold gap of the payload
+and the stall execution).
+
+**Not done.** The reminder clock wiring (357, as 9.51 left it). The terminal's reports and artifacts sections and script path (703,
+704). The payload is not schema-checked on the cold read (870).
+
+**Divergences (new in 9.56, numbered from 870).**
+
+870. The cold read does not validate the stored payload. Node runs `parseWorkflowNotificationMeta` and `workflowBlockedMetaSchema` and
+     drops only a malformed payload. Rust takes any JSON object under the two keys as stored. Rust writes only its own shapes, so the
+     difference is reachable only for a record that Node wrote with a shape Rust does not know.
+871. The cold message carries the stall execution from `subagentStall.executionId`. Node's cold read keeps no execution field on its
+     row (its `BackgroundResultOriginMeta` has none), so this is a Rust field the projection needs to rebuild the stall meta.
+872. The payload is read back from the message's metadata first and then from the first text part, as Node reads it. Rust writes
+     both places (`merge` of the notice into the message and the part), so either gives the same fragment.
+873. A batch of notices stores the base only (713), so its cold meta has no payload and equals the live batch meta. This is the
+     live rule, not a cold change.
+874. A Node-written background notice (no `rustCli` marker) takes the same replay in the background branch of `hydrate`. Not checked
+     against a Node-written record that carries a payload; the stored shape is the same key names, read from a Node fixture only in
+     principle.
+875. The stored meta is read for every notice message, not only the workflow ones. Only the two payload keys and the execution are
+     taken; the base (`backgroundSource`, `workId`, `title`, `subagentResult`) is still read from the text, as before.
+876. A reopened session does not re-send any notice to the model. The stored notice is already in the model's history (Node's
+     transcript is the same), so 637 closes for the row only. The blocked reminder still needs its clock (357).
+877. The cold read takes the execution and the payload for a message that is exactly one notice, as the live path does
+     (`stall_execution` and `workflow_meta` are dropped for a batch by `background_notice` when the store writes it, and the projection
+     checks the length again). A batch read back from a store written before this change has no payload, as before.
+878. Tests are at two levels, not one composed test. The node-store round trip (`a_cold_open_reads_back_the_payload_and_the_stall_execution_of_a_notice`)
+     checks that a committed notice reads back with the same payload and execution. The projection test
+     (`a_reopened_notice_draws_the_row_the_live_notice_drew`, protocol-zcode) feeds the live message and the cold message built from the
+     stored meta (`origin_meta_for` into `replay_from_origin_meta`) through the projection, and asserts the same `origin` and `originMeta`
+     for the terminal, escalation, hole, workflow stall, blocked and subagent stall shapes (the node-store round trip covers the same six
+     shapes). `replay_from_origin_meta` has its own unit tests: the stored shape maps back, and a non-string execution or a non-object
+     payload replays as absent. protocol-zcode cannot depend on node-records, so no test runs the hydrate
+     of a store row into the projection in one step.
+879. Red first, honestly: the node-store round trip was seen red (the payload read back as `None`) before `hydrate` changed. The
+     projection test passed on its first run, since the replay helper was written in the same change; it was not seen red.
+
+**Tests.** kernel-api (454), node-records (36), node-store (363, including the new round trip), protocol-zcode (1046, including the new
+projection test), runtime (379) and workflow (463) lib tests pass. `cargo fmt --all --check` and `cargo clippy --workspace --all-targets
+--locked -- -D warnings` are clean.
+
 ## 10. Open questions
 
 Each has a recommendation. The user decides. Until decided, the recommendation is the default.
