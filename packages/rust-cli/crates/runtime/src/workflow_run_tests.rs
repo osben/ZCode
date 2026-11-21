@@ -1372,6 +1372,15 @@ struct DetailStore {
 }
 
 impl rust_cli_workflow::run_store::RunStore for DetailStore {
+    fn session_progress(
+        &self,
+        _parent_session_id: &str,
+        _exclude: &std::collections::HashSet<String>,
+        _default_concurrency: f64,
+    ) -> anyhow::Result<Vec<serde_json::Value>> {
+        Ok(Vec::new())
+    }
+
     fn non_terminal_runs(
         &self,
         _parent: &str,

@@ -107,17 +107,14 @@ pub trait RunStore: Send + Sync {
 
     /// Node `replayProgressForSession` (9.62, DWP-02): this parent's journaled runs, oldest first, replayed into the
     /// `workflowRuns` deltas a cold open folds, so the session's runs read the same before and after a restart. The runs in
-    /// `exclude` (live in this process, whose progress the session already gets) are skipped. A store without a journal
-    /// replays nothing.
+    /// `exclude` (live in this process, whose progress the session already gets) are skipped. Required, not defaulted, like
+    /// `amend_preflight`: the composition's lazy wrapper kept a default once, and a restarted app drew no run card.
     fn session_progress(
         &self,
         parent_session_id: &str,
         exclude: &std::collections::HashSet<String>,
         default_concurrency: f64,
-    ) -> Result<Vec<serde_json::Value>> {
-        let _ = (parent_session_id, exclude, default_concurrency);
-        Ok(Vec::new())
-    }
+    ) -> Result<Vec<serde_json::Value>>;
 }
 
 /// What one detail read holds, all from one snapshot of the journal (9.42).

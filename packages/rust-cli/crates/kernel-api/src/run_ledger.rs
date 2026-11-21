@@ -209,7 +209,7 @@ mod tests;
 /// Fork (9.62): the display Node keeps in a completed part's `metadata.display` (`completedToolPartMetadata`): a result
 /// that is not an error and whose display is a payload with a `kind`. The other keys of Rust's display object
 /// (`checkpoint`, `agent`) are the store's own facts, not a result card. `node_repl_images` is left out: the row never
-/// carries it (`buildToolOutput`), and its images would only grow the row (divergence 911).
+/// carries it (`buildToolOutput`), and its images would only grow the row (divergence 912).
 pub fn stored_display(output: &ToolOutput) -> Option<Value> {
     if output.is_error {
         return None;

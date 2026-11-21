@@ -1014,6 +1014,15 @@ impl Probe {
 }
 
 impl RunStore for Probe {
+    fn session_progress(
+        &self,
+        _parent_session_id: &str,
+        _exclude: &std::collections::HashSet<String>,
+        _default_concurrency: f64,
+    ) -> anyhow::Result<Vec<serde_json::Value>> {
+        Ok(Vec::new())
+    }
+
     fn non_terminal_runs(&self, parent_session_id: &str) -> Result<Vec<RunRow>> {
         self.note_read();
         self.inner.non_terminal_runs(parent_session_id)
@@ -1164,6 +1173,15 @@ struct Racing {
 }
 
 impl RunStore for Racing {
+    fn session_progress(
+        &self,
+        _parent_session_id: &str,
+        _exclude: &std::collections::HashSet<String>,
+        _default_concurrency: f64,
+    ) -> anyhow::Result<Vec<serde_json::Value>> {
+        Ok(Vec::new())
+    }
+
     fn non_terminal_runs(&self, parent_session_id: &str) -> Result<Vec<RunRow>> {
         let rows = self.inner.non_terminal_runs(parent_session_id)?;
         dwf::update_run_status(

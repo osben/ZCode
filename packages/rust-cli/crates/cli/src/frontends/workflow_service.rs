@@ -183,6 +183,16 @@ impl RunStore for LazyRunStore {
         self.get()?
             .run_detail_for(run_id, default_concurrency, live_here)
     }
+
+    fn session_progress(
+        &self,
+        parent_session_id: &str,
+        exclude: &std::collections::HashSet<String>,
+        default_concurrency: f64,
+    ) -> Result<Vec<serde_json::Value>> {
+        self.get()?
+            .session_progress(parent_session_id, exclude, default_concurrency)
+    }
 }
 
 /// Fork (W7-11, 9.44, closes 414): the reminder clocks' run source over the service. The live runs and each run's open
