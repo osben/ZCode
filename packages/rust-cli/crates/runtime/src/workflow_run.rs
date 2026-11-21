@@ -465,6 +465,16 @@ impl Inner {
         let Some(signals) = signals else {
             return;
         };
+        // Fork (9.62, DWP-03): a run the closing service stopped posts nothing, as Node drops a background notification
+        // while its runtime shuts down. The row stays `stopped`, so a restarted app draws the run with no notification.
+        if self.state.lock_unpoisoned().closed {
+            tracing::info!(
+                event = "workflow.run.terminal_notice.shutdown_dropped",
+                run = %run_id,
+                "a workflow run settled while the service closed; its terminal notice is dropped"
+            );
+            return;
+        }
         let Some(store) = self.store.get().cloned() else {
             tracing::warn!(
                 event = "workflow.run.terminal_notice_skipped",

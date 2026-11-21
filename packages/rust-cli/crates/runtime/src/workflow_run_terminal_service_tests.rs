@@ -287,3 +287,40 @@ async fn the_terminal_notice_carries_the_runs_published_artifact_chips() {
         ])
     );
 }
+
+/// 9.62 (DWP-03): a run the closing service stops settles `stopped` and posts no terminal notice. Node drops a
+/// background notification while its runtime shuts down (`runtime.background_task_notification.shutdown_dropped`), so a
+/// restarted app shows the stopped run with no notification row and the model is not woken.
+#[tokio::test]
+async fn a_run_stopped_by_the_closing_service_posts_no_terminal_notice() {
+    let f = fixture(true);
+    f.service
+        .launch(input("wf_1"), config("wf_1"))
+        .await
+        .expect("launched");
+    let conn = rust_cli_node_store::open_session_database(&f.path, Duration::from_secs(1), 0)
+        .expect("a second connection")
+        .0;
+    wait_until("the run row", || {
+        rust_cli_node_store::dwf::get_run(&conn, "wf_1")
+            .ok()
+            .flatten()
+            .is_some()
+    })
+    .await;
+
+    f.service.close().await;
+    wait_until("the stopped row", || {
+        rust_cli_node_store::dwf::get_run(&conn, "wf_1")
+            .ok()
+            .flatten()
+            .is_some_and(|row| row.status == rust_cli_node_store::dwf::RunStatus::Stopped)
+    })
+    .await;
+    // The owner's settle path runs after the row is written: give it the time a notice would need to arrive.
+    tokio::time::sleep(Duration::from_millis(100)).await;
+    assert!(
+        f.recorder.0.lock().expect("notices").is_empty(),
+        "a closing service posts no terminal notice"
+    );
+}
