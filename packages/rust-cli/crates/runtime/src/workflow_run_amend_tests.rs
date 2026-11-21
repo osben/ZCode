@@ -553,6 +553,8 @@ async fn a_fill_of_another_sessions_run_is_refused_as_run_not_found() {
 struct ScriptedFill {
     fake: Arc<FakeChildRunner>,
     outcome: FillPrepareOutcome,
+    /// Every preparation's input, in order (9.65, 906).
+    inputs: Arc<std::sync::Mutex<Vec<FillPrepareInput>>>,
 }
 
 #[async_trait]
@@ -569,8 +571,9 @@ impl WorkflowChildRunner for ScriptedFill {
 
     async fn prepare_fill(
         &self,
-        _input: FillPrepareInput,
+        input: FillPrepareInput,
     ) -> Result<FillPrepareOutcome, LaunchError> {
+        self.inputs.lock().unwrap().push(input);
         Ok(self.outcome.clone())
     }
 }
@@ -590,6 +593,14 @@ fn fixture_scripted_fills(
     seed: impl FnOnce(&rusqlite::Connection),
     outcome: FillPrepareOutcome,
 ) -> Fixture {
+    fixture_recorded_fills(seed, outcome, Arc::default())
+}
+
+fn fixture_recorded_fills(
+    seed: impl FnOnce(&rusqlite::Connection),
+    outcome: FillPrepareOutcome,
+    inputs: Arc<std::sync::Mutex<Vec<FillPrepareInput>>>,
+) -> Fixture {
     let dir = tempfile::tempdir().expect("temp dir");
     let path = dir.path().join("session.db");
     let conn = open(&path);
@@ -601,6 +612,7 @@ fn fixture_scripted_fills(
     let runner: Arc<dyn WorkflowChildRunner> = Arc::new(ScriptedFill {
         fake: fake.clone(),
         outcome,
+        inputs,
     });
     let factory = production_owner_factory(
         OwnerStores {
@@ -662,6 +674,47 @@ async fn a_fill_the_helper_refuses_as_compile_failed_keeps_the_hole_waiting() {
         .await
         .expect("the script reads");
     assert_eq!(stored.as_deref(), Some("return 1\n"));
+}
+
+/// 9.65 (closes 906 and 512): the fill carries the run's journaled model bindings to the helper (Node passes
+/// `entry.modelBindings` to `unboundFillModelDiagnostics`), so a fill whose body names a model the run did not bind is
+/// refused there; a run that named no model sends none.
+#[tokio::test]
+async fn a_fill_carries_the_runs_model_bindings_to_the_helper() {
+    for (bindings, expected) in [
+        (
+            Some(json!({"poet": "deepseek/deepseek-v4-flash"})),
+            Some(json!({"poet": "deepseek/deepseek-v4-flash"})),
+        ),
+        (None, None),
+    ] {
+        let inputs: Arc<std::sync::Mutex<Vec<FillPrepareInput>>> = Arc::default();
+        let fx = fixture_recorded_fills(
+            |conn| {
+                interrupted(conn, "dwfrun-bound", PARENT, "return 1\n");
+                if let Some(bindings) = &bindings {
+                    dwf::append_event(
+                        conn,
+                        "dwfrun-bound",
+                        &json!({"type": "run-launched", "modelBindings": bindings}),
+                        2,
+                    )
+                    .expect("seed the launch event");
+                }
+            },
+            compile_refusal(),
+            inputs.clone(),
+        );
+        fx.service
+            .for_session(&SessionId::new(PARENT))
+            .resume(&WorkflowRunId::new("dwfrun-bound"))
+            .await
+            .expect("the resume answers");
+        fill(&fx.service, fill_request("dwfrun-bound")).await;
+        let seen = inputs.lock().unwrap().clone();
+        assert_eq!(seen.len(), 1, "one preparation");
+        assert_eq!(seen[0].model_bindings, expected, "{bindings:?}");
+    }
 }
 
 /// W7-12 (9.45): a fill the helper prepares and the owner applies returns `Filled` with the phases it added and the

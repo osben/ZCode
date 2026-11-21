@@ -6,7 +6,9 @@
 //! site stability check and the compile, whose refusals are Node's), and the owner applies the fill in one step (the
 //! effective script, the hole-filled event and the release of the parked branch). A fill is serialized with every other
 //! fill of this service (Node serializes per run; divergence 510). The draft file is not rewritten and no draft is minted
-//! (divergence 511). The run's model bindings are not carried, so the helper checks no named model (divergence 512).
+//! (divergence 511). The run's journaled model bindings reach the helper, which refuses a body that names a model the
+//! run did not bind (9.65, closes 512 and 906). The subagent model is not the fill's: the fill joins the live owner,
+//! which keeps the run's launch facts, as Node's fill path never touches it.
 
 use std::sync::Arc;
 
@@ -163,6 +165,19 @@ impl WorkflowRunService {
                 format!("Run {run_id} has no script, so nothing is waiting."),
             ));
         };
+        // Fork (9.65, closes 906 and 512): the run's model bindings, as Node passes `entry.modelBindings` to
+        // `unboundFillModelDiagnostics`: the journaled launch's table (the owner's `launch_facts` rule). A launch that
+        // cannot be read fails the fill rather than checking the body against no table.
+        let launch_store = store.clone();
+        let launch_id = run_id.clone();
+        let model_bindings = on_blocking_pool(move || {
+            launch_store
+                .launch_payload(&launch_id)
+                .map_err(store_failure)
+        })
+        .await?
+        .and_then(|launch| launch.get("modelBindings").cloned())
+        .filter(|bindings| bindings.as_object().is_some_and(|table| !table.is_empty()));
         let prepared = self
             .inner
             .runner
@@ -171,7 +186,7 @@ impl WorkflowRunService {
                 run_id: run_id.clone(),
                 hole_id: request.hole_id.clone(),
                 body: request.body.clone(),
-                model_bindings: None,
+                model_bindings,
             })
             .await
             .map_err(|error| {
