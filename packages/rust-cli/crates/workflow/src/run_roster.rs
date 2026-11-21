@@ -52,6 +52,9 @@ pub struct RosterFacts<'a> {
     pub nodes: &'a [NodeRecord],
     pub actors: &'a [ActorRecord],
     pub terminal: bool,
+    /// Node `pendingQuestionsOf`: the parked table is in the run owner's memory, so the read can answer for it only when
+    /// the run is live in the reading session or terminal. Otherwise the questions are unknown and nobody is parked.
+    pub questions_known: bool,
 }
 
 /// The roster's keys, as the detail carries them: `phases` (when there is a table), `subagents`, `subagentsTruncated` (when
@@ -374,6 +377,7 @@ fn subagent_views(facts: &RosterFacts<'_>, index: &Index) -> Vec<Value> {
         .collect();
     // Parked questions and born phases, keyed by the actor; the first entry wins, as a linear search would find it.
     let parked: HashMap<String, String> = state
+        .filter(|_| facts.questions_known)
         .map(|state| {
             first_wins(
                 array_of(state.get("pendingQuestions"))
@@ -668,7 +672,10 @@ fn health(facts: &RosterFacts<'_>, index: &Index) -> Value {
             out.insert("leftoverRunning".into(), json!(leftover));
         }
     }
-    out.insert("pendingQuestionsKnown".into(), json!(facts.state.is_some()));
+    out.insert(
+        "pendingQuestionsKnown".into(),
+        json!(facts.questions_known && facts.state.is_some()),
+    );
     Value::Object(out)
 }
 

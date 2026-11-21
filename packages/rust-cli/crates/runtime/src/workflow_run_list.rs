@@ -768,11 +768,14 @@ impl WorkflowRunService {
             .progress
             .as_ref()
             .map(|progress| progress.default_concurrency);
-        let Some(detail) = store.run_detail(run_id, default).map_err(store_error)? else {
+        let live_here = live.is_some();
+        let Some(detail) = store
+            .run_detail_for(run_id, default, live_here)
+            .map_err(store_error)?
+        else {
             // The gap form: this session's launched run whose row is not written yet (Node's registry gap copy).
             return Ok(live.map(|run| detail_with_usage(gap_item(&run.run_id, &run.meta))));
         };
-        let live_here = live.is_some();
         let mut listed = detail.run;
         let spent = js_number(listed.run.spent_tokens);
         let max_concurrency = listed.run.caps.max_concurrency;
@@ -804,6 +807,12 @@ impl WorkflowRunService {
         // model bindings, as the workflow crate builds them from the same read.
         for (key, value) in detail.roster {
             item[key] = value;
+        }
+        // Node `pendingQuestionsOf`: questions this read cannot know are left out, not reported as none (DWL-02).
+        if item["health"]["pendingQuestionsKnown"] == Value::Bool(false)
+            && let Some(fields) = item.as_object_mut()
+        {
+            fields.remove("pendingQuestions");
         }
         Ok(Some(item))
     }

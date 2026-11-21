@@ -92,6 +92,18 @@ pub trait RunStore: Send + Sync {
         let _ = (run_id, default_concurrency);
         Err(anyhow::anyhow!("this run store does not read run details"))
     }
+
+    /// `run_detail` for a reader that knows whether the run is live in its own session (Node `pendingQuestionsOf`): the
+    /// pending questions are known only then or on a terminal run. `run_detail` reads as the run's own live session.
+    fn run_detail_for(
+        &self,
+        run_id: &str,
+        default_concurrency: Option<f64>,
+        live_here: bool,
+    ) -> Result<Option<RunDetail>> {
+        let _ = live_here;
+        self.run_detail(run_id, default_concurrency)
+    }
 }
 
 /// What one detail read holds, all from one snapshot of the journal (9.42).
@@ -218,6 +230,15 @@ impl RunStore for SqliteRunStore {
         run_id: &str,
         default_concurrency: Option<f64>,
     ) -> Result<Option<RunDetail>> {
+        self.run_detail_for(run_id, default_concurrency, true)
+    }
+
+    fn run_detail_for(
+        &self,
+        run_id: &str,
+        default_concurrency: Option<f64>,
+        live_here: bool,
+    ) -> Result<Option<RunDetail>> {
         // The row, its timestamps, its events, its node rows and its actor rows are read in one read transaction, so they share
         // one WAL snapshot: the engine writes the journal through its own connection, and an autocommit read per query could
         // see a settlement land between two of them. The replay and the roster fold them after the lock is released. The
@@ -266,6 +287,7 @@ impl RunStore for SqliteRunStore {
             nodes: &nodes,
             actors: &actors,
             terminal,
+            questions_known: live_here || terminal,
         });
         Ok(Some(RunDetail {
             run: RunListRow {

@@ -173,6 +173,16 @@ impl RunStore for LazyRunStore {
     ) -> Result<Option<rust_cli_workflow::run_store::RunDetail>> {
         self.get()?.run_detail(run_id, default_concurrency)
     }
+
+    fn run_detail_for(
+        &self,
+        run_id: &str,
+        default_concurrency: Option<f64>,
+        live_here: bool,
+    ) -> Result<Option<rust_cli_workflow::run_store::RunDetail>> {
+        self.get()?
+            .run_detail_for(run_id, default_concurrency, live_here)
+    }
 }
 
 /// Fork (W7-11, 9.44, closes 414): the reminder clocks' run source over the service. The live runs and each run's open

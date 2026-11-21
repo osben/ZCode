@@ -1467,6 +1467,7 @@ impl rust_cli_workflow::run_store::RunStore for DetailStore {
                         | rust_cli_workflow::model::RunStatus::Errored
                         | rust_cli_workflow::model::RunStatus::Stopped
                 ),
+                questions_known: true,
             },
         );
         Ok(Some(rust_cli_workflow::run_store::RunDetail {

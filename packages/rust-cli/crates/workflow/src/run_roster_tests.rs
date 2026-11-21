@@ -55,6 +55,7 @@ fn facts<'a>(
         nodes,
         actors,
         terminal,
+        questions_known: true,
     }
 }
 
@@ -440,4 +441,29 @@ fn a_log_message_of_astral_characters_is_bounded_by_utf16_units_not_characters()
     let message = out["logTail"][0]["message"].as_str().unwrap();
     assert_eq!(message.encode_utf16().count(), 2_048);
     assert_eq!(message.chars().count(), 1_024);
+}
+
+/// Node `pendingQuestionsOf`: a run another session holds live has its parked table in that session's memory, so this read
+/// reports the questions as unknown and parks nobody, though the journal's projection names the question (DWL-02).
+#[test]
+fn a_run_live_in_another_session_has_unknown_questions_and_no_parked_subagent() {
+    let s = state(json!({
+        "phaseNames": [], "phases": [],
+        "pendingQuestions": [{ "qid": "q-1", "actorSiteId": "agent", "actorOrdinal": 1, "askedAt": 900, "question": "which?" }],
+        "nodes": [{ "siteId": "w", "ordinal": 1, "actorSiteId": "agent", "actorOrdinal": 1, "phase": "executing", "phaseName": "fetch" }]
+    }));
+    let actors = [actor("agent", 1, Some("poet"))];
+    let rows = [ask("w", 1, ("agent", 1), 0, NodeStatus::Running)];
+    let events = [stored(
+        1,
+        1_000,
+        json!({ "type": "node-dispatched", "instance": { "siteId": "w", "ordinal": 1 } }),
+    )];
+    let mut elsewhere = facts(Some(&s), &events, &rows, &actors, false);
+    elsewhere.questions_known = false;
+    let out = roster(&elsewhere);
+    let subs = out["subagents"].as_array().expect("subagents");
+    assert_eq!(subs[0]["state"], "executing");
+    assert!(subs[0].get("parkedOn").is_none());
+    assert_eq!(out["health"]["pendingQuestionsKnown"], false);
 }
