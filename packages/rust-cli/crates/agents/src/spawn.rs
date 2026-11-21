@@ -462,10 +462,7 @@ async fn run_loop(
             Arc::new(SubagentContext {
                 inner: core.ports.context.clone(),
                 system: if definition.agent_type == "workflow_actor" {
-                    report::workflow_actor_system(
-                        &definition.prompt,
-                        core.ports.incognito.get(&agent.child).as_ref(),
-                    )
+                    report::workflow_actor_system(&definition.prompt)
                 } else {
                     report::system(
                         &definition.prompt,

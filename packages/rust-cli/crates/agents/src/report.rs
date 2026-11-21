@@ -40,11 +40,17 @@ pub(crate) fn system(prompt: &str, incognito: Option<&IncognitoProfile>) -> Vec<
 /// A workflow subagent's system prompt. Its `prompt` is the whole workflow identity (Node
 /// `buildWorkflowActorIdentitySection`, which the context builder takes instead of the main identity), so no main
 /// identity block is sent.
-pub(crate) fn workflow_actor_system(
-    prompt: &str,
-    incognito: Option<&IncognitoProfile>,
-) -> Vec<SystemBlock> {
-    identity_and_body(None, prompt, incognito)
+pub(crate) fn workflow_actor_system(prompt: &str) -> Vec<SystemBlock> {
+    let tokens = render(
+        context_texts::total_tokens(),
+        &[("tokens", TOTAL_TOKENS_BUDGET)],
+    );
+    let body = [prompt, context_texts::context_management(), &tokens]
+        .into_iter()
+        .filter(|part| !part.is_empty())
+        .collect::<Vec<_>>()
+        .join("\n\n");
+    vec![ephemeral(body)]
 }
 
 fn identity_and_body(
