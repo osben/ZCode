@@ -4655,11 +4655,16 @@ Split: this section is W9b-1 (the policy answer, the busy race, the classificati
 classification, the box runs, the parent doc updates and the status lines are W9b-2 (9.57). The gate is on for the
 Host's answer and for the records created after it. No E2E ran in this PR.
 
-**Busy race (divergence 765, closed).** `start_saved` decides busy from the session actor's view, not the protocol
-projection. `busy(live)` reads `handle.view()` (`running`, `pending`, `queue` of `SessionView`) and `preparing()`, and
-`busy_from(view, preparing)` is the decision: a running turn, a pending interaction, a queued input, a first submission
-still preparing, or no view at all is busy. The projection is updated only when the pump applies kernel events
-(`live.rs`, `apply`), so an input the actor has accepted can be missing from it; the actor view is authoritative.
+**Busy race (divergence 765, closed).** `start_saved` asks the session actor, not the protocol projection. `busy(live)`
+calls `SessionHandle::busy()` (a `Request::Busy` in the actor, kernel-api default: the view's fields) and `preparing()`, and
+`busy_from(actor_busy, preparing)` is the decision: an actor that is busy, a first submission still preparing, or no
+answer at all is busy. The actor's answer is its own `busy()` (a turn, or a job: goal verification, a rewind, a hook job),
+or a pending interaction, or a queued input. Node's `hasActiveOrQueuedTurnWork` covers goal verification too, because
+Node runs it inside the foreground execution (`activeForegroundExecution`, read by `target-completion-verification.ts`). The
+job is therefore counted. The projection is updated only when the pump applies kernel events (`live.rs`, `apply`), so an
+input the actor has accepted can be missing from it; the actor answer is authoritative. The test is
+`session` `goal_verify_tests::a_verification_in_flight_is_busy_for_a_start_though_no_turn_runs`, red when the job is
+excluded (checked by hand).
 Node's reference is `hasActiveOrQueuedTurnWork` (`runtime-command-queue.ts:124`), read at step 0 of
 `startSavedWorkflowRun` (`dynamic-workflow-run-start.ts:86`). Node's awaits (context init, persistence, draft write,
 submit) come after that check, so the window between the check and the submit is the same window Node has (shared with
@@ -4680,21 +4685,22 @@ Node, so it was not done.
 
 **Gate-off markers (every one in the listed files).**
 
-| Where                                                                 | Marker                                                | Decision             | Reason                                                                                 |
-| --------------------------------------------------------------------- | ----------------------------------------------------- | -------------------- | -------------------------------------------------------------------------------------- |
-| `protocol-zcode/src/server.rs` (policy answer)                        | hardcoded `enabled: false`                            | removed              | This is the hard stop of W4. The answer now follows the gate.                          |
-| `protocol-zcode/src/fork/workflow_run_commands.rs` (`sessions`)       | a closed gate answers capability unsupported          | kept                 | Node's answer for a closed gate. Correct, not a stop.                                  |
-| `protocol-zcode/src/fork/workflow_run_commands.rs` (`busy`)           | projection-only busy check                            | removed              | Divergence 765, replaced by the actor view.                                            |
-| `protocol-zcode/src/context.rs` (`workflow_child`, `workflow_runner`) | "nothing starts a run yet (gate off)"                 | kept, comment fixed  | The slots are set by the composition root; they are reached only through an open gate. |
-| `protocol-zcode/src/fork/workflow_runner.rs`, `workflow_snippet.rs`   | "nothing starts a run / snippet yet; the gate is off" | kept, comment fixed  | Both start only through the gate.                                                      |
-| `runtime/src/assemble.rs` (no gate source)                            | no gate source registers no tools                     | kept, comment fixed  | Fail closed when the composition sets no gating (W7-1).                                |
-| `cli/src/frontends/workflow_service.rs` (quota allow)                 | a closed or missing gate refuses quota resumes        | kept                 | Node refuses resumes for a closed gate. Not a stop.                                    |
-| `cli/src/frontends/workflow_service.rs` (progress)                    | "the gate stays off for the user"                     | kept, comment fixed  | Nothing is recorded until a run launches.                                              |
-| `cli/src/frontends/app_server.rs` (service build)                     | "nothing starts a run yet"                            | kept, comment fixed  | Building the service opens nothing (9.30).                                             |
-| `cli/src/frontends/node_helper.rs` (runner)                           | "nothing calls it yet"                                | kept, comment fixed  | Called by the run service through the gate.                                            |
-| `workflow/src/lib.rs` (module header)                                 | "not wired until W9"                                  | kept, comment fixed  | Wired through the gate (9.54).                                                         |
-| `node-store/src/workflow_runs/{mod,projection}.rs`, `repo/mod.rs`     | W2/W3 library notes                                   | kept, comments fixed | The run service reads these; the notes were written before W7.                         |
-| `kernel-api/src/dynamic_workflow.rs` (`resolve_gate` closed)          | fail-closed closed gate                               | kept                 | Node's fail-closed rule (`resolveDynamicWorkflowRuntimeGate`).                         |
+| Where                                                                 | Marker                                                | Decision             | Reason                                                                                     |
+| --------------------------------------------------------------------- | ----------------------------------------------------- | -------------------- | ------------------------------------------------------------------------------------------ |
+| `protocol-zcode/src/server.rs` (policy answer)                        | hardcoded `enabled: false`                            | removed              | This is the hard stop of W4. The answer now follows the gate.                              |
+| `protocol-zcode/src/fork/workflow_run_commands.rs` (`sessions`)       | a closed gate answers capability unsupported          | kept                 | Node's answer for a closed gate. Correct, not a stop.                                      |
+| `protocol-zcode/src/fork/workflow_run_commands.rs` (`busy`)           | projection-only busy check                            | removed              | Divergence 765, replaced by the actor view.                                                |
+| `protocol-zcode/src/context.rs` (`workflow_child`, `workflow_runner`) | "nothing starts a run yet (gate off)"                 | kept, comment fixed  | The slots are set by the composition root; they are reached only through an open gate.     |
+| `protocol-zcode/src/fork/workflow_runner.rs`, `workflow_snippet.rs`   | "nothing starts a run / snippet yet; the gate is off" | kept, comment fixed  | Both start only through the gate.                                                          |
+| `runtime/src/assemble.rs` (no gate source)                            | no gate source registers no tools                     | kept, comment fixed  | Fail closed when the composition sets no gating (W7-1).                                    |
+| `cli/src/frontends/workflow_service.rs` (quota allow)                 | a closed or missing gate refuses quota resumes        | kept                 | Node refuses resumes for a closed gate. Not a stop.                                        |
+| `cli/src/frontends/workflow_service.rs` (progress)                    | "the gate stays off for the user"                     | kept, comment fixed  | Nothing is recorded until a run launches.                                                  |
+| `cli/src/frontends/workflow_service.rs` (module header)               | "nothing calls `launch` yet (the gate is off)"        | kept, comment fixed  | A run starts only through an open session gate (9.54); building the service opens nothing. |
+| `cli/src/frontends/app_server.rs` (service build)                     | "nothing starts a run yet"                            | kept, comment fixed  | Building the service opens nothing (9.30).                                                 |
+| `cli/src/frontends/node_helper.rs` (runner)                           | "nothing calls it yet"                                | kept, comment fixed  | Called by the run service through the gate.                                                |
+| `workflow/src/lib.rs` (module header)                                 | "not wired until W9"                                  | kept, comment fixed  | Wired through the gate (9.54).                                                             |
+| `node-store/src/workflow_runs/{mod,projection}.rs`, `repo/mod.rs`     | W2/W3 library notes                                   | kept, comments fixed | The run service reads these; the notes were written before W7.                             |
+| `kernel-api/src/dynamic_workflow.rs` (`resolve_gate` closed)          | fail-closed closed gate                               | kept                 | Node's fail-closed rule (`resolveDynamicWorkflowRuntimeGate`).                             |
 
 **Tests (red where it was red).**
 
@@ -4731,6 +4737,77 @@ Node, so it was not done.
 807. The gate-off comments listed in the table are updated where they described a state that no longer holds. No behaviour
      changed for them.
 808. `cargo fmt` reformatted two test and source files after the first test run; the content is unchanged.
+809. Review of PR #613 (ocr, 9 items; medium first). Fixed: the busy answer counts the actor's jobs (goal verification, rewind)
+     through `Request::Busy`, with the red test above (medium). The busy answer no longer builds the full `SessionView`
+     (clones history, token usage), so a refused start is cheap (low). An unavailable answer is logged as
+     `workflow.run.start.busy_unknown`, then refused (low). The policy answer is computed under the same preferences guard
+     as the write (low). The disable reply is asserted `enabled: false` (low). The workflow_service module header, the
+     projection header and the `#[allow(dead_code)]` on `node-store` `dwf` (its items are public, so the attribute only hid
+     dead private helpers) were updated or removed (low, four items).
+810. Rejected with a reason: the review's suggestion to test the `pending` and `queue` arms of the old predicate in isolation.
+     Those arms moved into the actor's `Request::Busy`, which the protocol cannot inspect; they are the same state the input
+     admission reads. A session-level test of the queue arm is not added here.
+811. Node parity for the answer: Node's `hasActiveOrQueuedTurnWork` has no pending-interaction arm, but a pending interaction
+     without a running turn does not arise in the Rust session. Kept as a conservative arm.
+
+### 9.56 Cold replay of run notices (as built, gate off)
+
+**Scope built.** A reopened session draws the run notice rows the live session drew: the terminal, escalation, hole, stall,
+blocked and reminder rows. The stored record already had the payload (9.51, 716); the cold read dropped it.
+
+- **Node's cold read.** `transcript-hydration.ts` (`backgroundResultOriginMetaOfMessage`) takes the stored `originMeta` from the
+  message's metadata, or else the first text part's, and reads it verbatim. It keeps `workflowNotification`, `workflowBlocked` and
+  `subagentResult` (zod-validated; a malformed payload is dropped and the base kept). Node's row comes from that stored meta, not from
+  the text.
+- **Rust's cold read** (`node-records/src/notices.rs`, `hydrate`). For a notice message the stored `originMeta` is read the same
+  way (message metadata first, then the first part), and `replay_from_origin_meta` (`kernel-api/src/workflow_notice_meta.rs`) gives
+  back the stall execution (`subagentStall.executionId`) and the workflow fragment (`workflowNotification` and `workflowBlocked`,
+  whichever is present). Both are set on the message the node-store read returns (`UserMessage::stall_execution`,
+  `workflow_meta`), in the META branch that Rust writes and in the Node-written background branch. The projection is unchanged: it
+  already merges a `workflow` fragment and an execution into the base it reads from the text (`origin_meta_for`).
+- **Gate, policy, busy check and `/tasks` are untouched.** The change is in the cold read and in tests.
+
+**Closed here.** 637 (the notices are drawn again on a reopen; see 876 for what is not re-sent). 716 (the cold gap of the payload
+and the stall execution).
+
+**Not done.** The reminder clock wiring (357, as 9.51 left it). The terminal's reports and artifacts sections and script path (703,
+704). The payload is not schema-checked on the cold read (870).
+
+**Divergences (new in 9.56, numbered from 870).**
+
+870. The cold read does not validate the stored payload. Node runs `parseWorkflowNotificationMeta` and `workflowBlockedMetaSchema` and
+     drops only a malformed payload. Rust takes any JSON object under the two keys as stored. Rust writes only its own shapes, so the
+     difference is reachable only for a record that Node wrote with a shape Rust does not know.
+871. The cold message carries the stall execution from `subagentStall.executionId`. Node's cold read keeps no execution field on its
+     row (its `BackgroundResultOriginMeta` has none), so this is a Rust field the projection needs to rebuild the stall meta.
+872. The payload is read back from the message's metadata first and then from the first text part, as Node reads it. Rust writes
+     both places (`merge` of the notice into the message and the part), so either gives the same fragment.
+873. A batch of notices stores the base only (713), so its cold meta has no payload and equals the live batch meta. This is the
+     live rule, not a cold change.
+874. A Node-written background notice (no `rustCli` marker) takes the same replay in the background branch of `hydrate`. Not checked
+     against a Node-written record that carries a payload; the stored shape is the same key names, read from a Node fixture only in
+     principle.
+875. The stored meta is read for every notice message, not only the workflow ones. Only the two payload keys and the execution are
+     taken; the base (`backgroundSource`, `workId`, `title`, `subagentResult`) is still read from the text, as before.
+876. A reopened session does not re-send any notice to the model. The stored notice is already in the model's history (Node's
+     transcript is the same), so 637 closes for the row only. The blocked reminder still needs its clock (357).
+877. The cold read takes the execution and the payload for a message that is exactly one notice, as the live path does
+     (`stall_execution` and `workflow_meta` are dropped for a batch by `background_notice` when the store writes it, and the projection
+     checks the length again). A batch read back from a store written before this change has no payload, as before.
+878. Tests are at two levels, not one composed test. The node-store round trip (`a_cold_open_reads_back_the_payload_and_the_stall_execution_of_a_notice`)
+     checks that a committed notice reads back with the same payload and execution. The projection test
+     (`a_reopened_notice_draws_the_row_the_live_notice_drew`, protocol-zcode) feeds the live message and the cold message built from the
+     stored meta (`origin_meta_for` into `replay_from_origin_meta`) through the projection, and asserts the same `origin` and `originMeta`
+     for the terminal, escalation, hole, workflow stall, blocked and subagent stall shapes (the node-store round trip covers the same six
+     shapes). `replay_from_origin_meta` has its own unit tests: the stored shape maps back, and a non-string execution or a non-object
+     payload replays as absent. protocol-zcode cannot depend on node-records, so no test runs the hydrate
+     of a store row into the projection in one step.
+879. Red first, honestly: the node-store round trip was seen red (the payload read back as `None`) before `hydrate` changed. The
+     projection test passed on its first run, since the replay helper was written in the same change; it was not seen red.
+
+**Tests.** kernel-api (454), node-records (36), node-store (363, including the new round trip), protocol-zcode (1046, including the new
+projection test), runtime (379) and workflow (463) lib tests pass. `cargo fmt --all --check` and `cargo clippy --workspace --all-targets
+--locked -- -D warnings` are clean.
 
 ## 10. Open questions
 

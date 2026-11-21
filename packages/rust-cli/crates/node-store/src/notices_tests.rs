@@ -403,3 +403,84 @@ async fn a_workflow_payload_is_dropped_from_a_batch_of_notices() {
     assert!(meta.get("workflowNotification").is_none(), "{meta}");
     assert_eq!(meta["backgroundSource"], "workflow", "{meta}");
 }
+
+/// 9.56 (637, 716): a stored run notice reads back with the payload and the stall execution it was written with. The
+/// payload comes from the stored `originMeta` (Node's cold read takes it verbatim), so a reopened session draws the same
+/// rows as the live one. A notice without a payload reads back without one.
+#[tokio::test]
+async fn a_cold_open_reads_back_the_payload_and_the_stall_execution_of_a_notice() {
+    let t = TestStore::new();
+    started(&t, "sess_1").await;
+    t.source.at(2000);
+    let escalation_text = "[SYSTEM NOTIFICATION - NOT USER INPUT]\n\n<workflow-escalation>\n  <run-id>dwfrun-7</run-id>\n  <run>Audit</run>\n  <question-id>q-1</question-id>\n  <subagent>Scout</subagent>\n  <question>Which file?</question>\n</workflow-escalation>\n\nSubagent Scout in workflow run Audit (dwfrun-7) escalated a blocking question.";
+    let blocked_text = "[SYSTEM NOTIFICATION - NOT USER INPUT]\n\n<workflow-blocked>\n  <run-id>dwfrun-7</run-id>\n  <run>Audit</run>\n</workflow-blocked>\n\nWorkflow run Audit (dwfrun-7) is waiting for an answer.";
+    let stall_text = "[SYSTEM NOTIFICATION - NOT USER INPUT]\n\n<background-agent-stall>\n  <task-id>agent_1</task-id>\n  <description>Silent job</description>\n  <no-progress-for-ms>900000</no-progress-for-ms>\n  <last-progress-at>2024-11-07T17:20:00.000Z</last-progress-at>\n</background-agent-stall>\n\nBackground agent \"Silent job\" (agent_1) has been running.";
+    let plain_text = "<task-notification>\n<task-id>agent_9</task-id>\n<summary>Agent \"Other\" completed</summary>\n</task-notification>";
+    let hole_text = "[SYSTEM NOTIFICATION - NOT USER INPUT]\n\n<workflow-hole>\n  <run-id>dwfrun-7</run-id>\n  <run>Audit</run>\n</workflow-hole>";
+    let workflow_stall_text = "[SYSTEM NOTIFICATION - NOT USER INPUT]\n\n<workflow-stall>\n  <run-id>dwfrun-7</run-id>\n  <run>Audit</run>\n</workflow-stall>";
+    let live = vec![
+        (
+            "msg_cold_wf_1",
+            None,
+            Some(
+                json!({"workflowNotification": {"kind": "escalation", "qid": "q-1", "actor": "Scout", "question": "Which file?", "askedAt": 1_731_000_000_000u64}}),
+            ),
+            escalation_text,
+        ),
+        (
+            "msg_cold_wf_2",
+            None,
+            Some(json!({"workflowBlocked": {"questions": 1, "holes": 0, "sinceMs": 5}})),
+            blocked_text,
+        ),
+        ("msg_cold_stall", Some("3".to_owned()), None, stall_text),
+        (
+            "msg_cold_hole",
+            None,
+            Some(
+                json!({"workflowNotification": {"kind": "hole", "siteId": "site-3", "ordinal": 4, "name": "plan", "type": "Plan", "prompt": "write it"}}),
+            ),
+            hole_text,
+        ),
+        (
+            "msg_cold_wf_stall",
+            None,
+            Some(
+                json!({"workflowNotification": {"kind": "stall", "sinceMs": 1_200_000, "reason": "rate_limit", "cap": 4}}),
+            ),
+            workflow_stall_text,
+        ),
+        ("msg_cold_plain", None, None, plain_text),
+    ];
+    let facts = live
+        .iter()
+        .map(|(id, execution, workflow, body)| Fact::MessageAppended {
+            message: Message::User(UserMessage {
+                stall_execution: execution.clone(),
+                workflow_meta: workflow.clone(),
+                epilogue_start: None,
+                intent: None,
+                id: MessageId::new(*id),
+                content: vec![text(body)],
+                origin: UserOrigin::Meta {
+                    source: rust_cli_kernel_api::hooks::queued_command::TASK_NOTIFICATION.into(),
+                },
+            }),
+        })
+        .collect();
+    t.store.commit(&sid(), batch(None, facts)).await.unwrap();
+
+    let loaded = t.store.load(&sid()).await.unwrap();
+    for (id, execution, workflow, _) in &live {
+        let cold = loaded
+            .messages
+            .iter()
+            .find_map(|message| match message {
+                Message::User(user) if user.id.as_str() == *id => Some(user),
+                _ => None,
+            })
+            .unwrap_or_else(|| panic!("{id} is not read back"));
+        assert_eq!(cold.stall_execution, *execution, "{id}: stall execution");
+        assert_eq!(cold.workflow_meta, *workflow, "{id}: workflow payload");
+    }
+}
