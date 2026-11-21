@@ -205,6 +205,7 @@ pub trait HandleOverride: Send + Sync {
         Ok(crate::panels::TasksSnapshot {
             subagents: HandleOverride::subagents(self).await?,
             background: HandleOverride::background_tasks(self).await?,
+            workflows: Vec::new(),
         })
     }
 

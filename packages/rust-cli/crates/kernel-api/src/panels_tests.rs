@@ -124,9 +124,15 @@ fn tasks_snapshots_round_trip() {
             "Alpha task".to_owned(),
             BackgroundStatus::Running,
         )],
+        workflows: vec![WorkflowRunTask {
+            id: "wf_1".to_owned(),
+            title: "Nightly sweep".to_owned(),
+            started_at_ms: 7,
+        }],
     };
     let json = serde_json::to_value(&snapshot).unwrap();
     assert_eq!(json["background"][0]["kind"], "agent");
+    assert_eq!(json["workflows"][0]["id"], "wf_1");
     assert_eq!(
         serde_json::from_value::<TasksSnapshot>(json).unwrap(),
         snapshot

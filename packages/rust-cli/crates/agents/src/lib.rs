@@ -62,10 +62,14 @@ mod task_stop;
 mod tasks;
 mod toolset;
 mod views;
+#[cfg(test)]
+#[path = "workflow_tasks_tests.rs"]
+mod workflow_tasks_tests;
 
 use std::sync::{Arc, Weak};
 
 use async_trait::async_trait;
+use futures_util::StreamExt;
 use futures_util::stream::BoxStream;
 use rust_cli_base::Spawner;
 use rust_cli_base::sync::LockUnpoisoned;
@@ -651,7 +655,51 @@ impl AgentSignals for Signals {
         &self,
         session: &SessionId,
     ) -> rust_cli_kernel_api::panels::TasksSnapshot {
-        views::tasks(&self.0.live, session)
+        let mut snapshot = views::tasks(&self.0.live, session);
+        snapshot.workflows = self.workflow_runs(session).await;
+        snapshot
+    }
+
+    /// Fork (9.55): the session's live workflow runs in launch order, read from the run port (9.52). No port wired answers
+    /// none. A failed read answers none for this refresh (logged), so the list is empty until the next good read; 9.52's
+    /// keep-the-last-list is not carried over to the TUI's snapshot.
+    async fn workflow_runs(
+        &self,
+        session: &SessionId,
+    ) -> Vec<rust_cli_kernel_api::panels::WorkflowRunTask> {
+        let Some(sessions) = self.0.run_sessions.get() else {
+            return Vec::new();
+        };
+        match sessions.for_session(session).background_runs().await {
+            Ok(runs) => runs
+                .into_iter()
+                .map(|run| rust_cli_kernel_api::panels::WorkflowRunTask {
+                    id: run.run_id.as_str().to_owned(),
+                    title: run.title,
+                    started_at_ms: run.started_at_ms,
+                })
+                .collect(),
+            Err(error) => {
+                tracing::debug!(event = "agents.workflow_runs.read_failed", error = %error, "reading the workflow runs for /tasks failed");
+                Vec::new()
+            }
+        }
+    }
+
+    /// Fork (9.55): ticks when the session's live runs change, so `/tasks` re-reads them when a run settles on its own (749).
+    fn workflow_changes(&self, session: &SessionId) -> Option<BoxStream<'static, ()>> {
+        let changes = self
+            .0
+            .run_sessions
+            .get()?
+            .for_session(session)
+            .background_changes()?;
+        Some(
+            futures_util::stream::unfold(changes, |mut changes| async move {
+                changes.changed().await.ok().map(|()| ((), changes))
+            })
+            .boxed(),
+        )
     }
 
     /// 只读查看（tui-panels.md §1.4）：子会话的存储是唯一事实源。

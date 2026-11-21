@@ -41,6 +41,7 @@ fn kind_name(kind: TaskKind, lang: Lang) -> &'static str {
         TaskKind::Subagents => pick(lang, "Subagents", "子代理"),
         TaskKind::Commands => pick(lang, "Commands", "命令"),
         TaskKind::Todos => pick(lang, "Todos", "待办"),
+        TaskKind::Workflows => pick(lang, "Workflows", "工作流"),
     }
 }
 
@@ -113,6 +114,14 @@ impl App {
                 let items = self.todo_rows(width);
                 window(self, items, card.todo_top, WINDOW)
             }
+            TaskKind::Workflows => {
+                let items = self.workflow_rows(card, width);
+                let focus = items
+                    .iter()
+                    .position(|(_, i)| *i == Some(card.workflow))
+                    .unwrap_or(0);
+                window(self, items, focus.saturating_sub(WINDOW / 2), WINDOW)
+            }
         };
         for (line, item) in body {
             if let Some(item) = item {
@@ -141,10 +150,14 @@ impl App {
             TaskKind::Subagents => (counts.running > 0).then(|| counts.running.to_string()),
             TaskKind::Commands => Some(counts.commands().to_string()),
             TaskKind::Todos => Some(format!("{done}/{}", tasks.len())),
+            TaskKind::Workflows => Some(self.snapshots.workflows.len().to_string()),
         };
         let build = |glue: &str, with_counts: bool| {
             let mut spans = vec![Span::plain(INDENT)];
-            for (i, kind) in KINDS.iter().enumerate() {
+            let shown = KINDS
+                .iter()
+                .filter(|kind| **kind != TaskKind::Workflows || self.kind_has(**kind));
+            for (i, kind) in shown.enumerate() {
                 if i > 0 {
                     spans.push(Span::new(glue.to_owned(), theme.line));
                 }
@@ -236,6 +249,32 @@ impl App {
             if let Some(peek) = card.peek.as_ref().filter(|p| p.id == shell.id) {
                 out.extend(self.peek_rows(peek, measure, width));
             }
+        }
+        out
+    }
+
+    /// Workflows 的行（9.55）：每个在跑的运行一行，名字是标题；没有输出可展开，⏎ 什么也不做（divergence 854）。
+    fn workflow_rows(&self, card: &TaskCard, width: usize) -> Vec<(StyledLine, Option<usize>)> {
+        let theme = &self.ink.theme;
+        let measure = width
+            .saturating_sub(MEASURE_MARGIN)
+            .min(MEASURE_MAX)
+            .saturating_sub(string_width(INDENT));
+        let mut out = Vec::new();
+        for (index, run) in self.snapshots.workflows.iter().enumerate() {
+            let first = run.title.lines().next().unwrap_or_default();
+            let label = truncate(&plain_output(first), measure.saturating_sub(2));
+            let style = if index == card.workflow {
+                self.ink.selection()
+            } else {
+                theme.fg2
+            };
+            let spans = vec![
+                Span::new("○", theme.fg3),
+                Span::plain(" "),
+                Span::new(label, style),
+            ];
+            out.extend(lay(lists::row(spans), width, Some(index)));
         }
         out
     }
@@ -354,6 +393,7 @@ impl App {
                 ));
             }
             TaskKind::Todos => {}
+            TaskKind::Workflows => {}
         }
         super::interaction_view::board::slot(&self.ink.theme, &pairs)
     }

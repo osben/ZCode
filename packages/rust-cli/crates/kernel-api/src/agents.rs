@@ -208,7 +208,21 @@ pub trait AgentSignals: Send + Sync {
         crate::panels::TasksSnapshot {
             subagents: self.subagents(session).await,
             background: self.background_entries(session).await,
+            workflows: self.workflow_runs(session).await,
         }
+    }
+
+    /// Fork (9.55): the session's live workflow runs for `/tasks`' Workflows, in launch order. Empty when no run port is wired.
+    async fn workflow_runs(&self, session: &SessionId) -> Vec<crate::panels::WorkflowRunTask> {
+        let _ = session;
+        Vec::new()
+    }
+
+    /// Fork (9.55): ticks when the session's live workflow runs change (a run started or settled on its own), so the task
+    /// list re-reads them. `None` when no run port is wired.
+    fn workflow_changes(&self, session: &SessionId) -> Option<BoxStream<'static, ()>> {
+        let _ = session;
+        None
     }
 
     /// Fork: the kernel opened `meta` (from the store, or created it). For a top-level session the agents start a notice forwarder

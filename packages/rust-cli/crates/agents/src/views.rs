@@ -94,6 +94,7 @@ pub(crate) fn tasks(live: &Live, root: &SessionId) -> TasksSnapshot {
     TasksSnapshot {
         subagents: agents.iter().map(|agent| entry(agent, now)).collect(),
         background,
+        workflows: Vec::new(),
     }
 }
 

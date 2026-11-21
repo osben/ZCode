@@ -378,6 +378,11 @@ impl AgentSignals for OneRead {
         TasksSnapshot {
             subagents: vec![entry],
             background: OneAgent::default().background_entries(session).await,
+            workflows: vec![rust_cli_kernel_api::panels::WorkflowRunTask {
+                id: "wf_1".to_owned(),
+                title: "Nightly sweep".to_owned(),
+                started_at_ms: 3,
+            }],
         }
     }
 }
@@ -408,6 +413,9 @@ async fn the_tasks_snapshot_has_the_commands_and_the_agents_in_one_reply() {
             ("agent_1", BackgroundKind::Agent, None)
         ]
     );
+    // Fork (9.55): the workflow runs ride the same reply, outside the background list.
+    let runs: Vec<_> = snapshot.workflows.iter().map(|r| r.id.as_str()).collect();
+    assert_eq!(runs, ["wf_1"]);
     // 旧的两个查询照旧（只加不改）：这个替身的旧方法没有条目。
     assert!(built.session.subagents().await.unwrap().is_empty());
 }

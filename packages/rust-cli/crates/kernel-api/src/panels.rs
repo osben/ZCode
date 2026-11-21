@@ -172,6 +172,20 @@ pub struct TasksSnapshot {
     /// 给出的只有后台子代理。
     #[serde(default)]
     pub background: Vec<crate::manage::BackgroundEntry>,
+    /// 本会话还在跑的工作流运行，按启动顺序（9.55，divergence 850）。不放进 `background`：运行没有输出末尾、机器与子会话，
+    /// 而 `background` 的每个消费者（footer 的 pill、终端通知、计数）都按命令与子代理算。
+    #[serde(default)]
+    pub workflows: Vec<WorkflowRunTask>,
+}
+
+/// 一个还在跑的工作流运行，在 `/tasks` 的 Workflows 里一行（9.55）。`title` 是运行的名字，没有名字时是运行的 ID
+/// （Node 的 `workflowTaskSubject` 另有脚本路径一档，这里运行没有保存它，9.52 的 737）。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct WorkflowRunTask {
+    /// 运行的 ID：停止时 `Command::StopTask` 用它（同 TaskStop）。
+    pub id: String,
+    pub title: String,
+    pub started_at_ms: i64,
 }
 
 #[cfg(test)]
