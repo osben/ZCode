@@ -416,6 +416,8 @@ async fn a_cold_open_reads_back_the_payload_and_the_stall_execution_of_a_notice(
     let blocked_text = "[SYSTEM NOTIFICATION - NOT USER INPUT]\n\n<workflow-blocked>\n  <run-id>dwfrun-7</run-id>\n  <run>Audit</run>\n</workflow-blocked>\n\nWorkflow run Audit (dwfrun-7) is waiting for an answer.";
     let stall_text = "[SYSTEM NOTIFICATION - NOT USER INPUT]\n\n<background-agent-stall>\n  <task-id>agent_1</task-id>\n  <description>Silent job</description>\n  <no-progress-for-ms>900000</no-progress-for-ms>\n  <last-progress-at>2024-11-07T17:20:00.000Z</last-progress-at>\n</background-agent-stall>\n\nBackground agent \"Silent job\" (agent_1) has been running.";
     let plain_text = "<task-notification>\n<task-id>agent_9</task-id>\n<summary>Agent \"Other\" completed</summary>\n</task-notification>";
+    let hole_text = "[SYSTEM NOTIFICATION - NOT USER INPUT]\n\n<workflow-hole>\n  <run-id>dwfrun-7</run-id>\n  <run>Audit</run>\n</workflow-hole>";
+    let workflow_stall_text = "[SYSTEM NOTIFICATION - NOT USER INPUT]\n\n<workflow-stall>\n  <run-id>dwfrun-7</run-id>\n  <run>Audit</run>\n</workflow-stall>";
     let live = vec![
         (
             "msg_cold_wf_1",
@@ -432,6 +434,22 @@ async fn a_cold_open_reads_back_the_payload_and_the_stall_execution_of_a_notice(
             blocked_text,
         ),
         ("msg_cold_stall", Some("3".to_owned()), None, stall_text),
+        (
+            "msg_cold_hole",
+            None,
+            Some(
+                json!({"workflowNotification": {"kind": "hole", "siteId": "site-3", "ordinal": 4, "name": "plan", "type": "Plan", "prompt": "write it"}}),
+            ),
+            hole_text,
+        ),
+        (
+            "msg_cold_wf_stall",
+            None,
+            Some(
+                json!({"workflowNotification": {"kind": "stall", "sinceMs": 1_200_000, "reason": "rate_limit", "cap": 4}}),
+            ),
+            workflow_stall_text,
+        ),
         ("msg_cold_plain", None, None, plain_text),
     ];
     let facts = live

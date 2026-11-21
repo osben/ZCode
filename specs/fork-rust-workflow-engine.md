@@ -4697,7 +4697,9 @@ and the stall execution).
      checks that a committed notice reads back with the same payload and execution. The projection test
      (`a_reopened_notice_draws_the_row_the_live_notice_drew`, protocol-zcode) feeds the live message and the cold message built from the
      stored meta (`origin_meta_for` into `replay_from_origin_meta`) through the projection, and asserts the same `origin` and `originMeta`
-     for the terminal, escalation, blocked and stall shapes. protocol-zcode cannot depend on node-records, so no test runs the hydrate
+     for the terminal, escalation, hole, workflow stall, blocked and subagent stall shapes (the node-store round trip covers the same six
+     shapes). `replay_from_origin_meta` has its own unit tests: the stored shape maps back, and a non-string execution or a non-object
+     payload replays as absent. protocol-zcode cannot depend on node-records, so no test runs the hydrate
      of a store row into the projection in one step.
 879. Red first, honestly: the node-store round trip was seen red (the payload read back as `None`) before `hydrate` changed. The
      projection test passed on its first run, since the replay helper was written in the same change; it was not seen red.

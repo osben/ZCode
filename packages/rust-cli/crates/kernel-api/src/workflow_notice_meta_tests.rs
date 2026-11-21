@@ -168,3 +168,40 @@ fn a_terminal_block_parses_the_same_after_telemetry_splits_off_its_marker() {
     assert!(origin_meta(split).is_some());
     assert_eq!(origin_meta(split), origin_meta(whole));
 }
+
+/// 9.56: the stored shape maps back to the stall execution and the payload fragment, and nothing else.
+#[test]
+fn a_stored_origin_meta_replays_its_execution_and_its_payload_and_nothing_else() {
+    let stored = json!({
+        "backgroundSource": "workflow",
+        "title": "Audit",
+        "workId": "dwfrun-7",
+        "workflowNotification": {"kind": "hole", "siteId": "site-3", "ordinal": 4},
+        "workflowBlocked": {"questions": 1, "holes": 0, "sinceMs": 5},
+        "subagentStall": {"noProgressForMs": 900000, "lastProgressAt": 1, "executionId": "3"},
+    });
+    let (execution, workflow) = replay_from_origin_meta(&stored);
+    assert_eq!(execution.as_deref(), Some("3"));
+    assert_eq!(
+        workflow,
+        Some(json!({
+            "workflowNotification": {"kind": "hole", "siteId": "site-3", "ordinal": 4},
+            "workflowBlocked": {"questions": 1, "holes": 0, "sinceMs": 5},
+        }))
+    );
+}
+
+/// 9.56: a non-string execution or a non-object payload replays as absent, and a meta with neither replays nothing.
+#[test]
+fn a_non_string_execution_or_a_non_object_payload_replays_as_absent() {
+    let stored = json!({
+        "backgroundSource": "workflow",
+        "workflowNotification": "not an object",
+        "subagentStall": {"executionId": 3},
+    });
+    assert_eq!(replay_from_origin_meta(&stored), (None, None));
+    assert_eq!(
+        replay_from_origin_meta(&json!({"title": "Plain"})),
+        (None, None)
+    );
+}

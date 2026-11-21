@@ -484,6 +484,10 @@ fn a_reopened_notice_draws_the_row_the_live_notice_drew() {
     let escalation_text = "<workflow-escalation>\n  <run-id>dwfrun-7</run-id>\n  <run>Audit</run>\n</workflow-escalation>";
     let blocked_text =
         "<workflow-blocked>\n  <run-id>dwfrun-7</run-id>\n  <run>Audit</run>\n</workflow-blocked>";
+    let hole_text =
+        "<workflow-hole>\n  <run-id>dwfrun-7</run-id>\n  <run>Audit</run>\n</workflow-hole>";
+    let workflow_stall_text =
+        "<workflow-stall>\n  <run-id>dwfrun-7</run-id>\n  <run>Audit</run>\n</workflow-stall>";
     let cases: Vec<(&str, Option<&str>, Option<Value>)> = vec![
         (
             escalation_text,
@@ -505,6 +509,20 @@ fn a_reopened_notice_draws_the_row_the_live_notice_drew() {
             ),
         ),
         (stall_text, Some("3"), None),
+        (
+            hole_text,
+            None,
+            Some(
+                json!({"workflowNotification": {"kind": "hole", "siteId": "site-3", "ordinal": 4, "name": "plan", "type": "Plan", "prompt": "write it"}}),
+            ),
+        ),
+        (
+            workflow_stall_text,
+            None,
+            Some(
+                json!({"workflowNotification": {"kind": "stall", "sinceMs": 1_200_000, "reason": "rate_limit", "cap": 4}}),
+            ),
+        ),
     ];
     for (text, execution, workflow) in cases {
         let notice = |stall: Option<String>, workflow: Option<Value>| {
