@@ -9,6 +9,7 @@ mod child_processes;
 pub(crate) mod commands;
 pub(crate) mod external_agent_config;
 mod file_summary;
+pub(crate) mod slash_builtins;
 /// Fork (W9a, 9.53): the v4 run controls `startSavedWorkflow` and `amendWorkflowRunSettings`.
 pub(crate) mod workflow_run_commands;
 // Fork: specs/fork-rust-node-helper.md F3, "Helper → Rust requests".

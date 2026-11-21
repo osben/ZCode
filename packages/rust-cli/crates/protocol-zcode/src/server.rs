@@ -494,21 +494,25 @@ impl Server {
     async fn read_presentation(&self, params: &Value) -> Value {
         let workspace = params["workspace"].clone();
         let path = workspace["workspacePath"].as_str().unwrap_or_default();
-        let commands: Vec<Value> = self
+        // W9b-2 (9.57): the built-ins come first, as Node's catalog does, and `workflow` follows the cached gate fact.
+        let workflow_enabled =
+            resolve_gate(None, None, &self.dynamic_workflow_preferences()).enabled;
+        let custom = self
             .kernel
             .user_commands(&self.workspace(path))
             .await
             .into_iter()
             .filter(|command| !command.hidden && !command.name.is_empty())
             .map(|command| {
+                let builtin = command.builtin;
                 let mut value = json!({"name": command.name, "description": command.description,
                     "source": "custom"});
                 if let Some(hint) = command.argument_hint {
                     value["inputHint"] = json!(hint);
                 }
-                value
-            })
-            .collect();
+                (value, builtin)
+            });
+        let commands = crate::fork::slash_builtins::catalog_commands(workflow_enabled, custom);
         json!({"workspace": workspace, "mode": self.defaults.mode.node_name(),
             "slashCommands": commands})
     }

@@ -628,3 +628,6 @@ mod composition_tests;
 #[cfg(test)]
 #[path = "machines_tests.rs"]
 mod machines_tests;
+#[cfg(test)]
+#[path = "start_busy_tests.rs"]
+mod start_busy_tests;

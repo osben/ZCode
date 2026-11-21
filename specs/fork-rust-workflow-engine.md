@@ -1,6 +1,6 @@
 # Dynamic workflow engine in Rust (F5 design)
 
-Status: design only, no code (2026-11-17). Decision D1 (updated 2026-11-17): workflow runs are not run by the Node helper. Rust ports the workflow engine and runs each actor as its own Rust child session. The helper keeps only stateless compile and format work (see "What stays on the helper").
+Status: gate on since W9b-1 (9.54, PR #613); E2E classification and the box runs are W9b-2 (9.57). The design and the as-built sections below are the record. Decision D1 (updated 2026-11-17): workflow runs are not run by the Node helper. Rust ports the workflow engine and runs each actor as its own Rust child session. The helper keeps only stateless compile and format work (see "What stays on the helper").
 
 Related: `specs/fork-rust-node-helper.md` (rules, F2, F5 row, D1), `specs/fork-rust-agent-parity.md` ("Out of scope"), `specs/fork-agent-runtime-selection.md` (one runtime per process), `docs/dynamic-workflow/launch.md`, `docs/dynamic-workflow/concurrency.md`, `docs/dynamic-workflow/transcript-and-notifications.md`, `docs/dynamic-workflow/presentation.md`, `apps/zcode-cli/packages/dynamic-workflow/docs/execution-engine.md`, `apps/zcode-cli/packages/dynamic-workflow/docs/analysis.md`.
 
@@ -8,7 +8,7 @@ Paths are relative to the repository root. Node sources are under `apps/zcode-cl
 
 ## Problem and scope
 
-Dynamic workflows let the model (or the user) start a script that fans out work to subagent "actors", each a full agent session, and collects results. Node runs all of it. In Rust mode (`ZCODE_FORK_AGENT_RUNTIME=rust`) the ten gated tools and the run controls answer as refused, the rollout policy answers `enabled: false` (`packages/rust-cli/crates/protocol-zcode/src/server.rs:496`), and `v4/conversation/workflowRuns` answers an empty list.
+Dynamic workflows let the model (or the user) start a script that fans out work to subagent "actors", each a full agent session, and collects results. Node runs all of it. Before W9b-1 (9.54) the ten gated tools and the run controls answered as refused, the rollout policy answered `enabled: false` (`packages/rust-cli/crates/protocol-zcode/src/server.rs:496`), and `v4/conversation/workflowRuns` answered an empty list. Since W9b-1 the gate is on: the policy answers the resolved gate, the gated tools reach a session whose record is open, and the run controls run in Rust. The E2E run of the workflow specs under `zcode-rs` is in 9.57.
 
 This spec covers the port of execution (F5) to `zcode-rs`. It also covers the parts of saved workflows and run history (F2) that F5 changes. Saved-workflow files and the journal history reads stay where F1+F2 put them, unless section 4 shows they must move.
 
@@ -28,7 +28,7 @@ Rules 1 to 7 of `specs/fork-rust-node-helper.md` still hold. The workflow-specif
 - **W1. Rust owns every run and every actor session.** A run, its engine state, its actors' sessions and their turns are written by `zcode-rs`. The helper never creates, opens, resumes or writes a run or a conversation. This keeps rule 2 of the helper spec intact.
 - **W2. Node-format rows.** Rust writes the existing upstream rows (`dwf_run`, `dwf_actor`, `dwf_node`, `dwf_event`, and `session_task_link` role `workflow_actor`) in the exact format Node writes them. Desktop and Node readers see the same data. Section 5 gives the reasons.
 - **W3. The script runs as Node does.** The user script is JavaScript evaluated in a `vm` cell inside a Node child process (section 3.1). Rust does not embed a second JavaScript engine. Replay depends on the exact promise ordering of the cell, so a different engine could change which call gets which ordinal.
-- **W4. Gate off until the last PR.** Until PR W9 the tools are not registered and the policy answers `enabled: false`. Each intermediate PR keeps the same answer.
+- **W4. Gate off until the last PR (now on).** Until PR W9b-1 (9.54) the tools were not registered and the policy answered `enabled: false`; each intermediate PR kept that answer. From W9b-1 the policy answers the resolved gate, and the gated tools reach a session through its record. Status: on since #613 (506d4af1f).
 - **W5. Failure is explicit.** A run that cannot start (no helper command for compile, no `node` for the child, a journal error) fails the tool call or the run with a stable error. It never half-starts. The Node rule "durability is a prerequisite for a run" (`dynamic-workflow-run-service.ts` invariant 3) applies: no journal, no run.
 
 ## 1. Why the split is where it is
@@ -460,7 +460,7 @@ All 25 specs in `packages/desktop/test/e2e/conversation-session/workflows/` (`*.
 
 Shared helpers: `packages/desktop/test/e2e/helpers/dynamic-workflow-gray.ts` and `dynamic-workflow-config-mock-server.ts` (the gate and the config server). The Node-side tests `packages/desktop/test/dynamicWorkflowConfigMockServer.test.ts` and `bootstrap/tests/workflow-driver.helpers.ts` show the scripted provider shape.
 
-Classification to do in PR W9 (before the gate flips): each spec is marked "reusable as is" (UI and fake provider only), "reusable with a Rust fixture" (depends on a Node-only trace or journal inspection), or "Node-only" (none expected). The replay traps in the memory notes apply: `reference_desktop-e2e-replay-traps.md` (a pending directory forces capture mode, and the typecheck clobbers `out/host`), `reference_e2e-linux-container-runner.md` (log subdirectories for names with slashes must exist before the run), and the Rust E2E gate notes in `project_wave2-merges-2026-11-12.md`.
+Classification (done in W9b-2, the table is in 9.57; it was due before the gate flipped in W9b-1): each spec is marked "reusable as is" (UI and fake provider only), "reusable with a Rust fixture" (depends on a Node-only trace or journal inspection), or "Node-only" (none expected). The replay traps in the memory notes apply: `reference_desktop-e2e-replay-traps.md` (a pending directory forces capture mode, and the typecheck clobbers `out/host`), `reference_e2e-linux-container-runner.md` (log subdirectories for names with slashes must exist before the run), and the Rust E2E gate notes in `project_wave2-merges-2026-11-12.md`.
 
 ## 8. Tests
 
@@ -488,7 +488,7 @@ Each PR is independently mergeable and keeps the gate off (W4) until PR W9. Size
 | W6b | Driver for the rest: governor (process-level, admission per attempt), model failure policy, world reads, artifact publish, stall clock, quota timer, `LiveRunGuard` and session residency                                                                                                                      | 3,000                        | off  | Status: done, parts 1 to 6 (sections 9.9 to 9.15); the gate stays off until W7 and W9. |
 | W7  | The tools: `CreateWorkflow`, `AmendWorkflow`, `FillWorkflowHole`, `SaveWorkflow`, `ListSavedWorkflows`, `EvalWorkflowSnippet`, `ListWorkflowRuns`, `GetWorkflowRun`, `ResumeWorkflowRun`, `ResolveWorkflowQuestion`; window display from helper; owner exemption; child denylist; registration behind the gate | ~21,000 (re-estimated, 9.18) | off  |
 | W8  | Cancel for runs in the background registry; `cancelBackgroundWork` routing; terminal, escalation, hole and stall notifications with `workflowNotification`; reminder; orphan reconciliation at session open; settings turn writer                                                                              | 1,800                        | off  |
-| W9  | Hub start (`startSavedWorkflow`), `amendWorkflowRunSettings`, launch turn and provenance; policy answer driven by the gate; E2E classification and enabling (section 7.1); parent doc updates                                                                                                                  | 800 Rust, E2E                | on   |
+| W9  | Hub start (`startSavedWorkflow`), `amendWorkflowRunSettings`, launch turn and provenance; policy answer driven by the gate; E2E classification and enabling (section 7.1); parent doc updates. Status: W9a (9.53, gate off), W9b-1 (9.54, gate on), W9b-2 (9.57, classification, box runs, doc updates)        | 800 Rust, E2E                | on   |
 
 Total: about 40,500 lines of Rust including tests and about 400 of JavaScript, estimated (22,000 before the W7 re-estimate of 9.18: 2,500 became about 21,000). Versus Node: the engine core is 6,636 TypeScript lines, the bootstrap workflow and run files about 17,290 (these include some non-engine code), and the tools 6,152. A Rust port of this size usually runs about 1.2 to 1.5 times the TypeScript for the same behaviour, so the estimate is in the expected range; it should be re-checked after W5a.
 
@@ -4898,6 +4898,146 @@ and the stall execution).
 **Tests.** kernel-api (454), node-records (36), node-store (363, including the new round trip), protocol-zcode (1046, including the new
 projection test), runtime (379) and workflow (463) lib tests pass. `cargo fmt --all --check` and `cargo clippy --workspace --all-targets
 --locked -- -D warnings` are clean.
+
+### 9.57 W9b-2: E2E classification, runs and doc updates (as built, gate on)
+
+Scope: the classification of the workflow desktop E2E specs (section 7.1), their runs under `zcode-rs` and under Node in the
+OrbStack Linux box (never on the Mac desktop), the divergence 801 check, the Q8 measurement, and the doc updates. The gate has
+been on since W9b-1 (9.54). **The Rust E2E gate is not green.** Of the 26 specs, one passes on Rust after the catalog fix (`gray-always-on`).
+The other 25 fail. Most of them share one missing Rust feature, the bundled `dynamic-workflows` skill (divergence 892, open). One
+in-scope Rust fix landed (the built-ins in the `/` catalog, divergence 893).
+
+**Classification (section 7.1).** All 26 specs are "reusable as is": the 25 conversation-session specs and the workflows hub.
+Static review of the specs and helpers (`helpers/dynamic-workflow-gray.ts`, `helpers/dynamic-workflow-config-mock-server.ts`)
+found no read of the journal database, the `dwf_*` rows, or a Node-only trace. The journal mentions in the specs are in test
+names and comments. The Node child that the hub's direct-launch group needs runs through the helper's `execPath` on both
+runtimes (Q9), so it is not Node-only. No spec needs a Rust fixture by this rule. The failures are product gaps, not fixture gaps.
+
+| Spec (suffix after `conversation-session-dynamic-workflow-` unless noted) | Class          | Rust (box, `zcode-rs`)                                               | Node (box)                                  |
+| ------------------------------------------------------------------------- | -------------- | -------------------------------------------------------------------- | ------------------------------------------- |
+| `gray-disabled`                                                           | reusable as is | FAIL at DWG-23, the catalog refresh after a mode change (894)        | FAIL, same assertion                        |
+| `gray-on-demand`                                                          | reusable as is | FAIL at DWO-01, DWO-02, DWO-03 (unknown skill, 892)                  | not run                                     |
+| `gray-always-on`                                                          | reusable as is | PASS after the catalog fix (893)                                     | not run                                     |
+| `gray-always-on-english-dark`                                             | reusable as is | FAIL (unknown skill, 892)                                            | not run                                     |
+| `gray-always-on-confirm`                                                  | reusable as is | FAIL: timeout waiting for the confirm window (unknown skill, 892)    | not run                                     |
+| `gray-always-on-compile`                                                  | reusable as is | FAIL (unknown skill, 892)                                            | not run                                     |
+| `gray-always-on-save-window`                                              | reusable as is | FAIL (unknown skill, 892)                                            | not run                                     |
+| `gray-always-on-user-choice`                                              | reusable as is | FAIL at DWG-23, the catalog refresh (894)                            | FAIL, same assertion                        |
+| `gray-always-on-lookup`                                                   | reusable as is | FAIL (unknown skill, 892)                                            | not run                                     |
+| `gray-always-on-snippet`                                                  | reusable as is | FAIL (unknown skill, 892)                                            | not run                                     |
+| `gray-always-on-transcript`                                               | reusable as is | FAIL (unknown skill, 892)                                            | not run                                     |
+| `gray-always-on-run`                                                      | reusable as is | FAIL (unknown skill, 892)                                            | PASS                                        |
+| `gray-always-on-run-pane-details`                                         | reusable as is | FAIL (unknown skill, 892)                                            | not run                                     |
+| `gray-always-on-artifacts`                                                | reusable as is | FAIL (unknown skill, 892)                                            | not run                                     |
+| `gray-always-on-notify`                                                   | reusable as is | FAIL (unknown skill, 892)                                            | not run                                     |
+| `gray-always-on-overflow`                                                 | reusable as is | FAIL (unknown skill, 892)                                            | not run                                     |
+| `gray-always-on-questions`                                                | reusable as is | FAIL (unknown skill, 892)                                            | not run                                     |
+| `holes`                                                                   | reusable as is | FAIL (unknown skill, 892)                                            | not run                                     |
+| `gray-always-on-stop`                                                     | reusable as is | FAIL (unknown skill, 892)                                            | not run                                     |
+| `gray-always-on-resume`                                                   | reusable as is | FAIL (unknown skill, 892)                                            | not run                                     |
+| `gray-always-on-restart`                                                  | reusable as is | FAIL (unknown skill, 892)                                            | not run                                     |
+| `gray-always-on-amend`                                                    | reusable as is | FAIL (unknown skill, 892)                                            | not run                                     |
+| `gray-always-on-cross-session`                                            | reusable as is | FAIL (unknown skill, 892)                                            | not run                                     |
+| `gray-always-on-run-permissions`                                          | reusable as is | FAIL: the workflow confirm window never appears (unknown skill, 892) | not run                                     |
+| `gray-always-on-save-from-chat`                                           | reusable as is | FAIL (unknown skill, 892)                                            | not run                                     |
+| `automations/workflows/automations-workflows-hub` (all groups)            | reusable as is | FAIL: "工作流页没有出现默认工作区的项目组" (no unknown-skill lines)  | FAIL, same first message (environment, 895) |
+
+"Unknown skill" means the line `Unknown skill: dynamic-workflows` in the Rust runtime log of that spec. 21 specs have it, 1 to 5
+times each. The four without it are the catalog cases (`gray-always-on`, `gray-disabled`, `gray-always-on-user-choice`) and the
+hub. The Rust sweep is `out-rust-2` (built 05:59, before the built-in order fix, so the 26 specs did not see the final order).
+Re-run after the order fix: `out-rust-3` (three specs). The Node baseline is `out-node-1` (three specs) and `out-node-2`
+(one spec).
+
+**Runs (box, one at a time).** Runner: `~/Dev/zcode-qa/e2e-box/run-e2e-box.sh`, copied into the scratchpad with its scratch
+mount pointed at the scratchpad. Keys `BOX_RUST_KEY=w9b2` and `BOX_SRC_KEY=w9b2`. The stale-binary check was run on the
+volume for the second sweep: the string `workflow.run.start.busy_unknown` (9.54) is in `zcode-rs` built at 05:59. Disk: 480 GB
+free before and during the runs. Only one box ran at a time. The first sweep was stopped with `docker stop` on its own container
+after eight specs, because the rebuild with the catalog fix was needed for the rest.
+
+**Root cause of the Rust failures (open, divergence 892).** Node injects the bundled skill pack
+(`apps/zcode-cli/packages/bundled-skills`, `skills/dynamic-workflows/SKILL.md`) as a skill root, through `resolveBundledSkillRoots`
+in `packages/bootstrap/src/app/bundled-skills.ts`. The Rust skill catalog (`crates/ext/src/skills/builtin.rs`, `mod.rs`) registers
+only `/loop`, `/init` and `/security-review`. So the `Skill` tool answers `Unknown skill: dynamic-workflows`, and `CreateWorkflow`
+refuses a script until that skill is loaded. Every later step (the confirm window, the run, the permission ask) then never starts,
+which is why the specs fail at different points with the same symptom ("v4 权限弹窗没有出现"). The fix is a Rust skill root for the
+bundled pack, found the way Node finds it, ordered after the plugin roots. It was not built in this PR: it needs a new root kind in
+the skill catalog and a path that works in the box, in development, and in the packaged app. It is the first item for the next PR,
+followed by a full Rust re-run of section 7.1.
+
+**Fixed in this PR (in scope).**
+
+- The `/` panel and the `+` menu list the app built-ins the runtime runs: `goal`, `workflow` (only while the gate is open), and
+  `compact`, in Node's order (`APP_PROTOCOL_VISIBLE_BUILTIN_SLASH_COMMAND_NAMES`: goal, workflow, compact, init, dream). Before
+  this, `readPresentation` listed only custom commands, so the catalog barrier `slash:goal` never arrived. Module
+  `protocol-zcode/src/fork/slash_builtins.rs`, tests in `slash_builtins_tests.rs`. The order test was seen red first (left
+  `["goal","compact","workflow"]`, right `["goal","workflow","compact"]`). The other two tests were written with the code, not seen red.
+- Built-in names are reserved from custom commands (Node's reserved filter), for the names the module lists.
+- Result: `gray-always-on` passes on Rust after the order fix (`out-rust-3`). The barrier now clears in the other specs too.
+
+**Divergence 801 (answered).** An input admitted behind a running turn, and held in the queue before that turn ends, leaves the
+session with nothing running and one queued input. The test `session` `start_busy_tests::an_admitted_turn_held_in_the_queue_is_busy_for_a_start`
+checks that the busy answer is true, that `view.running` is false, that the queue holds one input, and that the model has one
+request. It passes. It is red when the queued-input arm of `Request::Busy` is removed (checked by hand, then restored). So a start
+is refused while an admitted, not-started turn sits in the queue. The actor handles requests one at a time, and `submit_with`
+finishes its admission before it reads the next request, so a `Busy` request cannot see an input between admission and start.
+The box did not show this state; the answer comes from the unit test.
+
+**Q8 memory (not measured for the child).** No run reached the child. Every run stopped at the CreateWorkflow refusal before the
+child (`node --max-old-space-size=256`) was spawned, so no child RSS was observed. The samples taken every 15 s with `ps` in the
+container: `zcode-rs` at most about 70 MB, the wdio runner at most about 920 MB. The W4 measurement (about 56 MB for the Node
+child, the Q8 note under the W4 row in section 3) stands. The packaged-build measure is still open (divergence 896).
+
+**Review of PR #615 (ocr, 7 findings), as fixed.** The reserved set is the full Node set (29 names: the help-entry names,
+their aliases, `compress`, `plan`), moved to `rust_cli_kernel_api::slash_names` so the catalog and the expansion read one list.
+Names are normalized as Node does (trim, drop the leading slashes, lowercase). A skill named like a reserved name does not
+expand (`SkillCommands::expand`, red test first: `/workflow` ran the shadowing skill with the gate closed). The catalog assembly
+is a pure function (`slash_builtins::catalog_commands`), tested for order, the gate and reserved custom names. The module
+declaration in `fork/mod.rs` is back above the doc comment it had split. Still not covered by a unit test: the read of the
+cached gate fact in `read_presentation` (it is `dynamic_workflow_preferences()`, the same read the other gate sites use).
+
+**Review round 2 of PR #615 (ocr, 3 findings), as fixed.** The guard that refused reserved names blocked the runtime's own
+built-in `init`, so `/init` became plain text (high). It now checks the matched skill: a user, project or plugin skill with a
+reserved name is refused, and a built-in skill (`SkillSource::Builtin`) still expands. Red test first (`/init` returned plain
+input). The TUI shelf (`runner/session.rs` `fetch_commands`) does not offer a reserved name that expansion refuses. The filter is
+at that consumer, not in `UserCommands::commands`, because the settings Skills and Commands sections read the same list and
+must keep listing every installed skill. `UserCommand` carries a `builtin` flag (serde default, skipped when false), so the
+desktop catalog keeps the built-in `init` and drops a user `init`. The catalog comment on `init` was wrong (Rust runs `/init`);
+corrected, and divergence 893 says what is listed.
+
+**Review delta of #615 (ocr, 4 findings), as fixed.** One predicate, `slash_names::offered(name, builtin)` (built-in or not
+reserved), is read by expansion, the protocol catalog and the TUI shelf. A reserved name with no skill behind it is not a
+command, so the `-p` unknown-command note no longer applies to it (red test first). A user, project or managed `init` no longer
+shadows the built-in: `skills_with` drops a file skill whose name is a reserved built-in, so `/init` runs the built-in (red test
+first). The TUI filter moved from the command list to the `/` shelf (`commands::shelf_skills`, tested). The `$` mention and the
+composer's own list keep every skill, which is the `skills_of` parity. Divergence 893 is unchanged. The `$` mention now offers
+a reserved user skill, as `skills_of` does.
+
+**Node divergences (new in 9.57, numbered from 890).**
+
+890. Classification (7.1): all 26 specs are reusable as is by static review. No spec needs a Rust fixture.
+891. Rust sweep: one spec passes after the catalog fix (`gray-always-on`). The other 25 fail, 21 of them on the bundled skill (892).
+     Node's baseline on four specs: 1 pass (`gray-always-on-run`), 3 fail (`gray-disabled`, `gray-always-on-user-choice` at DWG-23,
+     and the hub at its first assertion). The Rust result is recorded per spec above. The gate is not green.
+892. **Open, in scope, not built.** Rust does not load the bundled `dynamic-workflows` skill (root cause above). It is the cause
+     of 21 of the 25 Rust failures. Node's bundled skill roots are not ported; the fix belongs in the skill catalog (`crates/ext`).
+893. The `/` catalog lists `goal`, `workflow` (while the gate is open) and `compact` as built-in commands, and `init` as the runtime's
+     built-in skill (`SkillSource::Builtin`, which `/init` still runs as). Node also lists `dream`. Rust has no `dream` command, so
+     `dream` is not listed. The catalog differs from Node only for `dream`. Open.
+894. The catalog refresh after a mode change (DWG-23 in `gray-disabled` and `gray-always-on-user-choice`): after the mode is set, the
+     new draft's `/` panel still shows or hides `workflow` as before. Node fails the same assertion in the same container, so this is
+     a shared open item, not a Rust-only divergence. The policy update (`dynamic-workflow-policy.ts`) does not republish the catalog
+     on Node either.
+895. The hub spec (all groups) fails on Rust and on Node at the same first assertion ("工作流页没有出现默认工作区的项目组", the default
+     workspace group). It is an environment or fixture issue in the container, shared with Node. The Rust hub run has no
+     unknown-skill lines, so the bundled skill is not its cause.
+896. Q8: the child RSS is not measured in the box (no run reached a child). Open. The packaged-build measure is still due.
+897. Divergence 801: answered (above). The queued-input arm is covered by a unit test that is red when the arm is removed.
+898. The stale-binary check: the W9b string was found in the `zcode-rs` on the volume for the second sweep. The third sweep rebuilt
+     from the same worktree after the order fix, and the binary was not re-checked.
+899. Parent docs (section 11): the F2 row and the hub note of `specs/fork-rust-node-helper.md`, and the F5 status sentences of
+     `specs/fork-rust-agent-parity.md`, no longer say the gate is off or pending. The W9 row and rule W4 say the gate is on.
+900. Open for the next PR: the bundled skill root (892); DWG-23 (894); `init` and `dream` in the catalog (893); Q8 child RSS on the
+     packaged build (896); a full Rust re-run of section 7.1 after 892. The order fix (893) is in this PR; the full re-run was not done.
 
 ## 10. Open questions
 

@@ -135,6 +135,10 @@ pub struct UserCommand {
     /// 不在补全里列出（`user-invocable: false`），但仍是命令：用户输入时会话给出提示。
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub hidden: bool,
+    /// The runtime's own built-in skill (`loop`, `init`, `security-review`), not a user, project or plugin skill. A reserved
+    /// name is refused for the others (W9b-2, 9.57).
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub builtin: bool,
 }
 
 /// 展开出的一条消息的种类。

@@ -240,6 +240,7 @@ impl Loop<'_> {
     pub(super) fn fetch_commands(&mut self) {
         let kernel = self.kernel.clone();
         let workspace = self.app.view.workspace().clone();
+        // The list is unfiltered: the `/` shelf filters it at `composer_popup::slash_matches` (W9b-2, 9.57).
         self.pending
             .push(async move { Done::Commands(kernel.user_commands(&workspace).await) }.boxed());
     }

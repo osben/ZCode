@@ -14,7 +14,7 @@ use rust_cli_kernel_api::user_command::{
 };
 
 use super::inline::Runner;
-use super::{SKILL_MESSAGE_SOURCE, Skill, SkillCatalog};
+use super::{SKILL_MESSAGE_SOURCE, Skill, SkillCatalog, SkillSource};
 
 /// 本地命令之前的 caveat（产品名替换，kernel-api 的定义，F55：以前这里另写了一份）。
 const CAVEAT: &str = rust_cli_kernel_api::user_input::BASH_CAVEAT;
@@ -109,6 +109,7 @@ impl UserCommands for SkillCommands {
                 argument_hint: skill.argument_hint.clone(),
                 // `user-invocable: false` 不进 `/` 菜单，但输入时仍按命令处理（给出提示）。
                 hidden: !skill.user_invocable,
+                builtin: skill.source == SkillSource::Builtin,
             })
             .collect()
     }
@@ -122,6 +123,11 @@ impl UserCommands for SkillCommands {
             .skills_in(&context.workspace, Some(&context.session))
             .await;
         let Some((skill, args)) = find(&skills, name, args) else {
+            // W9b-2 (9.57, ocr delta): a reserved name with no built-in skill behind it is not a command, so the `-p` note below
+            // does not apply to it (Node returns no prompt for it).
+            if rust_cli_kernel_api::slash_names::is_reserved_slash_name(name) {
+                return Expansion::NotCommand;
+            }
             // `-p` 的回退：输入照常发给模型，后面跟一条提醒（TUI 在发送前自己提示未知命令）。
             if self.catalog.print_session()
                 && super::unknown::applies(self.catalog.files.as_ref(), &context.workspace, name)
@@ -144,6 +150,12 @@ impl UserCommands for SkillCommands {
             }
             return Expansion::NotCommand;
         };
+        // W9b-2 (9.57, ocr #615): a user, project or plugin skill never takes a reserved name (Node returns no prompt for
+        // it), so a skill named `workflow` cannot take the built-in's place. The runtime's own built-in skills (`loop`,
+        // `init`, `security-review`) are not user skills and still expand.
+        if !rust_cli_kernel_api::slash_names::offered(name, skill.source == SkillSource::Builtin) {
+            return Expansion::NotCommand;
+        }
         // `userInvocable === false` 时只回一句提示，不调模型（产品名替换，ext.md §2.7）。
         if !skill.user_invocable {
             return local(

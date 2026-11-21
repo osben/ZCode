@@ -503,6 +503,15 @@ pub fn matching_skills<'a>(skills: &'a [UserCommand], typed: &str) -> Vec<&'a Us
         .collect()
 }
 
+/// The skills the `/` shelf offers: [`matching_skills`] minus the names expansion refuses (W9b-2, 9.57). The `$` catalog and the
+/// composer's own list keep every skill.
+pub fn shelf_skills<'a>(skills: &'a [UserCommand], typed: &str) -> Vec<&'a UserCommand> {
+    matching_skills(skills, typed)
+        .into_iter()
+        .filter(|skill| rust_cli_kernel_api::slash_names::offered(&skill.name, skill.builtin))
+        .collect()
+}
+
 fn alias(name: &str) -> Option<&'static Command> {
     COMMANDS
         .iter()
@@ -529,6 +538,42 @@ pub fn matching(typed: &str) -> Vec<&'static Command> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// W9b-2 (9.57, ocr delta on #615): the `/` shelf offers a built-in skill, and not a reserved name that expansion refuses;
+    /// `matching_skills` (the `$` side reads the unfiltered list) still shows the user skill it filters out.
+    #[test]
+    fn the_shelf_drops_a_reserved_user_skill_and_keeps_the_built_in_init() {
+        let skill = |name: &str, builtin: bool| UserCommand {
+            name: name.to_owned(),
+            description: String::new(),
+            argument_hint: None,
+            hidden: false,
+            builtin,
+        };
+        let skills = vec![
+            skill("init", true),
+            skill("init-notes", false),
+            skill("dream", false),
+            skill("dream-notes", false),
+        ];
+        let shelf = |typed: &str| {
+            shelf_skills(&skills, typed)
+                .iter()
+                .map(|s| s.name.as_str())
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(shelf("in"), ["init", "init-notes"]);
+        assert_eq!(
+            shelf("dr"),
+            ["dream-notes"],
+            "the reserved user `dream` is not offered"
+        );
+        assert_eq!(
+            matching_skills(&skills, "dr").len(),
+            2,
+            "the unfiltered matcher keeps it"
+        );
+    }
 
     #[test]
     fn the_shelf_matches_name_and_alias_prefixes_in_table_order() {
