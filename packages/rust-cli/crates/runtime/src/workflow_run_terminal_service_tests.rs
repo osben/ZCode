@@ -138,7 +138,7 @@ fn fixture(configured: bool) -> Fixture {
     }
     Fixture {
         _dir: dir,
-        path: path.clone(),
+        path,
         service,
         fake,
         recorder,
