@@ -964,7 +964,7 @@ Base `fork`. Four PRs, in this order. Each PR keeps the refusal of every method 
     - `plugins/installation/plugin-management-builtin-inline`;
     - `plugins/installation/plugin-concurrent-install`;
     - `automations/workflows/automations-workflows-hub`.
-  - In the workflows hub spec, the "saved workflows hub" and "global workflows hub" groups are F2. The "direct launch" group starts and observes runs, which is F5; on Rust it failed in the W9b-2 box run (`specs/fork-rust-workflow-engine.md` 9.57): Rust does not load the bundled `dynamic-workflows` skill, and the group also fails on Node in the container.
+  - In the workflows hub spec, the "saved workflows hub" and "global workflows hub" groups are F2. The "direct launch" group starts and observes runs, which is F5; on Rust it failed in the W9b-2 box run (`specs/fork-rust-workflow-engine.md` 9.57). Since W9b-3 (9.58) Rust loads the bundled `dynamic-workflows` skill, and the hub still fails on Rust at the same default-workspace assertion as on Node (environment, 895).
 
 - **Memory.** Idle RSS of the helper after F1 calls, measured on the packaged bundle and recorded here.
   - 2026-11-13, macOS arm64, the F1+F2 bundle (`cli/dist/zcode.cjs`) run by the packaged app's Electron binary with `ELECTRON_RUN_AS_NODE=1` (Node 24, as the Host starts it), empty storage root:

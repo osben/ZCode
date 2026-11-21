@@ -5039,6 +5039,84 @@ a reserved user skill, as `skills_of` does.
 900. Open for the next PR: the bundled skill root (892); DWG-23 (894); `init` and `dream` in the catalog (893); Q8 child RSS on the
      packaged build (896); a full Rust re-run of section 7.1 after 892. The order fix (893) is in this PR; the full re-run was not done.
 
+### 9.58 W9b-3: the bundled dynamic-workflows skill under zcode-rs, and the re-run (as built, gate on)
+
+Scope: divergence 892 (the bundled skill pack) and a re-run of the 26 workflow desktop specs under `zcode-rs` in the OrbStack
+Linux box. No desktop app window opened on the Mac; one box ran at a time (keys `BOX_RUST_KEY=w9b3`, `BOX_SRC_KEY=w9b3`).
+
+**Where the pack is found (Node parity).** Node searches `packages/bundled-skills`, `../bundled-skills`, `../../bundled-skills`
+and `../../../bundled-skills` relative to the bundle entry (`bootstrap/src/app/bundled-skills.ts`), and rejects a pack that lacks
+`skills/` or one of the three required `dynamic-workflows` files. The Rust agent gets that entry from the Node helper command the
+Host already passes (`ZCODE_FORK_NODE_HELPER_COMMAND`, `args[0]`, the same bundle that storage preparation runs), so no Host
+change was needed. Module `crates/ext/src/skills/bundled.rs` (`helper_entry_dir`, `pack_skills_dir`), set once in `Ext::new`.
+The three layouts resolve to the same skill: dev dist (`apps/zcode-cli/packages/cli/dist` → `../../bundled-skills`), the desktop
+package (`resources/glm/packages/bundled-skills`, staged by `prepare-agent-node-bundle.mjs`), and the remote runtime
+(`runtime/packages/bundled-skills`, staged by `zcode-server-cli` `stage.ts`). The packaged build ships the pack in `glm/`, so
+the rust variant (`resources/zcode-rs/`) sees it through the Node entry; the candidate is not in `zcode-rs`'s own directory.
+
+**Catalog.** `SkillSource::Bundled` (source label `bundled`, as in Node) is a system root after the plugin roots (Node's
+priority), and it is not subject to the plugins switch. The skill is withheld from a session whose recorded workflow gate is
+closed (Node `disabledPaths` for `dynamicWorkflowEnabled === false`), and the draft catalog (no session) keeps it. It is not in
+the reference catalog (`$` panel, `skill-reference-catalog.ts` filters `bundled`). `is_safe` is unchanged: its frontmatter has no
+`allowed-tools` or hooks, so no permission prompt is added (Node has no special path either).
+
+**Tests (red first, seen red).** `crates/ext/src/skills/bundled_tests.rs`: the pack is found as a system root (red: not found);
+the closed gate hides it from its session and the listing, and an open gate shows it again (red at the session check). The
+resolver tests (dev layout, packaged layout, helper JSON, missing required file, no pack) were written with the code and pass.
+Green after the change: 12 bundled tests; `rust-cli-ext` and `rust-cli-runtime` lib tests (364 and 379); clippy `-D warnings`
+on ext, runtime and cli; `cargo fmt --check`.
+
+**Box run (`out-rust-4`, the fresh `zcode-rs` built 09:02, the new string is in the binary).** Unknown-skill errors: 0 (was 21 of 26
+in 9.57). Per spec, Rust (box):
+
+| Spec (suffix after `conversation-session/workflows/conversation-session-dynamic-workflow-`, hub noted) | Rust | First failure (box, zcode-rs)                                                               |
+| ------------------------------------------------------------------------------------------------------ | ---- | ------------------------------------------------------------------------------------------- |
+| `gray-always-on`                                                                                       | PASS |                                                                                             |
+| `gray-always-on-save-window`                                                                           | PASS |                                                                                             |
+| `gray-always-on-amend`                                                                                 | FAIL | timeout DWA-01 (run amend, concurrency-only settings line)                                  |
+| `gray-always-on-artifacts`                                                                             | FAIL | first note artifact not shown on the run card (`dwk-notes`)                                 |
+| `gray-always-on-compile`                                                                               | FAIL | tool row `toolu_dwe_inline_create` not shown                                                |
+| `gray-always-on-confirm`                                                                               | FAIL | permission block / `workflowRefine` option not found                                        |
+| `gray-always-on-cross-session`                                                                         | FAIL | timeout DWW-01 (sidebar run row in the other session)                                       |
+| `gray-always-on-english-dark`                                                                          | FAIL | confirm window does not write "2 phases"                                                    |
+| `gray-always-on-lookup`                                                                                | FAIL | timeout DWL-01 (run status card)                                                            |
+| `gray-always-on-notify`                                                                                | FAIL | timeout DWN-01 (completion notice)                                                          |
+| `gray-always-on-overflow`                                                                              | FAIL | timeout DWV-01 (timeline overflow pills)                                                    |
+| `gray-always-on-questions`                                                                             | FAIL | timeout DWQ-01 (subagent question notice)                                                   |
+| `gray-always-on-restart`                                                                               | FAIL | timeout DWP-01 (renderer reload)                                                            |
+| `gray-always-on-resume`                                                                                | FAIL | timeout DWU-01 (resume from the run card)                                                   |
+| `gray-always-on-run`                                                                                   | FAIL | confirm window does not write the phase count                                               |
+| `gray-always-on-run-pane-details`                                                                      | FAIL | v4 permission window does not appear, then timeout DWR-05                                   |
+| `gray-always-on-run-permissions`                                                                       | FAIL | parent session shows no subagent permission window (`latest=null`)                          |
+| `gray-always-on-save-from-chat`                                                                        | FAIL | `dws-release-check.dwf.ts` not written (ENOENT)                                             |
+| `gray-always-on-snippet`                                                                               | FAIL | `toMatch` assertions on the snippet result                                                  |
+| `gray-always-on-stop`                                                                                  | FAIL | run line not found; no `stop-reason=user` notice to the main agent                          |
+| `gray-always-on-transcript`                                                                            | FAIL | timeout DWT-01 (script transcript tab)                                                      |
+| `gray-always-on-user-choice`                                                                           | FAIL | `not.toContain` assertion (DWG-23, 894)                                                     |
+| `gray-disabled`                                                                                        | FAIL | `toContain` assertion (DWG-23, 894; same as Node in 9.57)                                   |
+| `gray-on-demand`                                                                                       | FAIL | `toEqual` deep equality (on-demand activation)                                              |
+| `holes`                                                                                                | FAIL | station `data-station-hole` not shown after 60 s                                            |
+| hub `automations/workflows/automations-workflows-hub`                                                  | FAIL | "工作流页没有出现默认工作区的项目组" (895, shared with Node) and "移到项目" submit disabled |
+
+The Node column was not re-run in this PR. 9.57 holds for its four Node baselines (`gray-always-on-run` PASS, `gray-disabled` and
+`gray-always-on-user-choice` FAIL at DWG-23, hub FAIL at 895).
+
+**Q8 (child RSS).** Not measured. The Rust logs show the helper spawned, and no run reached a workflow child (`node
+--max-old-space-size=256`), so there is no child RSS to read. Open (896).
+
+**Divergences (new in 9.58, numbered from 901).**
+
+901. Node's `process.cwd()` candidate is not searched. The Rust agent's cwd is the workspace, not the Host's, so the candidate would
+     differ. The entry-directory candidates are the same as Node's.
+902. The SEA extraction path (`<cli storage>/bundled-skills/<hash>`) is not ported. A SEA bundle with no helper command finds no pack
+     on the Rust side; the Node runtime still does. Open, no SEA Rust agent is shipped.
+903. A Rust agent without the Node helper command (the `ZCODE_AGENT_SERVER_COMMAND` override, the deployed native binary) finds no
+     pack and warns once (`bundled skill pack unavailable`). Node finds its own pack in those forms. Open, not in the desktop path.
+904. The `/` menu and Settings: the Rust `UserCommands` list includes the bundled skill like any user-invocable skill. Node's `/`
+     list for a bundled skill was not checked in this PR, so this is unverified, not a known difference.
+905. Closed for the discovery and the gate: the bundled skill loads under `zcode-rs` on every spec in the box run (0 unknown-skill
+     lines). The remaining Rust failures in the table are the next gaps, not this one.
+
 ## 10. Open questions
 
 Each has a recommendation. The user decides. Until decided, the recommendation is the default.
