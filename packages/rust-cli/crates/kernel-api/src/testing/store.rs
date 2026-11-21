@@ -426,6 +426,16 @@ impl SessionStore for MemoryStore {
             goal_target: goal_target.flatten(),
             goal_verifications,
             message_models: Default::default(),
+            // Fork (9.62): the committed result displays, as node-store reads them back from the parts.
+            tool_displays: facts
+                .iter()
+                .filter_map(|fact| match fact {
+                    Fact::ToolDisplayed { tool_use, display } => {
+                        Some((tool_use.clone(), display.clone()))
+                    }
+                    _ => None,
+                })
+                .collect(),
             execution_worktree,
         })
     }

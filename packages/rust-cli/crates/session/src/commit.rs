@@ -71,6 +71,16 @@ impl Actor {
         let batch = self.ledger.batch(command, facts, self.deps.ids.as_ref());
         let turn = batch.turn.clone();
         let models = assistant_models(&batch.facts, &self.selection);
+        let displays: Vec<_> = batch
+            .facts
+            .iter()
+            .filter_map(|fact| match fact {
+                Fact::ToolDisplayed { tool_use, display } => {
+                    Some((tool_use.clone(), display.clone()))
+                }
+                _ => None,
+            })
+            .collect();
         let typed = batch
             .command
             .clone()
@@ -78,6 +88,7 @@ impl Actor {
         self.deps.store.commit(&self.meta.id, batch).await?;
         self.ledger.committed(turn);
         self.message_models.extend(models);
+        self.tool_displays.extend(displays);
         if let Some((ids, command)) = typed {
             for id in ids {
                 self.commands.insert(id, command.clone());

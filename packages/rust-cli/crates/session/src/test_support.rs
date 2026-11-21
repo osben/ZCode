@@ -372,6 +372,7 @@ impl Setup {
                 goal_target: self.goal_target,
                 goal_verifications: self.goal_verifications,
                 message_models: Default::default(),
+                tool_displays: Default::default(),
             },
             self.opened,
         );

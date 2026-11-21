@@ -492,3 +492,61 @@ async fn a_tool_use_error_keeps_the_bare_message_for_the_app() {
     let loaded = t.store.load(&sid()).await.unwrap();
     assert_eq!(loaded.messages, messages(&facts));
 }
+
+/// 9.62 (DWL-05): a completed call's result display is kept in the part's `state.metadata.display` (Node
+/// `completedToolPartMetadata`) and read back by the cold load, keyed by the call; an error part keeps none.
+#[tokio::test]
+async fn a_completed_results_display_is_kept_in_the_part_and_read_back() {
+    let t = TestStore::new();
+    started(&t, "sess_1").await;
+    t.source.at(2000);
+    let card = json!({"kind": "get_workflow_run", "runId": "dwfrun-1"});
+    commit_each(
+        &t,
+        &[
+            user("msg_ru_u1", "Look"),
+            calls(
+                "msg_rv_a1",
+                vec![
+                    call("toolu_1", "GetWorkflowRun", json!({"run_id": "dwfrun-1"})),
+                    call("toolu_2", "Read", json!({"file_path": "/w/a"})),
+                ],
+            ),
+        ],
+    )
+    .await;
+    let done = result("msg_rw_r1", "msg_rv_a1", "toolu_1", vec![said("ok")], false);
+    let shown = Fact::ToolDisplayed {
+        tool_use: ToolUseId::new("toolu_1"),
+        display: card.clone(),
+    };
+    t.store
+        .commit(&sid(), batch(None, vec![done, shown]))
+        .await
+        .unwrap();
+    let failed = result("msg_rx_r2", "msg_rv_a1", "toolu_2", vec![said("no")], true);
+    let ignored = Fact::ToolDisplayed {
+        tool_use: ToolUseId::new("toolu_2"),
+        display: json!({"kind": "read"}),
+    };
+    t.store
+        .commit(&sid(), batch(None, vec![failed, ignored]))
+        .await
+        .unwrap();
+    let displays = t.rows(
+        "select json_extract(data, '$.callID'), json_extract(data, '$.state.metadata.display') from part
+         where json_extract(data, '$.type') = 'tool' order by sequence",
+    );
+    assert_eq!(
+        displays,
+        vec![
+            vec![Value::from("toolu_1"), Value::from(stringify(&card))],
+            vec![Value::from("toolu_2"), Value::Null],
+        ]
+    );
+    let loaded = t.store.load(&sid()).await.unwrap();
+    assert_eq!(
+        loaded.tool_displays.into_iter().collect::<Vec<_>>(),
+        vec![(ToolUseId::new("toolu_1"), card)]
+    );
+}

@@ -29,6 +29,8 @@ pub struct RunLedger {
     /// 工具已结束、结果还没提交的 checkpoint（`ToolOutput.display.checkpoint` 原样）。
     checkpoints: HashMap<ToolUseId, Value>,
     links: HashMap<ToolUseId, Fact>,
+    /// Fork (9.62): the result displays to store with their results ([`Fact::ToolDisplayed`]).
+    displays: HashMap<ToolUseId, Fact>,
 }
 
 /// 一条消息带出的同批事实与改动摘要。
@@ -67,6 +69,15 @@ impl RunLedger {
         if let Some(link) = crate::agents::subagent_link(tool_use, output) {
             self.links.insert(tool_use.clone(), link);
         }
+        if let Some(display) = stored_display(output) {
+            self.displays.insert(
+                tool_use.clone(),
+                Fact::ToolDisplayed {
+                    tool_use: tool_use.clone(),
+                    display,
+                },
+            );
+        }
     }
 
     /// 一条消息与它的同批事实：工具结果带出记下的 checkpoint 与子代理关联，`usage` 排在最后。`prompt` 是这次运行开头
@@ -83,6 +94,7 @@ impl RunLedger {
             None => Vec::new(),
         };
         let links = self.take_links(&message);
+        let displays = self.take_displays(&message);
         let facts = std::iter::once(Fact::MessageAppended { message })
             .chain(
                 checkpoints
@@ -92,6 +104,7 @@ impl RunLedger {
                     }),
             )
             .chain(links)
+            .chain(displays)
             .chain(usage)
             .collect();
         Settled { facts, checkpoints }
@@ -158,6 +171,20 @@ impl RunLedger {
             .collect()
     }
 
+    /// Fork (9.62): the result displays recorded for this tool result message's calls.
+    fn take_displays(&mut self, message: &Message) -> Vec<Fact> {
+        let Message::User(user) = message else {
+            return Vec::new();
+        };
+        user.content
+            .iter()
+            .filter_map(|block| match block {
+                ContentBlock::ToolResult { tool_use_id, .. } => self.displays.remove(tool_use_id),
+                _ => None,
+            })
+            .collect()
+    }
+
     /// 交给存储的一批：当前轮按批里的事实推进（[`TurnAnchor::after`]），提交成功后调 [`Self::committed`]。
     pub fn batch(&self, command: Option<CommandId>, facts: Vec<Fact>, ids: &dyn Ids) -> FactBatch {
         let turn = TurnAnchor::after(self.turn.as_ref(), &facts, || ids.turn());
@@ -178,3 +205,15 @@ impl RunLedger {
 #[cfg(test)]
 #[path = "run_ledger_tests.rs"]
 mod tests;
+
+/// Fork (9.62): the display Node keeps in a completed part's `metadata.display` (`completedToolPartMetadata`): a result
+/// that is not an error and whose display is a payload with a `kind`. The other keys of Rust's display object
+/// (`checkpoint`, `agent`) are the store's own facts, not a result card. `node_repl_images` is left out: the row never
+/// carries it (`buildToolOutput`), and its images would only grow the row (divergence 911).
+pub fn stored_display(output: &ToolOutput) -> Option<Value> {
+    if output.is_error {
+        return None;
+    }
+    let kind = output.display.get("kind").and_then(Value::as_str)?;
+    (kind != "node_repl_images").then(|| output.display.clone())
+}

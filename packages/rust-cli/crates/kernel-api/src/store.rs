@@ -172,6 +172,10 @@ pub enum Fact {
         child: SessionId,
         agent_type: String,
     },
+    /// Fork (9.62, DWL-05): a completed call's result display (Node `completedToolPartMetadata`'s `display`), written into
+    /// the tool part's `state.metadata.display` so a cold read draws the same card. Committed with the call's result,
+    /// after it, like [`Fact::SubagentLinked`]. Only a successful result with a display `kind` has one.
+    ToolDisplayed { tool_use: ToolUseId, display: Value },
     /// Fork: an input queued behind a running turn, Node's `session_input` row `admitted` (specs/fork-rust-agent-parity.md,
     /// Input ledger). Written again when the queued input is edited (the row's sequence is kept).
     ///
@@ -353,6 +357,10 @@ pub struct LoadedSession {
     /// cold model switch divider ([`crate::session_api::SessionView::message_models`]).
     #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
     pub message_models: std::collections::BTreeMap<MessageId, ModelSelection>,
+    /// Fork (9.62): the stored result display of each completed call (Node `metadata.display`), for the cold projection
+    /// ([`crate::session_api::SessionView::tool_displays`]).
+    #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
+    pub tool_displays: std::collections::BTreeMap<ToolUseId, Value>,
     /// Fork: `meta.workspace.root` is the session's stored execution worktree (node-store `run_in_worktree`), so a
     /// root that is gone refuses the workspace tools (Node `getMissingExecutionWorktreeToolError`).
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]

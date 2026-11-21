@@ -135,6 +135,7 @@ async fn an_agent_notice_starts_a_turn_and_is_acked_after_the_commit() {
             goal_target: None,
             goal_verifications: Vec::new(),
             message_models: Default::default(),
+            tool_displays: Default::default(),
         },
         Opened::Loaded,
     );
@@ -256,6 +257,7 @@ async fn open_with(signals: Arc<FakeSignals>, scope: &TaskScope) -> Session {
             goal_target: None,
             goal_verifications: Vec::new(),
             message_models: Default::default(),
+            tool_displays: Default::default(),
         },
         Opened::Loaded,
     )

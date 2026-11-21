@@ -250,6 +250,9 @@ pub struct SessionState {
     /// Fork: the model of each assistant message (cold load: `LoadedSession.message_models`).
     pub message_models:
         std::collections::BTreeMap<rust_cli_kernel_api::ids::MessageId, ModelSelection>,
+    /// Fork (9.62): the stored result display of each completed call (cold load: `LoadedSession.tool_displays`).
+    pub tool_displays:
+        std::collections::BTreeMap<rust_cli_kernel_api::ids::ToolUseId, serde_json::Value>,
 }
 
 impl SessionState {
@@ -280,6 +283,7 @@ impl SessionState {
             goal_target: None,
             goal_verifications: Vec::new(),
             message_models: Default::default(),
+            tool_displays: Default::default(),
         }
     }
 
@@ -320,6 +324,7 @@ impl SessionState {
             goal_target: loaded.goal_target,
             goal_verifications: loaded.goal_verifications,
             message_models: loaded.message_models,
+            tool_displays: loaded.tool_displays,
         }
     }
 }

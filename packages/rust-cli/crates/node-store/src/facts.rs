@@ -293,6 +293,9 @@ pub(crate) fn apply(ctx: &Commit<'_>, fact: &Fact) -> Result<(), StoreError> {
             child,
             agent_type,
         } => crate::tool_parts::link(ctx, tool_use, (agent.as_str(), child.as_str(), agent_type)),
+        Fact::ToolDisplayed { tool_use, display } => {
+            crate::tool_parts::display(ctx, tool_use, display)
+        }
     }
 }
 

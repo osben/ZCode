@@ -313,6 +313,8 @@ impl LocalKernel {
             plan: execution.plan,
             // Fork: the stored title source, as the opened actor's view reports it.
             title_source: loaded.title_source,
+            // Fork (9.62): the stored result cards, as the opened actor's view reports them.
+            tool_displays: loaded.tool_displays,
             ..SessionView::new(
                 loaded.meta, // 显示用的历史：压缩点之前只供显示的消息接上模型侧的历史（工作线 F102，compact.md §5.1）。
                 [loaded.earlier, loaded.messages].concat(),
