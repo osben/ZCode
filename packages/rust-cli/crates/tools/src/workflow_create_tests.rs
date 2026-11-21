@@ -1324,6 +1324,7 @@ impl rust_cli_kernel_api::provider::ModelDirectory for Catalog {
             model: name.to_owned(),
             protocol: rust_cli_kernel_api::provider::WireProtocol::AnthropicMessages,
             reasoning_levels: Vec::new(),
+            default_reasoning_level: None,
             context_window: 1,
             max_output_tokens: 1,
             capabilities: Default::default(),

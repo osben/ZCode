@@ -8,6 +8,7 @@ fn entry(provider: &str, model: &str, levels: &[&str]) -> CatalogModel {
         model: model.to_owned(),
         protocol: rust_cli_kernel_api::provider::WireProtocol::OpenAiChatCompletions,
         reasoning_levels: levels.iter().map(|level| (*level).to_owned()).collect(),
+        default_reasoning_level: None,
         context_window: 200_000,
         max_output_tokens: 32_000,
         capabilities: Default::default(),

@@ -15,6 +15,7 @@ fn entry(provider: &str, model: &str, team: Option<(&str, &str)>) -> CatalogMode
         model: model.to_owned(),
         protocol: WireProtocol::AnthropicMessages,
         reasoning_levels: vec!["low".to_owned(), "high".to_owned()],
+        default_reasoning_level: None,
         context_window: 1,
         max_output_tokens: 1,
         capabilities: Default::default(),

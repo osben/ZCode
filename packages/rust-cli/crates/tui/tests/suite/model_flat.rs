@@ -41,6 +41,7 @@ impl ModelDirectory for Plans {
             model: name.into(),
             protocol: WireProtocol::AnthropicMessages,
             reasoning_levels: vec!["low".into(), "high".into()],
+            default_reasoning_level: None,
             context_window: 200_000,
             max_output_tokens: 32_000,
             connection: team.map(|(project, team)| CatalogConnection {
