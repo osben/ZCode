@@ -641,7 +641,6 @@ impl DynamicWorkflowRunSessions for WorkflowRunService {
 }
 
 impl WorkflowRunService {
-    /// The live runs of one parent session. Taken under the lock; the lock is released before any journal read.
     /// The `workflowRuns` deltas of this parent's journaled runs that are not live here (Node `replayProgressForSession`).
     /// A failed read replays nothing and is logged: the observation surface never fails a cold open (Node). With no
     /// configured default concurrency there is no replay, since the `run-started` payload needs it and none is fabricated.
@@ -670,6 +669,7 @@ impl WorkflowRunService {
         }
     }
 
+    /// The live runs of one parent session. Taken under the lock; the lock is released before any journal read.
     pub(crate) fn live_runs_of(&self, parent: &str) -> Vec<LiveRun> {
         let state = self.inner.state.lock_unpoisoned();
         state

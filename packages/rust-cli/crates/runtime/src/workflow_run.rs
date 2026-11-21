@@ -306,6 +306,9 @@ struct RunEntry {
     serve: Option<JoinHandle<Vec<(String, String)>>>,
     /// What the run's reads need before its row exists (W7-5a-4).
     meta: Arc<list::RunMeta>,
+    /// Fork (9.62 review): the run's script file (Node's snapshot `scriptPath`), kept here so the hole notice and the
+    /// blocked reminder read it from memory. Set at launch; a Rust fill journals no file, so it does not change.
+    script_path: Option<String>,
 }
 
 /// Frees a run id's reservation when its launch ends, however it ends.
@@ -535,10 +538,7 @@ impl Inner {
                 None
             }
         };
-        let script_path = detail
-            .as_ref()
-            .and_then(|detail| detail.roster.get("scriptPath"))
-            .and_then(Value::as_str);
+        let script_path = detail.as_ref().and_then(roster_script_path);
         if let Some(notice) =
             crate::workflow_run_terminal::terminal_notice(&row, auto_resumes, script_path)
         {
@@ -891,8 +891,27 @@ impl WorkflowRunService {
         // executor (9.30 review). The id stays reserved until this launch returns, so a failure releases it.
         let owners = inner.owners.clone();
         let factory_handle = handle.clone();
-        let built =
-            tokio::task::spawn_blocking(move || (owners)(config, mailbox, factory_handle)).await;
+        let launched_path = config
+            .launch
+            .as_ref()
+            .and_then(|launch| launch.script_path.clone())
+            .filter(|path| !path.is_empty());
+        let journal = launched_path
+            .is_none()
+            .then(|| inner.store.get().cloned())
+            .flatten();
+        let path_run = run_id.clone();
+        let built = tokio::task::spawn_blocking(move || {
+            let script_path = launched_path.or_else(|| {
+                journal.and_then(|store| journaled_script_path(store.as_ref(), &path_run))
+            });
+            ((owners)(config, mailbox, factory_handle), script_path)
+        })
+        .await;
+        let (built, script_path) = match built {
+            Ok((built, script_path)) => (Ok(built), script_path),
+            Err(join) => (Err(join), None),
+        };
         let mut hosted = match built {
             Ok(Ok(hosted)) => hosted,
             Ok(Err(error)) => {
@@ -993,6 +1012,7 @@ impl WorkflowRunService {
                 stop: stop.clone(),
                 serve: Some(serve),
                 meta,
+                script_path,
             },
         );
         drop(state);
@@ -1067,28 +1087,12 @@ impl WorkflowRunService {
         self.inner.state.lock_unpoisoned().runs.len()
     }
 
-    /// Fork (9.62, DWH-02): the run's script file as the journal records it (Node's snapshot `scriptPath`, read by the hole
-    /// notice and the blocked reminder): the last fill's file, else the launch's. No store, no row, or a read fault is
-    /// `None` (the fault is logged); the notice then falls back to GetWorkflowRun.
+    /// Fork (9.62, DWH-02): a live run's script file (Node's snapshot `scriptPath`, read by the hole notice and the
+    /// blocked reminder), from the service's memory: these readers run on the async runtime, so no store is read here. A
+    /// run the service does not hold, or one with no file, has none; the notice then falls back to GetWorkflowRun.
     pub fn run_script_path_of(&self, run_id: &str) -> Option<String> {
-        let store = self.inner.store.get()?.clone();
-        match store.run_detail(run_id, None) {
-            Ok(detail) => detail?
-                .roster
-                .get("scriptPath")
-                .and_then(Value::as_str)
-                .filter(|path| !path.is_empty())
-                .map(str::to_owned),
-            Err(error) => {
-                tracing::warn!(
-                    event = "dynamic_workflow.hole.snapshot_failed",
-                    run = %run_id,
-                    error = %error,
-                    "a workflow run's script path could not be read, so its notice names no draft"
-                );
-                None
-            }
-        }
+        let state = self.inner.state.lock_unpoisoned();
+        state.runs.get(run_id)?.script_path.clone()
     }
 
     /// Fork (W7-11, 9.44): the ids of one parent session's live runs, the runs the service holds (a settled run is removed).
@@ -1193,6 +1197,36 @@ fn settle_run(
         return Vec::new();
     }
     failures
+}
+
+/// The run's script file in its journal roster (Node `workflowSnapshotScriptPath`: the last fill's file, else the
+/// launch's). An empty path is none. The one rule for the terminal notice and the resume's journal read.
+fn roster_script_path(detail: &rust_cli_workflow::run_store::RunDetail) -> Option<&str> {
+    detail
+        .roster
+        .get("scriptPath")
+        .and_then(Value::as_str)
+        .filter(|path| !path.is_empty())
+}
+
+/// The script file a run's journal records, for a launch that carries none (a resume). Blocking: called on the blocking
+/// pool. A read fault is logged and reads as none.
+pub(crate) fn journaled_script_path(store: &dyn RunStore, run_id: &str) -> Option<String> {
+    match store.run_detail(run_id, None) {
+        Ok(detail) => detail
+            .as_ref()
+            .and_then(roster_script_path)
+            .map(str::to_owned),
+        Err(error) => {
+            tracing::warn!(
+                event = "workflow.run.script_path_unread",
+                run = %run_id,
+                error = %error,
+                "a workflow run's script path could not be read from its journal, so its notices name no file"
+            );
+            None
+        }
+    }
 }
 
 /// The text of a panic payload, for the close failure that reports it.
