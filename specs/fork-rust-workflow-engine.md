@@ -5314,6 +5314,22 @@ The holes FAIL in out-rust-12 was a wrong spec path (`gray-always-on-holes` does
   without a graph (it was dropped by `.ok()` with no trace). The merged W9d card kept `status` and `backgroundTaskId` on
   the display, which the desktop's strict schema rejects whole; this branch's `workflow_card::card` (five keys; the key set is
   frozen by `the_window_and_the_result_carry_the_scripts_display`) is the one kept at the merge.
+- **Review of #619 (ocr).**
+  - A gap or no-state run's detail `usage` carries the four node counts at zero next to `spentTokens`; the desktop's
+    strict usage schema dropped the card without them (`usage_without_nodes`; the gap test asserts the whole object).
+  - `artifact_text` writes numbers as JavaScript does (`1`, not `1.0`; `1e+21`), through a new indented form of the JS
+    stringify (`rust_cli_base::js::json::stringify_indented`, the same number and key-order rules). Test:
+    `an_artifact_is_indented_json_with_js_numbers`.
+  - FillWorkflowHole's card carries Node's `fill` block `{siteId, name}`; the name comes from the run's hole entry, else
+    the site id. A body that does not compile answers with the card (`ok: false`, its diagnostics, the fill block), as Node
+    does; the other refusals stay errors with no card. Node's optional `draftPath` and `line` are left out: the Rust hole
+    projection holds neither (488). Tests: `a_filled_hole_names_the_fill_row_by_the_holes_name`,
+    `a_compile_refusal_lists_its_diagnostics_one_per_line`, `a_filled_hole_reports_the_phases_it_added`.
+  - The terminal notice's artifact chips cut the title and description in UTF-16 units (whole characters, 365), and a
+    version past JavaScript's safe integers stays a number instead of saturating at `u64::MAX`. Test:
+    `a_chip_cuts_its_title_in_utf16_units_and_keeps_a_large_version`.
+  - The drafts directory name is defined once, in `rust_cli_base::names` (`WORKFLOW_DRAFTS_DIR`,
+    `PROJECT_WORKFLOW_DRAFTS_DIR`), for policy's preapproval and the tools' draft writes.
 
 **Divergences.**
 
@@ -5325,6 +5341,10 @@ The holes FAIL in out-rust-12 was a wrong spec path (`gray-always-on-holes` does
 910. Node refuses a cross-session fill or revision because the run's engine is in another process
      (`liveInThisProcess === false`). One Rust app server holds every session's runs, so Rust keys the same refusal on the run's
      starting session: a run in flight that another session started.
+911. The session's `backgroundWorks` lists only live runs: a settled run leaves the list instead of staying as an ended
+     work, so the desktop's background panel shows no finished run (Node keeps ended tracker entries). This narrows 609 for
+     live runs. Keeping them needs the run's status and end time on `BackgroundRunWork` and Node's retention of ended
+     works.
 
 **Open (recorded, not fixed here).**
 

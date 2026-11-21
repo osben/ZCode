@@ -16,12 +16,13 @@ use rust_cli_kernel_api::tool::{
     PromptContext, Tool, ToolError, ToolOutput, ToolProgress, ToolUseContext, Validation, failed,
 };
 use rust_cli_kernel_api::tool_names;
+use rust_cli_kernel_api::workflow_analysis::WorkflowDiagnostic;
 use rust_cli_kernel_api::workflow_run::{
     DynamicWorkflowRunPort, DynamicWorkflowRunSessions, FillHoleOutcome, FillHoleRequest,
     FillRefusalReason,
 };
 use serde::Deserialize;
-use serde_json::Value;
+use serde_json::{Value, json};
 use tokio::sync::mpsc;
 
 use crate::workflow_amend::read_revision_file;
@@ -88,6 +89,47 @@ fn refusal_text(reason: FillRefusalReason, run_id: &str, message: &str) -> Strin
         ),
         FillRefusalReason::CompileFailed => format!("workflow_fill_refused: {message}"),
     }
+}
+
+/// Node `fillBlock`: the hole the fill names, by its own name from the run's hole entry, else by its site id. Node also
+/// carries the hole's draft path and line; the Rust hole projection holds neither, so they are left out (both optional).
+async fn fill_block(port: &Arc<dyn DynamicWorkflowRunPort>, run_id: &str, hole_id: &str) -> Value {
+    let detail = run_detail(Some(port), run_id).await;
+    let name = detail
+        .as_ref()
+        .and_then(|detail| detail.get("holes"))
+        .and_then(Value::as_array)
+        .and_then(|holes| {
+            holes
+                .iter()
+                .find(|hole| hole.get("siteId").and_then(Value::as_str) == Some(hole_id))
+        })
+        .and_then(|hole| hole.get("name"))
+        .and_then(Value::as_str)
+        .unwrap_or(hole_id);
+    json!({"siteId": hole_id, "name": name})
+}
+
+/// The refused body's diagnostics as the card carries them.
+fn card_diagnostics(diagnostics: Option<&Value>) -> Vec<WorkflowDiagnostic> {
+    diagnostics
+        .and_then(Value::as_array)
+        .map(|items| {
+            items
+                .iter()
+                .map(|item| WorkflowDiagnostic {
+                    code: item.get("code").and_then(Value::as_i64).unwrap_or(0),
+                    line: item.get("line").and_then(Value::as_i64).unwrap_or(0),
+                    column: item.get("column").and_then(Value::as_i64).unwrap_or(0),
+                    message: item
+                        .get("message")
+                        .and_then(Value::as_str)
+                        .unwrap_or("")
+                        .to_owned(),
+                })
+                .collect()
+        })
+        .unwrap_or_default()
 }
 
 /// The diagnostics of a refused body, one per line, as `L{line}:C{column} {message}`.
@@ -241,7 +283,8 @@ impl Tool for FillWorkflowHoleTool {
         )
     }
 
-    /// Reads the body, then asks the run port to fill the hole. A refusal is a failure with the port's text.
+    /// Reads the body, then asks the run port to fill the hole. A refusal is a failure with the port's text, except a body
+    /// that does not compile, which answers with the card as Node does.
     async fn call(
         &self,
         input: Value,
@@ -291,7 +334,12 @@ impl Tool for FillWorkflowHoleTool {
                         "The fill joined run {} at hole \"{}\"; the branch parked there has resumed and the run keeps going in the background. {phases} Do not wait for the run.",
                         input.run_id, input.hole_id
                     ),
-                    crate::workflow_card::card(None, true, &[]),
+                    crate::workflow_card::card_with_fill(
+                        None,
+                        true,
+                        &[],
+                        Some(&fill_block(&port, &input.run_id, &input.hole_id).await),
+                    ),
                 ))
             }
             FillHoleOutcome::Refused {
@@ -301,7 +349,20 @@ impl Tool for FillWorkflowHoleTool {
             } => {
                 let text = refusal_text(reason, &input.run_id, &message)
                     + &diagnostic_lines(diagnostics.as_ref());
-                Err(failed(text))
+                // Node answers a body that does not compile with the card (ok false, its diagnostics, the fill block)
+                // rather than an error; the other refusals stay errors with no card.
+                if reason != FillRefusalReason::CompileFailed {
+                    return Err(failed(text));
+                }
+                Ok(output_for(
+                    text,
+                    crate::workflow_card::card_with_fill(
+                        None,
+                        false,
+                        &card_diagnostics(diagnostics.as_ref()),
+                        Some(&fill_block(&port, &input.run_id, &input.hole_id).await),
+                    ),
+                ))
             }
         }
     }

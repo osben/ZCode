@@ -205,3 +205,21 @@ fn the_terminal_payload_carries_the_runs_artifact_chips_primary_first_and_bounde
     assert_eq!(none, base);
     assert_eq!(super::with_artifacts(base.clone(), None), base);
 }
+
+/// Node cuts a chip's title and description with `slice`, in UTF-16 units; Rust keeps a character whole, so an astral
+/// character across the cap is left out (divergence 365). A version past `u64` is carried as JavaScript's number
+/// rather than saturated (ocr #619).
+#[test]
+fn a_chip_cuts_its_title_in_utf16_units_and_keeps_a_large_version() {
+    let base = terminal_notice(&row(RunStatus::Completed)).expect("a completed run posts");
+    let title = format!("{}\u{1F600}", "a".repeat(119));
+    let description = "\u{1F600}".repeat(260);
+    let published = json!([
+        {"id": "doc", "kind": "file", "version": 1e20, "title": title, "primary": true, "description": description},
+    ]);
+    let notice = super::with_artifacts(base, Some(&published));
+    let chip = &notice.workflow["workflowNotification"]["artifacts"][0];
+    assert_eq!(chip["title"], json!("a".repeat(119)));
+    assert_eq!(chip["description"], json!("\u{1F600}".repeat(250)));
+    assert_eq!(chip["version"], json!(1e20));
+}

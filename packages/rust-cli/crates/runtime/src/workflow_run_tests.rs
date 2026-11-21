@@ -1637,6 +1637,11 @@ async fn get_run_detail_reports_a_launched_run_before_its_row_and_refuses_withou
         .expect("found");
     assert_eq!(gap["status"], "pending");
     assert_eq!(gap["ownedByThisSession"], true);
+    // Node's gap copy counts no nodes yet: the usage has all five numbers the desktop's strict card needs (ocr #619).
+    assert_eq!(
+        gap["usage"],
+        json!({"spentTokens": 0, "nodesObserved": 0, "nodesRunning": 0, "nodesCompleted": 0, "nodesFailed": 0})
+    );
     h.runner.finish(0, completed(json!("done")));
     wait_until("the run to settle", || h.residency.live_runs("ses_p") == 0).await;
 }

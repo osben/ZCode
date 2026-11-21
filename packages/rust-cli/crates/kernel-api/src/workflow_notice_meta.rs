@@ -179,11 +179,11 @@ fn bound_units(value: &str, max: usize) -> String {
 #[path = "workflow_notice_meta_tests.rs"]
 mod tests;
 
-/// Node `serializeWorkflowArtifact`: a string is the text itself, anything else `JSON.stringify(value, null, 2)` (two-space
-/// indent, as serde's pretty printer writes it). The terminal notice, the GetWorkflowRun text and its card share it.
+/// Node `serializeWorkflowArtifact`: a string is the text itself, anything else `JSON.stringify(value, null, 2)` (JS number
+/// text and key order, two-space indent). The terminal notice, the GetWorkflowRun text and its card share it.
 pub fn artifact_text(value: &Value) -> String {
     match value {
         Value::String(text) => text.clone(),
-        other => serde_json::to_string_pretty(other).unwrap_or_else(|_| other.to_string()),
+        other => rust_cli_base::js::json::stringify_indented(other),
     }
 }

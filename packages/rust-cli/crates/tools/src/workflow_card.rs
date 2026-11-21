@@ -15,6 +15,17 @@ pub(crate) const MAX_MESSAGE_UNITS: usize = 2048;
 /// The card: `kind`, `ok`, the full error count, at most [`MAX_DIAGNOSTICS`] diagnostics with bounded messages,
 /// `truncated` when some were left out, and the script's causality graph when the analyzer drew one.
 pub(crate) fn card(graph: Option<&Value>, ok: bool, diagnostics: &[WorkflowDiagnostic]) -> Value {
+    card_with_fill(graph, ok, diagnostics, None)
+}
+
+/// [`card`] with Node's `fill` block (`{siteId, name, draftPath?, line?}`), which FillWorkflowHole adds so the desktop's
+/// fill row names the hole it filled.
+pub(crate) fn card_with_fill(
+    graph: Option<&Value>,
+    ok: bool,
+    diagnostics: &[WorkflowDiagnostic],
+    fill: Option<&Value>,
+) -> Value {
     let bounded: Vec<Value> = diagnostics
         .iter()
         .take(MAX_DIAGNOSTICS)
@@ -38,6 +49,9 @@ pub(crate) fn card(graph: Option<&Value>, ok: bool, diagnostics: &[WorkflowDiagn
     }
     if truncated {
         card.insert("truncated".to_owned(), json!(true));
+    }
+    if let Some(fill) = fill {
+        card.insert("fill".to_owned(), fill.clone());
     }
     Value::Object(card)
 }

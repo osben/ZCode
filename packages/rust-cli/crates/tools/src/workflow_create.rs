@@ -51,7 +51,7 @@ const DRAFT_ATTEMPTS: usize = 1_000;
 /// Node `WORKFLOW_DRAFT_MAX_SLUG_CHARS` (the same cap as a saved name).
 pub(crate) const DRAFT_SLUG_CHARS: usize = 64;
 /// Node `WORKFLOW_DRAFTS_DIR`.
-pub(crate) const DRAFTS_DIR: &str = ".zcode/workflow-drafts";
+pub(crate) const DRAFTS_DIR: &str = rust_cli_base::names::PROJECT_WORKFLOW_DRAFTS_DIR;
 /// Node `DIAGNOSTICS_NOT_EXECUTED_NOTE`: diagnostics with no script file to point at.
 pub(crate) const DIAGNOSTICS_NOT_EXECUTED_NOTE: &str =
     "NOTE: The workflow was NOT executed — fix the errors above and resubmit.";
