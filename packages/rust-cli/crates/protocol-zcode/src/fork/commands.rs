@@ -58,6 +58,10 @@ pub(crate) async fn decide(
         "startSavedWorkflow" => {
             super::workflow_run_commands::start_saved(server, live, envelope, revision).await
         }
+        // Fork (W9h, 9.64): the GUI Resume of a stopped run.
+        "resumeWorkflowRun" => {
+            super::workflow_run_commands::resume(server, live, envelope, revision).await
+        }
         "amendWorkflowRunSettings" => {
             super::workflow_run_commands::amend_settings(server, live, envelope, revision).await
         }

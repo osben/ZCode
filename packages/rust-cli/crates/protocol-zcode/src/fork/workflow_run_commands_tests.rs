@@ -28,12 +28,34 @@ struct Fake {
     amend_error: Mutex<Option<DynamicWorkflowRunError>>,
     /// A successful start activates the parent and records its launch turn through the sink.
     drive_sink: bool,
+    /// The run ids the GUI resume asked for, and the port's answer (Node's result union as JSON).
+    resumes: Mutex<Vec<String>>,
+    resume_answer: Mutex<Option<Value>>,
+    resume_error: Mutex<Option<DynamicWorkflowRunError>>,
 }
 
 struct Port(Arc<Fake>);
 
 #[async_trait]
 impl DynamicWorkflowRunPort for Port {
+    async fn resume(&self, run_id: &WorkflowRunId) -> Result<Value, DynamicWorkflowRunError> {
+        self.0
+            .resumes
+            .lock()
+            .expect("fake")
+            .push(run_id.as_str().to_owned());
+        if let Some(error) = self.0.resume_error.lock().expect("fake").clone() {
+            return Err(error);
+        }
+        Ok(self
+            .0
+            .resume_answer
+            .lock()
+            .expect("fake")
+            .clone()
+            .unwrap_or_else(|| json!({"ok": false, "reason": "not_found"})))
+    }
+
     async fn start_saved(
         &self,
         request: StartSavedRequest,
@@ -738,4 +760,75 @@ mod busy_decision {
     fn an_answer_the_actor_cannot_give_is_busy_so_the_start_fails_closed() {
         assert!(busy_from(None, false));
     }
+}
+
+// Fork (W9h, 9.64): the GUI Resume on a stopped run card (desktop E2E DWU-01). Node `resumeWorkflowRun`
+// (`interaction-background.ts`): success is a plain accepted ack, a refusal is a `failed` ack with
+// `fault.command.workflowRunResumeRejected.<reason>` and the port's message.
+
+#[tokio::test]
+async fn a_gui_resume_asks_the_run_service_and_is_accepted() {
+    let fake = Arc::new(Fake::default());
+    *fake.resume_answer.lock().expect("fake") =
+        Some(json!({"ok": true, "runId": "run-1", "toolCallId": "tc-1"}));
+    let (_scope, server) = session(Some(true), Some(fake.clone())).await;
+    let ack = send(
+        &server,
+        "resumeWorkflowRun",
+        json!({"workId": "run-1", "name": "digest"}),
+    )
+    .await;
+    assert_eq!(ack["status"], json!("accepted"), "{ack}");
+    assert_eq!(
+        *fake.resumes.lock().expect("fake"),
+        vec!["run-1".to_owned()]
+    );
+}
+
+#[tokio::test]
+async fn a_refused_gui_resume_carries_the_reason_code_and_the_message() {
+    let fake = Arc::new(Fake::default());
+    *fake.resume_answer.lock().expect("fake") = Some(json!({
+        "ok": false, "reason": "compile_failed", "message": "line 3: oops",
+    }));
+    let (_scope, server) = session(Some(true), Some(fake)).await;
+    let ack = send(&server, "resumeWorkflowRun", json!({"workId": "run-1"})).await;
+    assert_eq!(ack["status"], json!("failed"), "{ack}");
+    assert_eq!(
+        ack["reasonCode"],
+        json!("fault.command.workflowRunResumeRejected.compile_failed")
+    );
+    assert_eq!(ack["message"], json!("line 3: oops"));
+}
+
+#[tokio::test]
+async fn a_gui_resume_with_the_gate_closed_answers_as_a_missing_capability() {
+    let fake = Arc::new(Fake::default());
+    let (_scope, server) = session(Some(false), Some(fake.clone())).await;
+    let ack = send(&server, "resumeWorkflowRun", json!({"workId": "run-1"})).await;
+    assert_eq!(ack["reasonCode"], unsupported(), "{ack}");
+    assert!(fake.resumes.lock().expect("fake").is_empty());
+}
+
+#[tokio::test]
+async fn a_gui_resume_without_a_work_id_is_an_invalid_payload() {
+    let fake = Arc::new(Fake::default());
+    let (_scope, server) = session(Some(true), Some(fake.clone())).await;
+    let ack = send(&server, "resumeWorkflowRun", json!({"name": "digest"})).await;
+    assert_eq!(ack["status"], json!("rejected"), "{ack}");
+    assert_eq!(ack["reasonCode"], json!("proto.invalidPayload"));
+    assert!(fake.resumes.lock().expect("fake").is_empty());
+}
+
+#[tokio::test]
+async fn a_failed_gui_resume_answers_as_an_execution_failure() {
+    let fake = Arc::new(Fake::default());
+    *fake.resume_error.lock().expect("fake") = Some(DynamicWorkflowRunError::new(
+        "the run has no working directory",
+    ));
+    let (_scope, server) = session(Some(true), Some(fake)).await;
+    let ack = send(&server, "resumeWorkflowRun", json!({"workId": "run-1"})).await;
+    assert_eq!(ack["status"], json!("failed"), "{ack}");
+    assert_eq!(ack["reasonCode"], json!("fault.command.executionFailed"));
+    assert_eq!(ack["message"], json!("the run has no working directory"));
 }

@@ -462,6 +462,74 @@ fn refused_settings(envelope: &Envelope, revision: u64, reason: &str, message: &
     )
 }
 
+/// Node `WORKFLOW_RUN_RESUME_REJECTED_FAULT_PREFIX`.
+const RESUME_REJECTED: &str = "fault.command.workflowRunResumeRejected.";
+
+/// Node `resumeWorkflowRun` (`interaction-background.ts`): the GUI Resume on a stopped run card or the run pane (W9h, 9.64;
+/// desktop E2E DWU-01). `workId` is the run id. The run service's `resume` is the one the `ResumeWorkflowRun` tool calls,
+/// so the re-armed tracking (background work, terminal notice) is the same. Success is a plain accepted ack; a refusal is a
+/// `failed` ack with the port's reason and message; any other failure is Node's `fault.command.executionFailed`.
+///
+/// Node also passes the GUI's `name` to its re-arm; here the run service reads the name from the run row, so it is not used.
+pub(crate) async fn resume(
+    server: &Server,
+    live: &Arc<Bridged<Live>>,
+    envelope: &Envelope,
+    revision: u64,
+) -> Ack {
+    let session = live.handle.id().clone();
+    let Some(runs) = sessions(server, &session) else {
+        return unsupported(envelope, revision, "resumeWorkflowRun", session.as_str());
+    };
+    let Some(work_id) = envelope
+        .payload
+        .get("workId")
+        .and_then(Value::as_str)
+        .map(str::to_owned)
+    else {
+        return Ack::refused(
+            &envelope.command_id,
+            Status::Rejected,
+            "proto.invalidPayload",
+            "Invalid resumeWorkflowRun payload",
+            revision,
+        );
+    };
+    let port = runs.for_session(&session);
+    match port.resume(&WorkflowRunId::new(work_id)).await {
+        Ok(answer) if answer.get("ok") == Some(&Value::Bool(true)) => {
+            Ack::accepted(&envelope.command_id, revision, None)
+        }
+        Ok(answer) => {
+            let reason = answer
+                .get("reason")
+                .and_then(Value::as_str)
+                .unwrap_or("not_resumable");
+            let message = answer.get("message").and_then(Value::as_str).map_or_else(
+                || format!("workflow run resume rejected: {reason}"),
+                str::to_owned,
+            );
+            Ack::refused(
+                &envelope.command_id,
+                Status::Failed,
+                &format!("{RESUME_REJECTED}{reason}"),
+                message,
+                revision,
+            )
+        }
+        Err(error) if error.is_unsupported() => {
+            unsupported(envelope, revision, "resumeWorkflowRun", session.as_str())
+        }
+        Err(error) => Ack::refused(
+            &envelope.command_id,
+            Status::Failed,
+            "fault.command.executionFailed",
+            error.message,
+            revision,
+        ),
+    }
+}
+
 #[cfg(test)]
 #[path = "workflow_run_commands_tests.rs"]
 mod tests;
