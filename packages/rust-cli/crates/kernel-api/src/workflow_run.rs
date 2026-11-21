@@ -513,13 +513,38 @@ pub struct LaunchTurn {
     pub name: String,
 }
 
-/// The origin a hub start's launch record carries on the parent (Node's `workflowLaunch` origin).
-pub const WORKFLOW_LAUNCH_SOURCE: &str = "workflow_launch";
-/// The origin a GUI settings change's record carries on the parent (Node's settings turn).
-pub const WORKFLOW_SETTINGS_SOURCE: &str = "workflow_settings";
+/// The origin a workflow control record carries on the parent's transcript: a closed set, so a producer names one of these
+/// and the session's record filter (`is_record_source`) recognizes exactly these. `Launch` is a hub start's record (Node's
+/// `workflowLaunch` origin); `Settings` is a GUI settings change's record (Node's settings turn).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum WorkflowRecordSource {
+    Launch,
+    Settings,
+}
+
+impl WorkflowRecordSource {
+    /// The stored origin text: the meta user message's `source`.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Launch => "workflow_launch",
+            Self::Settings => "workflow_settings",
+        }
+    }
+
+    /// Whether a stored meta `source` is a workflow control record's. The one place the recognized set is listed.
+    pub fn is_record_source(source: &str) -> bool {
+        [Self::Launch, Self::Settings]
+            .into_iter()
+            .any(|record| record.as_str() == source)
+    }
+}
 
 /// The parent's side of a run's turns (Node `activateDynamicWorkflowTools`, `enqueueSettingsTurn` and the launch turn).
 /// The sink belongs to one parent session: the port that receives it is that session's, so no method names the session.
+///
+/// The records are handed over once, before the port's answer: a record offered after the answer is not sent (the protocol logs
+/// it). A port must push each record before it resolves its start or change.
 ///
 /// The records are best effort and are not acknowledged to the caller: a record that the session cannot store is logged
 /// by the sink, and the start or the change still answers as it did (divergence 773 in the W9a spec section).

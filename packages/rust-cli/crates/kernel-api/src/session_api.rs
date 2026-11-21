@@ -350,7 +350,7 @@ pub enum Command {
     /// now; busy: held and committed when the work in flight ends (as `RecordLocalCommand`). Always `Accepted`.
     RecordWorkflowTurn {
         text: String,
-        source: String,
+        source: crate::workflow_run::WorkflowRecordSource,
     },
     /// 把这个会话在跑的前台 Bash 转到后台（修复线 L-A，docs/specs/rust-cli/tui-input.md §11）：用户的转后台键
     /// （`User`），或低延迟投递的输入（`DeliverMessage`）。会话 actor 交给本机的执行环境；总是 `Accepted`：没有回合在跑

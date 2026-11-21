@@ -15,8 +15,7 @@ use rust_cli_kernel_api::ids::{SessionId, WorkflowRunId};
 use rust_cli_kernel_api::session_api::{Ack as KernelAck, Command, SessionHandle};
 use rust_cli_kernel_api::workflow_run::{
     LaunchTurn, SettingsOutcome, SettingsRefusal, SettingsRequest, SettingsTurn, StartRefusal,
-    StartSavedOutcome, StartSavedRequest, WORKFLOW_LAUNCH_SOURCE, WORKFLOW_SETTINGS_SOURCE,
-    WorkflowTurnSink,
+    StartSavedOutcome, StartSavedRequest, WorkflowRecordSource, WorkflowTurnSink,
 };
 use rust_cli_protocol_core::sessions::Bridged;
 use serde::Deserialize;
@@ -34,45 +33,83 @@ const START_REJECTED: &str = "fault.command.savedWorkflowStartRejected.";
 /// Node `WORKFLOW_RUN_SETTINGS_REJECTED_FAULT_PREFIX`.
 const SETTINGS_REJECTED: &str = "fault.command.workflowRunSettingsRejected.";
 
-/// The parent's side of a run's turns for one session: its activation, and the control-only records the run asked for. The
-/// records wait in arrival order until [`ParentTurns::deliver`] sends them, once the run's answer is known.
+/// The parent's side of a run's turns for one session: its activation, and the control-only records the run asked for.
+///
+/// Drain-once contract: the records wait in arrival order until [`ParentTurns::deliver`] takes them, once, after the run's
+/// answer. A record the sink receives after that take is not sent: it is logged and dropped, so it is never silent. The
+/// run service pushes every record before it answers, so the contract holds for it.
 pub(crate) struct ParentTurns {
     gates: Arc<rust_cli_kernel_api::dynamic_workflow::SessionGates>,
     session: SessionId,
+    state: Mutex<Pending>,
+}
+
+#[derive(Default)]
+struct Pending {
     /// (source, text) in the order the run asked for them.
-    records: Mutex<Vec<(&'static str, String)>>,
+    records: Vec<(WorkflowRecordSource, String)>,
+    /// Set by the first `deliver`: records after it are dropped (and logged).
+    delivered: bool,
 }
 
 impl ParentTurns {
+    /// A sink over no gates and a fixed session, for the delivery tests (the run's own sink is built by `new`).
+    #[cfg(test)]
+    pub(crate) fn for_test() -> Self {
+        Self {
+            gates: Arc::default(),
+            session: SessionId::new("ses_test"),
+            state: Mutex::new(Pending::default()),
+        }
+    }
+
     fn new(server: &Server, session: SessionId) -> Self {
         Self {
             gates: server.context.dynamic_workflow_gates().clone(),
             session,
-            records: Mutex::new(Vec::new()),
+            state: Mutex::new(Pending::default()),
         }
     }
 
-    /// Sends the records to the session in order, each as a `RecordWorkflowTurn` command, and waits for each answer. A
-    /// record the session does not accept is logged (the start or the change has already happened; Node's turn is
-    /// best effort for the same reason, divergence 773).
+    fn push(&self, source: WorkflowRecordSource, text: String) {
+        let mut state = self.state.lock_unpoisoned();
+        if state.delivered {
+            tracing::warn!(
+                event = "workflow.run.turn.after_delivery",
+                source = source.as_str(),
+                "a workflow control record arrived after the answer; it is not sent to the session"
+            );
+            return;
+        }
+        state.records.push((source, text));
+    }
+
+    /// Sends the records to the session in order, each as a `RecordWorkflowTurn` command, and waits for each answer. Takes
+    /// the records once (see the contract on the type). A record the session does not accept is logged.
     pub(crate) async fn deliver(&self, handle: &dyn SessionHandle) {
-        let records = std::mem::take(&mut *self.records.lock_unpoisoned());
+        self.deliver_with(|id, command| async move { send(handle, &id, command).await })
+            .await;
+    }
+
+    /// [`ParentTurns::deliver`] over any command sender, so the order, the sources and the refusal are testable without a
+    /// session.
+    pub(crate) async fn deliver_with<F, Fut>(&self, mut send_command: F)
+    where
+        F: FnMut(String, Command) -> Fut,
+        Fut: std::future::Future<Output = KernelAck>,
+    {
+        let records = {
+            let mut state = self.state.lock_unpoisoned();
+            state.delivered = true;
+            std::mem::take(&mut state.records)
+        };
         for (source, text) in records {
             let id = format!("workflow-turn-{}", rust_cli_platform::ids::uuid_v4());
-            match send(
-                handle,
-                &id,
-                Command::RecordWorkflowTurn {
-                    text,
-                    source: source.to_owned(),
-                },
-            )
-            .await
-            {
+            match send_command(id, Command::RecordWorkflowTurn { text, source }).await {
                 KernelAck::Accepted { .. } | KernelAck::Duplicate => {}
                 KernelAck::Rejected { reason } => tracing::warn!(
                     event = "workflow.run.turn.rejected",
-                    source,
+                    source = source.as_str(),
                     %reason,
                     "the session did not accept a workflow control record"
                 ),
@@ -87,15 +124,11 @@ impl WorkflowTurnSink for ParentTurns {
     }
 
     fn settings_turn(&self, turn: SettingsTurn) {
-        self.records
-            .lock_unpoisoned()
-            .push((WORKFLOW_SETTINGS_SOURCE, turn.text));
+        self.push(WorkflowRecordSource::Settings, turn.text);
     }
 
     fn launch_turn(&self, turn: LaunchTurn) {
-        self.records
-            .lock_unpoisoned()
-            .push((WORKFLOW_LAUNCH_SOURCE, turn.text));
+        self.push(WorkflowRecordSource::Launch, turn.text);
     }
 }
 

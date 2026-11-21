@@ -4635,6 +4635,17 @@ controls answer `capabilityUnsupported` while the gate is off.
      and the run starts without `scriptPath`. The launch anchor is recorded only as the run's `run-launched.inputId`; the
      launch turn does not carry it (Node shares one id), which the module header states.
 
+775. Two texts differ from CreateWorkflow on purpose, and follow Node's hub start (`dynamic-workflow-run-start.ts`). The
+     argument refusal lists the problems under the heading only, without CreateWorkflow's declaration appendix. The unreadable
+     refusal is the bare sentence, without CreateWorkflow's hand-edit hint. The shared texts (the invalid name, the not-found
+     headline, the unreadable sentence) are written once in `saved_workflow.rs` and used by both callers.
+776. The workflow control record source is a closed kernel-api enum (`WorkflowRecordSource`, with `as_str` and
+     `is_record_source`). The session's record filter and the protocol sink share that set. A producer cannot name a source
+     the filter does not recognize.
+777. The sink's drain-once contract: `deliver` takes the records once, after the port answers. A record offered after that is
+     logged (`workflow.run.turn.after_delivery`) and not sent. The run service pushes every record before it answers, so the
+     case does not arise for it.
+
 **Red, honestly.** The tests above were written after the code they cover, and I did not observe any of them fail first. The
 brief asked for red first; that was not done in this round, and the W9b agent should not count these tests as red-first.
 

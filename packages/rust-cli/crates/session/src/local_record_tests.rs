@@ -12,6 +12,7 @@ use rust_cli_kernel_api::user_command::{
     LOCAL_COMMAND_CAVEAT_SOURCE, LOCAL_COMMAND_INPUT_SOURCE, LOCAL_COMMAND_META_SOURCE,
     LOCAL_COMMAND_OUTPUT_SOURCE, LocalCommandOutput, LocalCommandRecord,
 };
+use rust_cli_kernel_api::workflow_run::WorkflowRecordSource;
 
 use crate::test_support::{Setup, envelope, finished, submit, until};
 
@@ -353,7 +354,7 @@ async fn an_idle_workflow_record_is_a_meta_message_with_its_source_and_the_next_
             "c2",
             Command::RecordWorkflowTurn {
                 text: "Started the saved workflow \"digest\" (global) as run dwfrun-1.".to_owned(),
-                source: "workflow_launch".to_owned(),
+                source: WorkflowRecordSource::Launch,
             },
         ))
         .await;
@@ -408,7 +409,7 @@ async fn a_workflow_record_held_during_a_turn_keeps_its_arrival_order_with_local
             "c2",
             Command::RecordWorkflowTurn {
                 text: "workflow first".to_owned(),
-                source: "workflow_launch".to_owned(),
+                source: WorkflowRecordSource::Launch,
             },
         ))
         .await;
@@ -421,6 +422,12 @@ async fn a_workflow_record_held_during_a_turn_keeps_its_arrival_order_with_local
             },
         ))
         .await;
+    let before = built.session.view().await.unwrap();
+    assert!(
+        !sources(&before.messages).contains(&"workflow_launch".to_owned()),
+        "the held workflow record is not in the history while the turn runs: {:?}",
+        sources(&before.messages)
+    );
     gate.notify_one();
     until(&mut events, finished).await;
     let view = built.session.view().await.unwrap();

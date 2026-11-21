@@ -371,12 +371,8 @@ async fn serve(
         let analyzer = Arc::new(
             rust_cli_protocol_zcode::workflow_compile::HelperWorkflowAnalyzer::new(helper.clone()),
         );
-        if !service.configure_saved_start(facts.process.home.to_path_buf(), analyzer) {
-            tracing::warn!(
-                event = "workflow.run.saved_start_set_twice",
-                "the saved-start ports were set twice; the first ones stay"
-            );
-        }
+        // A refused second set is logged by the run service itself (workflow.run.saved_start_set_twice).
+        let _ = service.configure_saved_start(facts.process.home.to_path_buf(), analyzer);
     }
     let workflow_service = workflow_service.map(Arc::new);
     // Fork (9.51, W8d): a settled run posts its terminal notice to the parent session's model, through the agents' channel.

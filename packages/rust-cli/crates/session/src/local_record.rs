@@ -13,7 +13,7 @@ use rust_cli_kernel_api::user_command::{
     LOCAL_COMMAND_CAVEAT_SOURCE, LOCAL_COMMAND_INPUT_SOURCE, LOCAL_COMMAND_META_SOURCE,
     LOCAL_COMMAND_OUTPUT_SOURCE, LocalCommandRecord,
 };
-use rust_cli_kernel_api::workflow_run::{WORKFLOW_LAUNCH_SOURCE, WORKFLOW_SETTINGS_SOURCE};
+use rust_cli_kernel_api::workflow_run::WorkflowRecordSource;
 
 use crate::actor::{Actor, accepted};
 
@@ -24,10 +24,8 @@ pub(crate) fn is_record(user: &UserMessage) -> bool {
         LOCAL_COMMAND_INPUT_SOURCE,
         LOCAL_COMMAND_OUTPUT_SOURCE,
         LOCAL_COMMAND_META_SOURCE,
-        WORKFLOW_LAUNCH_SOURCE,
-        WORKFLOW_SETTINGS_SOURCE,
     ]
-    .contains(&source.as_str()))
+    .contains(&source.as_str()) || WorkflowRecordSource::is_record_source(source))
 }
 
 /// Fork (W9a, 9.53): one meta user message of a record. Every record message is built here.
@@ -57,14 +55,19 @@ pub(crate) fn record_messages(ids: &dyn Ids, record: &LocalCommandRecord) -> Vec
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) enum HeldRecord {
     Local(LocalCommandRecord),
-    Workflow { source: String, text: String },
+    Workflow {
+        source: WorkflowRecordSource,
+        text: String,
+    },
 }
 
 impl HeldRecord {
     fn messages(self, ids: &dyn Ids) -> Vec<Message> {
         match self {
             Self::Local(record) => record_messages(ids, &record),
-            Self::Workflow { source, text } => vec![meta_message(ids, source, text)],
+            Self::Workflow { source, text } => {
+                vec![meta_message(ids, source.as_str().to_owned(), text)]
+            }
         }
     }
 }
@@ -94,19 +97,19 @@ impl Actor {
         &mut self,
         command: CommandId,
         text: String,
-        source: String,
+        source: WorkflowRecordSource,
     ) -> Ack {
         if self.busy() {
             self.held_records
                 .push(HeldRecord::Workflow { source, text });
             return accepted();
         }
-        let message = meta_message(self.deps.ids.as_ref(), source, text);
+        let message = meta_message(self.deps.ids.as_ref(), source.as_str().to_owned(), text);
         if let Err(reason) = self
             .commit_record_messages(Some(command), vec![message])
             .await
         {
-            tracing::warn!(%reason, "the workflow control record could not be stored");
+            tracing::warn!(%reason, source = source.as_str(), "the workflow control record could not be stored");
         }
         accepted()
     }
@@ -122,7 +125,7 @@ impl Actor {
             .flat_map(|record| record.messages(self.deps.ids.as_ref()))
             .collect();
         if let Err(reason) = self.commit_record_messages(None, messages).await {
-            tracing::warn!(%reason, "the held local and workflow records could not be stored");
+            tracing::warn!(%reason, "the held local and workflow records could not be stored (the records are lost for the model)");
         }
     }
 

@@ -510,3 +510,123 @@ fn the_refusal_codes_are_nodes_vocabulary() {
         ("model_unavailable", "the host's message")
     );
 }
+
+/// The sink's records reach the session in arrival order, each with its source, and are taken once.
+mod deliver {
+    use std::sync::Mutex;
+
+    use rust_cli_kernel_api::session_api::{Ack as KernelAck, Command, CommandResult};
+    use rust_cli_kernel_api::workflow_run::{
+        LaunchTurn, SettingsAmend, SettingsTurn, WorkflowRecordSource, WorkflowTurnSink,
+    };
+
+    use crate::fork::workflow_run_commands::ParentTurns;
+
+    /// A `ParentTurns` over its own gates, with its records queued the way the run service queues them.
+    fn parent() -> ParentTurns {
+        ParentTurns::for_test()
+    }
+
+    fn settings(text: &str) -> SettingsTurn {
+        SettingsTurn {
+            text: text.to_owned(),
+            run_id: rust_cli_kernel_api::ids::WorkflowRunId::new("dwfrun-2"),
+            tool_call_id: "settings-2".to_owned(),
+            name: None,
+            title_input: "dwfrun-2".to_owned(),
+            amend: SettingsAmend {
+                predecessor_run_id: None,
+                max_concurrency: None,
+                default_concurrency: 6.0,
+            },
+        }
+    }
+
+    fn launch(text: &str) -> LaunchTurn {
+        LaunchTurn {
+            text: text.to_owned(),
+            run_id: rust_cli_kernel_api::ids::WorkflowRunId::new("dwfrun-1"),
+            tool_call_id: "launch-1".to_owned(),
+            name: "digest".to_owned(),
+        }
+    }
+
+    fn accepted() -> KernelAck {
+        KernelAck::Accepted {
+            result: CommandResult::Done,
+        }
+    }
+
+    #[tokio::test]
+    async fn the_records_are_sent_in_arrival_order_with_their_sources_and_taken_once() {
+        let turns = parent();
+        turns.launch_turn(launch("started"));
+        turns.settings_turn(settings("changed"));
+        let sent: Mutex<Vec<(WorkflowRecordSource, String)>> = Mutex::new(Vec::new());
+        turns
+            .deliver_with(|_id, command| {
+                let Command::RecordWorkflowTurn { text, source } = command else {
+                    panic!("only the records are sent: {command:?}");
+                };
+                sent.lock().unwrap().push((source, text));
+                std::future::ready(accepted())
+            })
+            .await;
+        assert_eq!(
+            *sent.lock().unwrap(),
+            vec![
+                (WorkflowRecordSource::Launch, "started".to_owned()),
+                (WorkflowRecordSource::Settings, "changed".to_owned()),
+            ]
+        );
+        // A second delivery finds nothing left.
+        turns
+            .deliver_with(|_id, _command| -> std::future::Ready<KernelAck> {
+                panic!("the records are taken once")
+            })
+            .await;
+    }
+
+    #[tokio::test]
+    async fn a_record_the_session_refuses_is_logged_and_the_rest_still_go_out() {
+        let turns = parent();
+        turns.launch_turn(launch("first"));
+        turns.launch_turn(launch("second"));
+        let calls = Mutex::new(0usize);
+        turns
+            .deliver_with(|_id, _command| {
+                let mut calls = calls.lock().unwrap();
+                *calls += 1;
+                let answer = if *calls == 1 {
+                    KernelAck::Rejected {
+                        reason: "the session is closed".to_owned(),
+                    }
+                } else {
+                    accepted()
+                };
+                std::future::ready(answer)
+            })
+            .await;
+        assert_eq!(
+            *calls.lock().unwrap(),
+            2,
+            "the refusal does not stop the batch"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_record_offered_after_the_delivery_is_dropped_not_sent() {
+        let turns = parent();
+        turns
+            .deliver_with(|_id, _command| -> std::future::Ready<KernelAck> {
+                panic!("nothing is queued")
+            })
+            .await;
+        turns.launch_turn(launch("too late"));
+        turns
+            .deliver_with(|_id, _command| -> std::future::Ready<KernelAck> {
+                panic!("a late record is never sent")
+            })
+            .await;
+    }
+}

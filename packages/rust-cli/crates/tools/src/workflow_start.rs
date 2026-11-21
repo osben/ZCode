@@ -1,6 +1,8 @@
 //! Fork: the hub's direct start of a saved workflow, resolved the way CreateWorkflow's `saved` source resolves it (9.53,
-//! W9a; Node `startSavedWorkflowRun` steps 1 and 2 in `dynamic-workflow-run-start.ts`). The name rules, the file reads
-//! and the argument checks are the saved-workflow store's and CreateWorkflow's, so the two callers agree.
+//! W9a; Node `startSavedWorkflowRun` steps 1 and 2 in `dynamic-workflow-run-start.ts`). The name rules, the not-found and
+//! the unreadable texts are the saved-workflow store's own (shared with CreateWorkflow). Two texts differ on purpose, and
+//! follow Node's hub start rather than CreateWorkflow: the argument refusal lists the problems without the declaration
+//! appendix, and the unreadable refusal has no hand-edit hint (divergence 775).
 //!
 //! This module answers the resolution and the argument check, and writes the best-effort draft copy of the file it
 //! resolved (Node `writeWorkflowDraft`, step 3b). The compile, the activation, the submit and the launch turn belong to
@@ -12,7 +14,9 @@ use rust_cli_kernel_api::workflow_run::StartRefusal;
 use serde_json::{Map, Value};
 
 pub use crate::saved_workflow::Scope;
-use crate::saved_workflow::{ResolveRefusal, Store};
+use crate::saved_workflow::{
+    ResolveRefusal, Store, invalid_name_text, not_found_headline, unreadable_text,
+};
 use crate::workflow_create::{DRAFTS_DIR, validate_args, write_draft_file};
 
 /// A saved definition resolved for a hub start: what the run is launched with.
@@ -52,22 +56,15 @@ pub fn resolve_saved_start(
         .resolve(name, scope_filter)
         .map_err(|refusal| match refusal {
             ResolveRefusal::InvalidName => StartRefusal::InvalidName {
-                message: format!(
-                    "'{name}' is not a usable workflow name: workflow names may only contain letters, digits, '.', '-' and '_', and must be 1-64 characters"
-                ),
+                message: invalid_name_text(name),
             },
             ResolveRefusal::NotFound => StartRefusal::NotFound {
-                message: match scope_filter {
-                    None => format!("No saved workflow named '{name}' in this project or globally."),
-                    Some(scope) => format!("No {} workflow named '{name}'.", scope.as_str()),
-                },
+                message: not_found_headline(name, scope_filter),
             },
+            // Node's hub start sends the bare sentence for a file that cannot be read or parsed (no hand-edit hint).
             ResolveRefusal::Parse { path, detail } | ResolveRefusal::Read { path, detail } => {
                 StartRefusal::NotFound {
-                    message: format!(
-                        "The saved workflow '{name}' at {} could not be read: {detail}",
-                        path.display()
-                    ),
+                    message: unreadable_text(name, &path, &detail),
                 }
             }
         })?;
@@ -239,5 +236,104 @@ mod tests {
             ),
             other => panic!("expected not_found with the read error, got {other:?}"),
         }
+    }
+
+    /// A saved definition that declares two arguments: a numeric one with a default and a required string.
+    fn save_with_args(cwd: &Path, home: &Path, name: &str) {
+        let path = Store::new(cwd, home).path(Scope::Project, name);
+        rust_cli_fs::ensure_dir(path.parent().expect("a scope directory"))
+            .expect("the scope directory");
+        rust_cli_fs::write_text(
+            &path,
+            "/* zcode-workflow\ndescription: test\nargs:\n  limit:\n    type: number\n    default: 10\n  topic:\n    type: string\n    required: true\n*/\nreturn 2\n",
+        )
+        .expect("the saved file");
+    }
+
+    #[test]
+    fn the_declared_arguments_are_filled_with_their_defaults_and_the_caller_values() {
+        let cwd = tempfile::tempdir().expect("cwd");
+        let home = tempfile::tempdir().expect("home");
+        save_with_args(cwd.path(), home.path(), "tasks");
+        let mut args = Map::new();
+        args.insert("topic".to_owned(), json!("rust"));
+        let resolved = resolve_saved_start(
+            home.path(),
+            cwd.path(),
+            "tasks",
+            Some("project"),
+            Some(&args),
+        )
+        .expect("the declared arguments resolve");
+        assert_eq!(resolved.args.get("topic"), Some(&json!("rust")));
+        assert_eq!(
+            resolved.args.get("limit"),
+            Some(&json!(10)),
+            "the default fills in"
+        );
+        assert_eq!(resolved.args.len(), 2);
+    }
+
+    #[test]
+    fn a_missing_required_argument_is_refused_with_the_listing_and_no_declaration_appendix() {
+        let cwd = tempfile::tempdir().expect("cwd");
+        let home = tempfile::tempdir().expect("home");
+        save_with_args(cwd.path(), home.path(), "tasks");
+        let refusal = resolve_saved_start(home.path(), cwd.path(), "tasks", Some("project"), None)
+            .expect_err("the required argument is missing");
+        assert_eq!(
+            refusal,
+            StartRefusal::InvalidArgs {
+                message: "The arguments for saved workflow 'tasks' are not valid:\n- missing required argument 'topic'"
+                    .to_owned()
+            }
+        );
+    }
+
+    #[tokio::test]
+    async fn the_draft_copy_is_written_byte_for_byte_under_the_drafts_directory_with_its_ignore_file()
+     {
+        let cwd = tempfile::tempdir().expect("cwd");
+        let home = tempfile::tempdir().expect("home");
+        save(
+            cwd.path(),
+            home.path(),
+            Scope::Project,
+            "plain",
+            "return 1\n",
+        );
+        let resolved = resolve_saved_start(home.path(), cwd.path(), "plain", Some("project"), None)
+            .expect("resolves");
+        let draft = write_start_draft(cwd.path(), &resolved)
+            .await
+            .expect("the draft is written");
+        assert!(draft.starts_with(cwd.path().join(DRAFTS_DIR)), "{draft:?}");
+        assert_eq!(
+            rust_cli_fs::read_text(&draft).expect("the draft"),
+            resolved.source,
+            "the draft is the file as written, metadata block included"
+        );
+        assert!(rust_cli_fs::is_regular_file(
+            &cwd.path().join(DRAFTS_DIR).join(".gitignore")
+        ));
+    }
+
+    #[tokio::test]
+    async fn a_draft_that_cannot_be_written_is_absent_so_the_run_starts_without_a_script_path() {
+        let cwd = tempfile::tempdir().expect("cwd");
+        let home = tempfile::tempdir().expect("home");
+        save(
+            cwd.path(),
+            home.path(),
+            Scope::Project,
+            "plain",
+            "return 1\n",
+        );
+        let resolved = resolve_saved_start(home.path(), cwd.path(), "plain", Some("project"), None)
+            .expect("resolves");
+        // A file where the working directory should be: the drafts directory cannot be made under it.
+        let blocked = cwd.path().join("blocked");
+        rust_cli_fs::write_text(&blocked, "not a directory").expect("the blocker");
+        assert!(write_start_draft(&blocked, &resolved).await.is_none());
     }
 }
