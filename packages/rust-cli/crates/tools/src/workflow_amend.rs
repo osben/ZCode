@@ -55,6 +55,10 @@ use crate::workspace_path::{Refusal, contain};
 const FAILURE_CODE: i32 = 400;
 /// The skill refusal code (Node `WORKFLOW_SKILL_NOT_LOADED_CODE`).
 const SKILL_NOT_LOADED_CODE: i32 = 428;
+/// Fork (9.65, closes 920): Node `AMEND_WORKFLOW_ERROR_CODE.SUBAGENT_MODEL`, a subagent model that does not resolve.
+const SUBAGENT_MODEL_CODE: i32 = 23;
+/// Fork (9.65): Node `AMEND_WORKFLOW_ERROR_CODE.HELD_ELSEWHERE`, another session's live run.
+const HELD_ELSEWHERE_CODE: i32 = 30;
 /// Kept approvals (a refused decision never reaches its call, so the table is bounded).
 const APPROVAL_CAP: usize = 256;
 /// Node `MAX_DRAFT_ATTEMPTS`-style draft name, used for an inline revision without a name.
@@ -519,13 +523,13 @@ impl Tool for AmendWorkflowTool {
             && let Some(detail) = run_detail(self.port(context).as_ref(), &input.run_id).await
             && live_elsewhere(&detail)
         {
-            return invalid(Some(FAILURE_CODE), &held_elsewhere(&input.run_id));
+            return invalid(Some(HELD_ELSEWHERE_CODE), &held_elsewhere(&input.run_id));
         }
         // Fork (9.63): Node resolves the model (named or kept) after the predecessor read, before any script read.
         if !input.is_concurrency_only()
             && let Err(message) = self.models_of(&input, context, None).await
         {
-            return invalid(Some(FAILURE_CODE), &message);
+            return invalid(Some(SUBAGENT_MODEL_CODE), &message);
         }
         Validation::Ok
     }
