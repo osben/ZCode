@@ -11,6 +11,54 @@ fn between<'a>(text: &'a str, open: &str, close: &str) -> Option<&'a str> {
     Some(&text[start..end])
 }
 
+/// Fork (9.51, W8d): `originMeta` of a message that is exactly one workflow run notice, with the payload the notice carries
+/// (`workflow`, a fragment such as `{"workflowNotification": …}`, minted where the text is made; see `workflow_notice_meta`).
+/// The base (`backgroundSource`, `workId`, `title`) is read from the text; the payload is merged over it. A batch keeps
+/// the base only (Node `batch_meta`), so callers pass `workflow` only for a single notice.
+pub fn origin_meta_for(
+    text: &str,
+    execution: Option<&str>,
+    workflow: Option<&Value>,
+) -> Option<Value> {
+    let mut meta = origin_meta_with_execution(text, execution)?;
+    // Only a workflow base takes a workflow payload, so the fragment cannot be grafted onto another source's meta.
+    let is_workflow = meta["backgroundSource"] == "workflow";
+    if let (true, Some(Value::Object(fields)), Some(object)) =
+        (is_workflow, workflow, meta.as_object_mut())
+    {
+        for (key, value) in fields {
+            object.insert(key.clone(), value.clone());
+        }
+    }
+    Some(meta)
+}
+
+/// Fork (9.51): the base of a workflow run notice. A `<workflow-…>` block names its run (`<run-id>`, the title `<run>`); a
+/// terminal `<task-notification>` of a run has the `Workflow "…"` summary, the title in `<description>` and the id in
+/// `<task-id>`. Node `buildWorkflowNotificationOriginMeta`: `backgroundSource: "workflow"`, `title`, `workId`.
+fn workflow_base(text: &str) -> Option<Value> {
+    const BLOCKS: [&str; 4] = [
+        "<workflow-escalation>",
+        "<workflow-hole>",
+        "<workflow-stall>",
+        "<workflow-blocked>",
+    ];
+    if BLOCKS.iter().any(|open| text.contains(open)) {
+        let work = tag(text, "run-id")?;
+        let title = tag(text, "run")?;
+        return Some(json!({"backgroundSource": "workflow", "title": title, "workId": work}));
+    }
+    // No opening marker is required: telemetry passes each block after its `<task-notification>` split, so the block
+    // alone must parse the same. The summary prefix discriminates the shape; other notifications fall through.
+    let summary = decode(between(text, "<summary>", "</summary>")?.trim());
+    if summary.starts_with("Workflow \"") {
+        let work = tag(text, "task-id")?;
+        let title = tag(text, "description")?;
+        return Some(json!({"backgroundSource": "workflow", "title": title, "workId": work}));
+    }
+    None
+}
+
 /// `origin_meta` of one notification block, with the run a no-progress reminder was built for. Node writes
 /// `subagentStall.executionId` after `lastProgressAt` (subagent-stall-reminder.ts), only when the reminder has one.
 /// `execution` is given only for a message that is exactly this one block (a batch keeps base fields, as Node).
@@ -59,11 +107,14 @@ pub fn notified_outputs(text: &str) -> Vec<(String, String)> {
 }
 
 /// `originMeta` of the first `<task-notification>` in a notification message; `None` for a
-/// notification the UI does not title (a Monitor, a workflow). A no-progress reminder
+/// notification the UI does not title (a Monitor). A no-progress reminder
 /// (`<background-agent-stall>`) has its own meta (Node `subagent-stall-reminder.ts`).
 pub fn origin_meta(text: &str) -> Option<Value> {
     if let Some(stall) = stall_origin_meta(text) {
         return Some(stall);
+    }
+    if let Some(workflow) = workflow_base(text) {
+        return Some(workflow);
     }
     let work = between(text, "<task-id>", "</task-id>")?.trim();
     let summary = between(text, "<summary>", "</summary>")?.trim();

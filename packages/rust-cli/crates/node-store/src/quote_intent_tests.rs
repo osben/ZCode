@@ -33,6 +33,7 @@ fn input(id: &str, text: &str, intent: InputIntent) -> Fact {
     Fact::MessageAppended {
         message: Message::User(UserMessage {
             stall_execution: None,
+            workflow_meta: None,
             epilogue_start: None,
             id: MessageId::new(id),
             content: vec![ContentBlock::Text { text: text.into() }],

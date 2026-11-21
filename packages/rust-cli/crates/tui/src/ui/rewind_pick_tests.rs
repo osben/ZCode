@@ -55,6 +55,7 @@ fn app(lang: Lang) -> App {
             KernelEvent::MessageDone {
                 message: Message::User(UserMessage {
                     stall_execution: None,
+                    workflow_meta: None,
                     epilogue_start: None,
                     intent: None,
                     id: MessageId::new(format!("u{n}")),
@@ -341,6 +342,7 @@ fn forked_view() -> rust_cli_kernel_api::session_api::SessionView {
         vec![
             Message::User(UserMessage {
                 stall_execution: None,
+                workflow_meta: None,
                 epilogue_start: None,
                 intent: None,
                 id: MessageId::new("c0"),

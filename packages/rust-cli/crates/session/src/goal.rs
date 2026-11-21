@@ -570,6 +570,7 @@ impl Actor {
     fn meta(&self, source: &str, text: String) -> Message {
         Message::User(UserMessage {
             stall_execution: None,
+            workflow_meta: None,
             epilogue_start: None,
             intent: None,
             id: self.deps.ids.message(),
@@ -584,6 +585,7 @@ impl Actor {
     pub(crate) fn goal_inputs(&self, args: &str, prompt: MessageId) -> Inputs {
         let input = Message::User(UserMessage {
             stall_execution: None,
+            workflow_meta: None,
             epilogue_start: None,
             intent: None,
             id: prompt,

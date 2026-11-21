@@ -576,6 +576,7 @@ fn compact_latest(sandbox: &Sandbox) {
         })),
         Message::User(UserMessage {
             stall_execution: None,
+            workflow_meta: None,
             epilogue_start: None,
             intent: None,
             id: summary,

@@ -77,6 +77,7 @@ fn request() -> ContextRequest {
 fn human() -> Message {
     Message::User(UserMessage {
         stall_execution: None,
+        workflow_meta: None,
         epilogue_start: None,
         intent: None,
         id: MessageId::new("prompt"),
@@ -219,6 +220,7 @@ async fn reading_a_file_in_a_subdirectory_brings_its_rules_once() {
     }));
     history.push(Message::User(UserMessage {
         stall_execution: None,
+        workflow_meta: None,
         epilogue_start: None,
         intent: None,
         id: MessageId::new("r1"),
@@ -270,6 +272,7 @@ async fn a_shell_cd_announces_the_new_working_directory() {
     ));
     history.push(Message::User(UserMessage {
         stall_execution: None,
+        workflow_meta: None,
         epilogue_start: None,
         intent: None,
         id: MessageId::new("r1"),

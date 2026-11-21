@@ -45,6 +45,7 @@ fn user(id: &str, origin: UserOrigin, intent: Option<Value>) -> Message {
             Box::new(InputIntent::from_fields(fields))
         }),
         stall_execution: None,
+        workflow_meta: None,
         epilogue_start: None,
     })
 }

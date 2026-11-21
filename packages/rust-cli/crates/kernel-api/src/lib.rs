@@ -152,6 +152,7 @@ pub mod unparsed_input;
 pub mod user_command;
 pub mod user_input;
 pub mod workflow_child;
+pub mod workflow_notice_meta;
 pub mod workflow_run;
 pub mod workflow_run_progress;
 // Fork: the typecheck of a workflow script for SaveWorkflow (W7-8b).

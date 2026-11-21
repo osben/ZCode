@@ -34,6 +34,7 @@ pub(crate) fn record_messages(ids: &dyn Ids, record: &LocalCommandRecord) -> Vec
         .map(|(source, text)| {
             Message::User(UserMessage {
                 stall_execution: None,
+                workflow_meta: None,
                 epilogue_start: None,
                 intent: None,
                 id: ids.message(),

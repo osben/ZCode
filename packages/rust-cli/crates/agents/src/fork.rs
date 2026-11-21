@@ -73,6 +73,7 @@ pub(crate) fn prefix(
     }));
     messages.push(Message::User(UserMessage {
         stall_execution: None,
+        workflow_meta: None,
         epilogue_start: None,
         intent: None,
         id: ids.message(),

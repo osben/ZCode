@@ -55,6 +55,7 @@ fn tool_call_output_round_trips() {
         output: output.clone(),
         new_messages: vec![Message::User(UserMessage {
             stall_execution: None,
+            workflow_meta: None,
             epilogue_start: None,
             intent: None,
             id: MessageId::new("msg_skill"),

@@ -87,6 +87,7 @@ fn change(path: &str, additions: u64, deletions: u64) -> FileChange {
 fn user(id: &str, text: &str) -> Message {
     Message::User(UserMessage {
         stall_execution: None,
+        workflow_meta: None,
         epilogue_start: None,
         intent: None,
         id: MessageId::new(id),
@@ -242,6 +243,7 @@ fn a_notification_turn_header_is_targeted_through_its_turn_input() {
     feed.apply(KernelEvent::MessageDone {
         message: Message::User(UserMessage {
             stall_execution: None,
+            workflow_meta: None,
             epilogue_start: None,
             intent: None,
             id: MessageId::new("msg_notice"),

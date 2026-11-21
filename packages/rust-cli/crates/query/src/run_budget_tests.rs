@@ -36,6 +36,7 @@ fn history(input: u64, output: u64) -> Vec<Message> {
     let user = |id: &str, text: &str| {
         Message::User(UserMessage {
             stall_execution: None,
+            workflow_meta: None,
             epilogue_start: None,
             intent: None,
             id: MessageId::new(id),

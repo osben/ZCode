@@ -27,6 +27,7 @@ fn call(id: &str, tool: &str, path: &str) -> Message {
 fn result(id: &str, is_error: bool) -> Message {
     Message::User(UserMessage {
         stall_execution: None,
+        workflow_meta: None,
         epilogue_start: None,
         intent: None,
         id: MessageId::new(format!("u_{id}")),

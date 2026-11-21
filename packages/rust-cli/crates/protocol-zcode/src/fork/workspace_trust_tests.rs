@@ -170,6 +170,7 @@ impl HandleOverride for TestHandle {
         if self.resumed {
             view.messages.push(Message::User(UserMessage {
                 stall_execution: None,
+                workflow_meta: None,
                 epilogue_start: None,
                 intent: None,
                 id: MessageId::new("u1"),

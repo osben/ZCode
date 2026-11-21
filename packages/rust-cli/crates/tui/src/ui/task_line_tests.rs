@@ -106,6 +106,7 @@ fn report(app: &mut App, agent: &str) {
             event: KernelEvent::MessageDone {
                 message: Message::User(UserMessage {
                     stall_execution: None,
+                    workflow_meta: None,
                     epilogue_start: None,
                     intent: None,
                     id: MessageId::new("m1"),
@@ -557,6 +558,7 @@ fn with_body(app: &mut App) {
             event: KernelEvent::MessageDone {
                 message: Message::User(UserMessage {
                     stall_execution: None,
+                    workflow_meta: None,
                     epilogue_start: None,
                     intent: None,
                     id: MessageId::new("m1"),

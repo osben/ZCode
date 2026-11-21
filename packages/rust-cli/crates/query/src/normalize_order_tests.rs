@@ -40,6 +40,7 @@ fn call(id: &str) -> ContentBlock {
 fn human(id: &str, value: &str) -> Message {
     Message::User(UserMessage {
         stall_execution: None,
+        workflow_meta: None,
         epilogue_start: None,
         intent: None,
         id: MessageId::new(id),
@@ -61,6 +62,7 @@ fn assistant(id: &str, content: Vec<ContentBlock>) -> Message {
 fn result(id: &str, owner: &str, calls: &[&str]) -> Message {
     Message::User(UserMessage {
         stall_execution: None,
+        workflow_meta: None,
         epilogue_start: None,
         intent: None,
         id: MessageId::new(id),

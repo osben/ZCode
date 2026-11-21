@@ -132,6 +132,7 @@ fn view(running: bool, running_turn: bool) -> SessionView {
     if running_turn {
         view.messages = vec![Message::User(UserMessage {
             stall_execution: None,
+            workflow_meta: None,
             epilogue_start: None,
             intent: None,
             id: rust_cli_kernel_api::ids::MessageId::new("m1"),

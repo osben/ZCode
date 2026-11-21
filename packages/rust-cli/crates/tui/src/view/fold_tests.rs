@@ -55,6 +55,7 @@ impl Feed {
 fn user(id: &str, text: &str) -> Message {
     Message::User(UserMessage {
         stall_execution: None,
+        workflow_meta: None,
         epilogue_start: None,
         intent: None,
         id: MessageId::new(id),
@@ -84,6 +85,7 @@ fn tool_use(id: &str, name: &str) -> ContentBlock {
 fn tool_result(id: &str, text: &str, is_error: bool) -> Message {
     Message::User(UserMessage {
         stall_execution: None,
+        workflow_meta: None,
         epilogue_start: None,
         intent: None,
         id: MessageId::new(format!("r_{id}")),

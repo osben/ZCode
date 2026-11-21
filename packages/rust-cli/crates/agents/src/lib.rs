@@ -479,8 +479,13 @@ impl AgentSignals for Signals {
         self.0.hub.subscribe(session)
     }
 
-    fn workflow_notice(&self, session: &SessionId, text: String) {
-        self.0.hub.workflow_notice(session, text);
+    fn workflow_notice(
+        &self,
+        session: &SessionId,
+        text: String,
+        workflow: Option<serde_json::Value>,
+    ) {
+        self.0.hub.workflow_notice(session, text, workflow);
     }
 
     fn session_opened(&self, meta: &rust_cli_kernel_api::store::SessionMeta) {

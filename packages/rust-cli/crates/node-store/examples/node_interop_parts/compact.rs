@@ -35,6 +35,7 @@ pub(super) async fn compacted(store: &NodeStore) -> Result<SessionId> {
     let result = Fact::MessageAppended {
         message: Message::User(UserMessage {
             stall_execution: None,
+            workflow_meta: None,
             epilogue_start: None,
             intent: None,
             id: r2.clone(),
@@ -70,6 +71,7 @@ pub(super) async fn compacted(store: &NodeStore) -> Result<SessionId> {
         Fact::MessageAppended {
             message: Message::User(UserMessage {
                 stall_execution: None,
+                workflow_meta: None,
                 epilogue_start: None,
                 intent: None,
                 id: summary,

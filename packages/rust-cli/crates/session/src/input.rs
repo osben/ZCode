@@ -39,6 +39,7 @@ impl Actor {
             .join("\n");
         let user = Message::User(UserMessage {
             stall_execution: None,
+            workflow_meta: None,
             epilogue_start: None,
             intent: None,
             id: prompt.clone(),
@@ -171,6 +172,7 @@ impl Actor {
                 };
                 let message = Message::User(UserMessage {
                     stall_execution: None,
+                    workflow_meta: None,
                     epilogue_start: None,
                     intent: extra.intent,
                     id: ids.message(),

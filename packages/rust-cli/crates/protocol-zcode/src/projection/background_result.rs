@@ -11,7 +11,7 @@ use serde_json::{Value, json};
 use super::{Projection, ToolStatus, tool_key, turn_key};
 
 pub(super) use rust_cli_kernel_api::background_origin::{
-    batch_meta, notified_outputs, notified_statuses, notified_tools, origin_meta_with_execution,
+    batch_meta, notified_outputs, notified_statuses, notified_tools, origin_meta_for,
 };
 
 impl Projection {
@@ -23,6 +23,7 @@ impl Projection {
         &mut self,
         content: &[ContentBlock],
         stall_execution: Option<&str>,
+        workflow: Option<&Value>,
         out: &mut Vec<Value>,
     ) {
         // The execution belongs to a message that is exactly one stall reminder (Node `subagentStall.executionId`).
@@ -31,6 +32,8 @@ impl Projection {
         } else {
             None
         };
+        // Fork (9.51): the workflow payload is kept for a single notice only, as the execution is.
+        let workflow = if content.len() == 1 { workflow } else { None };
         let Some(turn) = &mut self.turn else {
             return;
         };
@@ -40,7 +43,7 @@ impl Projection {
         turn.notified
             .extend(content.iter().filter_map(|block| match block {
                 ContentBlock::Text { text } => {
-                    Some(origin_meta_with_execution(text, stall_execution))
+                    Some(origin_meta_for(text, stall_execution, workflow))
                 }
                 _ => None,
             }));

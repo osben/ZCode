@@ -15,6 +15,7 @@ use std::time::Duration;
 use rust_cli_kernel_api::clock::Clock;
 use rust_cli_kernel_api::dynamic_workflow::DynamicWorkflowGates;
 use rust_cli_kernel_api::ids::SessionId;
+use rust_cli_kernel_api::workflow_notice_meta;
 use rust_cli_prompts::workflow_notice::{Blocked, BlockedHole, BlockedQuestion, blocked};
 use serde_json::Value;
 
@@ -107,7 +108,9 @@ impl ReminderHost for Host {
     }
 
     fn remind(&self, reminder: Reminder) {
-        self.notices.post(&self.session, reminder_text(&reminder));
+        let workflow = reminder_payload(&reminder);
+        self.notices
+            .post(&self.session, reminder_text(&reminder), Some(workflow));
     }
 
     fn now_ms(&self) -> u64 {
@@ -117,6 +120,32 @@ impl ReminderHost for Host {
     fn schedule(&self, delay_ms: u64, fire: Box<dyn FnOnce() + Send>) -> Box<dyn FnOnce() + Send> {
         self.timers.schedule(delay_ms, fire)
     }
+}
+
+/// How long a decision has waited at `now`. A decision with no time counts as no wait (Node's fallback, the same in the text and the payload).
+fn waited_ms(now: u64, since: Option<u64>) -> u64 {
+    now.saturating_sub(since.unwrap_or(now))
+}
+
+/// The blocked reminder's payload (Node `workflowBlocked`, 9.51, W8d): the counts of the open decisions and the longest wait
+/// among them, counted from the reminder's own time as the text is (Node: `Math.max(0, …)` over the questions and holes).
+fn reminder_payload(reminder: &Reminder) -> Value {
+    let questions = reminder
+        .open
+        .questions
+        .iter()
+        .map(|question| waited_ms(reminder.now, question.asked_at));
+    let holes = reminder
+        .open
+        .holes
+        .iter()
+        .map(|hole| waited_ms(reminder.now, hole.since));
+    let oldest = questions.chain(holes).max().unwrap_or(0);
+    workflow_notice_meta::blocked(
+        reminder.open.questions.len(),
+        reminder.open.holes.len(),
+        oldest,
+    )
 }
 
 /// The blocked reminder's text (Node `formatWorkflowBlockedNotification`): each open question and hole with how long it has
@@ -131,9 +160,7 @@ fn reminder_text(reminder: &Reminder) -> String {
             subagent: question.subagent.clone(),
             question: question.question.clone(),
             context: question.context.clone(),
-            waited_ms: reminder
-                .now
-                .saturating_sub(question.asked_at.unwrap_or(reminder.now)),
+            waited_ms: waited_ms(reminder.now, question.asked_at),
         })
         .collect();
     let holes: Vec<BlockedHole> = reminder
@@ -145,9 +172,7 @@ fn reminder_text(reminder: &Reminder) -> String {
             name: hole.name.clone(),
             type_name: hole.type_name.clone(),
             line: hole.line,
-            waited_ms: reminder
-                .now
-                .saturating_sub(hole.since.unwrap_or(reminder.now)),
+            waited_ms: waited_ms(reminder.now, hole.since),
         })
         .collect();
     blocked(&Blocked {

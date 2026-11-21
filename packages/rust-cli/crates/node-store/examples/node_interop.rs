@@ -125,6 +125,7 @@ fn user(id: &MessageId, text: &str) -> Fact {
     Fact::MessageAppended {
         message: Message::User(UserMessage {
             stall_execution: None,
+            workflow_meta: None,
             epilogue_start: None,
             intent: None,
             id: id.clone(),
@@ -271,6 +272,7 @@ fn user_with(content: Vec<ContentBlock>, origin: UserOrigin) -> Fact {
     Fact::MessageAppended {
         message: Message::User(UserMessage {
             stall_execution: None,
+            workflow_meta: None,
             epilogue_start: None,
             intent: None,
             id: message_id(),

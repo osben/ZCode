@@ -176,6 +176,7 @@ fn running(id: &str, root: &str) -> SessionView {
     let mut view = idle(id, root);
     view.messages = vec![Message::User(UserMessage {
         stall_execution: None,
+        workflow_meta: None,
         epilogue_start: None,
         intent: None,
         id: MessageId::new("m1"),

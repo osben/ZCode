@@ -14,6 +14,7 @@ use crate::test_support::{ScriptedHooks, Setup, envelope, finished, submit, unti
 fn meta_message(id: &str, text: &str) -> Message {
     Message::User(UserMessage {
         stall_execution: None,
+        workflow_meta: None,
         epilogue_start: None,
         intent: None,
         id: rust_cli_kernel_api::ids::MessageId::new(id),
@@ -672,6 +673,7 @@ impl rust_cli_kernel_api::orchestration::Compactor for FixedCompact {
             },
             summary: UserMessage {
                 stall_execution: None,
+                workflow_meta: None,
                 epilogue_start: None,
                 intent: None,
                 id: rust_cli_kernel_api::ids::MessageId::new("msg_s"),

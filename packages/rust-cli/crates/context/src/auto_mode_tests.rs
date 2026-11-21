@@ -34,6 +34,7 @@ fn names(list: &[&str]) -> Vec<String> {
 fn human() -> Message {
     Message::User(UserMessage {
         stall_execution: None,
+        workflow_meta: None,
         epilogue_start: None,
         intent: None,
         id: MessageId::new("u"),
@@ -69,6 +70,7 @@ fn tool_round() -> Vec<Message> {
         }),
         Message::User(UserMessage {
             stall_execution: None,
+            workflow_meta: None,
             epilogue_start: None,
             intent: None,
             id: MessageId::new("r"),

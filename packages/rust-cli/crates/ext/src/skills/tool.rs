@@ -206,6 +206,7 @@ impl SkillTool {
         };
         let message = Message::User(UserMessage {
             stall_execution: None,
+            workflow_meta: None,
             epilogue_start: None,
             intent: None,
             id: self.ids.message(),

@@ -280,6 +280,7 @@ async fn a_workflow_notice_opens_a_turn_with_its_raw_text_and_is_never_acked() {
     sender
         .send(AgentSignal::WorkflowNotice {
             text: STALL_TEXT.to_owned(),
+            workflow: None,
         })
         .unwrap();
     let seen = until_finished(&mut events, 1).await;
@@ -352,4 +353,44 @@ async fn a_stall_reminder_opens_a_turn_with_its_raw_text_and_is_never_acked() {
         signals.acked.lock().unwrap().is_empty(),
         "a reminder is never acknowledged"
     );
+}
+
+#[tokio::test]
+async fn a_workflow_notices_payload_is_kept_on_the_message_that_opens_its_turn() {
+    let scope = TaskScope::root("test", |_| {});
+    let (sender, receiver) = mpsc::unbounded_channel();
+    let signals = Arc::new(FakeSignals {
+        receiver: Mutex::new(Some(receiver)),
+        acked: Mutex::default(),
+        background: Mutex::default(),
+    });
+    let session = open_with(signals.clone(), &scope).await;
+    let mut events = session.subscribe(Some(0));
+    let payload =
+        serde_json::json!({"workflowBlocked": {"questions": 1, "holes": 0, "sinceMs": 5}});
+    sender
+        .send(AgentSignal::WorkflowNotice {
+            text: STALL_TEXT.to_owned(),
+            workflow: Some(payload.clone()),
+        })
+        .unwrap();
+    until_finished(&mut events, 1).await;
+    let view = session.view().await.unwrap();
+    let carried: Vec<Option<serde_json::Value>> = view
+        .messages
+        .iter()
+        .filter_map(|message| match message {
+            Message::User(user)
+                if user.origin
+                    == UserOrigin::Meta {
+                        source: "task-notification".to_owned(),
+                    } =>
+            {
+                Some(user.workflow_meta.clone())
+            }
+            _ => None,
+        })
+        .collect();
+    // The payload reaches the message as a sidecar, not as text (9.51, W8d).
+    assert_eq!(carried, vec![Some(payload)]);
 }
