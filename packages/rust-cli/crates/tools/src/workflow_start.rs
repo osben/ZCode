@@ -2,15 +2,17 @@
 //! W9a; Node `startSavedWorkflowRun` steps 1 and 2 in `dynamic-workflow-run-start.ts`). The name rules, the file reads
 //! and the argument checks are the saved-workflow store's and CreateWorkflow's, so the two callers agree.
 //!
-//! This module answers the resolution and the argument check only. The compile, the activation, the submit and the
-//! launch turn belong to the run service (the runtime), which calls it first and has no side effect before it.
+//! This module answers the resolution and the argument check, and writes the best-effort draft copy of the file it
+//! resolved (Node `writeWorkflowDraft`, step 3b). The compile, the activation, the submit and the launch turn belong to
+//! the run service (the runtime), which calls the resolution first and has no side effect before it.
 
 use std::path::{Path, PathBuf};
 
 use rust_cli_kernel_api::workflow_run::StartRefusal;
 use serde_json::{Map, Value};
 
-use crate::saved_workflow::{ResolveRefusal, Scope, Store};
+pub use crate::saved_workflow::Scope;
+use crate::saved_workflow::{ResolveRefusal, Store};
 use crate::workflow_create::{DRAFTS_DIR, validate_args, write_draft_file};
 
 /// A saved definition resolved for a hub start: what the run is launched with.
@@ -19,7 +21,7 @@ pub struct ResolvedStart {
     /// The saved name as the file has it (Node `found.name`).
     pub name: String,
     /// `project` or `global` (Node `found.scope`).
-    pub scope: &'static str,
+    pub scope: Scope,
     /// The script body that runs (the file after its metadata block).
     pub script: String,
     /// The file as written, for the draft copy.
@@ -38,10 +40,12 @@ pub fn resolve_saved_start(
     args: Option<&Map<String, Value>>,
 ) -> Result<ResolvedStart, StartRefusal> {
     let store = Store::new(cwd, home);
+    // The protocol refuses a scope that is not `project` or `global` before this call (as Node's schema does). The check
+    // here keeps the resolution honest for any other caller: the answer is the enum message, not a missing workflow.
     let scope_filter = match scope {
         None => None,
-        Some(text) => Some(Scope::parse(text).ok_or_else(|| StartRefusal::NotFound {
-            message: format!("No {text} workflow named '{name}'."),
+        Some(text) => Some(Scope::parse(text).ok_or_else(|| StartRefusal::InvalidArgs {
+            message: "saved.scope: Invalid enum value. Expected 'project' | 'global'".to_owned(),
         })?),
     };
     let found = store
@@ -67,9 +71,10 @@ pub fn resolve_saved_start(
                 }
             }
         })?;
-    let provided = args.cloned().unwrap_or_default();
+    let empty = Map::new();
+    let provided = args.unwrap_or(&empty);
     let declared = found.meta.args.as_deref().unwrap_or(&[]);
-    let args = validate_args(declared, &provided).map_err(|errors| {
+    let args = validate_args(declared, provided).map_err(|errors| {
         let mut lines = vec![format!(
             "The arguments for saved workflow '{}' are not valid:",
             found.name
@@ -80,10 +85,10 @@ pub fn resolve_saved_start(
         }
     })?;
     Ok(ResolvedStart {
-        name: found.name.clone(),
-        scope: found.scope.as_str(),
-        script: found.script.clone(),
-        source: found.source.clone(),
+        name: found.name,
+        scope: found.scope,
+        script: found.script,
+        source: found.source,
         args,
     })
 }
@@ -153,7 +158,7 @@ mod tests {
         let resolved = resolve_saved_start(home.path(), cwd.path(), "digest", None, None)
             .expect("the global file resolves");
         assert_eq!(resolved.name, "digest");
-        assert_eq!(resolved.scope, "global");
+        assert_eq!(resolved.scope, Scope::Global);
         assert_eq!(resolved.script.trim(), "return 2");
         assert!(resolved.args.is_empty());
     }
@@ -199,5 +204,40 @@ mod tests {
             matches!(refusal, StartRefusal::InvalidName { .. }),
             "{refusal:?}"
         );
+    }
+    #[test]
+    fn a_scope_that_is_not_project_or_global_is_an_enum_refusal_not_a_missing_workflow() {
+        let dir = tempfile::tempdir().expect("temp dir");
+        let refusal = resolve_saved_start(dir.path(), dir.path(), "x", Some("Project"), None)
+            .expect_err("a scope outside the two values");
+        assert_eq!(
+            refusal,
+            StartRefusal::InvalidArgs {
+                message: "saved.scope: Invalid enum value. Expected 'project' | 'global'"
+                    .to_owned()
+            }
+        );
+    }
+
+    #[test]
+    fn a_file_whose_metadata_block_does_not_parse_is_not_found_with_its_read_error() {
+        let cwd = tempfile::tempdir().expect("cwd");
+        let home = tempfile::tempdir().expect("home");
+        let path = Store::new(cwd.path(), home.path()).path(Scope::Project, "broken");
+        rust_cli_fs::ensure_dir(path.parent().expect("a scope directory"))
+            .expect("the scope directory");
+        // An opened block that is never closed: the store refuses it as a parse error.
+        rust_cli_fs::write_text(&path, "/* zcode-workflow\ndescription: never closed\n")
+            .expect("the file");
+        let refusal = resolve_saved_start(home.path(), cwd.path(), "broken", Some("project"), None)
+            .expect_err("a malformed block");
+        match refusal {
+            StartRefusal::NotFound { message } => assert!(
+                message.starts_with("The saved workflow 'broken' at ")
+                    && message.contains("could not be read"),
+                "{message}"
+            ),
+            other => panic!("expected not_found with the read error, got {other:?}"),
+        }
     }
 }

@@ -523,22 +523,30 @@ impl WorkflowRunService {
         }
     }
 
-    /// Node `defaultConcurrency()` (9.39): the caps default of a submit, and the port's `default_concurrency`. Set once by
-    /// the composition root (the governor's formula over the process's cores). Returns `false` when the value is not
-    /// finite or below one (refused, nothing kept), or when a value is already set (the first one stays, logged).
     /// Fork (W9a, 9.53): sets the hub start's ports, the user's home (where saved workflows live) and the compile checker
-    /// (the same analyzer CreateWorkflow uses). Set once; a second call keeps the first.
+    /// (the same analyzer CreateWorkflow uses). Set once: a second call is a wiring fault, logged, and keeps the first.
     pub fn configure_saved_start(
         &self,
         home: std::path::PathBuf,
         analyzer: Arc<dyn rust_cli_kernel_api::workflow_analysis::WorkflowAnalyzer>,
     ) -> bool {
-        self.inner
+        let first = self
+            .inner
             .saved_start
             .set(SavedStartPorts { home, analyzer })
-            .is_ok()
+            .is_ok();
+        if !first {
+            tracing::warn!(
+                event = "workflow.run.saved_start_set_twice",
+                "the saved-start ports were set twice; the first ones stay"
+            );
+        }
+        first
     }
 
+    /// Node `defaultConcurrency()` (9.39): the caps default of a submit, and the port's `default_concurrency`. Set once by
+    /// the composition root (the governor's formula over the process's cores). Returns `false` when the value is not
+    /// finite or below one (refused, nothing kept), or when a value is already set (the first one stays, logged).
     pub fn configure_concurrency(&self, default_concurrency: f64) -> bool {
         if !default_concurrency.is_finite() || default_concurrency < 1.0 {
             tracing::warn!(

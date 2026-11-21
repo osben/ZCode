@@ -566,7 +566,8 @@ impl Actor {
         self.titles.mark_custom();
         self.set_title(title, rust_cli_kernel_api::title::Source::Custom);
         self.after_commit(appended).await;
-        self.held_records.extend(held);
+        self.held_records
+            .extend(held.map(crate::local_record::HeldRecord::Local));
         accepted()
     }
 }

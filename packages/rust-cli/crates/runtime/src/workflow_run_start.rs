@@ -3,13 +3,13 @@
 //!
 //! The order is Node's. Resolution, argument checks and the compile come first and have no side effect: a refusal there
 //! starts nothing and writes nothing. Then the parent is activated, the draft copy is written, the run is submitted with
-//! the launch anchor (a UUID v7, shared with the launch turn), and the launch turn is recorded for the parent. A failure
-//! after the submit is not rolled back, as Node does not roll it back.
+//! the launch anchor (a UUID v7, recorded as the run's `run-launched.inputId`), and the launch turn is recorded for the
+//! parent. A failure after the submit is not rolled back, as Node does not roll it back.
 //!
-//! Not built here (divergences 760 to 765): the models a script names (Node binds them; this host refuses none and binds
+//! Not built here (divergences 760 to 774): the models a script names (Node binds them; this host refuses none and binds
 //! none), the phase table of the launch (no `phaseNames`/`phaseAlongside` on the run), the background tracker
-//! registration (the run is registered by the run service only), and the metadata of the launch turn (the turn records
-//! its text and origin; `workflowLaunch` is not stored on the row).
+//! registration, and the metadata of the launch turn (the turn records its text and origin only). The launch turn does
+//! not carry the anchor: Node shares one id between the run and the turn, this host stores it on the run alone.
 
 use std::path::PathBuf;
 
@@ -30,7 +30,8 @@ const COMPILE_DIAGNOSTICS_MAX_CHARS: usize = 2_000;
 
 impl WorkflowRunService {
     /// Node `startSavedWorkflowRun`, for the parent session the port belongs to. The session's own busy check is the
-    /// caller's. A refusal is an answer (`Refused`); an error is a missing capability or a wiring fault.
+    /// caller's, made before this call (divergence 765 names the window it leaves). A refusal is an answer (`Refused`);
+    /// a missing capability or a wiring fault (no default concurrency, no bindings) is an error the caller maps.
     pub async fn start_saved(
         &self,
         parent: &str,
@@ -42,16 +43,27 @@ impl WorkflowRunService {
         };
         let cwd = PathBuf::from(&request.cwd);
 
-        // (1) Resolve and validate the arguments, as CreateWorkflow's saved source does.
-        let resolved = match resolve_saved_start(
-            &ports.home,
-            &cwd,
-            &request.name,
-            request.scope.as_deref(),
-            request.args.as_ref(),
-        ) {
-            Ok(resolved) => resolved,
-            Err(refusal) => return Ok(StartSavedOutcome::Refused(refusal)),
+        // (1) Resolve and validate the arguments, as CreateWorkflow's saved source does. The store reads the disk, so
+        // this runs off the async executor (as CreateWorkflow's resolution does).
+        let (home, name, scope, args) = (
+            ports.home.clone(),
+            request.name.clone(),
+            request.scope.clone(),
+            request.args.clone(),
+        );
+        let resolve_cwd = cwd.clone();
+        let resolved = match tokio::task::spawn_blocking(move || {
+            resolve_saved_start(&home, &resolve_cwd, &name, scope.as_deref(), args.as_ref())
+        })
+        .await
+        {
+            Ok(Ok(resolved)) => resolved,
+            Ok(Err(refusal)) => return Ok(StartSavedOutcome::Refused(refusal)),
+            Err(error) => {
+                return Err(DynamicWorkflowRunError::new(format!(
+                    "the saved workflow could not be read: {error}"
+                )));
+            }
         };
 
         // (2) Compile. A script with any diagnostic is refused before anything starts (Node's compile_failed).
@@ -72,15 +84,27 @@ impl WorkflowRunService {
 
         // No side effects up to here. The parent is activated before the run is submitted (Node activates after the
         // session is persisted and before the draft and the submit).
-        let parent_id = SessionId::new(parent);
-        sink.activate(&parent_id);
+        if !sink.activate() {
+            tracing::warn!(
+                event = "workflow.run.start.activation_missed",
+                "the parent has no gate record to activate the workflow tools in"
+            );
+        }
 
-        // (3) The draft copy and the launch anchor. The anchor is shared by the run's `run-launched` and the launch turn.
+        // (3) The draft copy and the launch anchor. The anchor is the run's `run-launched.inputId`.
         let draft = write_start_draft(&cwd, &resolved).await;
+        if draft.is_none() {
+            tracing::warn!(
+                event = "workflow.run.start.draft_not_written",
+                workflow = %resolved.name,
+                "the saved workflow's draft copy could not be written, so the run starts without a script path"
+            );
+        }
         let tool_call_id = format!("launch-{}", uuid_v4());
         let launch_input_id = uuid_v7(self.start_clock_ms());
 
-        // (4) Submit. A failure is a start failure with the submit's message; nothing was recorded for the run.
+        // (4) Submit. A capability or wiring failure is the caller's to map; any other failure is a start failure with the
+        // submit's message, and nothing was recorded for the run.
         let args = (!resolved.args.is_empty()).then(|| resolved.args.clone());
         let submitted = self
             .submit_run_with_launch(
@@ -90,7 +114,7 @@ impl WorkflowRunService {
                     cwd: request.cwd.clone(),
                     name: Some(resolved.name.clone()),
                     args,
-                    parent_session_id: Some(parent_id.clone()),
+                    parent_session_id: Some(SessionId::new(parent)),
                     tool_call_id: Some(tool_call_id.clone()),
                     max_concurrency: None,
                     script_path: draft.map(|path| path.display().to_string()),
@@ -100,6 +124,7 @@ impl WorkflowRunService {
             .await;
         let run_id = match submitted {
             Ok(run_id) => run_id,
+            Err(error) if error.is_unsupported() => return Err(error),
             Err(error) => {
                 return Ok(StartSavedOutcome::Refused(StartRefusal::StartFailed {
                     message: error.message,
@@ -109,15 +134,12 @@ impl WorkflowRunService {
 
         // (5) The launch turn: the parent's control-only record of the start (Node `emitControlOnlyUserTurn`).
         let text = launch_text(&resolved, run_id.as_str());
-        sink.launch_turn(
-            &parent_id,
-            LaunchTurn {
-                text,
-                run_id: run_id.clone(),
-                tool_call_id: tool_call_id.clone(),
-                name: resolved.name.clone(),
-            },
-        );
+        sink.launch_turn(LaunchTurn {
+            text,
+            run_id: run_id.clone(),
+            tool_call_id: tool_call_id.clone(),
+            name: resolved.name.clone(),
+        });
         Ok(StartSavedOutcome::Started {
             run_id,
             tool_call_id,
@@ -140,7 +162,8 @@ impl WorkflowRunService {
 pub(crate) fn launch_text(resolved: &ResolvedStart, run_id: &str) -> String {
     let mut lines = vec![format!(
         "Started the saved workflow \"{}\" ({}) from the workflows hub as run {run_id}.",
-        resolved.name, resolved.scope
+        resolved.name,
+        resolved.scope.as_str()
     )];
     push_arguments(&mut lines, &resolved.args);
     lines.push(String::new());

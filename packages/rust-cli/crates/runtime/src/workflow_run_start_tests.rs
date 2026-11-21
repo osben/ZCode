@@ -7,7 +7,6 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use async_trait::async_trait;
-use rust_cli_kernel_api::ids::SessionId;
 use rust_cli_kernel_api::permission::PermissionMode;
 use rust_cli_kernel_api::testing::FakeChildRunner;
 use rust_cli_kernel_api::workflow_analysis::{
@@ -19,6 +18,8 @@ use rust_cli_kernel_api::workflow_child::{
 use rust_cli_kernel_api::workflow_run::{
     LaunchTurn, SettingsTurn, StartRefusal, StartSavedOutcome, StartSavedRequest, WorkflowTurnSink,
 };
+use rust_cli_node_store::dwf;
+use rust_cli_tools::workflow_start::Scope;
 use rust_cli_workflow::residency::SessionResidency;
 use rust_cli_workflow::run_concurrency::{ConcurrencyListener, RunConcurrency};
 use rust_cli_workflow::run_store::SqliteRunStore;
@@ -109,13 +110,14 @@ struct Recorder {
 }
 
 impl WorkflowTurnSink for Recorder {
-    fn activate(&self, _parent: &SessionId) {
+    fn activate(&self) -> bool {
         *self.activated.lock().expect("the recorder") += 1;
+        true
     }
 
-    fn settings_turn(&self, _parent: &SessionId, _turn: SettingsTurn) {}
+    fn settings_turn(&self, _turn: SettingsTurn) {}
 
-    fn launch_turn(&self, _parent: &SessionId, turn: LaunchTurn) {
+    fn launch_turn(&self, turn: LaunchTurn) {
         self.launches.lock().expect("the recorder").push(turn);
     }
 }
@@ -137,6 +139,7 @@ fn add_session(conn: &rusqlite::Connection, id: &str) {
 
 struct Fixture {
     _dir: tempfile::TempDir,
+    path: PathBuf,
     home: PathBuf,
     cwd: PathBuf,
     service: WorkflowRunService,
@@ -154,7 +157,7 @@ fn fixture(analyzer: Option<Arc<dyn WorkflowAnalyzer>>) -> Fixture {
     let runner: Arc<dyn WorkflowChildRunner> = Arc::new(WithCompiled { fake: fake.clone() });
     let factory = production_owner_factory(
         OwnerStores {
-            database: path,
+            database: path.clone(),
             directory: "project".to_owned(),
             version: "test".to_owned(),
             clock: || 1,
@@ -178,6 +181,7 @@ fn fixture(analyzer: Option<Arc<dyn WorkflowAnalyzer>>) -> Fixture {
     }
     Fixture {
         _dir: dir,
+        path,
         home,
         cwd,
         service,
@@ -311,7 +315,7 @@ fn the_launch_text_carries_the_arguments_as_a_json_block_when_there_are_some() {
     args.insert("topic".to_owned(), json!("rust"));
     let resolved = rust_cli_tools::workflow_start::ResolvedStart {
         name: "digest".to_owned(),
-        scope: "project",
+        scope: Scope::Project,
         script: "return 1".to_owned(),
         source: String::new(),
         args,
@@ -339,4 +343,28 @@ fn a_long_compile_message_is_cut_at_the_limit_with_an_ellipsis() {
     let text = bounded_diagnostics("heading", &diagnostics);
     assert_eq!(text.chars().count(), 2_000);
     assert!(text.ends_with('…'));
+}
+
+#[tokio::test]
+async fn a_clean_start_puts_its_v7_anchor_and_its_draft_on_the_run_row() {
+    let fx = fixture(Some(clean()));
+    save_global(&fx, "digest", SAVED);
+    let answer = fx
+        .service
+        .start_saved(PARENT, request(&fx.cwd, "digest"), &Recorder::default())
+        .await
+        .expect("the start answers");
+    let StartSavedOutcome::Started { run_id, .. } = answer else {
+        panic!("a clean script starts: {answer:?}");
+    };
+    let conn = open(&fx.path);
+    let payload = dwf::run_launched_payload(&conn, run_id.as_str())
+        .expect("the journal reads")
+        .expect("the run has its launched event");
+    let input_id = payload["inputId"].as_str().expect("the launch anchor");
+    assert_eq!(input_id.as_bytes()[14], b'7', "a v7 anchor: {input_id}");
+    let script_path = payload["scriptPath"]
+        .as_str()
+        .expect("the draft copy is recorded");
+    assert!(script_path.contains("digest"), "{script_path}");
 }

@@ -3,7 +3,7 @@
 
 use std::sync::Arc;
 
-use rust_cli_kernel_api::message::{ContentBlock, Message, UserOrigin};
+use rust_cli_kernel_api::message::{ContentBlock, Message, UserMessage, UserOrigin};
 use rust_cli_kernel_api::model::{ApiContent, ApiRole};
 use rust_cli_kernel_api::session_api::{Ack, Command, KernelEvent, SessionHandle};
 use rust_cli_kernel_api::store::Fact;
@@ -367,6 +367,9 @@ async fn an_idle_workflow_record_is_a_meta_message_with_its_source_and_the_next_
         })
         .collect();
     assert_eq!(added.len(), 1, "one meta message, no turn of its own");
+    // Not a turn of its own: the batch carries the turn of the input before it (as the local record batch does).
+    let turns = built.store.batch_turns(&crate::test_support::meta().id);
+    assert_eq!(turns.last(), turns.get(turns.len() - 2), "{turns:?}");
     match &added[0] {
         Message::User(user) => assert_eq!(
             user.origin,
@@ -384,4 +387,70 @@ async fn an_idle_workflow_record_is_a_meta_message_with_its_source_and_the_next_
         texts.iter().any(|text| text.contains("dwfrun-1")),
         "the model reads the record: {texts:#?}"
     );
+}
+
+/// Fork (W9a, 9.53): a workflow record that arrives during a turn is held in arrival order with the local records: here the
+/// workflow record first, then a local one, so the workflow message commits first once the turn ends.
+#[tokio::test]
+async fn a_workflow_record_held_during_a_turn_keeps_its_arrival_order_with_local_records() {
+    let gate = Arc::new(tokio::sync::Notify::new());
+    let model = Arc::new(crate::test_support::GatedModel::new(gate.clone()));
+    let built = Setup::new(model).build().await;
+    let mut events = built.session.subscribe(Some(0));
+    built.session.send(submit("c1", "hello")).await;
+    until(&mut events, |event| {
+        matches!(event, KernelEvent::TurnStarted { .. })
+    })
+    .await;
+    built
+        .session
+        .send(envelope(
+            "c2",
+            Command::RecordWorkflowTurn {
+                text: "workflow first".to_owned(),
+                source: "workflow_launch".to_owned(),
+            },
+        ))
+        .await;
+    built
+        .session
+        .send(envelope(
+            "c3",
+            Command::RecordLocalCommand {
+                record: record("model", "x", "Set model to `x`", false),
+            },
+        ))
+        .await;
+    gate.notify_one();
+    until(&mut events, finished).await;
+    let view = built.session.view().await.unwrap();
+    let workflow = view
+        .messages
+        .iter()
+        .position(|message| matches!(message, Message::User(user) if user.origin == UserOrigin::Meta { source: "workflow_launch".to_owned() }))
+        .expect("the workflow record after the turn");
+    let local = view
+        .messages
+        .iter()
+        .position(|message| matches!(message, Message::User(user) if user.origin == UserOrigin::Meta { source: LOCAL_COMMAND_INPUT_SOURCE.to_owned() }))
+        .expect("the local record after the turn");
+    assert!(workflow < local, "{:?}", sources(&view.messages));
+}
+
+/// Fork (W9a, 9.53): the workflow control records are records, not human input, so the first real input still sets the title.
+#[test]
+fn workflow_control_records_are_records_and_not_human_input() {
+    let meta = |source: &str| UserMessage {
+        stall_execution: None,
+        epilogue_start: None,
+        intent: None,
+        id: rust_cli_kernel_api::ids::MessageId::new("m"),
+        content: Vec::new(),
+        origin: UserOrigin::Meta {
+            source: source.to_owned(),
+        },
+    };
+    assert!(crate::local_record::is_record(&meta("workflow_launch")));
+    assert!(crate::local_record::is_record(&meta("workflow_settings")));
+    assert!(!crate::local_record::is_record(&meta("some_other_meta")));
 }

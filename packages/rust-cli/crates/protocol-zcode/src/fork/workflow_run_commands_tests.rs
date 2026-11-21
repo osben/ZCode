@@ -8,22 +8,26 @@ use async_trait::async_trait;
 use rust_cli_kernel_api::dynamic_workflow::DynamicWorkflowGate;
 use rust_cli_kernel_api::ids::{SessionId, WorkflowRunId};
 use rust_cli_kernel_api::workflow_run::{
-    DynamicWorkflowRunError, DynamicWorkflowRunPort, DynamicWorkflowRunSessions, SettingsOutcome,
-    SettingsRefusal, SettingsRequest, StartRefusal, StartSavedOutcome, StartSavedRequest,
-    WorkflowTurnSink,
+    DynamicWorkflowRunError, DynamicWorkflowRunPort, DynamicWorkflowRunSessions, LaunchTurn,
+    SettingsAmend, SettingsOutcome, SettingsRefusal, SettingsRequest, SettingsTurn, StartRefusal,
+    StartSavedOutcome, StartSavedRequest, WorkflowTurnSink,
 };
 use serde_json::{Value, json};
 
 use super::{settings_refusal_code, settings_request, start_refusal_code};
 use crate::fork::legacy_session::tests::server;
 
-/// What the fake run service was asked, and the answers it gives.
+/// What the fake run service was asked, the answers it gives, and whether it drives the parent's sink as the run service does.
 #[derive(Default)]
 struct Fake {
     starts: Mutex<Vec<StartSavedRequest>>,
     start_answer: Mutex<Option<StartSavedOutcome>>,
+    start_error: Mutex<Option<DynamicWorkflowRunError>>,
     amends: Mutex<Vec<SettingsRequest>>,
     amend_answer: Mutex<Option<SettingsOutcome>>,
+    amend_error: Mutex<Option<DynamicWorkflowRunError>>,
+    /// A successful start activates the parent and records its launch turn through the sink.
+    drive_sink: bool,
 }
 
 struct Port(Arc<Fake>);
@@ -33,10 +37,13 @@ impl DynamicWorkflowRunPort for Port {
     async fn start_saved(
         &self,
         request: StartSavedRequest,
-        _sink: Arc<dyn WorkflowTurnSink>,
+        sink: Arc<dyn WorkflowTurnSink>,
     ) -> Result<StartSavedOutcome, DynamicWorkflowRunError> {
         self.0.starts.lock().expect("fake").push(request);
-        Ok(self
+        if let Some(error) = self.0.start_error.lock().expect("fake").clone() {
+            return Err(error);
+        }
+        let answer = self
             .0
             .start_answer
             .lock()
@@ -46,22 +53,60 @@ impl DynamicWorkflowRunPort for Port {
                 StartSavedOutcome::Refused(StartRefusal::NotFound {
                     message: "unset".to_owned(),
                 })
-            }))
+            });
+        if self.0.drive_sink
+            && let StartSavedOutcome::Started {
+                run_id,
+                tool_call_id,
+            } = &answer
+        {
+            sink.activate();
+            sink.launch_turn(LaunchTurn {
+                text: "launch text".to_owned(),
+                run_id: run_id.clone(),
+                tool_call_id: tool_call_id.clone(),
+                name: "digest".to_owned(),
+            });
+        }
+        Ok(answer)
     }
 
     async fn amend_settings(
         &self,
         request: SettingsRequest,
-        _sink: Arc<dyn WorkflowTurnSink>,
+        sink: Arc<dyn WorkflowTurnSink>,
     ) -> Result<SettingsOutcome, DynamicWorkflowRunError> {
         self.0.amends.lock().expect("fake").push(request);
-        Ok(self
+        if let Some(error) = self.0.amend_error.lock().expect("fake").clone() {
+            return Err(error);
+        }
+        let answer = self
             .0
             .amend_answer
             .lock()
             .expect("fake")
             .clone()
-            .unwrap_or(SettingsOutcome::Refused(SettingsRefusal::NotConfigurable)))
+            .unwrap_or(SettingsOutcome::Refused(SettingsRefusal::NotConfigurable));
+        if self.0.drive_sink
+            && let SettingsOutcome::Retuned {
+                run_id,
+                tool_call_id,
+            } = &answer
+        {
+            sink.settings_turn(SettingsTurn {
+                text: "settings text".to_owned(),
+                run_id: run_id.clone(),
+                tool_call_id: tool_call_id.clone(),
+                name: None,
+                title_input: run_id.as_str().to_owned(),
+                amend: SettingsAmend {
+                    predecessor_run_id: None,
+                    max_concurrency: None,
+                    default_concurrency: 6.0,
+                },
+            });
+        }
+        Ok(answer)
     }
 }
 
@@ -108,10 +153,15 @@ async fn session(
 }
 
 async fn send(server: &crate::server::Server, kind: &str, payload: Value) -> Value {
+    send_as(server, &format!("cmd-{kind}"), kind, payload).await
+}
+
+/// One command with its own id: a repeated id is answered as a duplicate, not run again.
+async fn send_as(server: &crate::server::Server, id: &str, kind: &str, payload: Value) -> Value {
     crate::commands::command(
         server,
         json!({
-            "commandId": format!("cmd-{kind}"), "clientId": "k", "sessionId": "s1", "type": kind,
+            "commandId": id, "clientId": "k", "sessionId": "s1", "type": kind,
             "payload": payload, "issuedAt": 2, "baseRevision": 0, "baseLogEpoch": "e",
         }),
     )
@@ -154,6 +204,31 @@ async fn a_start_with_no_run_service_installed_answers_as_a_missing_capability()
 }
 
 #[tokio::test]
+async fn a_run_service_that_reports_the_capability_absent_answers_as_a_missing_capability() {
+    let fake = Arc::new(Fake::default());
+    *fake.start_error.lock().expect("fake") =
+        Some(DynamicWorkflowRunError::unsupported("startSavedWorkflow"));
+    let (_scope, server) = session(Some(true), Some(fake)).await;
+    let ack = send(&server, "startSavedWorkflow", json!({"name": "digest"})).await;
+    assert_eq!(ack["reasonCode"], unsupported(), "{ack}");
+}
+
+#[tokio::test]
+async fn a_run_service_fault_is_a_start_failure_with_its_message() {
+    let fake = Arc::new(Fake::default());
+    *fake.start_error.lock().expect("fake") =
+        Some(DynamicWorkflowRunError::new("the journal is closed"));
+    let (_scope, server) = session(Some(true), Some(fake)).await;
+    let ack = send(&server, "startSavedWorkflow", json!({"name": "digest"})).await;
+    assert_eq!(ack["status"], json!("failed"), "{ack}");
+    assert_eq!(
+        ack["reasonCode"],
+        json!("fault.command.savedWorkflowStartRejected.start_failed")
+    );
+    assert_eq!(ack["message"], json!("the journal is closed"));
+}
+
+#[tokio::test]
 async fn an_accepted_start_answers_with_the_run_and_its_tool_call_and_names_the_session_cwd() {
     let fake = Arc::new(Fake::default());
     *fake.start_answer.lock().expect("fake") = Some(StartSavedOutcome::Started {
@@ -184,6 +259,26 @@ async fn an_accepted_start_answers_with_the_run_and_its_tool_call_and_names_the_
 }
 
 #[tokio::test]
+async fn an_accepted_start_activates_the_parent_through_the_sink() {
+    let fake = Arc::new(Fake {
+        drive_sink: true,
+        ..Fake::default()
+    });
+    *fake.start_answer.lock().expect("fake") = Some(StartSavedOutcome::Started {
+        run_id: WorkflowRunId::new("dwfrun-1"),
+        tool_call_id: "launch-1".to_owned(),
+    });
+    let (_scope, server) = session(Some(true), Some(fake)).await;
+    assert!(!server.dynamic_workflow_activated(&SessionId::new("s1")));
+    let ack = send(&server, "startSavedWorkflow", json!({"name": "digest"})).await;
+    assert_eq!(ack["status"], json!("accepted"), "{ack}");
+    assert!(
+        server.dynamic_workflow_activated(&SessionId::new("s1")),
+        "the sink activated the parent's workflow tools"
+    );
+}
+
+#[tokio::test]
 async fn a_refused_start_is_a_failed_ack_with_nodes_reason_code_and_message() {
     let fake = Arc::new(Fake::default());
     *fake.start_answer.lock().expect("fake") =
@@ -204,12 +299,31 @@ async fn a_refused_start_is_a_failed_ack_with_nodes_reason_code_and_message() {
 }
 
 #[tokio::test]
-async fn a_start_with_an_empty_name_is_an_invalid_payload() {
+async fn a_start_payload_that_is_not_strict_is_an_invalid_payload_and_the_run_service_is_not_asked()
+{
     let fake = Arc::new(Fake::default());
     let (_scope, server) = session(Some(true), Some(fake.clone())).await;
-    let ack = send(&server, "startSavedWorkflow", json!({"name": ""})).await;
-    assert_eq!(ack["status"], json!("rejected"), "{ack}");
-    assert_eq!(ack["reasonCode"], json!("proto.invalidPayload"));
+    for (index, bad) in [
+        json!({"name": ""}),
+        json!({"name": "digest", "extra": 1}),
+        json!({"name": "digest", "scope": "Project"}),
+        json!({"name": "digest", "scope": null}),
+        json!({"name": "digest", "args": null}),
+        json!({"name": "digest", "args": ["x"]}),
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        let ack = send_as(
+            &server,
+            &format!("bad-{index}"),
+            "startSavedWorkflow",
+            bad.clone(),
+        )
+        .await;
+        assert_eq!(ack["status"], json!("rejected"), "{bad} -> {ack}");
+        assert_eq!(ack["reasonCode"], json!("proto.invalidPayload"), "{bad}");
+    }
     assert!(fake.starts.lock().expect("fake").is_empty());
 }
 
@@ -225,6 +339,27 @@ async fn a_settings_change_with_the_gate_closed_answers_as_a_missing_capability(
     .await;
     assert_eq!(ack["reasonCode"], unsupported(), "{ack}");
     assert!(fake.amends.lock().expect("fake").is_empty());
+}
+
+#[tokio::test]
+async fn an_in_place_retune_answers_without_a_successor_field() {
+    let fake = Arc::new(Fake::default());
+    *fake.amend_answer.lock().expect("fake") = Some(SettingsOutcome::Retuned {
+        run_id: WorkflowRunId::new("dwfrun-1"),
+        tool_call_id: "settings-1".to_owned(),
+    });
+    let (_scope, server) = session(Some(true), Some(fake)).await;
+    let ack = send(
+        &server,
+        "amendWorkflowRunSettings",
+        json!({"workId": "dwfrun-1", "maxConcurrency": 3}),
+    )
+    .await;
+    assert_eq!(ack["status"], json!("accepted"), "{ack}");
+    assert_eq!(
+        ack["result"],
+        json!({"type": "amendWorkflowRunSettings", "runId": "dwfrun-1", "toolCallId": "settings-1"})
+    );
 }
 
 #[tokio::test]
@@ -275,6 +410,42 @@ async fn a_refused_settings_change_is_a_failed_ack_with_its_reason_code() {
     );
 }
 
+#[tokio::test]
+async fn a_settings_change_with_a_misspelt_key_is_an_invalid_payload() {
+    let fake = Arc::new(Fake::default());
+    let (_scope, server) = session(Some(true), Some(fake.clone())).await;
+    let ack = send(
+        &server,
+        "amendWorkflowRunSettings",
+        json!({"workId": "dwfrun-1", "maxConcurrenccy": 3}),
+    )
+    .await;
+    assert_eq!(ack["status"], json!("rejected"), "{ack}");
+    assert_eq!(ack["reasonCode"], json!("proto.invalidPayload"));
+    assert!(fake.amends.lock().expect("fake").is_empty());
+}
+
+#[tokio::test]
+async fn a_settings_run_service_fault_is_a_start_failed_refusal_with_its_message() {
+    let fake = Arc::new(Fake::default());
+    *fake.amend_error.lock().expect("fake") = Some(DynamicWorkflowRunError::new(
+        "the successor could not start",
+    ));
+    let (_scope, server) = session(Some(true), Some(fake)).await;
+    let ack = send(
+        &server,
+        "amendWorkflowRunSettings",
+        json!({"workId": "dwfrun-1", "maxConcurrency": 3}),
+    )
+    .await;
+    assert_eq!(
+        ack["reasonCode"],
+        json!("fault.command.workflowRunSettingsRejected.start_failed"),
+        "{ack}"
+    );
+    assert_eq!(ack["message"], json!("the successor could not start"));
+}
+
 #[test]
 fn the_settings_payload_keeps_absent_null_and_value_apart() {
     let absent = settings_request(&json!({"workId": "dwfrun-1"})).expect("a valid payload");
@@ -305,6 +476,7 @@ fn a_settings_payload_of_the_wrong_shape_is_refused() {
         json!({"workId": "dwfrun-1", "maxConcurrency": 2.5}),
         json!({"workId": "dwfrun-1", "maxConcurrency": "2"}),
         json!({"workId": "dwfrun-1", "subagentModel": ""}),
+        json!({"workId": "dwfrun-1", "other": 1}),
     ] {
         assert!(settings_request(&bad).is_none(), "{bad}");
     }

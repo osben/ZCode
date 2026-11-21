@@ -464,7 +464,7 @@ pub struct SettingsChange {
 #[derive(Debug, Clone, PartialEq)]
 pub struct SettingsAmend {
     /// Absent for an in-place change: its absence means "applied in place" (Node).
-    pub predecessor_run_id: Option<String>,
+    pub predecessor_run_id: Option<WorkflowRunId>,
     pub max_concurrency: Option<SettingsChange>,
     /// Node's `ceiling`: the default concurrency at the change.
     pub default_concurrency: f64,
@@ -492,15 +492,24 @@ pub struct LaunchTurn {
     pub name: String,
 }
 
+/// The origin a hub start's launch record carries on the parent (Node's `workflowLaunch` origin).
+pub const WORKFLOW_LAUNCH_SOURCE: &str = "workflow_launch";
+/// The origin a GUI settings change's record carries on the parent (Node's settings turn).
+pub const WORKFLOW_SETTINGS_SOURCE: &str = "workflow_settings";
+
 /// The parent's side of a run's turns (Node `activateDynamicWorkflowTools`, `enqueueSettingsTurn` and the launch turn).
-/// The production sink is the protocol's; a port without one cannot start or configure a run.
+/// The sink belongs to one parent session: the port that receives it is that session's, so no method names the session.
+///
+/// The records are best effort and are not acknowledged to the caller: a record that the session cannot store is logged
+/// by the sink, and the start or the change still answers as it did (divergence 773 in the W9a spec section).
 pub trait WorkflowTurnSink: Send + Sync {
-    /// A successful start or configuration activates the workflow tools (Node, `source: "run_control"`).
-    fn activate(&self, parent: &SessionId);
+    /// A successful start or configuration activates the workflow tools (Node, `source: "run_control"`). `false` when the
+    /// session has no gate record to activate in.
+    fn activate(&self) -> bool;
     /// Queues the settings turn to the parent as a control-only turn, after the work in flight.
-    fn settings_turn(&self, parent: &SessionId, turn: SettingsTurn);
+    fn settings_turn(&self, turn: SettingsTurn);
     /// Records the launch turn of a hub start as a control-only turn, after the work in flight.
-    fn launch_turn(&self, parent: &SessionId, turn: LaunchTurn);
+    fn launch_turn(&self, turn: LaunchTurn);
 }
 
 /// Node's answer of a settings change. A refusal changes nothing, with one exception: `Refused(StartFailed)` can follow an
@@ -521,8 +530,11 @@ pub enum SettingsOutcome {
     Refused(SettingsRefusal),
 }
 
-/// Why a settings change is refused, in Node's vocabulary (`not_found`, `not_configurable`, `unchanged`, `script_missing`,
-/// `model_unavailable`, `missing_boundaries`, `start_failed`).
+/// Why a settings change is refused, in Node's vocabulary minus `compile_failed` (divergence 674). Node's shared schema
+/// also lists `compile_failed`: it answers a stored script that no longer compiles at the step-8 pre-compile. This host
+/// has no such pre-compile; a script that fails inside the amend's probe is `start_failed` (divergence 675).
+/// Serialized reasons: `not_found`, `not_configurable`, `unchanged`, `script_missing`, `model_unavailable`,
+/// `missing_boundaries`, `start_failed`.
 #[derive(Debug, Clone, PartialEq)]
 pub enum SettingsRefusal {
     NotFound,

@@ -132,9 +132,9 @@ impl WorkflowRunService {
         self.submit_run_with_launch(parent, request, None).await
     }
 
-    /// Fork (W9a, 9.53): `submit_run` with the launch anchor the caller minted. A hub start mints its UUID v7 once and
-    /// uses it for both the launch turn and the run's `run-launched.inputId` (Node `launchInputId`); without one the submit
-    /// mints a UUID (divergence 371).
+    /// Fork (W9a, 9.53): `submit_run` with the launch anchor the caller minted. A hub start mints its UUID v7 and records it
+    /// as the run's `run-launched.inputId`. This host does not share it with the launch turn, which carries only its text
+    /// (Node shares one id; divergence 774). Without an anchor the submit mints a UUID (divergence 371).
     pub(crate) async fn submit_run_with_launch(
         &self,
         parent: &str,

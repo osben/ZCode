@@ -855,15 +855,16 @@ struct Recorder {
 }
 
 impl WorkflowTurnSink for Recorder {
-    fn activate(&self, _parent: &SessionId) {
+    fn activate(&self) -> bool {
         *self.activations.lock().unwrap() += 1;
+        true
     }
 
-    fn settings_turn(&self, _parent: &SessionId, turn: SettingsTurn) {
+    fn settings_turn(&self, turn: SettingsTurn) {
         self.turns.lock().unwrap().push(turn);
     }
 
-    fn launch_turn(&self, _parent: &SessionId, _turn: LaunchTurn) {}
+    fn launch_turn(&self, _turn: LaunchTurn) {}
 }
 
 /// A stopped run with its stored arguments, as an earlier process interrupted it.
@@ -1027,7 +1028,11 @@ async fn a_change_to_a_settled_run_amends_it_and_the_successor_inherits_the_argu
     let turns = sink.turns.lock().unwrap();
     assert_eq!(turns[0].run_id, run_id);
     assert_eq!(
-        turns[0].amend.predecessor_run_id.as_deref(),
+        turns[0]
+            .amend
+            .predecessor_run_id
+            .as_ref()
+            .map(WorkflowRunId::as_str),
         Some("dwfrun-settled-cfg")
     );
     assert_eq!(
@@ -1180,7 +1185,7 @@ async fn the_port_retune_answers_not_live_for_a_settled_or_unknown_run() {
 #[test]
 fn the_settings_text_names_the_successor_or_the_in_place_run_as_node_does() {
     let amendment = SettingsAmend {
-        predecessor_run_id: Some("run_a".to_owned()),
+        predecessor_run_id: Some(WorkflowRunId::new("run_a")),
         max_concurrency: Some(SettingsChange {
             from: Some(4.0),
             to: Some(2.0),

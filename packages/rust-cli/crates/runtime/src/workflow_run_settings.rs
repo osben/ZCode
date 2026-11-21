@@ -180,18 +180,20 @@ impl WorkflowRunService {
                     default_concurrency,
                 };
                 let text = settings_message_text(name.as_deref(), &run_id, &run_id, false, &amend);
-                sink.activate(&parent_id);
-                sink.settings_turn(
-                    &parent_id,
-                    SettingsTurn {
-                        text,
-                        run_id: request.run_id.clone(),
-                        tool_call_id: tool_call_id.clone(),
-                        title_input: name.clone().unwrap_or_else(|| run_id.clone()),
-                        name,
-                        amend,
-                    },
-                );
+                if !sink.activate() {
+                    tracing::warn!(
+                        event = "workflow.run.settings.activation_missed",
+                        "the parent has no gate record to activate the workflow tools in"
+                    );
+                }
+                sink.settings_turn(SettingsTurn {
+                    text,
+                    run_id: request.run_id.clone(),
+                    tool_call_id: tool_call_id.clone(),
+                    title_input: name.clone().unwrap_or_else(|| run_id.clone()),
+                    name,
+                    amend,
+                });
                 return Ok(SettingsOutcome::Retuned {
                     run_id: request.run_id,
                     tool_call_id,
@@ -260,7 +262,7 @@ impl WorkflowRunService {
             }) => {
                 let name = display_name(row.name.as_deref());
                 let amend = SettingsAmend {
-                    predecessor_run_id: Some(run_id.clone()),
+                    predecessor_run_id: Some(request.run_id.clone()),
                     max_concurrency: Some(SettingsChange {
                         from: side_of(current, default),
                         to: side_of(next, default),
@@ -274,18 +276,20 @@ impl WorkflowRunService {
                     superseded_run_id.is_some(),
                     &amend,
                 );
-                sink.activate(&parent_id);
-                sink.settings_turn(
-                    &parent_id,
-                    SettingsTurn {
-                        text,
-                        run_id: successor.clone(),
-                        tool_call_id: tool_call_id.clone(),
-                        title_input: name.clone().unwrap_or_else(|| run_id.clone()),
-                        name,
-                        amend,
-                    },
-                );
+                if !sink.activate() {
+                    tracing::warn!(
+                        event = "workflow.run.settings.activation_missed",
+                        "the parent has no gate record to activate the workflow tools in"
+                    );
+                }
+                sink.settings_turn(SettingsTurn {
+                    text,
+                    run_id: successor.clone(),
+                    tool_call_id: tool_call_id.clone(),
+                    title_input: name.clone().unwrap_or_else(|| run_id.clone()),
+                    name,
+                    amend,
+                });
                 Ok(SettingsOutcome::Amended {
                     run_id: successor,
                     tool_call_id,

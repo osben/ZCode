@@ -5,15 +5,18 @@
 //! `fault.command.capabilityUnsupported`, as Node answers a missing capability. Business refusals are `failed` acks with
 //! Node's reason code and message, and the run service decides them (9.50, 9.53). The parent's side is [`ParentTurns`]: it
 //! activates the workflow tools and records the launch and settings turns as control-only records through the session's
-//! command path (`Command::RecordWorkflowTurn`).
+//! command path (`Command::RecordWorkflowTurn`). The records are delivered before the ack goes out, so a user input sent
+//! after the ack queues behind them.
 
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
+use rust_cli_base::sync::LockUnpoisoned;
 use rust_cli_kernel_api::ids::{SessionId, WorkflowRunId};
-use rust_cli_kernel_api::session_api::Command;
+use rust_cli_kernel_api::session_api::{Ack as KernelAck, Command, SessionHandle};
 use rust_cli_kernel_api::workflow_run::{
     LaunchTurn, SettingsOutcome, SettingsRefusal, SettingsRequest, SettingsTurn, StartRefusal,
-    StartSavedOutcome, StartSavedRequest, WorkflowTurnSink,
+    StartSavedOutcome, StartSavedRequest, WORKFLOW_LAUNCH_SOURCE, WORKFLOW_SETTINGS_SOURCE,
+    WorkflowTurnSink,
 };
 use rust_cli_protocol_core::sessions::Bridged;
 use serde::Deserialize;
@@ -22,7 +25,6 @@ use serde_json::{Map, Value, json};
 use crate::commands::send;
 use crate::inbox::{Ack, Envelope, Status};
 use crate::live::Live;
-use crate::projection::state::Phase;
 use crate::server::Server;
 
 /// Node `CAPABILITY_UNSUPPORTED` (`V4CapabilityUnsupportedError`).
@@ -32,48 +34,78 @@ const START_REJECTED: &str = "fault.command.savedWorkflowStartRejected.";
 /// Node `WORKFLOW_RUN_SETTINGS_REJECTED_FAULT_PREFIX`.
 const SETTINGS_REJECTED: &str = "fault.command.workflowRunSettingsRejected.";
 
-/// The parent's side of a run's turns: activation, and the control-only records (9.53). It holds the session's handle, so
-/// each record is a command to the session the run belongs to.
+/// The parent's side of a run's turns for one session: its activation, and the control-only records the run asked for. The
+/// records wait in arrival order until [`ParentTurns::deliver`] sends them, once the run's answer is known.
 pub(crate) struct ParentTurns {
-    handle: Arc<dyn rust_cli_kernel_api::session_api::SessionHandle>,
-    live: Arc<Bridged<Live>>,
     gates: Arc<rust_cli_kernel_api::dynamic_workflow::SessionGates>,
+    session: SessionId,
+    /// (source, text) in the order the run asked for them.
+    records: Mutex<Vec<(&'static str, String)>>,
 }
 
 impl ParentTurns {
-    fn record(&self, text: String, source: &str) {
-        let handle = self.handle.clone();
-        let source = source.to_owned();
-        let id = format!("workflow-turn-{}", rust_cli_platform::ids::uuid_v4());
-        self.live.run(Box::pin(async move {
-            let _ = send(
-                handle.as_ref(),
+    fn new(server: &Server, session: SessionId) -> Self {
+        Self {
+            gates: server.context.dynamic_workflow_gates().clone(),
+            session,
+            records: Mutex::new(Vec::new()),
+        }
+    }
+
+    /// Sends the records to the session in order, each as a `RecordWorkflowTurn` command, and waits for each answer. A
+    /// record the session does not accept is logged (the start or the change has already happened; Node's turn is
+    /// best effort for the same reason, divergence 773).
+    pub(crate) async fn deliver(&self, handle: &dyn SessionHandle) {
+        let records = std::mem::take(&mut *self.records.lock_unpoisoned());
+        for (source, text) in records {
+            let id = format!("workflow-turn-{}", rust_cli_platform::ids::uuid_v4());
+            match send(
+                handle,
                 &id,
-                Command::RecordWorkflowTurn { text, source },
+                Command::RecordWorkflowTurn {
+                    text,
+                    source: source.to_owned(),
+                },
             )
-            .await;
-        }));
+            .await
+            {
+                KernelAck::Accepted { .. } | KernelAck::Duplicate => {}
+                KernelAck::Rejected { reason } => tracing::warn!(
+                    event = "workflow.run.turn.rejected",
+                    source,
+                    %reason,
+                    "the session did not accept a workflow control record"
+                ),
+            }
+        }
     }
 }
 
 impl WorkflowTurnSink for ParentTurns {
-    fn activate(&self, parent: &SessionId) {
-        let _ = self.gates.activate(parent);
+    fn activate(&self) -> bool {
+        self.gates.activate(&self.session)
     }
 
-    fn settings_turn(&self, _parent: &SessionId, turn: SettingsTurn) {
-        self.record(turn.text, "workflow_settings");
+    fn settings_turn(&self, turn: SettingsTurn) {
+        self.records
+            .lock_unpoisoned()
+            .push((WORKFLOW_SETTINGS_SOURCE, turn.text));
     }
 
-    fn launch_turn(&self, _parent: &SessionId, turn: LaunchTurn) {
-        self.record(turn.text, "workflow_launch");
+    fn launch_turn(&self, turn: LaunchTurn) {
+        self.records
+            .lock_unpoisoned()
+            .push((WORKFLOW_LAUNCH_SOURCE, turn.text));
     }
 }
 
-/// The reason a session cannot run a control now, as the session's own state says (Node `hasActiveOrQueuedTurnWork`).
+/// Whether a control must wait: the session runs a turn, holds a queued input, has a pending interaction, or is preparing
+/// an accepted input (the set `residency_busy` and `preparing` name, which the other session controls read as well).
+///
+/// This is read before the run service is asked, and it is not re-read at the submit: a turn that starts in between is not
+/// refused (divergence 765 names the window).
 fn busy(live: &Bridged<Live>) -> bool {
-    let (phase, _) = live.sink.status();
-    phase == Phase::Running || live.sink.has_queue()
+    live.sink.residency_busy() || live.sink.preparing()
 }
 
 /// Node's `fault.command.capabilityUnsupported` ack, for a session without the capability.
@@ -101,22 +133,33 @@ fn sessions(
     server.context.dynamic_workflow_runs().cloned()
 }
 
-fn parent_turns(live: &Arc<Bridged<Live>>, server: &Server) -> ParentTurns {
-    ParentTurns {
-        handle: live.handle.clone(),
-        live: live.clone(),
-        gates: server.context.dynamic_workflow_gates().clone(),
-    }
-}
-
-/// The `startSavedWorkflow` payload (Node `startSavedWorkflow` schema, strict on the names the command knows).
+/// Node `startSavedWorkflowRun`'s payload (zod `startSavedWorkflowPayloadSchema`, strict): `name` is a non-empty string,
+/// `scope` is `project` or `global` when present (`null` is not a scope), `args` is an object when present, and no other
+/// key is allowed.
 #[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
 struct StartPayload {
     name: String,
     #[serde(default)]
     scope: Option<String>,
     #[serde(default)]
     args: Option<Map<String, Value>>,
+}
+
+fn start_payload(value: &Value) -> Option<StartPayload> {
+    let object = value.as_object()?;
+    if object
+        .get("scope")
+        .is_some_and(|scope| !matches!(scope.as_str(), Some("project" | "global")))
+    {
+        return None;
+    }
+    if object.get("args").is_some_and(|args| !args.is_object()) {
+        return None;
+    }
+    serde_json::from_value::<StartPayload>(value.clone())
+        .ok()
+        .filter(|payload| !payload.name.is_empty())
 }
 
 /// Node's `startSavedWorkflowRejected` reason and message for a refused start.
@@ -142,19 +185,15 @@ pub(crate) async fn start_saved(
     let Some(runs) = sessions(server, &session) else {
         return unsupported(envelope, revision, "startSavedWorkflow", session.as_str());
     };
-    let payload: StartPayload =
-        match serde_json::from_value::<StartPayload>(envelope.payload.clone()) {
-            Ok(payload) if !payload.name.is_empty() => payload,
-            _ => {
-                return Ack::refused(
-                    &envelope.command_id,
-                    Status::Rejected,
-                    "proto.invalidPayload",
-                    "Invalid startSavedWorkflow payload",
-                    revision,
-                );
-            }
-        };
+    let Some(payload) = start_payload(&envelope.payload) else {
+        return Ack::refused(
+            &envelope.command_id,
+            Status::Rejected,
+            "proto.invalidPayload",
+            "Invalid startSavedWorkflow payload",
+            revision,
+        );
+    };
     if busy(live) {
         return refused_start(
             envelope,
@@ -170,8 +209,10 @@ pub(crate) async fn start_saved(
         scope: payload.scope,
         args: payload.args,
     };
-    let sink = Arc::new(parent_turns(live, server));
-    match port.start_saved(request, sink).await {
+    let parent = Arc::new(ParentTurns::new(server, session.clone()));
+    let answer = port.start_saved(request, parent.clone()).await;
+    parent.deliver(live.handle.as_ref()).await;
+    match answer {
         Ok(StartSavedOutcome::Started {
             run_id,
             tool_call_id,
@@ -205,6 +246,9 @@ fn refused_start(envelope: &Envelope, revision: u64, reason: &str, message: &str
     )
 }
 
+/// The three keys the `amendWorkflowRunSettings` payload may carry (Node's strict schema).
+const SETTINGS_KEYS: [&str; 3] = ["workId", "subagentModel", "maxConcurrency"];
+
 /// One of the two three-state settings (Node's `maxConcurrency` and `subagentModel`): absent keeps the run's, `null` is the
 /// default, a value sets it. A value of the wrong type is an invalid payload.
 fn three_state<T>(
@@ -219,9 +263,16 @@ fn three_state<T>(
     }
 }
 
-/// The `amendWorkflowRunSettings` payload: `workId` is the run id; the two settings are three-state.
+/// The `amendWorkflowRunSettings` payload: `workId` is the run id; the two settings are three-state. A key outside the three
+/// is refused, so a misspelt setting is not dropped into a no-change request.
 pub(crate) fn settings_request(payload: &Value) -> Option<SettingsRequest> {
     let object = payload.as_object()?;
+    if object
+        .keys()
+        .any(|key| !SETTINGS_KEYS.contains(&key.as_str()))
+    {
+        return None;
+    }
     let work_id = object.get("workId")?.as_str()?;
     if work_id.is_empty() {
         return None;
@@ -233,6 +284,7 @@ pub(crate) fn settings_request(payload: &Value) -> Option<SettingsRequest> {
             .map(str::to_owned)
     })
     .ok()?;
+    // Node's schema has no upper bound on the limit (the shared `maxConcurrency` is `int().min(1)`), so none is applied here.
     let max_concurrency = three_state(object, "maxConcurrency", |value| {
         value
             .as_f64()
@@ -273,6 +325,9 @@ pub(crate) fn settings_refusal_code(refusal: &SettingsRefusal) -> (&'static str,
 
 /// Node `amendWorkflowRunSettings` (`interaction-background.ts`): the GUI "Configure". Success returns `{type, runId,
 /// toolCallId, supersededRunId?}`; a refusal is a `failed` ack with the reason code and the message.
+///
+/// Unlike the start, this route has no busy refusal: Node's `amendWorkflowRunSettings` does not check
+/// `hasActiveOrQueuedTurnWork` (checked against `dynamic-workflow-run-settings.ts`), so none is made here (divergence 765).
 pub(crate) async fn amend_settings(
     server: &Server,
     live: &Arc<Bridged<Live>>,
@@ -298,8 +353,10 @@ pub(crate) async fn amend_settings(
         );
     };
     let port = runs.for_session(&session);
-    let sink = Arc::new(parent_turns(live, server));
-    match port.amend_settings(request, sink).await {
+    let parent = Arc::new(ParentTurns::new(server, session.clone()));
+    let answer = port.amend_settings(request, parent.clone()).await;
+    parent.deliver(live.handle.as_ref()).await;
+    match answer {
         Ok(SettingsOutcome::Retuned {
             run_id,
             tool_call_id,

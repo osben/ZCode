@@ -26,27 +26,29 @@ fn system_random(bytes: &mut [u8]) {
 /// Fork (W9a, 9.53): a random v7 uuid (RFC 9562: a 48-bit millisecond timestamp, then random bits), the form Node's
 /// `uuidv7()` mints for a hub launch's input id. The random part comes from the same CSPRNG as `uuid_v4`.
 pub fn uuid_v7(unix_millis: u64) -> String {
+    // The field holds 48 bits; a value outside it is a unit mistake (seconds, micro- or nanoseconds), caught in debug builds.
+    debug_assert!(
+        unix_millis < 1 << 48,
+        "a v7 uuid takes unix milliseconds, which fit in 48 bits"
+    );
     let mut bytes = [0u8; 16];
     system_random(&mut bytes);
     let millis = unix_millis.to_be_bytes();
     bytes[..6].copy_from_slice(&millis[2..]);
     bytes[6] = (bytes[6] & 0x0f) | 0x70;
     bytes[8] = (bytes[8] & 0x3f) | 0x80;
-    let hex: String = bytes.iter().map(|byte| format!("{byte:02x}")).collect();
-    format!(
-        "{}-{}-{}-{}-{}",
-        &hex[0..8],
-        &hex[8..12],
-        &hex[12..16],
-        &hex[16..20],
-        &hex[20..32]
-    )
+    canonical_text(bytes)
 }
 
 /// The v4 layout of 16 random bytes: version nibble 4, RFC 4122 variant bits, then the canonical text form.
 fn uuid_from_bytes(mut bytes: [u8; 16]) -> String {
     bytes[6] = (bytes[6] & 0x0f) | 0x40;
     bytes[8] = (bytes[8] & 0x3f) | 0x80;
+    canonical_text(bytes)
+}
+
+/// The canonical 8-4-4-4-12 lower-case hex text of 16 bytes (shared by the v4 and v7 layouts).
+fn canonical_text(bytes: [u8; 16]) -> String {
     let hex: String = bytes.iter().map(|byte| format!("{byte:02x}")).collect();
     format!(
         "{}-{}-{}-{}-{}",
