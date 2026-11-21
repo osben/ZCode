@@ -2778,3 +2778,37 @@ fn a_cold_tool_row_carries_its_stored_result_display() {
         .collect();
     assert_eq!(tools, vec![card, Value::Null]);
 }
+
+/// 9.62 (DWT-03): a user input with an epilogue boundary carries it as the row's `epilogueStart` (Node
+/// `projection-rows.ts`), so the App folds the engine text of an actor's ask; a cold row carries the stored one.
+#[test]
+fn a_user_row_carries_its_epilogue_start() {
+    let mut ask = user("msg_u1", "TASK\n\nengine text");
+    if let Message::User(input) = &mut ask {
+        input.epilogue_start = Some(4);
+    }
+    let projection = Projection::from_view(
+        &view(vec![
+            ask,
+            user("msg_u2", "plain"),
+            assistant(
+                "msg_a1",
+                vec![ContentBlock::Text {
+                    text: "done".into(),
+                }],
+            ),
+        ]),
+        Followup::Guide,
+        Vec::new(),
+    );
+    let snapshot = projection.snapshot(0, "epoch");
+    let inputs: Vec<&Value> = snapshot["rows"]["window"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|row| row["kind"] == "userInput")
+        .collect();
+    assert_eq!(inputs.len(), 2);
+    assert_eq!(inputs[0]["epilogueStart"], json!(4));
+    assert!(inputs[1].get("epilogueStart").is_none());
+}

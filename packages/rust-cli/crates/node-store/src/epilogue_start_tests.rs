@@ -93,3 +93,29 @@ async fn the_boundary_sits_beside_the_input_intent() {
         serde_json::to_value(intent()).unwrap()
     );
 }
+
+/// 9.62 (DWT-03): a stored boundary reads back on the loaded message (Node `epilogueStartOfMessage` hydrates it), so a
+/// cold transcript folds the engine text of an actor's ask like the live one; 0 reads back too.
+#[tokio::test]
+async fn a_stored_boundary_reads_back_on_the_loaded_message() {
+    for start in [Some(5), Some(0), None] {
+        let test = TestStore::new();
+        let session = SessionId::new("sess_epilogue");
+        test.store
+            .create(meta("sess_epilogue", "/w", ""))
+            .await
+            .unwrap();
+        test.store
+            .commit(
+                &session,
+                batch(Some("c1"), vec![input("msg_1", start, None)]),
+            )
+            .await
+            .unwrap();
+        let loaded = test.store.load(&session).await.unwrap();
+        let Some(Message::User(user)) = loaded.messages.first() else {
+            panic!("the input reads back");
+        };
+        assert_eq!(user.epilogue_start, start);
+    }
+}

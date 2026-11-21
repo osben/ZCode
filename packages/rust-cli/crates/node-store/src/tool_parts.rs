@@ -135,7 +135,17 @@ pub fn link(
 pub fn display(ctx: &Commit<'_>, call: &ToolUseId, display: &Value) -> Result<(), StoreError> {
     let row =
         messages::last_tool_part_in_session(ctx.conn, ctx.session, call.as_str()).storage()?;
-    let (id, message, data) = row.ok_or_else(|| storage(format!("no tool part for {call}")))?;
+    // A card is never worth the batch: Node writes it inside the part's own write and has no failure of its own, so a
+    // part this store cannot find keeps the result without its card.
+    let Some((id, message, data)) = row else {
+        tracing::warn!(
+            event = "store.tool_display.no_part",
+            session = %ctx.session,
+            tool_use = %call,
+            "the result display was not stored: no tool part for the call"
+        );
+        return Ok(());
+    };
     let mut part = decode_part(&data, &id, ctx.session, &message).storage()?;
     if part["state"]["status"].as_str() != Some("completed") {
         return Ok(());
