@@ -5,10 +5,11 @@ use rust_cli_kernel_api::message::{
     ContentBlock, Message, ToolResultContent, UserMessage, UserOrigin,
 };
 use rust_cli_kernel_api::session_api::KernelEvent;
-use serde_json::json;
+use serde_json::{Value, json};
 
 use super::{Feed, Followup, Projection, assistant, row_of, user, view};
-use rust_cli_kernel_api::background_origin::origin_meta;
+use rust_cli_kernel_api::background_origin::{origin_meta, origin_meta_for};
+use rust_cli_kernel_api::workflow_notice_meta::replay_from_origin_meta;
 
 fn notification(id: &str, task: &str, summary: &str) -> Message {
     Message::User(UserMessage {
@@ -471,4 +472,89 @@ fn a_workflow_run_notice_turn_carries_its_payload_in_the_header() {
             "workflowNotification": {"kind": "escalation", "qid": "q-1", "actor": "Scout", "question": "Which file?"},
         })
     );
+}
+
+/// 9.56 (637, 716): a reopened session draws the row the live notice drew. Each notice is stored with its `originMeta`
+/// (`origin_meta_for`, as the store writes it); the cold message takes its payload and stall execution back from that
+/// stored meta, as the node-records read does, and the turn header must carry the same `origin` and `originMeta`.
+#[test]
+fn a_reopened_notice_draws_the_row_the_live_notice_drew() {
+    let stall_text = "<background-agent-stall>\n  <task-id>agent_1</task-id>\n  <description>Silent job</description>\n  <no-progress-for-ms>900000</no-progress-for-ms>\n  <last-progress-at>2024-11-07T17:20:00.000Z</last-progress-at>\n</background-agent-stall>";
+    let terminal_text = "<task-notification>\n<task-id>dwfrun-9</task-id>\n<description>Audit</description>\n<summary>Workflow \"Audit\" completed</summary>\n</task-notification>";
+    let escalation_text = "<workflow-escalation>\n  <run-id>dwfrun-7</run-id>\n  <run>Audit</run>\n</workflow-escalation>";
+    let blocked_text =
+        "<workflow-blocked>\n  <run-id>dwfrun-7</run-id>\n  <run>Audit</run>\n</workflow-blocked>";
+    let cases: Vec<(&str, Option<&str>, Option<Value>)> = vec![
+        (
+            escalation_text,
+            None,
+            Some(
+                json!({"workflowNotification": {"kind": "escalation", "qid": "q-1", "actor": "Scout", "question": "Which file?", "askedAt": 1_731_000_000_000u64}}),
+            ),
+        ),
+        (
+            blocked_text,
+            None,
+            Some(json!({"workflowBlocked": {"questions": 1, "holes": 2, "sinceMs": 900_000}})),
+        ),
+        (
+            terminal_text,
+            None,
+            Some(
+                json!({"workflowNotification": {"kind": "terminal", "status": "completed", "summary": "Audit"}}),
+            ),
+        ),
+        (stall_text, Some("3"), None),
+    ];
+    for (text, execution, workflow) in cases {
+        let notice = |stall: Option<String>, workflow: Option<Value>| {
+            Message::User(UserMessage {
+                stall_execution: stall,
+                workflow_meta: workflow,
+                epilogue_start: None,
+                intent: None,
+                id: MessageId::new("msg_n"),
+                content: vec![ContentBlock::Text { text: text.into() }],
+                origin: UserOrigin::Meta {
+                    source: "task-notification".into(),
+                },
+            })
+        };
+        let mut feed = Feed::new();
+        feed.apply(KernelEvent::TurnStarted {
+            turn: TurnId::new("turn_n"),
+            command: None,
+        });
+        feed.apply(KernelEvent::MessageDone {
+            message: notice(execution.map(str::to_owned), workflow.clone()),
+        });
+        let live = row_of(&feed.projection, "turnHeader", "turn_n");
+
+        // The stored record's meta, read back on a cold open.
+        let stored = origin_meta_for(text, execution, workflow.as_ref())
+            .unwrap_or_else(|| panic!("{text}: no origin meta"));
+        let (cold_execution, cold_workflow) = replay_from_origin_meta(&stored);
+        let projection = Projection::from_view(
+            &view(vec![
+                user("msg_u1", "start it"),
+                assistant(
+                    "msg_a1",
+                    vec![ContentBlock::Text {
+                        text: "started".into(),
+                    }],
+                ),
+                notice(cold_execution, cold_workflow),
+            ]),
+            Followup::Queue,
+            Vec::new(),
+        );
+        let cold = projection
+            .rows
+            .iter()
+            .rfind(|row| row["kind"] == "turnHeader")
+            .unwrap_or_else(|| panic!("{text}: no turn header"));
+        assert_eq!(live["origin"], "backgroundResult", "{text}");
+        assert_eq!(cold["origin"], live["origin"], "{text}");
+        assert_eq!(cold["originMeta"], live["originMeta"], "{text}");
+    }
 }
