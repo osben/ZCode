@@ -415,10 +415,10 @@ impl Tool for AmendWorkflowTool {
                 error_code: Some(SKILL_NOT_LOADED_CODE),
             };
         }
-        // Node `heldElsewhereFailure`, after the retune route: another session's running run cannot be stopped from here.
+        // Node `heldElsewhereFailure`, after the retune route: another session's run in flight (running, pending or parked at
+        // a hole) cannot be stopped from here.
         if !input.is_concurrency_only()
             && let Some(detail) = run_detail(self.port(context).as_ref(), &input.run_id).await
-            && detail.get("status").and_then(Value::as_str) == Some("running")
             && live_elsewhere(&detail)
         {
             return invalid(Some(FAILURE_CODE), &held_elsewhere(&input.run_id));
