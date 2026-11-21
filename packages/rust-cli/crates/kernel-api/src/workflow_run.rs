@@ -217,13 +217,39 @@ pub enum RetuneRefusal {
     Unchanged { current: f64 },
 }
 
-/// A live run of one session, as the background list shows it (Node's background tracker entry for a dynamic workflow run,
-/// 9.52, divergence 609). `title` is the run's name, else its id.
+/// A run of one session, as the background list shows it (Node's background tracker entry for a dynamic workflow run,
+/// 9.52, divergence 609). `title` is the run's name, else its id. A settled run stays listed with its end (9.65, closes
+/// 911), as Node's tracker keeps ended entries.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct BackgroundRunWork {
     pub run_id: WorkflowRunId,
     pub title: String,
     pub started_at_ms: i64,
+    pub status: BackgroundRunStatus,
+    /// When the run settled (epoch milliseconds); `None` while it runs.
+    pub ended_at_ms: Option<i64>,
+}
+
+/// Node's background work summary status for a run: its journal status mapped as the tracker maps a task's (completed is
+/// `resultPending`, stopped is `cancelled`, any other end is `failed`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BackgroundRunStatus {
+    Running,
+    ResultPending,
+    Failed,
+    Cancelled,
+}
+
+impl BackgroundRunStatus {
+    /// The wire value of `backgroundWorks[].status`.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Running => "running",
+            Self::ResultPending => "resultPending",
+            Self::Failed => "failed",
+            Self::Cancelled => "cancelled",
+        }
+    }
 }
 
 /// Node `DynamicWorkflowRunListQuery`: `cwd` and `limit` are required, the tool clamps `limit` to [1, 50].

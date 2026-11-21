@@ -52,6 +52,8 @@ impl DynamicWorkflowRunPort for Board {
                 run_id: WorkflowRunId::new(id),
                 title: id.clone(),
                 started_at_ms: *at,
+                status: rust_cli_kernel_api::workflow_run::BackgroundRunStatus::Running,
+                ended_at_ms: None,
             })
             .collect())
     }

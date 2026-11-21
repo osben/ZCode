@@ -296,6 +296,9 @@ struct State {
     retired: cancel::RetiredQuestions,
     /// Gives each launch a token, so a settled run removes only its own entry (a run id may be launched again).
     next_token: u64,
+    /// Fork (9.65, closes 911): the settled runs the background list keeps, as Node's tracker keeps ended entries. One
+    /// entry per run id (a later settlement of the same id replaces it); a close clears them with the live runs.
+    ended: Vec<list::EndedRun>,
 }
 
 struct RunEntry {
@@ -1054,6 +1057,7 @@ impl WorkflowRunService {
         let (runs, modules) = {
             let mut state = inner.state.lock_unpoisoned();
             state.closed = true;
+            state.ended.clear();
             let runs = std::mem::take(&mut state.runs);
             inner.runs_changed();
             let modules: Vec<Arc<QuotaAutoResume>> = inner
@@ -1211,13 +1215,29 @@ fn settle_run(
 ) -> Vec<(String, String)> {
     stop.stop();
     log_failures(run_id, &failures);
+    // The settled row's status, read before the lock (the row is settled when the owner stops serving).
+    let ended = list::ended_status(inner, run_id);
+    let ended_at_ms = list::clock_ms(inner);
     let mut state = inner.state.lock_unpoisoned();
     let owned = state
         .runs
         .get(run_id)
         .is_some_and(|entry| entry.token == token);
     if owned {
-        state.runs.remove(run_id);
+        if let Some(entry) = state.runs.remove(run_id)
+            && let Some(status) = ended
+        {
+            state.ended.retain(|run| run.run_id != run_id);
+            state.ended.push(list::EndedRun {
+                run_id: run_id.to_owned(),
+                parent: entry.parent,
+                token,
+                title: list::background_title(run_id, &entry.meta),
+                started_at_ms: entry.meta.started_at_ms,
+                status,
+                ended_at_ms,
+            });
+        }
         inner.runs_changed();
         buffer_failures(&mut state.failures, failures);
         return Vec::new();

@@ -9,7 +9,7 @@ use std::collections::HashMap;
 
 use rust_cli_kernel_api::env_shell::BackgroundStatus;
 use rust_cli_kernel_api::manage::{BackgroundEntry, BackgroundKind};
-use rust_cli_kernel_api::workflow_run::BackgroundRunWork;
+use rust_cli_kernel_api::workflow_run::{BackgroundRunStatus, BackgroundRunWork};
 use serde_json::{Map, Value, json};
 
 use super::{Projection, tool_key};
@@ -134,15 +134,21 @@ impl Projection {
                     .find(|work| work["workId"] == run.run_id.as_str())
                     .and_then(|work| work["startedAt"].as_u64())
                     .unwrap_or_else(|| u64::try_from(run.started_at_ms).unwrap_or(0));
-                json!({
+                // Node's tracker entry: an ended run keeps its row with `endedAt` and is no longer cancellable (9.65,
+                // closes 911).
+                let mut work = json!({
                     "workId": run.run_id.as_str(),
                     "kind": "workflow",
                     "title": run.title,
-                    "status": "running",
+                    "status": run.status.as_str(),
                     "startedAt": started,
-                    "cancellable": true,
+                    "cancellable": run.status == BackgroundRunStatus::Running,
                     "anchorRowId": Value::Null,
-                })
+                });
+                if let Some(ended) = run.ended_at_ms {
+                    work["endedAt"] = json!(u64::try_from(ended).unwrap_or(0));
+                }
+                work
             })
             .collect();
         let previous = &self.shells.works;
