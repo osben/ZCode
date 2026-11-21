@@ -963,7 +963,13 @@ impl Tool for CreateWorkflowTool {
         let name = resolved.name.clone();
         // A display the helper cannot give leaves the window without a graph; it never blocks the ask.
         let display = if checks {
-            self.analyzer.display(&resolved.script).await.ok().flatten()
+            match self.analyzer.display(&resolved.script).await {
+                Ok(display) => display,
+                Err(error) => {
+                    tracing::debug!(%error, "create_workflow display reply dropped; the window shows no graph");
+                    None
+                }
+            }
         } else {
             None
         };
