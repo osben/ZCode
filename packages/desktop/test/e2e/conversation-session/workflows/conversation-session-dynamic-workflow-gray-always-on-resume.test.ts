@@ -1,4 +1,5 @@
 import { readFile, rm, writeFile } from "node:fs/promises";
+import { TID_V4_TIMELINE } from "@zcode/shared/test-ids";
 import { join } from "node:path";
 import {
   countUpstreamRequests,
@@ -174,6 +175,31 @@ function countNotificationRows(kindLabel: string): Promise<number> {
       ).length,
     NOTIFICATION_ROW,
     kindLabel,
+  );
+}
+
+/**
+ * Scroll the virtual timeline back to its bottom and wait for the notice row to mount.
+ * Cause (W9h): DWU-03 scrolls to the top to find the launch card; the completion notice row lands
+ * at the bottom while the reader is up there, so the virtualizer does not mount it and the count
+ * read 0 (Node in the Linux box, intermittent). Same wheel-then-scroll intent as
+ * scrollV4TimelineToTop, so the timeline treats it as the user's scroll.
+ */
+async function scrollTimelineToBottomFor(kindLabel: string): Promise<void> {
+  await browser.waitUntil(
+    async () => {
+      await browser.execute((timelineTestId) => {
+        const timeline = document.querySelector<HTMLElement>(`[data-testid="${timelineTestId}"]`);
+        if (!timeline) return;
+        timeline.dispatchEvent(
+          new WheelEvent("wheel", { bubbles: true, cancelable: true, deltaY: 600 }),
+        );
+        timeline.scrollTop = timeline.scrollHeight;
+        timeline.dispatchEvent(new Event("scroll"));
+      }, TID_V4_TIMELINE);
+      return (await countNotificationRows(kindLabel)) > 0;
+    },
+    { timeout: 30_000, timeoutMsg: `滚回底部后没有挂载「${kindLabel}」通知行` },
   );
 }
 
@@ -473,6 +499,7 @@ describe("动态工作流 · 恢复停下的 run", () => {
     await waitForV4AssistantMessageContaining("E2E_DWU_C_DONE", 120_000);
     await waitForV4Pane((pane) => !pane.canStop, "完成通知那一轮没有结束", 60_000);
     expect(await countUpstreamRequests(terminalNotice(runId, "completed"))).toBe(1);
+    await scrollTimelineToBottomFor("工作流已完成");
     expect(await countNotificationRows("工作流已完成")).toBe(1);
   });
 

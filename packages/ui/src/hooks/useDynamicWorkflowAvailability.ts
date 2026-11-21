@@ -6,6 +6,7 @@ import {
   useDynamicWorkflowAvailabilityStore,
   type DynamicWorkflowAvailabilitySnapshot,
 } from "@/store/dynamicWorkflowAvailabilityStore.js";
+import { invalidateSlashCatalogs } from "@/store/slashCatalogRevision.js";
 
 /**
  * Read the dynamic-workflow rollout snapshot.
@@ -67,6 +68,9 @@ export function useDynamicWorkflowUserModeSync(params: {
         });
       }
       await reload(codingPlanSubscriptionService);
+      // Fork (W9h, DWG-23): the runtime lists `workflow` in the `/` catalog by this choice, and the
+      // composer caches that catalog per workspace; drop the caches so the next read follows it.
+      invalidateSlashCatalogs();
     });
   }, [codingPlanSubscriptionService, reload, settingsLoaded, userMode, zcodeAgentService]);
 }

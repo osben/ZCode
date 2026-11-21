@@ -36,7 +36,7 @@ import {
 const RUN_DIGEST = `[data-testid^="${TID_CHAT_WORKFLOW_RUN_DIGEST}"]`;
 const OK_SNIPPET = "dwy-ok-snippet.ts";
 const BAD_SNIPPET = "dwy-bad-snippet.ts";
-const GATE_OUTPUT = "dwy-gate-output.txt";
+const GATE_OUTPUT = "dwy-gate-output.out";
 const RUNNING_GATE = "dwy-gate-running";
 const NOT_EXECUTED_NOTE =
   "NOTE: The snippet was NOT executed — fix the errors above and call the tool again.";

@@ -379,6 +379,7 @@
   "packages/ui/test/shortcutLabel.test.ts",
   "packages/ui/test/sidePaneTerminalPersistentProfileTheme.test.ts",
   "packages/ui/test/sidePaneToggleEmptyState.test.ts",
+  "packages/ui/test/slashCatalogRevision.test.ts",
   "packages/ui/test/slashPanelQuickPromptIndex.test.ts",
   "packages/ui/test/sshHostKeyTrustFlow.test.ts",
   "packages/ui/test/stateBroadcast.test.ts",

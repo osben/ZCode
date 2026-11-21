@@ -42,6 +42,10 @@ import { resolveAppFollowupMode } from "@/v4/composer/followupModeSettings.js";
 import { isComposerEditScopeId } from "@/composer-edit-mode/contract.js";
 import { logger } from "@/logger.js";
 import { useZCodeSessionStore } from "@/store/zcodeSessionStore.js";
+import {
+  readSlashCatalogRevision,
+  useSlashCatalogRevisionStore,
+} from "@/store/slashCatalogRevision.js";
 
 /** 目录水合单飞（per workspaceKey）：draft、已有 session 和严格模式双挂载共享一次 RPC。 */
 const workspaceCatalogHydrationFlights = new Map<string, Promise<void>>();
@@ -233,6 +237,8 @@ export function useDraftConfigControl(params: {
   } = params;
   const workspaceKey = workspaceIdentity?.trim() || workspacePath;
   const displayProvider = provider ?? ZCODE_AGENT_PROVIDER;
+  // Fork (W9h): a cached catalog invalidation (slashCatalogRevision.ts) re-runs the hydration below.
+  const slashCatalogRevision = useSlashCatalogRevisionStore((state) => state.revision);
   const agentService = useZCodeAgentService(workspacePath, null, workspaceIdentity);
   useEffect(() => {
     const subscription = agentService.onDynamicPluginStartupDegraded({
@@ -1022,6 +1028,9 @@ export function useDraftConfigControl(params: {
       (option) => option.category === "mode" && option.type === "select",
     );
     const hasSlashCommandCatalog = workspaceState.slashCommands.length > 0;
+    // One flight per workspace and catalog revision: a read that started before an invalidation
+    // must not hold off the fresh read, and its result is dropped below.
+    const flightKey = `${workspaceKey}#${slashCatalogRevision}`;
     const shouldHydrateCatalog = shouldHydrateWorkspaceCatalog({
       configOptions,
       sessionId,
@@ -1031,11 +1040,11 @@ export function useDraftConfigControl(params: {
       catalogScope: isDraft ? "draft" : "known-session",
       hasModePresentation,
       hasSlashCommandCatalog,
-      flightInProgress: workspaceCatalogHydrationFlights.has(workspaceKey),
+      flightInProgress: workspaceCatalogHydrationFlights.has(flightKey),
       configOptionsStatus: workspaceState.configOptionsStatus,
       workspaceKey,
     });
-    const existingFlight = workspaceCatalogHydrationFlights.get(workspaceKey);
+    const existingFlight = workspaceCatalogHydrationFlights.get(flightKey);
     if (existingFlight) {
       return;
     }
@@ -1062,6 +1071,10 @@ export function useDraftConfigControl(params: {
           ),
           workspaceKey,
         });
+        if (readSlashCatalogRevision() !== slashCatalogRevision) {
+          // The catalog was invalidated while this read was in flight; the newer flight writes it.
+          return;
+        }
         const latest = useZCodeSessionStore.getState();
         latest.setConfigOptions(workspacePath, baseOptions, workspaceIdentity);
         latest.setConfigOptionsStatus(workspacePath, "ready", workspaceIdentity);
@@ -1078,13 +1091,14 @@ export function useDraftConfigControl(params: {
         logger.warn(`[v4-workspace-catalog] workspace 目录水合失败: ${String(error)}`);
       })
       .finally(() => {
-        workspaceCatalogHydrationFlights.delete(workspaceKey);
+        workspaceCatalogHydrationFlights.delete(flightKey);
       });
-    workspaceCatalogHydrationFlights.set(workspaceKey, flight);
+    workspaceCatalogHydrationFlights.set(flightKey, flight);
   }, [
     agentStartupAllowed,
     displayProvider,
     sessionId,
+    slashCatalogRevision,
     workspaceIdentity,
     workspaceKey,
     workspacePath,
