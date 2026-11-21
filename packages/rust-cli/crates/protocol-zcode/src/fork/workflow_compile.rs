@@ -463,8 +463,9 @@ impl WorkflowAnalyzer for HelperWorkflowAnalyzer {
     async fn display(
         &self,
         script: &str,
+        model_bindings: Option<&Map<String, Value>>,
     ) -> Result<Option<serde_json::Value>, WorkflowAnalysisError> {
-        display(&self.helper, script, None)
+        display(&self.helper, script, model_bindings)
             .await
             .map_err(|error| WorkflowAnalysisError {
                 message: error.message,

@@ -243,6 +243,9 @@ struct Inner {
     /// Fork (W9a, 9.53): the saved-workflow store's home and the compile checker of a hub start. Set once by the
     /// composition; without it a hub start is unsupported.
     saved_start: OnceLock<SavedStartPorts>,
+    /// Fork (9.63): the model catalog a GUI settings change resolves a model against (Node `modelCatalogPort`). Set once
+    /// by the composition; without it a model change is refused as `model_unavailable`.
+    models: OnceLock<Arc<rust_cli_kernel_api::provider::LateModelDirectory>>,
     /// Serializes FillWorkflowHole calls (9.45): a fill reads the run's script, and the next fill must read the one the
     /// previous fill wrote. One permit, held across the helper's call and the owner's apply (a semaphore, since a tokio guard
     /// may not be held across an await).
@@ -638,6 +641,7 @@ impl WorkflowRunService {
                 bindings: OnceLock::new(),
                 default_concurrency: OnceLock::new(),
                 saved_start: OnceLock::new(),
+                models: OnceLock::new(),
                 fills: Arc::new(tokio::sync::Semaphore::new(1)),
                 changes: tokio::sync::watch::channel(0).0,
                 resolves: Mutex::new(()),
@@ -647,6 +651,23 @@ impl WorkflowRunService {
 
     /// Fork (W9a, 9.53): sets the hub start's ports, the user's home (where saved workflows live) and the compile checker
     /// (the same analyzer CreateWorkflow uses). Set once: a second call is a wiring fault, logged, and keeps the first.
+    /// Fork (9.63): the model catalog of the GUI settings (the slot the workflow tools read too). Returns `false` when
+    /// one is already set (the first one stays).
+    pub fn configure_models(
+        &self,
+        models: Arc<rust_cli_kernel_api::provider::LateModelDirectory>,
+    ) -> bool {
+        self.inner.models.set(models).is_ok()
+    }
+
+    /// The catalog's entries now, or `None` without one (no session model is marked: the GUI sends a qualified id).
+    pub(crate) async fn model_entries(
+        &self,
+    ) -> Option<Vec<rust_cli_tools::model_reference::CatalogEntry>> {
+        let directory = self.inner.models.get()?.get()?;
+        rust_cli_tools::model_reference::read_entries(Some(directory.as_ref()), None).await
+    }
+
     pub fn configure_saved_start(
         &self,
         home: std::path::PathBuf,

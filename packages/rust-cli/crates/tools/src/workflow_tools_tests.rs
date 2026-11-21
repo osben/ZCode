@@ -49,10 +49,16 @@ fn every_contract_carries_a_provider_description_and_an_object_schema() {
 
 #[test]
 fn without_an_analyzer_only_list_saved_workflows_is_registered() {
-    let names: Vec<String> = workflow_tools(None, std::path::PathBuf::from("/home"), None, None)
-        .iter()
-        .map(|tool| tool.name().to_owned())
-        .collect();
+    let names: Vec<String> = workflow_tools(
+        None,
+        std::path::PathBuf::from("/home"),
+        None,
+        None,
+        Arc::default(),
+    )
+    .iter()
+    .map(|tool| tool.name().to_owned())
+    .collect();
     assert_eq!(names, ["ListSavedWorkflows"]);
 }
 
@@ -65,6 +71,7 @@ fn with_an_analyzer_create_amend_and_save_workflow_are_registered_before_list_sa
         std::path::PathBuf::from("/home"),
         None,
         None,
+        Arc::default(),
     );
     let names: Vec<&str> = tools.iter().map(|tool| tool.name()).collect();
     assert_eq!(
@@ -98,6 +105,7 @@ fn with_a_snippet_port_eval_workflow_snippet_is_registered_after_save_and_before
         std::path::PathBuf::from("/home"),
         None,
         Some(snippets.clone()),
+        Arc::default(),
     );
     let names: Vec<&str> = tools.iter().map(|tool| tool.name()).collect();
     assert_eq!(
@@ -122,6 +130,7 @@ fn with_a_snippet_port_eval_workflow_snippet_is_registered_after_save_and_before
         std::path::PathBuf::from("/home"),
         None,
         Some(snippets),
+        Arc::default(),
     );
     let names: Vec<&str> = alone.iter().map(|tool| tool.name()).collect();
     assert_eq!(names, ["EvalWorkflowSnippet", "ListSavedWorkflows"]);

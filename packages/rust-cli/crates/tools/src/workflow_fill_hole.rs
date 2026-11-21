@@ -340,7 +340,7 @@ impl Tool for FillWorkflowHoleTool {
                 // filled graph (the desktop's `buildWorkflowFillGraphByRunId`), beside Node's `fill` block. A graph the
                 // analyzer cannot draw leaves the card without one; the fill has joined either way.
                 let display = match &self.analyzer {
-                    Some(analyzer) => analyzer.display(&script_text).await.unwrap_or_else(|error| {
+                    Some(analyzer) => analyzer.display(&script_text, None).await.unwrap_or_else(|error| {
                         tracing::debug!(%error, "fill display reply dropped; the fill row shows no graph");
                         None
                     }),

@@ -120,6 +120,9 @@ impl WorkflowRunService {
                     script_path: draft.map(|path| path.display().to_string()),
                     phase_names: None,
                     phase_alongside: None,
+                    // A hub start runs on the session model; its saved definition names no subagent model.
+                    subagent_model: None,
+                    model_bindings: None,
                 },
                 Some(launch_input_id),
             )

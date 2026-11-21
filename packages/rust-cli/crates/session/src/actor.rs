@@ -916,8 +916,8 @@ impl Actor {
                 self.change_directory(id, root, Some(record)).await
             }
             Command::RecordLocalCommand { record } => self.record_local_command(id, record).await,
-            Command::RecordWorkflowTurn { text, source } => {
-                self.record_workflow_turn(id, text, source).await
+            Command::RecordWorkflowTurn { text, source, meta } => {
+                self.record_workflow_turn(id, text, source, meta).await
             }
             Command::BackgroundForeground { reason } => self.background_foreground(reason).await,
             Command::StoreResumeSentinel => self.store_resume_sentinel(id).await,

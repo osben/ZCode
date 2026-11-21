@@ -184,12 +184,16 @@ async fn serve(
         .as_ref()
         .filter(|_| context.workflow_child().is_some())
         .map(|_| snippet_slot.clone() as Arc<dyn WorkflowSnippetPort>);
+    // Fork (9.63): the model catalog CreateWorkflow, AmendWorkflow and the GUI settings resolve model names against. It
+    // is the session's model directory, set once that opens below; until then a named model is refused.
+    let workflow_models = Arc::new(rust_cli_kernel_api::provider::LateModelDirectory::default());
     spec.dynamic_workflow = Some(workflow_gating::gating(
         context.dynamic_workflow_gates().clone(),
         node_helper.as_ref(),
         &facts.process.home,
         run_sessions.clone(),
         snippets,
+        workflow_models.clone(),
     ));
     spec.node_helper = node_helper;
     // Fork: the Host's off-peak store (specs/fork-rust-automations.md, slice 3).
@@ -221,6 +225,7 @@ async fn serve(
     }
     // Fork: the projection's reasoning levels come from the model directory (specs/fork-rust-agent-parity.md).
     if let Some(directory) = opened.directory.clone() {
+        let _ = workflow_models.set(directory.clone());
         context.set_models(directory);
     }
     // Fork: session erase resolves per-session directories under `<storageRoot>/cli`.
@@ -392,6 +397,9 @@ async fn serve(
         );
         // A refused second set is logged by the run service itself (workflow.run.saved_start_set_twice).
         let _ = service.configure_saved_start(facts.process.home.to_path_buf(), analyzer);
+    }
+    if let Some(service) = &workflow_service {
+        let _ = service.configure_models(workflow_models.clone());
     }
     let workflow_service = workflow_service.map(Arc::new);
     // Fork (9.51, W8d): a settled run posts its terminal notice to the parent session's model, through the agents' channel.

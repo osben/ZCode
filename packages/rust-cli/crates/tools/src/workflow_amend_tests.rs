@@ -39,6 +39,7 @@ impl WorkflowAnalyzer for Checker {
         }
         if script.contains("BROKEN") {
             return Ok(WorkflowAnalysis {
+                model_references: Vec::new(),
                 ok: false,
                 diagnostics: vec![WorkflowDiagnostic {
                     code: 2322,
@@ -49,10 +50,87 @@ impl WorkflowAnalyzer for Checker {
             });
         }
         Ok(WorkflowAnalysis {
+            model_references: script_models(script),
             ok: true,
             diagnostics: Vec::new(),
         })
     }
+}
+
+/// 9.63: a line `// model: NAME` stands for a persona that names the model NAME (Node `modelReferences`).
+fn script_models(script: &str) -> Vec<rust_cli_kernel_api::workflow_analysis::ModelReference> {
+    script
+        .lines()
+        .enumerate()
+        .filter_map(|(index, line)| {
+            line.trim().strip_prefix("// model: ").map(|name| {
+                rust_cli_kernel_api::workflow_analysis::ModelReference {
+                    name: name.trim().to_owned(),
+                    line: index as i64 + 1,
+                    column: 4,
+                }
+            })
+        })
+        .collect()
+}
+
+/// 9.63: the fixture's catalog, two DeepSeek models with no levels.
+struct Catalog;
+
+#[async_trait]
+impl rust_cli_kernel_api::provider::ModelDirectory for Catalog {
+    async fn catalog(&self) -> rust_cli_kernel_api::provider::ModelCatalog {
+        let model = |name: &str| rust_cli_kernel_api::provider::CatalogModel {
+            provider: "deepseek".to_owned(),
+            provider_name: "DeepSeek".to_owned(),
+            model: name.to_owned(),
+            protocol: rust_cli_kernel_api::provider::WireProtocol::AnthropicMessages,
+            reasoning_levels: Vec::new(),
+            context_window: 1,
+            max_output_tokens: 1,
+            capabilities: Default::default(),
+            connection: None,
+            host: None,
+        };
+        rust_cli_kernel_api::provider::ModelCatalog {
+            revision: 1,
+            models: vec![model("deepseek-v4-flash"), model("deepseek-v4-pro")],
+            default: None,
+        }
+    }
+}
+
+/// `harness` with the fixture's catalog wired, over a predecessor whose detail is `detail`.
+fn with_catalog(
+    detail: Value,
+) -> (
+    AmendWorkflowTool,
+    ToolUseContext,
+    tempfile::TempDir,
+    Arc<FakeRun>,
+) {
+    let port = FakeRun::with_retune(
+        RetuneOutcome::Refused(RetuneRefusal::NotLive),
+        Some(detail),
+        Some(CLEAN),
+    );
+    let (tool, ctx, guard) = harness(port.clone());
+    let models = Arc::new(rust_cli_kernel_api::provider::LateModelDirectory::default());
+    assert!(models.set(Arc::new(Catalog)));
+    (tool.with_models(models), ctx, guard, port)
+}
+
+/// Node's executor order with the validation first, as the real pipeline runs it.
+async fn validated_run(
+    tool: &AmendWorkflowTool,
+    input: Value,
+    ctx: ToolUseContext,
+) -> Result<ToolOutput, ToolError> {
+    match tool.validate_input(&input, &ctx).await {
+        Validation::Ok => {}
+        Validation::Invalid { message, .. } => return Err(failed(message)),
+    }
+    run(tool, input, ctx).await
 }
 
 /// The amend the port answers, and the requests it received.
@@ -991,4 +1069,142 @@ async fn a_revision_of_another_sessions_live_run_is_refused_before_any_window() 
         tool.validate_input(&input, &ctx).await,
         Validation::Ok
     ));
+}
+
+/// 9.63 (Node `resolveAmendSubagentModel`): a named model resolves against the catalog, reaches the amend in canonical
+/// form, and the result says where the subagents run.
+#[tokio::test]
+async fn a_subagent_model_resolves_and_reaches_the_amend_and_the_result() {
+    let (tool, ctx, _guard, port) = with_catalog(json!({"runId": "run-1", "status": "running"}));
+    let input = json!({"run_id": "run-1", "script": REVISED, "subagent_model": "deepseek-v4-pro"});
+    let output = validated_run(&tool, input, ctx)
+        .await
+        .expect("the amend runs");
+    let text = output_text(&output);
+    assert_eq!(
+        port.amends()[0]
+            .subagent_model
+            .as_ref()
+            .and_then(Value::as_str),
+        Some("deepseek/deepseek-v4-pro")
+    );
+    assert!(
+        text.contains(" Subagents run on deepseek/deepseek-v4-pro (the main agent stays on the session model)."),
+        "{text}"
+    );
+}
+
+/// 9.63: an omitted model keeps the predecessor's, re-resolved; `null` puts the revision back on the session model.
+#[tokio::test]
+async fn an_omitted_subagent_model_is_inherited_and_null_clears_it() {
+    for (field, expected) in [
+        (None, Some("deepseek/deepseek-v4-flash")),
+        (Some(Value::Null), None),
+    ] {
+        let (tool, ctx, _guard, port) = with_catalog(
+            json!({"runId": "run-1", "status": "running", "subagentModel": "deepseek/deepseek-v4-flash"}),
+        );
+        let mut input = json!({"run_id": "run-1", "script": REVISED});
+        if let Some(field) = field {
+            input["subagent_model"] = field;
+        }
+        validated_run(&tool, input, ctx)
+            .await
+            .expect("the amend runs");
+        assert_eq!(
+            port.amends()[0]
+                .subagent_model
+                .as_ref()
+                .and_then(Value::as_str),
+            expected
+        );
+    }
+}
+
+/// 9.63: an inherited model that no longer resolves fails the call before anything stops, and says it was inherited.
+#[tokio::test]
+async fn an_inherited_subagent_model_that_is_gone_is_refused_as_inherited() {
+    let (tool, ctx, _guard, port) = with_catalog(
+        json!({"runId": "run-1", "status": "running", "subagentModel": "deepseek/gone"}),
+    );
+    let input = json!({"run_id": "run-1", "script": REVISED});
+    let Validation::Invalid { message, .. } = tool.validate_input(&input, &ctx).await else {
+        panic!("the inherited model is refused");
+    };
+    assert!(
+        message.starts_with("workflow_subagent_model_unresolved: This amend inherited the predecessor run's subagent model (`deepseek/gone`), which is no longer usable. "),
+        "{message}"
+    );
+    assert!(
+        message.ends_with("Nothing was stopped or created."),
+        "{message}"
+    );
+    assert!(port.amends().is_empty());
+}
+
+/// 9.63 (Node `introduces_providers`): a revision of this session's own run that brings in a provider neither the
+/// session nor the predecessor used asks; one that stays on the predecessor's provider does not.
+#[tokio::test]
+async fn a_revision_that_introduces_a_provider_asks_even_for_the_owner() {
+    for (detail, allowed) in [
+        (
+            json!({"runId": "run-1", "ownedByThisSession": true, "status": "running"}),
+            false,
+        ),
+        (
+            json!({"runId": "run-1", "ownedByThisSession": true, "status": "running", "subagentModel": "deepseek/deepseek-v4-flash"}),
+            true,
+        ),
+    ] {
+        let (tool, ctx, _guard, _port) = with_catalog(detail.clone());
+        let input =
+            json!({"run_id": "run-1", "script": REVISED, "subagent_model": "deepseek-v4-pro"});
+        let decision = tool.check_permissions(&input, &ctx).await;
+        assert_eq!(
+            matches!(decision, PermissionDecision::Allow { .. }),
+            allowed,
+            "{detail}: {decision:?}"
+        );
+    }
+}
+
+/// 9.63: a name the revised script shares with the predecessor keeps the predecessor's binding; the amend carries the
+/// table and the result lists it.
+#[tokio::test]
+async fn the_script_models_keep_the_predecessors_bindings_and_reach_the_amend() {
+    let (tool, ctx, _guard, port) = with_catalog(json!({
+        "runId": "run-1",
+        "status": "running",
+        "modelBindings": {"checker": "deepseek/deepseek-v4-flash"}
+    }));
+    let script = format!("// model: checker\n{REVISED}");
+    let output = validated_run(&tool, json!({"run_id": "run-1", "script": script}), ctx)
+        .await
+        .expect("the amend runs");
+    let text = output_text(&output);
+    assert_eq!(
+        port.amends()[0].model_bindings.clone(),
+        Some(json!({"checker": "deepseek/deepseek-v4-flash"}))
+    );
+    assert!(
+        text.contains(" Models named in the script: \"checker\" = deepseek/deepseek-v4-flash."),
+        "{text}"
+    );
+}
+
+/// 9.63: a script model that does not bind is a 9011 diagnostic; nothing is stopped.
+#[tokio::test]
+async fn an_unbound_script_model_is_reported_and_stops_nothing() {
+    let (tool, ctx, _guard, port) = with_catalog(json!({"runId": "run-1", "status": "running"}));
+    let script = format!("// model: gpt-9\n{REVISED}");
+    let output = validated_run(&tool, json!({"run_id": "run-1", "script": script}), ctx)
+        .await
+        .expect("the call reports");
+    let text = output_text(&output);
+    assert!(port.amends().is_empty(), "nothing is stopped");
+    assert!(
+        text.contains("The model \"gpt-9\" named in the script cannot be used: No configured model matches `gpt-9`."),
+        "{text}"
+    );
+    assert!(text.contains("Run run-1 was not touched."), "{text}");
 }

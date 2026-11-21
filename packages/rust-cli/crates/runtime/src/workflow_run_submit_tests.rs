@@ -168,6 +168,8 @@ fn request(script: &str) -> SubmitRequest {
         script_path: None,
         phase_names: None,
         phase_alongside: None,
+        subagent_model: None,
+        model_bindings: None,
     }
 }
 
@@ -490,5 +492,47 @@ async fn a_long_compile_rejection_is_capped_at_the_resume_bound() {
         error
             .message
             .starts_with("The workflow script did not compile:\nL0:C1")
+    );
+}
+
+/// 9.63 (DWR-04): the run's subagent model and the script's model table are recorded on `run-launched`, where the
+/// owner's actors and the run's snapshot read them (Node `RunLaunchConfig`).
+#[tokio::test]
+async fn a_submit_records_the_subagent_model_and_the_script_models_on_its_launch() {
+    let fx = fixture(compiled_facts(), mode(Ok(Some(PermissionMode::Default))));
+    let mut asked = request("return 1\n");
+    asked.subagent_model = Some("deepseek/deepseek-v4-pro".to_owned());
+    asked.model_bindings = json!({"checker": "deepseek/deepseek-v4-flash"})
+        .as_object()
+        .cloned();
+    let run = submit(&fx.service, PARENT, asked)
+        .await
+        .expect("the submit starts the run");
+    let path = fx.path.clone();
+    let id = run.clone();
+    wait_until("the run-launched event", || {
+        let conn = open(&path);
+        dwf::list_events(&conn, &id)
+            .map(|events| {
+                events
+                    .iter()
+                    .any(|event| event.event["type"] == json!("run-launched"))
+            })
+            .unwrap_or(false)
+    })
+    .await;
+    let conn = open(&fx.path);
+    let launched = dwf::list_events(&conn, &run)
+        .expect("the events")
+        .into_iter()
+        .find(|event| event.event["type"] == json!("run-launched"))
+        .expect("the launch event");
+    assert_eq!(
+        launched.event["subagentModel"],
+        json!("deepseek/deepseek-v4-pro")
+    );
+    assert_eq!(
+        launched.event["modelBindings"],
+        json!({"checker": "deepseek/deepseek-v4-flash"})
     );
 }

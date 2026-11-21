@@ -8,7 +8,8 @@
 //! A call that changes only `max_concurrency` retunes a live run in place (9.52, divergence 455, Node
 //! `amend-workflow-retune.ts`): no script, no window, no successor. A run that settles in the race falls back to a
 //! revision, which the owner exemption lets through without a window (Node's `isAmendWorkflowOwnedPredecessor`). The
-//! subagent model, script-named models and the GUI window are not built (divergences 456 to 459).
+//! subagent model (three states) and the script's models resolve against the catalog from 9.63; the GUI window is not
+//! built (divergences 458, 459).
 
 use std::collections::{HashMap, VecDeque};
 use std::path::{Path, PathBuf};
@@ -17,6 +18,7 @@ use std::sync::{Arc, Mutex};
 use async_trait::async_trait;
 use rust_cli_kernel_api::ids::ToolUseId;
 use rust_cli_kernel_api::permission::{PermissionDecision, PermissionRule};
+use rust_cli_kernel_api::provider::LateModelDirectory;
 use rust_cli_kernel_api::tool::{
     PromptContext, Tool, ToolError, ToolOutput, ToolProgress, ToolUseContext, Validation, failed,
 };
@@ -27,7 +29,12 @@ use rust_cli_kernel_api::workflow_run::{
     DynamicWorkflowRunSessions, RetuneOutcome, RetuneRefusal, RetuneRequest,
 };
 use serde::Deserialize;
-use serde_json::{Value, json};
+use serde_json::{Map, Value, json};
+
+use crate::model_reference::{
+    CatalogEntry, choose, describe_script_bindings, describe_subagent_model, introduced_providers,
+    script_bindings, session_entries, unbound_diagnostics,
+};
 use tokio::sync::mpsc;
 
 use rust_cli_fs::read_text;
@@ -52,8 +59,6 @@ const SKILL_NOT_LOADED_CODE: i32 = 428;
 const APPROVAL_CAP: usize = 256;
 /// Node `MAX_DRAFT_ATTEMPTS`-style draft name, used for an inline revision without a name.
 const DEFAULT_DRAFT_NAME: &str = "workflow";
-const SUBAGENT_MODEL_UNAVAILABLE: &str =
-    "This host cannot choose a subagent model; omit subagent_model.";
 const SOURCE_CONFLICT: &str = "Provide at most one script source: `script` for the whole revised script inline, or `path` for its file. Passing both is ambiguous.";
 const RETUNE_UNAVAILABLE: &str = "workflow_retune_unavailable: this host cannot change the parallelism of a live run in place, so this call has nothing to change. Nothing was stopped, created or changed.";
 
@@ -79,7 +84,8 @@ struct AmendInput {
     /// `null` must stay distinct from omission, which serde's `Option` would not do on its own.
     #[serde(default, deserialize_with = "present_value")]
     max_concurrency: Option<Value>,
-    #[serde(default)]
+    /// A model, `null` for the session model, or omitted to keep the predecessor's (Node's three states).
+    #[serde(default, deserialize_with = "present_value")]
     subagent_model: Option<Value>,
 }
 
@@ -124,6 +130,16 @@ impl AmendInput {
     }
 }
 
+/// The models of one revision (Node's normalized `subagent_model` and `model_bindings`).
+struct RevisionModels {
+    subagent_model: Option<String>,
+    bindings: Map<String, Value>,
+    predecessor_bindings: Option<Map<String, Value>>,
+    entries: Option<Vec<CatalogEntry>>,
+    /// Node `predecessor.introduces_providers` is non-empty: the owner exemption does not apply.
+    introduces_providers: bool,
+}
+
 /// A revision the permission decision read and checked, kept for its call.
 struct Pending {
     resolved: Resolved,
@@ -144,6 +160,8 @@ pub struct AmendWorkflowTool {
     /// The run service's per-session ports: an amend goes through the calling session's port.
     runs: Option<Arc<dyn DynamicWorkflowRunSessions>>,
     approvals: Mutex<Approvals>,
+    /// Fork (9.63): the catalog model names resolve against; unset refuses a named model.
+    models: Arc<LateModelDirectory>,
 }
 
 impl AmendWorkflowTool {
@@ -156,7 +174,77 @@ impl AmendWorkflowTool {
             analyzer,
             runs,
             approvals: Mutex::new(Approvals::default()),
+            models: Arc::default(),
         }
+    }
+
+    /// Fork (9.63): resolves model names against `models` (Node `context.modelCatalogPort`).
+    #[must_use]
+    pub fn with_models(mut self, models: Arc<LateModelDirectory>) -> Self {
+        self.models = models;
+        self
+    }
+
+    /// Node's model half of `resolveInput`: the revision's subagent model (three states, the predecessor's kept when
+    /// omitted) and its script table (a name the predecessor bound keeps that binding). `Err` is the call's failure text.
+    async fn models_of(
+        &self,
+        input: &AmendInput,
+        context: &ToolUseContext,
+        analysis: Option<&WorkflowAnalysis>,
+    ) -> Result<RevisionModels, String> {
+        let entries = session_entries(&self.models, context).await;
+        let detail = run_detail(self.port(context).as_ref(), &input.run_id).await;
+        let predecessor_model = detail
+            .as_ref()
+            .and_then(|detail| detail.get("subagentModel"))
+            .and_then(Value::as_str)
+            .map(str::to_owned);
+        let predecessor_bindings = detail
+            .as_ref()
+            .and_then(|detail| detail.get("modelBindings"))
+            .and_then(Value::as_object)
+            .cloned();
+        let subagent_model = choose(
+            input.subagent_model.as_ref(),
+            predecessor_model.as_deref(),
+            entries.as_deref(),
+        )
+        .map_err(|failure| {
+            let message = if failure.inherited {
+                format!(
+                    "This amend inherited the predecessor run's subagent model (`{}`), which is no longer usable. {}\n\nPass `subagent_model: null` to run the revision on the session model instead.",
+                    failure.text, failure.message
+                )
+            } else {
+                failure.message
+            };
+            format!("workflow_subagent_model_unresolved: {message} Nothing was stopped or created.")
+        })?;
+        let bindings = match analysis {
+            Some(analysis) if analysis.ok && !analysis.model_references.is_empty() => {
+                script_bindings(
+                    &analysis.model_references,
+                    entries.as_deref(),
+                    predecessor_bindings.as_ref(),
+                )
+            }
+            _ => Map::new(),
+        };
+        let introduced = introduced_providers(
+            subagent_model.as_deref(),
+            &bindings,
+            predecessor_model.as_deref(),
+            predecessor_bindings.as_ref(),
+            entries.as_deref(),
+        );
+        Ok(RevisionModels {
+            subagent_model,
+            bindings,
+            predecessor_bindings,
+            entries,
+            introduces_providers: !introduced.is_empty(),
+        })
     }
 
     fn approvals(&self) -> std::sync::MutexGuard<'_, Approvals> {
@@ -401,8 +489,15 @@ impl Tool for AmendWorkflowTool {
         if let Err(message) = input.limit() {
             return invalid(None, &message);
         }
-        if input.subagent_model.is_some() {
-            return invalid(Some(FAILURE_CODE), SUBAGENT_MODEL_UNAVAILABLE);
+        if input
+            .subagent_model
+            .as_ref()
+            .is_some_and(|model| !model.is_null() && !model.is_string())
+        {
+            return invalid(
+                None,
+                "subagent_model: Expected string, received a non-string value",
+            );
         }
         if input.script.is_some() && input.path.is_some() {
             return invalid(Some(FAILURE_CODE), SOURCE_CONFLICT);
@@ -422,6 +517,12 @@ impl Tool for AmendWorkflowTool {
             && live_elsewhere(&detail)
         {
             return invalid(Some(FAILURE_CODE), &held_elsewhere(&input.run_id));
+        }
+        // Fork (9.63): Node resolves the model (named or kept) after the predecessor read, before any script read.
+        if !input.is_concurrency_only()
+            && let Err(message) = self.models_of(&input, context, None).await
+        {
+            return invalid(Some(FAILURE_CODE), &message);
         }
         Validation::Ok
     }
@@ -460,7 +561,15 @@ impl Tool for AmendWorkflowTool {
                 };
             }
         };
-        let checks = analysis.ok;
+        // Fork (9.63): a script whose models do not all bind opens no window; the call reports them (Node).
+        let models = self.models_of(&input, context, Some(&analysis)).await;
+        let checks = analysis.ok
+            && models.as_ref().is_ok_and(|models| {
+                crate::model_reference::all_bound(&analysis.model_references, &models.bindings)
+            });
+        let introduces = models
+            .as_ref()
+            .is_ok_and(|models| models.introduces_providers);
         let name = resolved.name.clone();
         self.remember(
             context.tool_use.clone(),
@@ -476,9 +585,9 @@ impl Tool for AmendWorkflowTool {
             };
         }
         // Node `rule.session.workflowOwner`: a revision of a run this session started, that the user did not stop,
-        // opens no window. This host's amend names no new model, so it never introduces a provider.
+        // opens no window, unless its models bring in a provider neither the session nor the predecessor used.
         let predecessor = owned_run_facts(port.as_ref(), &input.run_id).await;
-        if is_amend_workflow_owned_predecessor(&predecessor) {
+        if !introduces && is_amend_workflow_owned_predecessor(&predecessor) {
             return PermissionDecision::Allow {
                 updated_input: None,
             };
@@ -526,7 +635,14 @@ impl Tool for AmendWorkflowTool {
                     .await
                     .map_err(|error| failed(error.message))?;
                 // The same rule as CreateWorkflow: a script that checks needs its approval, inherited or not.
-                if analysis.ok {
+                let bound = match self.models_of(&input, &context, Some(&analysis)).await {
+                    Ok(models) => crate::model_reference::all_bound(
+                        &analysis.model_references,
+                        &models.bindings,
+                    ),
+                    Err(message) => return Err(failed(message)),
+                };
+                if analysis.ok && bound {
                     return Err(failed(
                         "AmendWorkflow has no confirmation for this script, so nothing was stopped. Call it again.".to_owned(),
                     ));
@@ -725,9 +841,26 @@ impl AmendWorkflowTool {
     ) -> Result<ToolOutput, ToolError> {
         let Pending {
             resolved,
-            analysis,
+            mut analysis,
             inherited,
         } = pending;
+        // Fork (9.63): the revision's models; a script model that does not bind is a 9011 diagnostic (Node).
+        let models = self
+            .models_of(input, context, Some(&analysis))
+            .await
+            .map_err(failed)?;
+        if analysis.ok
+            && !crate::model_reference::all_bound(&analysis.model_references, &models.bindings)
+        {
+            let unbound = unbound_diagnostics(
+                &analysis.model_references,
+                &models.bindings,
+                models.entries.as_deref(),
+                models.predecessor_bindings.as_ref(),
+            );
+            analysis.ok = false;
+            analysis.diagnostics.extend(unbound);
+        }
 
         // The draft of an inline or inherited revision is a new file (never an overwrite); a path is already the file.
         let draft = if matches!(resolved.origin, Origin::Inline) {
@@ -796,8 +929,9 @@ impl AmendWorkflowTool {
             tool_call_id: Some(context.tool_use.to_string()),
             phase_names: None,
             max_concurrency: limit.map(|number| number as f64),
-            subagent_model: None,
-            model_bindings: None,
+            subagent_model: models.subagent_model.clone().map(Value::String),
+            model_bindings: (!models.bindings.is_empty())
+                .then(|| Value::Object(models.bindings.clone())),
             script_path,
             phase_alongside: None,
             inherit_args: false,
@@ -835,7 +969,13 @@ impl AmendWorkflowTool {
         } else {
             format!("The revised script started in the background as run {run_id}.")
         };
-        let settings = concurrency_sentence(limit, port.default_concurrency());
+        // Node `describeWorkflowRunSettings`: the limit, the subagent model, then the script's models.
+        let settings = format!(
+            "{}{}{}",
+            concurrency_sentence(limit, port.default_concurrency()),
+            describe_subagent_model(models.subagent_model.as_deref()),
+            describe_script_bindings(&models.bindings)
+        );
         let where_ = match &location {
             None => String::new(),
             Some(location) if location.path_source => format!(

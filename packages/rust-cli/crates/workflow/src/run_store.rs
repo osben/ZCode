@@ -78,6 +78,14 @@ pub trait RunStore: Send + Sync {
         let _ = run_id;
         Ok(true)
     }
+    /// Fork (9.63): the run's `run-launched` payload (its `subagentModel` and `modelBindings`), `None` when the journal has
+    /// none. The default fails, so a store that does not read the launch cannot drop a run's models by accident.
+    fn launch_payload(&self, run_id: &str) -> Result<Option<serde_json::Value>> {
+        let _ = run_id;
+        Err(anyhow::anyhow!(
+            "this run store does not read a run's launch"
+        ))
+    }
     /// One run's detail read (9.42): the row with its timestamps, and the run's entry of the journal's replay (the
     /// run-panel fields: pending questions, holes, artifacts, phases, node entries, the launch settings).
     ///
@@ -228,6 +236,11 @@ impl RunStore for SqliteRunStore {
         let conn = self.conn.lock_unpoisoned();
         let journal = DwfJournal::new(&*conn, self.clock);
         build_imported_cache(&journal, predecessor_run_id, BuildOptions::default())
+    }
+
+    fn launch_payload(&self, run_id: &str) -> Result<Option<serde_json::Value>> {
+        let conn = self.conn.lock_unpoisoned();
+        dwf::run_launched_payload(&conn, run_id)
     }
 
     fn launch_binds_models(&self, run_id: &str) -> Result<bool> {

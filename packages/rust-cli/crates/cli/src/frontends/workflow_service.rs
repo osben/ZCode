@@ -166,6 +166,10 @@ impl RunStore for LazyRunStore {
         self.get()?.launch_binds_models(run_id)
     }
 
+    fn launch_payload(&self, run_id: &str) -> Result<Option<serde_json::Value>> {
+        self.get()?.launch_payload(run_id)
+    }
+
     fn run_detail(
         &self,
         run_id: &str,

@@ -190,6 +190,9 @@ impl WorkflowRunService {
                 script_path: request.script_path,
                 phase_names,
                 phase_alongside,
+                // Fork (9.63): the run's subagent model and the script's table, as the owner's actors read them.
+                subagent_model: request.subagent_model,
+                model_bindings: request.model_bindings.map(Value::Object),
                 ..LaunchFields::default()
             }),
             ..EngineConfig::default()

@@ -351,6 +351,9 @@ pub enum Command {
     RecordWorkflowTurn {
         text: String,
         source: crate::workflow_run::WorkflowRecordSource,
+        /// Fork (9.63): the turn's `workflowLaunch` metadata (Node `metadata.workflowLaunch`), which its rows carry.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        meta: Option<serde_json::Value>,
     },
     /// 把这个会话在跑的前台 Bash 转到后台（修复线 L-A，docs/specs/rust-cli/tui-input.md §11）：用户的转后台键
     /// （`User`），或低延迟投递的输入（`DeliverMessage`）。会话 actor 交给本机的执行环境；总是 `Accepted`：没有回合在跑

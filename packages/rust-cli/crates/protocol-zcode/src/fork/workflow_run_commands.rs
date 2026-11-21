@@ -46,8 +46,8 @@ pub(crate) struct ParentTurns {
 
 #[derive(Default)]
 struct Pending {
-    /// (source, text) in the order the run asked for them.
-    records: Vec<(WorkflowRecordSource, String)>,
+    /// (source, text, `workflowLaunch` metadata) in the order the run asked for them.
+    records: Vec<(WorkflowRecordSource, String, Option<serde_json::Value>)>,
     /// Set by the first `deliver`: records after it are dropped (and logged).
     delivered: bool,
 }
@@ -71,7 +71,7 @@ impl ParentTurns {
         }
     }
 
-    fn push(&self, source: WorkflowRecordSource, text: String) {
+    fn push(&self, source: WorkflowRecordSource, text: String, meta: Option<serde_json::Value>) {
         let mut state = self.state.lock_unpoisoned();
         if state.delivered {
             tracing::warn!(
@@ -81,7 +81,7 @@ impl ParentTurns {
             );
             return;
         }
-        state.records.push((source, text));
+        state.records.push((source, text, meta));
     }
 
     /// Sends the records to the session in order, each as a `RecordWorkflowTurn` command, and waits for each answer. Takes
@@ -103,9 +103,9 @@ impl ParentTurns {
             state.delivered = true;
             std::mem::take(&mut state.records)
         };
-        for (source, text) in records {
+        for (source, text, meta) in records {
             let id = format!("workflow-turn-{}", rust_cli_platform::ids::uuid_v4());
-            match send_command(id, Command::RecordWorkflowTurn { text, source }).await {
+            match send_command(id, Command::RecordWorkflowTurn { text, source, meta }).await {
                 KernelAck::Accepted { .. } | KernelAck::Duplicate => {}
                 KernelAck::Rejected { reason } => tracing::warn!(
                     event = "workflow.run.turn.rejected",
@@ -123,12 +123,15 @@ impl WorkflowTurnSink for ParentTurns {
         self.gates.activate(&self.session)
     }
 
+    /// Fork (9.63): the settings turn carries its `workflowLaunch` metadata, so its rows draw the settings row.
     fn settings_turn(&self, turn: SettingsTurn) {
-        self.push(WorkflowRecordSource::Settings, turn.text);
+        let meta = turn.workflow_launch_meta();
+        self.push(WorkflowRecordSource::Settings, turn.text, Some(meta));
     }
 
+    /// A hub launch's record carries no metadata yet (divergence 916).
     fn launch_turn(&self, turn: LaunchTurn) {
-        self.push(WorkflowRecordSource::Launch, turn.text);
+        self.push(WorkflowRecordSource::Launch, turn.text, None);
     }
 }
 
