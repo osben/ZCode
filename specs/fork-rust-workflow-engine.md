@@ -5002,8 +5002,15 @@ input). The TUI shelf (`runner/session.rs` `fetch_commands`) does not offer a re
 at that consumer, not in `UserCommands::commands`, because the settings Skills and Commands sections read the same list and
 must keep listing every installed skill. `UserCommand` carries a `builtin` flag (serde default, skipped when false), so the
 desktop catalog keeps the built-in `init` and drops a user `init`. The catalog comment on `init` was wrong (Rust runs `/init`);
-corrected, and divergence 893 says what is listed. Not verified and not changed: whether any other consumer of the list
-(the `$` mention) offers a reserved file skill.
+corrected, and divergence 893 says what is listed.
+
+**Review delta of #615 (ocr, 4 findings), as fixed.** One predicate, `slash_names::offered(name, builtin)` (built-in or not
+reserved), is read by expansion, the protocol catalog and the TUI shelf. A reserved name with no skill behind it is not a
+command, so the `-p` unknown-command note no longer applies to it (red test first). A user, project or managed `init` no longer
+shadows the built-in: `skills_with` drops a file skill whose name is a reserved built-in, so `/init` runs the built-in (red test
+first). The TUI filter moved from the command list to the `/` shelf (`commands::shelf_skills`, tested). The `$` mention and the
+composer's own list keep every skill, which is the `skills_of` parity. Divergence 893 is unchanged. The `$` mention now offers
+a reserved user skill, as `skills_of` does.
 
 **Node divergences (new in 9.57, numbered from 890).**
 

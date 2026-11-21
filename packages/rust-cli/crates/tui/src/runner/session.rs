@@ -240,25 +240,9 @@ impl Loop<'_> {
     pub(super) fn fetch_commands(&mut self) {
         let kernel = self.kernel.clone();
         let workspace = self.app.view.workspace().clone();
-        self.pending.push(
-            async move {
-                // W9b-2 (9.57, ocr #615): the shelf does not offer a reserved name that expansion refuses (a user, project or
-                // plugin skill); the runtime's built-in skills stay. Settings lists every skill, so the filter is not in `commands`.
-                let commands = kernel
-                    .user_commands(&workspace)
-                    .await
-                    .into_iter()
-                    .filter(|command| {
-                        command.builtin
-                            || !rust_cli_kernel_api::slash_names::is_reserved_slash_name(
-                                &command.name,
-                            )
-                    })
-                    .collect();
-                Done::Commands(commands)
-            }
-            .boxed(),
-        );
+        // The list is unfiltered: the `/` shelf filters it at `composer_popup::slash_matches` (W9b-2, 9.57).
+        self.pending
+            .push(async move { Done::Commands(kernel.user_commands(&workspace).await) }.boxed());
     }
 
     pub(super) fn on_done(&mut self, done: Done) {

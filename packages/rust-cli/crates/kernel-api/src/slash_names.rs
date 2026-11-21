@@ -21,6 +21,12 @@ pub fn is_reserved_slash_name(name: &str) -> bool {
     RESERVED.contains(&normalized.as_str())
 }
 
+/// The one rule for offering a slash command (expansion, the desktop catalog and the TUI shelf all read it): the runtime's
+/// own built-in skill is always offered, and any other command with a reserved name is not.
+pub fn offered(name: &str, builtin: bool) -> bool {
+    builtin || !is_reserved_slash_name(name)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -50,6 +56,20 @@ mod tests {
             is_reserved_slash_name("//model"),
             "every leading slash is dropped"
         );
+    }
+
+    #[test]
+    fn a_built_in_skill_is_offered_and_a_reserved_custom_command_is_not() {
+        assert!(
+            offered("init", true),
+            "the runtime's built-in init is offered"
+        );
+        assert!(!offered("init", false), "a user init is not offered");
+        assert!(
+            !offered("Model", false),
+            "a reserved custom name is not offered"
+        );
+        assert!(offered("review", false), "a free custom name is offered");
     }
 
     #[test]

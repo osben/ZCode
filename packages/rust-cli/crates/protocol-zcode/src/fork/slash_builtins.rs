@@ -5,7 +5,7 @@
 //! (Node's reserved filter), except the runtime's own built-in skills (`init`, `loop`, `security-review`), which Rust runs.
 //! The reserved set itself lives in `rust_cli_kernel_api::slash_names`, shared with the expansion.
 
-use rust_cli_kernel_api::slash_names::is_reserved_slash_name;
+use rust_cli_kernel_api::slash_names::offered;
 use serde_json::{Value, json};
 
 #[cfg(test)]
@@ -50,7 +50,9 @@ pub(crate) fn catalog_commands(
     let custom = custom
         .into_iter()
         .filter(|(command, builtin)| {
-            *builtin || !command["name"].as_str().is_some_and(is_reserved_slash_name)
+            command["name"]
+                .as_str()
+                .is_none_or(|name| offered(name, *builtin))
         })
         .map(|(command, _)| command);
     builtins.chain(custom).collect()

@@ -322,6 +322,43 @@ async fn commands_lists_every_skill_and_marks_the_built_in_init() {
     assert!(init.builtin);
 }
 
+/// W9b-2 (9.57, ocr delta on #615): a reserved name with no skill behind it is not a command, even in a print session, so the
+/// `-p` unknown-command note and the @-mention expansion are not changed by it (Node returns no prompt for it).
+#[tokio::test]
+async fn a_reserved_name_without_a_skill_is_not_a_command_even_in_print_sessions() {
+    let env = env();
+    let commands = commands(env.clone());
+    commands.catalog.set_print_session(true);
+    let got = commands
+        .expand("/compact", tool_context(env, PermissionMode::DontAsk))
+        .await;
+    assert_eq!(got, Expansion::NotCommand);
+}
+
+/// W9b-2 (9.57, ocr delta on #615): a user skill named `init` does not shadow the built-in `init`: `/init` runs the built-in
+/// prompt, and the user's body is not used.
+#[tokio::test]
+async fn a_user_init_does_not_shadow_the_built_in_init() {
+    let env = Arc::new(MemoryEnvironment::new(facts()).with_file(
+        &format!("{CWD}/.zcode/skills/init/SKILL.md"),
+        "---\ndescription: User init\n---\nUSER BODY.\n",
+    ));
+    let Expansion::Messages { messages, query } = commands(env.clone())
+        .expand("/init notes", tool_context(env, PermissionMode::DontAsk))
+        .await
+    else {
+        panic!("/init should expand to the built-in skill");
+    };
+    assert!(query);
+    assert_eq!(
+        messages[0],
+        input(
+            "<command-message>init</command-message>\n<command-name>/init</command-name>\n<command-args>notes</command-args>"
+        )
+    );
+    assert!(!messages[1].text.contains("USER BODY"));
+}
+
 /// W9b-2 (9.57, ocr round 2 on #615): the runtime's own built-in skill `init` is not a user skill, so the reserved-name
 /// guard does not refuse it. `/init` expands to its prompt, as `/loop` does.
 #[tokio::test]

@@ -123,6 +123,11 @@ impl UserCommands for SkillCommands {
             .skills_in(&context.workspace, Some(&context.session))
             .await;
         let Some((skill, args)) = find(&skills, name, args) else {
+            // W9b-2 (9.57, ocr delta): a reserved name with no built-in skill behind it is not a command, so the `-p` note below
+            // does not apply to it (Node returns no prompt for it).
+            if rust_cli_kernel_api::slash_names::is_reserved_slash_name(name) {
+                return Expansion::NotCommand;
+            }
             // `-p` 的回退：输入照常发给模型，后面跟一条提醒（TUI 在发送前自己提示未知命令）。
             if self.catalog.print_session()
                 && super::unknown::applies(self.catalog.files.as_ref(), &context.workspace, name)
@@ -148,9 +153,7 @@ impl UserCommands for SkillCommands {
         // W9b-2 (9.57, ocr #615): a user, project or plugin skill never takes a reserved name (Node returns no prompt for
         // it), so a skill named `workflow` cannot take the built-in's place. The runtime's own built-in skills (`loop`,
         // `init`, `security-review`) are not user skills and still expand.
-        if rust_cli_kernel_api::slash_names::is_reserved_slash_name(name)
-            && skill.source != SkillSource::Builtin
-        {
+        if !rust_cli_kernel_api::slash_names::offered(name, skill.source == SkillSource::Builtin) {
             return Expansion::NotCommand;
         }
         // `userInvocable === false` 时只回一句提示，不调模型（产品名替换，ext.md §2.7）。

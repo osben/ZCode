@@ -288,12 +288,20 @@ impl SkillCatalog {
             Vec::new()
         };
         let mut found = load::discover(self, workspace, facts, &roots).await;
+        let built_ins: Vec<Arc<Skill>> = builtin::skills()
+            .into_iter()
+            .filter(|skill| self.looping || skill.name != builtin::LOOP)
+            .collect();
+        // W9b-2 (9.57, ocr delta): a built-in whose name is reserved (`init`) is not shadowed by a file, plugin or managed skill
+        // of the same name, so `/init` keeps running the built-in. Other names keep the first-wins order below.
+        found.retain(|skill| {
+            !built_ins.iter().any(|built_in| {
+                built_in.name == skill.name
+                    && rust_cli_kernel_api::slash_names::is_reserved_slash_name(&built_in.name)
+            })
+        });
         // 内置 skill 排在文件与插件 skill 之后，同名时前面的生效。
-        found.extend(
-            builtin::skills()
-                .into_iter()
-                .filter(|skill| self.looping || skill.name != builtin::LOOP),
-        );
+        found.extend(built_ins);
         let mut seen = HashSet::new();
         found
             .into_iter()

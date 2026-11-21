@@ -65,7 +65,7 @@ impl Composer {
     pub fn slash_matches(&self) -> Vec<Entry<'_>> {
         let typed = self.shelf_word().unwrap_or("").to_owned();
         let builtins: Vec<&'static Command> = commands::matching(&typed);
-        let skills = commands::matching_skills(&self.skills, &typed);
+        let skills = commands::shelf_skills(&self.skills, &typed);
         let init = skills.iter().find(|skill| skill.name == "init").copied();
         let agent = |name: &str| -> Option<Entry<'_>> {
             if name == "init" {
