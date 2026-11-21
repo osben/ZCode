@@ -201,3 +201,45 @@ async fn no_pack_anywhere_names_no_directory() {
     let env = MemoryEnvironment::new(facts());
     assert_eq!(pack_skills_dir(&env, &workspace(), ENTRY_DIR).await, None);
 }
+
+#[tokio::test]
+async fn a_miss_is_memoized_so_the_search_is_not_repeated_per_listing() {
+    let env = Arc::new(MemoryEnvironment::new(facts()));
+    let catalog = SkillCatalog::new(env.clone(), env.clone());
+    catalog.set_bundled_entry_dir(Some(ENTRY_DIR.to_owned()));
+    assert!(
+        catalog
+            .find(&workspace(), DYNAMIC_WORKFLOW_SKILL)
+            .await
+            .is_none()
+    );
+    // The pack appears after the miss: the memo answers the same way until the entry is set again.
+    let dir = format!("{PACK_ROOT}/skills/{DYNAMIC_WORKFLOW_SKILL}");
+    env.set_file(&format!("{dir}/SKILL.md"), "---\ndescription: late\n---\n");
+    env.set_file(&format!("{dir}/patterns.md"), "p");
+    env.set_file(&format!("{dir}/examples.md"), "e");
+    assert!(
+        catalog
+            .find(&workspace(), DYNAMIC_WORKFLOW_SKILL)
+            .await
+            .is_none()
+    );
+    catalog.set_bundled_entry_dir(Some(ENTRY_DIR.to_owned()));
+    assert!(
+        catalog
+            .find(&workspace(), DYNAMIC_WORKFLOW_SKILL)
+            .await
+            .is_some()
+    );
+}
+
+#[tokio::test]
+async fn a_shallow_entry_dir_still_finds_the_pack_beside_it() {
+    // An entry at depth 1 (`/app`): the ancestor walk runs out of parents, which must not discard `/app/packages`.
+    let root = "/app/packages/bundled-skills";
+    let env = pack_env_at(root);
+    assert_eq!(
+        pack_skills_dir(&env, &workspace(), "/app").await,
+        Some(format!("{root}/skills"))
+    );
+}
