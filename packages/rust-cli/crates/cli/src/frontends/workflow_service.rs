@@ -50,7 +50,7 @@ pub(crate) fn build<A: ActorAgents + ActorSessionRelease>(
     handle: tokio::runtime::Handle,
     progress: Arc<dyn WorkflowRunProgressPort>,
     gates: Arc<dyn DynamicWorkflowGates>,
-    world: RunWorld,
+    world: Option<RunWorld>,
 ) -> Option<WorkflowRunService> {
     let runner = runner?;
     let resume_handle = handle.clone();
@@ -69,7 +69,7 @@ pub(crate) fn build<A: ActorAgents + ActorSessionRelease>(
         handle,
         bindings,
         Arc::new(SystemClock::utc()),
-        Some(world),
+        world,
     );
     let concurrency = Arc::new(GovernorRunConcurrency::new(
         rust_cli_model::governor::process(),
@@ -206,7 +206,7 @@ fn now_ms() -> i64 {
 }
 
 /// The same reading as `now_ms`, for the database open's ledger stamp.
-fn now_ms_u64() -> u64 {
+pub(crate) fn now_ms_u64() -> u64 {
     SystemClock::utc().now_ms()
 }
 

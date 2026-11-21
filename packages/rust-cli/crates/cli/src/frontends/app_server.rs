@@ -338,7 +338,7 @@ async fn serve(
         context.dynamic_workflow_gates().clone(),
         // Fork (9.61): the runs' world reads and artifact publishes reach the workspace's environment and the kernel's
         // artifact store, each read rooted at its run's cwd.
-        rust_cli_runtime::workflow_owner::RunWorld {
+        Some(rust_cli_runtime::workflow_owner::RunWorld {
             roots: Arc::new(rust_cli_env_local::world_ports::WorldRoots::new(
                 opened.env.clone(),
                 tokio::runtime::Handle::current(),
@@ -353,7 +353,8 @@ async fn serve(
                         as Arc<dyn rust_cli_workflow::artifact_publish::ArtifactStorePort>
                 },
             ),
-        },
+            now_ms: workflow_service::now_ms_u64,
+        }),
     );
     // Fork (W7-11, 9.44, closes 411): the snippet service over the helper's runner and the workspace's environment. Each
     // snippet reads under its own cwd (9.41), so the roots port is the environment's, not the process's.

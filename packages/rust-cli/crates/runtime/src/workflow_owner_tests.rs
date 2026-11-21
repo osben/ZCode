@@ -957,6 +957,7 @@ async fn a_bound_run_world_read_reaches_the_hosts_ports_at_the_run_cwd() {
         roots: roots.clone(),
         fs: Arc::new(NoArtifactFs),
         store: None,
+        now_ms: || 7,
     };
     let (service, runner, _residency) = bound_service_with(
         path,

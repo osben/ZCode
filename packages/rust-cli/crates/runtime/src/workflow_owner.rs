@@ -403,6 +403,8 @@ pub struct RunWorld {
     pub roots: Arc<dyn WorldReadRoots>,
     pub fs: Arc<dyn ArtifactFsPort>,
     pub store: Option<Arc<dyn ArtifactStorePort>>,
+    /// The publication time of a run's artifacts, in milliseconds (the engine has no clock).
+    pub now_ms: fn() -> u64,
 }
 
 /// The owner factory of a run whose actor turns run on the agents (9.33). Each launch reads its parent's bindings, the
@@ -459,7 +461,7 @@ pub fn bound_owner_factory<A: ActorAgents + ActorSessionRelease>(
                     fs: world.fs.clone(),
                     store: world.store.clone(),
                     parent_session_id: Some(parent.clone()),
-                    now_ms: wall_ms,
+                    now_ms: world.now_ms,
                 }),
                 done: actor_handle.clone(),
             }
@@ -522,12 +524,3 @@ pub fn ledger_ms(reading: i64) -> u64 {
 #[cfg(test)]
 #[path = "workflow_owner_tests.rs"]
 mod tests;
-
-/// The wall clock in milliseconds, the publication time of a run's artifacts.
-fn wall_ms() -> u64 {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map_or(0, |elapsed| {
-            u64::try_from(elapsed.as_millis()).unwrap_or(u64::MAX)
-        })
-}
