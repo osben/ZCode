@@ -25,7 +25,7 @@ use rust_cli_kernel_api::workflow_run::{
 use rust_cli_platform::ids::uuid_v4;
 use rust_cli_tools::model_reference::{all_bound, choose, script_bindings, unbound_diagnostics};
 use rust_cli_workflow::model::RunStatus;
-use serde_json::{Map, Value};
+use serde_json::Value;
 
 use super::WorkflowRunService;
 use super::list::on_blocking_pool;
@@ -263,49 +263,72 @@ impl WorkflowRunService {
                 message: "the run has no working directory to start its successor in".to_owned(),
             }));
         };
-        // (8) The script's models (Node `bindScriptModels` over the launch's table): the run's own script is rerun, so
-        // every name it names was bound at launch. Each binding is re-resolved; one that is gone refuses the change.
-        // Divergence 918: the names come from the launch's table, not from a fresh compile of the script.
-        let model_bindings = match &launch_bindings {
-            None => Map::new(),
-            Some(table) => {
-                let references: Vec<ModelReference> = table
-                    .keys()
-                    .map(|name| ModelReference {
-                        name: name.clone(),
-                        line: 0,
-                        column: 0,
-                    })
-                    .collect();
-                let bound = script_bindings(&references, entries.as_deref(), Some(table));
-                if !all_bound(&references, &bound) {
-                    let lines: Vec<String> =
-                        unbound_diagnostics(&references, &bound, entries.as_deref(), Some(table))
-                            .into_iter()
-                            .map(|diagnostic| diagnostic.message)
-                            .collect();
-                    return Ok(SettingsOutcome::Refused(
-                        SettingsRefusal::ModelUnavailable {
-                            message: super::start::bounded_text(format!(
-                                "The models named in the script of run {run_id} cannot be used now:\n{}",
-                                lines.join("\n")
-                            )),
-                        },
-                    ));
+        // (8) Compile (Node `analyzeScript`, closes 918): a stored script written against an earlier facade that no
+        // longer compiles stops here, the old run untouched. A host with no checker (no saved-start ports) cannot
+        // compile, so it binds over the launch table's names as before (divergence 922). A checker that cannot answer
+        // refuses: nothing is decided on a failed check.
+        let analysis = match self.inner.saved_start.get() {
+            Some(ports) => match ports.analyzer.analyze(&script).await {
+                Ok(analysis) => Some(analysis),
+                Err(error) => {
+                    return Ok(SettingsOutcome::Refused(SettingsRefusal::StartFailed {
+                        message: format!(
+                            "the stored script of run {run_id} could not be checked: {}",
+                            error.message
+                        ),
+                    }));
                 }
-                bound
-            }
-        };
-        // The successor's card graph (Node `displayOfAnalysis`), best-effort from the saved-start checker.
-        let display = match self.inner.saved_start.get() {
-            Some(ports) => ports
-                .analyzer
-                .analyze(&script)
-                .await
-                .ok()
-                .and_then(|analysis| analysis.display),
+            },
             None => None,
         };
+        if let Some(analysis) = &analysis
+            && (!analysis.ok || !analysis.diagnostics.is_empty())
+        {
+            return Ok(SettingsOutcome::Refused(SettingsRefusal::CompileFailed {
+                message: super::start::bounded_diagnostics(
+                    &format!("The stored script of run {run_id} has errors:"),
+                    &analysis.diagnostics,
+                ),
+            }));
+        }
+        // (8b) The script's models (Node `bindScriptModels(analysis, catalog, snapshot.modelBindings)`): the compiled
+        // script's references, with the launch's table as the inherited bindings, each re-resolved; one that is gone
+        // refuses the change with its position.
+        let references: Vec<ModelReference> = match &analysis {
+            Some(analysis) => analysis.model_references.clone(),
+            None => launch_bindings
+                .iter()
+                .flat_map(|table| table.keys())
+                .map(|name| ModelReference {
+                    name: name.clone(),
+                    line: 0,
+                    column: 0,
+                })
+                .collect(),
+        };
+        let inherited = launch_bindings.as_ref();
+        let model_bindings = script_bindings(&references, entries.as_deref(), inherited);
+        if !all_bound(&references, &model_bindings) {
+            let unbound =
+                unbound_diagnostics(&references, &model_bindings, entries.as_deref(), inherited);
+            let heading =
+                format!("The models named in the script of run {run_id} cannot be used now:");
+            // The launch-table fallback has no positions, so its lines carry none.
+            let message = if analysis.is_some() {
+                super::start::bounded_diagnostics(&heading, &unbound)
+            } else {
+                let lines: Vec<String> = unbound
+                    .into_iter()
+                    .map(|diagnostic| diagnostic.message)
+                    .collect();
+                super::start::bounded_text(format!("{heading}\n{}", lines.join("\n")))
+            };
+            return Ok(SettingsOutcome::Refused(
+                SettingsRefusal::ModelUnavailable { message },
+            ));
+        }
+        // The successor's card graph (Node `displayOfAnalysis` of the same analysis).
+        let display = analysis.and_then(|analysis| analysis.display);
 
         // (9) Amend: the same script and the stored arguments, with the new limit. The tool call id is `settings-`, as Node's.
         let tool_call_id = format!("settings-{}", uuid_v4());

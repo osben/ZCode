@@ -650,17 +650,18 @@ pub enum SettingsOutcome {
     Refused(SettingsRefusal),
 }
 
-/// Why a settings change is refused, in Node's vocabulary minus `compile_failed` (divergence 674). Node's shared schema
-/// also lists `compile_failed`: it answers a stored script that no longer compiles at the step-8 pre-compile. This host
-/// has no such pre-compile; a script that fails inside the amend's probe is `start_failed` (divergence 675).
-/// Serialized reasons: `not_found`, `not_configurable`, `unchanged`, `script_missing`, `model_unavailable`,
-/// `missing_boundaries`, `start_failed`.
+/// Why a settings change is refused, in Node's vocabulary. Serialized reasons: `not_found`, `not_configurable`,
+/// `unchanged`, `script_missing`, `compile_failed`, `model_unavailable`, `missing_boundaries`, `start_failed`.
+///
+/// Fork (9.65, closes 918; adds `compile_failed` to 674's vocabulary): `compile_failed` answers a stored script that no longer compiles at Node's
+/// step-8 pre-compile, with Node's bounded diagnostics.
 #[derive(Debug, Clone, PartialEq)]
 pub enum SettingsRefusal {
     NotFound,
     NotConfigurable,
     Unchanged,
     ScriptMissing,
+    CompileFailed { message: String },
     ModelUnavailable { message: String },
     MissingBoundaries,
     StartFailed { message: String },

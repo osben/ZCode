@@ -582,6 +582,16 @@ fn the_refusal_codes_are_nodes_vocabulary() {
         settings_refusal_code(&SettingsRefusal::MissingBoundaries).0,
         "missing_boundaries"
     );
+    // 9.65 (918): a stored script that no longer compiles is Node's `compile_failed`, with its diagnostics.
+    assert_eq!(
+        settings_refusal_code(&SettingsRefusal::CompileFailed {
+            message: "The stored script of run r has errors:".to_owned()
+        }),
+        (
+            "compile_failed",
+            "The stored script of run r has errors:".to_owned()
+        )
+    );
     let (code, message) = settings_refusal_code(&SettingsRefusal::ModelUnavailable {
         message: "the host's message".to_owned(),
     });

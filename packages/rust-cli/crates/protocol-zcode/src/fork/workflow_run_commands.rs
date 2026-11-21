@@ -368,6 +368,7 @@ pub(crate) fn settings_refusal_code(refusal: &SettingsRefusal) -> (&'static str,
             "script_missing",
             "the workflow run has no script to start again".to_owned(),
         ),
+        SettingsRefusal::CompileFailed { message } => ("compile_failed", message.clone()),
         SettingsRefusal::ModelUnavailable { message } => ("model_unavailable", message.clone()),
         SettingsRefusal::MissingBoundaries => (
             "missing_boundaries",

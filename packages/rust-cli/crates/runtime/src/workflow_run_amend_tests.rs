@@ -1349,6 +1349,146 @@ async fn a_settings_refusal_for_many_unusable_models_is_bounded() {
     );
 }
 
+/// 9.65 (918): the settings route's checker. A script containing `BROKEN` has one error at L1:C7; each line
+/// `// model <name>` names `<name>` at that line, column 4 (a persona's model reference).
+struct Checker;
+
+#[async_trait]
+impl rust_cli_kernel_api::workflow_analysis::WorkflowAnalyzer for Checker {
+    async fn analyze(
+        &self,
+        script: &str,
+    ) -> Result<
+        rust_cli_kernel_api::workflow_analysis::WorkflowAnalysis,
+        rust_cli_kernel_api::workflow_analysis::WorkflowAnalysisError,
+    > {
+        use rust_cli_kernel_api::workflow_analysis::{
+            ModelReference, WorkflowAnalysis, WorkflowDiagnostic,
+        };
+        if script.contains("BROKEN") {
+            return Ok(WorkflowAnalysis {
+                ok: false,
+                diagnostics: vec![WorkflowDiagnostic {
+                    code: 2322,
+                    line: 1,
+                    column: 7,
+                    message: "Type 'string' is not assignable to type 'number'.".to_owned(),
+                }],
+                model_references: Vec::new(),
+                display: None,
+            });
+        }
+        let model_references = script
+            .lines()
+            .enumerate()
+            .filter_map(|(index, line)| {
+                line.strip_prefix("// model ").map(|name| ModelReference {
+                    name: name.to_owned(),
+                    line: index as i64 + 1,
+                    column: 4,
+                })
+            })
+            .collect();
+        Ok(WorkflowAnalysis {
+            ok: true,
+            diagnostics: Vec::new(),
+            model_references,
+            display: Some(
+                json!({"kind": "create_workflow", "ok": true, "causalityGraph": {"steps": []}}),
+            ),
+        })
+    }
+}
+
+fn with_checker(fx: &Fixture) {
+    assert!(
+        fx.service
+            .configure_saved_start(fx.path.with_file_name("home"), Arc::new(Checker))
+    );
+}
+
+/// 9.65 (closes 918): the settings route compiles the stored script first (Node step 8): a script that no longer
+/// compiles is `compile_failed` with Node's bounded diagnostics, and nothing changes.
+#[tokio::test]
+async fn a_stored_script_that_no_longer_compiles_refuses_the_settings_change() {
+    let fx = fixture(|conn| interrupted(conn, "dwfrun-broken", PARENT, "BROKEN\n"));
+    with_checker(&fx);
+    let sink = Recorder::default();
+    let answer = fx
+        .service
+        .amend_settings(PARENT, settings("dwfrun-broken", Some(Some(2.0))), &sink)
+        .await
+        .expect("answers");
+    assert_eq!(
+        answer,
+        SettingsOutcome::Refused(SettingsRefusal::CompileFailed {
+            message: "The stored script of run dwfrun-broken has errors:\nL1:C7 Type 'string' is not assignable to type 'number'.".to_owned(),
+        })
+    );
+    assert!(fx.fake.launches().is_empty());
+    assert_eq!(row(&fx, "dwfrun-broken").superseded_by, None);
+    assert!(sink.turns.lock().unwrap().is_empty());
+}
+
+/// 9.65 (closes 918): the models are bound over the compiled script's references (Node `bindScriptModels(analysis,
+/// catalog, snapshot.modelBindings)`), not the launch table's keys: a name the launch did not bind is resolved fresh,
+/// and a refusal names each reference at its line and column.
+#[tokio::test]
+async fn the_settings_route_binds_the_compiled_scripts_models_with_their_positions() {
+    let fx = fixture(|conn| {
+        interrupted(
+            conn,
+            "dwfrun-fresh",
+            PARENT,
+            "// model deepseek-v4-flash\nreturn 1\n",
+        );
+    });
+    with_catalog(&fx);
+    with_checker(&fx);
+    let answer = fx
+        .service
+        .amend_settings(
+            PARENT,
+            settings("dwfrun-fresh", Some(Some(2.0))),
+            &Recorder::default(),
+        )
+        .await
+        .expect("answers");
+    let SettingsOutcome::Amended { run_id, .. } = answer else {
+        panic!("the fresh name binds: {answer:?}");
+    };
+    let launch = launch_of(&fx, run_id.as_str()).await;
+    assert_eq!(
+        launch["modelBindings"],
+        json!({"deepseek-v4-flash": "deepseek/deepseek-v4-flash"})
+    );
+
+    let fx = fixture(|conn| {
+        interrupted(conn, "dwfrun-gone", PARENT, "return 1\n// model gpt-x\n");
+    });
+    with_catalog(&fx);
+    with_checker(&fx);
+    let answer = fx
+        .service
+        .amend_settings(
+            PARENT,
+            settings("dwfrun-gone", Some(Some(2.0))),
+            &Recorder::default(),
+        )
+        .await
+        .expect("answers");
+    let SettingsOutcome::Refused(SettingsRefusal::ModelUnavailable { message }) = answer else {
+        panic!("an unknown name refuses: {answer:?}");
+    };
+    assert!(
+        message.starts_with(
+            "The models named in the script of run dwfrun-gone cannot be used now:\nL2:C4 "
+        ),
+        "{message}"
+    );
+    assert!(fx.fake.launches().is_empty());
+}
+
 /// 9.63: an amend carries the run's subagent model and the script's table to the successor's launch (Node).
 #[tokio::test]
 async fn an_amend_records_the_subagent_model_and_the_script_models_on_the_successor() {
