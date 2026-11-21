@@ -314,6 +314,11 @@ impl LocalKernel {
             (&incognito, &workspaces),
             extensions.app_tools.clone(),
         );
+        // Fork (W9b-3, 9.58): the dynamic-workflow gate of each session also withholds the bundled dynamic-workflows skill.
+        if let Some(gating) = &extensions.dynamic_workflow {
+            ext.skills()
+                .set_dynamic_workflow_gates(gating.gates.clone());
+        }
         // Fork: the kernel's session opens await this layer host (the ext layer).
         let workspace_layer = ext.workspace_layer().clone();
         // agent 清单（context）与 Agent 工具共用一个目录：插件 agent 设置一次，两处同时看到（L12）。

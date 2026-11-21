@@ -114,6 +114,13 @@ impl Ext {
             SkillCatalog::new(ports.info.clone(), ports.files.clone())
                 .with_loop(!config.host_automations),
         );
+        // Fork (W9b-3, 9.58): the Node bundle entry the Host gave this agent locates the bundled skill pack.
+        skills.set_bundled_entry_dir(skills::helper_entry_dir(
+            config
+                .plugins
+                .env
+                .get(rust_cli_base::names::env::ZCODE_FORK_NODE_HELPER_COMMAND),
+        ));
         let runner = base
             .find(tool_names::BASH)
             .map(|bash| skills::runner(bash, ports.gate.clone(), ports.ids.clone()));

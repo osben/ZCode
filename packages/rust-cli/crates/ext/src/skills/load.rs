@@ -160,6 +160,27 @@ pub(crate) async fn discover(
     found
 }
 
+/// Fork (W9b-3, 9.58): the bundled pack's skills (Node `resolveBundledSkillRoots`: one system root, source `bundled`,
+/// no plugin prefix). `skills_dir` is the pack's `skills` directory.
+pub(crate) async fn bundled(
+    catalog: &SkillCatalog,
+    workspace: &WorkspaceRef,
+    facts: &EnvFacts,
+    skills_dir: &str,
+) -> Vec<Arc<Skill>> {
+    let reader = Reader {
+        catalog,
+        files: catalog.files.as_ref(),
+        workspace,
+        style: PathStyle::of_platform(&facts.platform),
+    };
+    let root = Root {
+        dir: skills_dir.to_owned(),
+        source: SkillSource::Bundled,
+    };
+    reader.load(&root, None).await
+}
+
 /// skill 的字段把嵌套块（`Value::Block`）当文本读（以前 ext 自己那份解析器就是这样，F132 收进 base 时保留）。
 fn text<'a>(map: &'a std::collections::BTreeMap<String, Value>, key: &str) -> Option<&'a str> {
     match map.get(key)? {
