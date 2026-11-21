@@ -297,10 +297,18 @@ impl WorkflowReminders {
 
     /// W8b (9.49): the hole `site_id` of a run of `session`, as the run source reads it (its type, its line). `None` when no
     /// source is set, the read fails, or the run owes no such hole.
-    pub fn open_hole(&self, session: &str, run_id: &str, site_id: &str) -> Option<OpenHole> {
-        let source = self.source.get()?;
+    pub fn open_hole(
+        &self,
+        session: &str,
+        run_id: &str,
+        site_id: &str,
+    ) -> (Option<OpenHole>, Option<String>) {
+        let Some(source) = self.source.get() else {
+            return (None, None);
+        };
         let decisions = match source.open(session, run_id) {
-            Ok(decisions) => decisions?,
+            Ok(Some(decisions)) => decisions,
+            Ok(None) => return (None, None),
             Err(error) => {
                 tracing::warn!(
                     event = "dynamic_workflow.hole.snapshot_failed",
@@ -308,13 +316,15 @@ impl WorkflowReminders {
                     error = error.as_str(),
                     "Dynamic workflow hole notification: snapshot read failed, the type falls back"
                 );
-                return None;
+                return (None, None);
             }
         };
-        decisions
+        // Node `readHoleSnapshot`: the hole's entry and the snapshot's script path, each read on its own.
+        let hole = decisions
             .holes
             .into_iter()
-            .find(|hole| hole.site_id == site_id)
+            .find(|hole| hole.site_id == site_id);
+        (hole, decisions.draft_path)
     }
 
     /// A turn started in `session`: the session is busy.

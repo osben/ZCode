@@ -181,8 +181,9 @@ fn hole_text(
         );
         return None;
     };
-    let hole =
-        reminders.and_then(|reminders| reminders.open_hole(parent_session_id, run_id, site_id));
+    let (hole, snapshot_draft) = reminders.map_or((None, None), |reminders| {
+        reminders.open_hole(parent_session_id, run_id, site_id)
+    });
     // Node `notifyHoleReached`: the payload wins for each field when it carries one, else the projection's hole, else the fallback.
     let type_name = str_field(payload, "type")
         .or_else(|| {
@@ -196,7 +197,13 @@ fn hole_text(
         .and_then(Value::as_u64)
         .or_else(|| hole.as_ref().and_then(|hole| hole.line));
     let prompt = str_field(payload, "prompt").map(bound_hole_prompt);
-    // The draft path is not in the projection yet (divergence 488), and the payload does not name the phases (9.49).
+    // Fork (9.62, DWH-02): the draft is the payload's, else the run's script file (Node's snapshot `scriptPath`); the
+    // reach time is the payload's, else the hole's `since`. The payload does not name the phases (9.49).
+    let draft_path = str_field(payload, "draftPath").or(snapshot_draft.as_deref());
+    let reached_at = payload
+        .get("reachedAt")
+        .and_then(Value::as_u64)
+        .or_else(|| hole.as_ref().and_then(|hole| hole.since));
     let text = rust_cli_prompts::workflow_notice::hole(&Hole {
         run_label: label,
         run_id,
@@ -204,7 +211,7 @@ fn hole_text(
         name,
         type_name,
         prompt: prompt.as_deref(),
-        draft_path: None,
+        draft_path,
         line,
         before: None,
         after: None,
@@ -216,10 +223,11 @@ fn hole_text(
         name,
         type_name,
         prompt: prompt.as_deref(),
-        draft_path: None,
+        draft_path,
         line,
         before: None,
         after: None,
+        reached_at,
     });
     Some((text, workflow))
 }

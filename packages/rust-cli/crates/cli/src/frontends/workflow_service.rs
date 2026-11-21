@@ -186,8 +186,8 @@ impl RunStore for LazyRunStore {
 }
 
 /// Fork (W7-11, 9.44, closes 414): the reminder clocks' run source over the service. The live runs and each run's open
-/// decisions are read from the service's memory (its run table and its parent's projection), so the synchronous reminder
-/// never waits on the owner thread.
+/// decisions are read from the service's memory (its run table and its parent's projection), and the script path from the
+/// run store's journal (9.62), so the synchronous reminder never waits on the owner thread.
 ///
 /// The service is held weakly. The service reaches the reminders through its progress port, so a strong hold here closes a
 /// cycle that nothing breaks. When the service is gone, no run is live (the same answer as an unset source).
@@ -202,11 +202,16 @@ impl RunDecisionsSource for ServiceRunDecisions {
     }
 
     fn open(&self, session: &str, run_id: &str) -> Result<Option<OpenDecisions>, String> {
-        Ok(self
-            .0
-            .upgrade()
-            .and_then(|service| service.run_snapshot_of(session, run_id))
-            .map(|run| open_decisions_of(&run)))
+        let Some(service) = self.0.upgrade() else {
+            return Ok(None);
+        };
+        // Fork (9.62, closes 488): the projection keeps no script path, so the draft is the run store's (Node's snapshot
+        // `scriptPath`), read only for a run the projection holds.
+        Ok(service.run_snapshot_of(session, run_id).map(|run| {
+            let mut open = open_decisions_of(&run);
+            open.draft_path = service.run_script_path_of(run_id);
+            open
+        }))
     }
 }
 

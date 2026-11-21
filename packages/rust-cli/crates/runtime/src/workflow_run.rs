@@ -1036,6 +1036,30 @@ impl WorkflowRunService {
         self.inner.state.lock_unpoisoned().runs.len()
     }
 
+    /// Fork (9.62, DWH-02): the run's script file as the journal records it (Node's snapshot `scriptPath`, read by the hole
+    /// notice and the blocked reminder): the last fill's file, else the launch's. No store, no row, or a read fault is
+    /// `None` (the fault is logged); the notice then falls back to GetWorkflowRun.
+    pub fn run_script_path_of(&self, run_id: &str) -> Option<String> {
+        let store = self.inner.store.get()?.clone();
+        match store.run_detail(run_id, None) {
+            Ok(detail) => detail?
+                .roster
+                .get("scriptPath")
+                .and_then(Value::as_str)
+                .filter(|path| !path.is_empty())
+                .map(str::to_owned),
+            Err(error) => {
+                tracing::warn!(
+                    event = "dynamic_workflow.hole.snapshot_failed",
+                    run = %run_id,
+                    error = %error,
+                    "a workflow run's script path could not be read, so its notice names no draft"
+                );
+                None
+            }
+        }
+    }
+
     /// Fork (W7-11, 9.44): the ids of one parent session's live runs, the runs the service holds (a settled run is removed).
     /// Sorted, so the reminder's order does not depend on the map.
     pub fn live_run_ids_of(&self, parent_session_id: &str) -> Vec<String> {

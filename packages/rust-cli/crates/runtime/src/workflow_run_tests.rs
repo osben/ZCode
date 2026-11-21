@@ -1827,3 +1827,43 @@ async fn a_later_answer_is_refused_by_how_its_question_left() {
         ResolveQuestionRefusalReason::UnknownQuestion
     );
 }
+
+/// 9.62 (DWH-02): the run's script file, as Node's snapshot `scriptPath` gives it to the hole notice and the blocked
+/// reminder: the last fill's file, else the launch's. A run with no file, or no row, has none.
+#[tokio::test]
+async fn the_script_path_of_a_run_is_the_last_fills_file_else_the_launchs() {
+    use rust_cli_workflow::model::RunStatus;
+    let h = harness();
+    let store = DetailStore {
+        events: vec![
+            (
+                "wf_launch".to_owned(),
+                vec![json!({"type": "run-launched", "scriptPath": "/ws/a.dwf.ts"})],
+            ),
+            (
+                "wf_fill".to_owned(),
+                vec![
+                    json!({"type": "run-launched", "scriptPath": "/ws/a.dwf.ts"}),
+                    json!({"type": "hole-filled", "siteId": "h", "filledAt": 1.0, "phaseNames": [],
+                           "scriptPath": "/ws/b.dwf.ts"}),
+                ],
+            ),
+            ("wf_none".to_owned(), vec![json!({"type": "run-launched"})]),
+        ],
+        rows: ["wf_launch", "wf_fill", "wf_none"]
+            .into_iter()
+            .map(|run| (settled_row(run, "ses_p", RunStatus::Running), 1, 2))
+            .collect(),
+    };
+    assert!(h.service.set_store(Arc::new(store)));
+    assert_eq!(
+        h.service.run_script_path_of("wf_launch").as_deref(),
+        Some("/ws/a.dwf.ts")
+    );
+    assert_eq!(
+        h.service.run_script_path_of("wf_fill").as_deref(),
+        Some("/ws/b.dwf.ts")
+    );
+    assert_eq!(h.service.run_script_path_of("wf_none"), None);
+    assert_eq!(h.service.run_script_path_of("wf_missing"), None);
+}

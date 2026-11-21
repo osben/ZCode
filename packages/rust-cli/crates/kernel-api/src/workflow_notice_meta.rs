@@ -96,6 +96,8 @@ pub struct HolePayload<'a> {
     pub line: Option<u64>,
     pub before: Option<&'a str>,
     pub after: Option<&'a str>,
+    /// Epoch milliseconds when the run reached the hole (Node `reachedAt`); the desktop's row counts the wait from it.
+    pub reached_at: Option<u64>,
 }
 
 /// Node `dynamic-workflow-run-hole-notification.ts`'s `workflowNotification` for a hole.
@@ -121,6 +123,9 @@ pub fn hole(input: &HolePayload<'_>) -> Value {
     }
     if let Some(after) = input.after {
         meta["after"] = json!(after);
+    }
+    if let Some(reached_at) = input.reached_at {
+        meta["reachedAt"] = json!(reached_at);
     }
     json!({ "workflowNotification": meta })
 }
