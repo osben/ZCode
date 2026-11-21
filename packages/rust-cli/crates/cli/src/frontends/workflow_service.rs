@@ -215,8 +215,8 @@ impl RunDecisionsSource for ServiceRunDecisions {
         let Some(service) = self.0.upgrade() else {
             return Ok(None);
         };
-        // Fork (9.62, closes 488): the projection keeps no script path, so the draft is the run store's (Node's snapshot
-        // `scriptPath`), read only for a run the projection holds.
+        // Fork (9.62, closes 488): the draft is the run's script file (Node's snapshot `scriptPath`), kept in the service's
+        // memory with the run, so this read stays off the store like the rest.
         Ok(service.run_snapshot_of(session, run_id).map(|run| {
             let mut open = open_decisions_of(&run);
             open.draft_path = service.run_script_path_of(run_id);

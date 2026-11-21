@@ -1369,6 +1369,8 @@ struct DetailStore {
     rows: Vec<(rust_cli_workflow::model::RunRow, i64, i64)>,
     /// The journal's events of each run, in order. The detail read replays them through the real reducer.
     events: Vec<(String, Vec<serde_json::Value>)>,
+    /// How many detail reads reached the store.
+    detail_reads: std::sync::atomic::AtomicUsize,
 }
 
 impl rust_cli_workflow::run_store::RunStore for DetailStore {
@@ -1429,6 +1431,8 @@ impl rust_cli_workflow::run_store::RunStore for DetailStore {
         run_id: &str,
         default_concurrency: Option<f64>,
     ) -> anyhow::Result<Option<rust_cli_workflow::run_store::RunDetail>> {
+        self.detail_reads
+            .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
         let Some((row, created, updated)) =
             self.rows.iter().find(|(row, _, _)| row.run_id == run_id)
         else {
@@ -1556,6 +1560,7 @@ async fn get_run_detail_reads_the_journal_row_for_the_owner_and_another_session(
                 4_000,
             ),
         ],
+        ..Default::default()
     };
     assert!(h.service.set_store(Arc::new(store)));
     // The replay needs the configured default concurrency (the service's progress port sets it).
@@ -1843,7 +1848,8 @@ async fn a_later_answer_is_refused_by_how_its_question_left() {
 }
 
 /// 9.62 (DWH-02): the run's script file, as Node's snapshot `scriptPath` gives it to the hole notice and the blocked
-/// reminder: the last fill's file, else the launch's. A run with no file, or no row, has none.
+/// reminder: the last fill's file, else the launch's. A run with no file, or no row, has none. A resumed run reads it
+/// from the journal once, at launch (9.62 review).
 #[tokio::test]
 async fn the_script_path_of_a_run_is_the_last_fills_file_else_the_launchs() {
     use rust_cli_workflow::model::RunStatus;
@@ -1868,16 +1874,64 @@ async fn the_script_path_of_a_run_is_the_last_fills_file_else_the_launchs() {
             .into_iter()
             .map(|run| (settled_row(run, "ses_p", RunStatus::Running), 1, 2))
             .collect(),
+        ..Default::default()
     };
-    assert!(h.service.set_store(Arc::new(store)));
+    let path = |run: &str| super::journaled_script_path(&store, run);
+    assert_eq!(path("wf_launch").as_deref(), Some("/ws/a.dwf.ts"));
+    assert_eq!(path("wf_fill").as_deref(), Some("/ws/b.dwf.ts"));
+    assert_eq!(path("wf_none"), None);
+    assert_eq!(path("wf_missing"), None);
+    // A launch without a file (a resume) takes the journal's, read once at launch; the reads after it are memory.
+    let store = Arc::new(store);
+    assert!(h.service.set_store(store.clone()));
+    let reads = store.detail_reads.load(std::sync::atomic::Ordering::SeqCst);
+    h.service
+        .launch(input("wf_fill"), config("wf_fill", Some("ses_p")))
+        .await
+        .expect("launched");
+    for _ in 0..3 {
+        assert_eq!(
+            h.service.run_script_path_of("wf_fill").as_deref(),
+            Some("/ws/b.dwf.ts")
+        );
+    }
     assert_eq!(
-        h.service.run_script_path_of("wf_launch").as_deref(),
-        Some("/ws/a.dwf.ts")
+        store.detail_reads.load(std::sync::atomic::Ordering::SeqCst),
+        reads + 1,
+        "one journal read at launch"
     );
+    assert_eq!(h.service.run_script_path_of("wf_launch"), None, "not held");
+    h.runner.finish(0, completed(json!("done")));
+    wait_until("the run to settle", || h.residency.live_runs("ses_p") == 0).await;
+}
+
+/// 9.62 review (ocr 1+2): a live run's script path is the launch's, kept in the service's memory. The hole notice and the
+/// blocked-reminder clock read it on the async runtime, so the read never reaches the store.
+#[tokio::test]
+async fn a_live_runs_script_path_is_read_from_memory_not_the_store() {
+    let h = harness();
+    let store = Arc::new(DetailStore::default());
+    assert!(h.service.set_store(store.clone()));
+    let mut launched = config("wf_1", Some("ses_p"));
+    launched.launch = Some(rust_cli_workflow::event::LaunchFields {
+        script_path: Some("/work/.zcode/workflows/drafts/check.dwf.js".to_owned()),
+        ..Default::default()
+    });
+    h.service
+        .launch(input("wf_1"), launched)
+        .await
+        .expect("launched");
+    for _ in 0..3 {
+        assert_eq!(
+            h.service.run_script_path_of("wf_1").as_deref(),
+            Some("/work/.zcode/workflows/drafts/check.dwf.js"),
+        );
+    }
     assert_eq!(
-        h.service.run_script_path_of("wf_fill").as_deref(),
-        Some("/ws/b.dwf.ts")
+        store.detail_reads.load(std::sync::atomic::Ordering::SeqCst),
+        0,
+        "the path is read from memory"
     );
-    assert_eq!(h.service.run_script_path_of("wf_none"), None);
-    assert_eq!(h.service.run_script_path_of("wf_missing"), None);
+    h.runner.finish(0, completed(json!("done")));
+    wait_until("the run to settle", || h.residency.live_runs("ses_p") == 0).await;
 }

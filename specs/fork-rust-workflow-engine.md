@@ -5417,7 +5417,7 @@ failed in the sweep besides run-pane-details is questions, a timing flake (re-ru
 
 - **DWN-02, the errored notice's script path** (71bdad10c). Node names the run's script file in the errored and model-stop
   guidance and gives AmendWorkflow its `path=`. The Rust notice had no path: it is only in the journal (the last fill's
-  file, else the launch's). `run_script_path_of` reads it, and the text names it relative to the run's directory (absolute
+  file, else the launch's). The notice reads it from the run's detail, and the text names it relative to the run's directory (absolute
   outside it, Node `describeWorkflowScriptPath`). Tests: `an_errored_run_with_a_script_file_says_to_edit_it_and_amend_with_path`,
   `a_model_stop_with_a_script_file_names_it_after_the_amend_sentence`,
   `an_errored_run_with_a_journaled_script_names_it_relative_to_the_run_cwd`,
@@ -5462,6 +5462,14 @@ failed in the sweep besides run-pane-details is questions, a timing flake (re-ru
   now posts nothing once the service is closed and logs `workflow.run.terminal_notice.shutdown_dropped`; the row stays
   `stopped` (interrupted), so the pane still reads stopped, process exited, resumable. Test:
   `a_run_stopped_by_the_closing_service_posts_no_terminal_notice`.
+- **Review: the script path is read from memory.** The hole notice and the blocked-reminder clock read the run's script
+  path on the async runtime, and the first DWH-02 cut read the run store there. The service now keeps the path on the run's
+  entry: the launch's own (submit, amend), else, for a resume, the journal's, read once on the blocking pool beside the
+  owner build. A Rust fill journals no file, so the path does not change while the run is live. `run_script_path_of` reads
+  only the entry. The terminal notice and the resume read share one roster rule (`roster_script_path`: the last fill's
+  file, else the launch's, an empty path is none); a failed resume read logs `workflow.run.script_path_unread`. Tests:
+  `a_live_runs_script_path_is_read_from_memory_not_the_store`,
+  `the_script_path_of_a_run_is_the_last_fills_file_else_the_launchs`.
 
 **Divergences.**
 
