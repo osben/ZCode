@@ -161,6 +161,7 @@ async fn short_inputs_and_later_turns_do_not_generate() {
     setup.titles = titles(title_model.clone());
     setup.messages = vec![Message::User(UserMessage {
         stall_execution: None,
+        workflow_meta: None,
         epilogue_start: None,
         intent: None,
         id: MessageId::new("msg_old"),
@@ -676,6 +677,7 @@ async fn node_desktop_titles_retry_a_reopened_session_only_with_an_automatic_tit
         setup.title_pending = pending;
         setup.messages = vec![Message::User(UserMessage {
             stall_execution: None,
+            workflow_meta: None,
             epilogue_start: None,
             intent: None,
             id: MessageId::new("msg_old"),

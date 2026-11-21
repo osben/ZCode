@@ -1678,6 +1678,116 @@ async fn a_cancel_stops_a_live_run_of_its_own_session_only() {
     assert_eq!(h.residency.live_runs("ses_p"), 0, "the guard is released");
 }
 
+/// Fork (9.52, divergence 609): a session's background works are its live runs only. Another session sees none, a run
+/// without a name is titled by its id, and a run that settles leaves the list.
+#[tokio::test]
+async fn a_session_lists_its_live_runs_as_background_works_only() {
+    use rust_cli_kernel_api::ids::{SessionId, WorkflowRunId};
+    use rust_cli_kernel_api::workflow_run::{CancelInitiator, DynamicWorkflowRunSessions};
+    let h = harness();
+    h.service
+        .launch(input("wf_1"), config("wf_1", Some("ses_p")))
+        .await
+        .expect("launched");
+    let own = h.service.for_session(&SessionId::new("ses_p"));
+    let other = h.service.for_session(&SessionId::new("ses_other"));
+    let listed = own.background_runs().await.expect("listed");
+    assert_eq!(listed.len(), 1, "the live run is a background work");
+    assert_eq!(listed[0].run_id.as_str(), "wf_1");
+    assert_eq!(
+        listed[0].title, "wf_1",
+        "an unnamed run is titled by its id"
+    );
+    assert!(
+        other.background_runs().await.expect("listed").is_empty(),
+        "another session's runs are not its works"
+    );
+    own.cancel(&WorkflowRunId::new("wf_1"), CancelInitiator::User)
+        .await
+        .expect("cancel");
+    wait_until("the stopped run to settle", || h.service.run_count() == 0).await;
+    assert!(
+        own.background_runs().await.expect("listed").is_empty(),
+        "a settled run is no longer a work"
+    );
+}
+
+/// Fork (9.52, divergence 609): a named run is titled by its name; runs are listed in launch order, not by id; and a
+/// run's start and its settlement each tick the change receiver the sessions' background watchers wait on.
+#[tokio::test]
+async fn background_works_follow_launch_order_and_name_and_tick_on_change() {
+    use rust_cli_kernel_api::ids::{SessionId, WorkflowRunId};
+    use rust_cli_kernel_api::workflow_run::{CancelInitiator, DynamicWorkflowRunSessions};
+    let h = harness();
+    let own = h.service.for_session(&SessionId::new("ses_p"));
+    let mut changes = own
+        .background_changes()
+        .expect("a run service keeps changes");
+    h.service
+        .launch(input("wf_b"), config("wf_b", Some("ses_p")))
+        .await
+        .expect("launched");
+    assert!(
+        changes.has_changed().expect("open"),
+        "a start ticks the receiver"
+    );
+    changes.borrow_and_update();
+    let mut named = config("wf_1", Some("ses_p"));
+    named.name = Some("Audit the tests".to_owned());
+    h.service
+        .launch(input("wf_1"), named)
+        .await
+        .expect("launched");
+    let listed = own.background_runs().await.expect("listed");
+    let ids: Vec<&str> = listed.iter().map(|run| run.run_id.as_str()).collect();
+    assert_eq!(ids, ["wf_b", "wf_1"], "launch order, not id order");
+    assert_eq!(
+        listed[0].title, "wf_b",
+        "an unnamed run is titled by its id"
+    );
+    assert_eq!(
+        listed[1].title, "Audit the tests",
+        "a named run is titled by its name"
+    );
+    changes.borrow_and_update();
+    own.cancel(&WorkflowRunId::new("wf_b"), CancelInitiator::User)
+        .await
+        .expect("cancel");
+    wait_until("the stopped run to settle", || h.service.run_count() == 1).await;
+    assert!(
+        changes.has_changed().expect("open"),
+        "a settlement ticks the receiver, so the list drops the run without a kernel event"
+    );
+}
+
+/// Fork (9.52): closing the host is a change of the live run set. The receiver ticks, and the session's background works
+/// are empty at once, so a session's list does not keep a run the host has already taken down.
+#[tokio::test]
+async fn closing_the_host_ticks_the_change_receiver_and_empties_the_background_works() {
+    use rust_cli_kernel_api::ids::SessionId;
+    use rust_cli_kernel_api::workflow_run::DynamicWorkflowRunSessions;
+    let h = harness();
+    let own = h.service.for_session(&SessionId::new("ses_p"));
+    h.service
+        .launch(input("wf_1"), config("wf_1", Some("ses_p")))
+        .await
+        .expect("launched");
+    let mut changes = own
+        .background_changes()
+        .expect("a run service keeps changes");
+    changes.borrow_and_update();
+    assert_eq!(own.background_runs().await.expect("listed").len(), 1);
+    let _report = h.service.close().await;
+    assert!(
+        changes.has_changed().expect("open"),
+        "the close ticks the receiver"
+    );
+    assert!(
+        own.background_runs().await.expect("listed").is_empty(),
+        "a closed host lists no background run"
+    );
+}
+
 /// Node's retired-question table (W8a, 9.48, divergence 391): a question withdrawn with its run is `run_not_in_flight`, an
 /// answered one is `already_resolved`, and an id it never held is `unknown_question`.
 #[tokio::test]

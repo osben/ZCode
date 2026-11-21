@@ -52,6 +52,7 @@ pub(crate) fn request(text: &str) -> QueryRequest {
         },
         vec![Message::User(UserMessage {
             stall_execution: None,
+            workflow_meta: None,
             epilogue_start: None,
             intent: None,
             id: MessageId::new("msg_user"),

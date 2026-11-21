@@ -14,6 +14,7 @@ fn input(id: &str, epilogue_start: Option<usize>, intent: Option<InputIntent>) -
     Fact::MessageAppended {
         message: Message::User(UserMessage {
             stall_execution: None,
+            workflow_meta: None,
             epilogue_start,
             id: MessageId::new(id),
             content: vec![ContentBlock::Text {

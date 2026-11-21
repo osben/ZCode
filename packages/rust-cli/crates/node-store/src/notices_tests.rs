@@ -28,6 +28,7 @@ fn user_with(id: &str, content: Vec<ContentBlock>, origin: UserOrigin) -> Fact {
     Fact::MessageAppended {
         message: Message::User(UserMessage {
             stall_execution: None,
+            workflow_meta: None,
             epilogue_start: None,
             intent: None,
             id: MessageId::new(id),
@@ -275,6 +276,7 @@ async fn a_stall_reminder_stores_its_execution_and_other_messages_do_not() {
     let stall = Fact::MessageAppended {
         message: Message::User(UserMessage {
             stall_execution: Some("3".to_owned()),
+            workflow_meta: None,
             epilogue_start: None,
             intent: None,
             id: MessageId::new("msg_stall_1"),
@@ -325,4 +327,79 @@ async fn a_stall_reminder_stores_its_execution_and_other_messages_do_not() {
     }]);
     let serialized = serde_json::to_value(&plain_message[0]).unwrap();
     assert!(serialized.get("stall_execution").is_none(), "{serialized}");
+}
+
+/// W8d (9.51): a stored workflow run notice carries its base (`backgroundSource`, `workId`, `title`) and its payload as
+/// `originMeta`.
+#[tokio::test]
+async fn a_workflow_run_notice_stores_its_payload_in_origin_meta() {
+    let t = TestStore::new();
+    started(&t, "sess_1").await;
+    t.source.at(2000);
+    let escalation_text = "[SYSTEM NOTIFICATION - NOT USER INPUT]\n\n<workflow-escalation>\n  <run-id>dwfrun-7</run-id>\n  <run>Audit</run>\n  <question-id>q-1</question-id>\n  <subagent>Scout</subagent>\n  <question>Which file?</question>\n</workflow-escalation>\n\nSubagent Scout in workflow run Audit (dwfrun-7) escalated a blocking question.";
+    let escalation = Fact::MessageAppended {
+        message: Message::User(UserMessage {
+            stall_execution: None,
+            workflow_meta: Some(
+                json!({"workflowNotification": {"kind": "escalation", "qid": "q-1", "actor": "Scout", "question": "Which file?", "askedAt": 1_731_000_000_000u64}}),
+            ),
+            epilogue_start: None,
+            intent: None,
+            id: MessageId::new("msg_wf_1"),
+            content: vec![text(escalation_text)],
+            origin: UserOrigin::Meta {
+                source: rust_cli_kernel_api::hooks::queued_command::TASK_NOTIFICATION.into(),
+            },
+        }),
+    };
+    t.store
+        .commit(&sid(), batch(None, vec![escalation]))
+        .await
+        .unwrap();
+
+    let (message, _) = stored(&t, "msg_wf_1");
+    let value: Value = serde_json::from_str(&message).unwrap();
+    assert_eq!(
+        value["metadata"]["originMeta"],
+        json!({
+            "backgroundSource": "workflow",
+            "title": "Audit",
+            "workId": "dwfrun-7",
+            "workflowNotification": {"kind": "escalation", "qid": "q-1", "actor": "Scout", "question": "Which file?", "askedAt": 1_731_000_000_000u64},
+        })
+    );
+}
+
+/// W8d (9.51): a workflow payload is kept for a message that is exactly one notice. A batch keeps the base meta only (Node `batch_meta`).
+#[tokio::test]
+async fn a_workflow_payload_is_dropped_from_a_batch_of_notices() {
+    let t = TestStore::new();
+    started(&t, "sess_1").await;
+    t.source.at(2000);
+    let escalation = "<workflow-escalation>\n  <run-id>dwfrun-7</run-id>\n  <run>Audit</run>\n</workflow-escalation>";
+    let other = "<task-notification>\n<task-id>agent_9</task-id>\n<summary>Agent \"Other\" completed</summary>\n</task-notification>";
+    let batch_fact = Fact::MessageAppended {
+        message: Message::User(UserMessage {
+            stall_execution: None,
+            workflow_meta: Some(
+                json!({"workflowNotification": {"kind": "escalation", "qid": "q-1", "actor": "Scout", "question": "Which file?"}}),
+            ),
+            epilogue_start: None,
+            intent: None,
+            id: MessageId::new("msg_batch_1"),
+            content: vec![text(escalation), text(other)],
+            origin: UserOrigin::Meta {
+                source: rust_cli_kernel_api::hooks::queued_command::TASK_NOTIFICATION.into(),
+            },
+        }),
+    };
+    t.store
+        .commit(&sid(), batch(None, vec![batch_fact]))
+        .await
+        .unwrap();
+    let (message, _) = stored(&t, "msg_batch_1");
+    let value: Value = serde_json::from_str(&message).unwrap();
+    let meta = &value["metadata"]["originMeta"];
+    assert!(meta.get("workflowNotification").is_none(), "{meta}");
+    assert_eq!(meta["backgroundSource"], "workflow", "{meta}");
 }

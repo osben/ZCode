@@ -147,6 +147,7 @@ async fn a_cold_load_during_the_child_run_adds_no_resume_sentinel() {
     setup.opened = crate::Opened::Loaded;
     setup.messages = vec![Message::User(rust_cli_kernel_api::message::UserMessage {
         stall_execution: None,
+        workflow_meta: None,
         epilogue_start: None,
         intent: None,
         id: MessageId::new("u1"),

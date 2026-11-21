@@ -24,6 +24,7 @@ fn recorded(source: &str, (text, data): (String, Value)) -> Message {
 fn human() -> Message {
     Message::User(UserMessage {
         stall_execution: None,
+        workflow_meta: None,
         epilogue_start: None,
         intent: None,
         id: MessageId::new("u"),
@@ -137,6 +138,7 @@ fn tokens_are_due_after_human_input_and_tool_results_only() {
     let user = |origin: UserOrigin| {
         Message::User(UserMessage {
             stall_execution: None,
+            workflow_meta: None,
             epilogue_start: None,
             intent: None,
             id: MessageId::new("u"),
@@ -154,6 +156,7 @@ fn tokens_are_due_after_human_input_and_tool_results_only() {
     });
     let result = Message::User(UserMessage {
         stall_execution: None,
+        workflow_meta: None,
         epilogue_start: None,
         intent: None,
         id: MessageId::new("r"),
@@ -178,6 +181,7 @@ fn tokens_are_due_after_human_input_and_tool_results_only() {
     // 用户调用 skill（命令标签 + 正文）不是普通的用户输入：不宣布（ext.md §2.7）。
     let command = Message::User(UserMessage {
         stall_execution: None,
+        workflow_meta: None,
         epilogue_start: None,
         intent: None,
         id: MessageId::new("c"),
@@ -205,6 +209,7 @@ fn inputs_are_not_announced_after_the_goal_prompt_or_stop_feedback() {
     let meta = |source: &str| {
         Message::User(UserMessage {
             stall_execution: None,
+            workflow_meta: None,
             epilogue_start: None,
             intent: None,
             id: MessageId::new("m"),
@@ -232,6 +237,7 @@ fn inputs_are_not_announced_after_a_bash_mode_command() {
     let said = |text: &str| {
         Message::User(UserMessage {
             stall_execution: None,
+            workflow_meta: None,
             epilogue_start: None,
             intent: None,
             id: MessageId::new("b"),

@@ -60,6 +60,7 @@ fn usage(n: usize) -> Option<Usage> {
 fn user(n: usize) -> Message {
     Message::User(UserMessage {
         stall_execution: None,
+        workflow_meta: None,
         epilogue_start: None,
         intent: None,
         id: id("u", n),
@@ -92,6 +93,7 @@ fn call(n: usize) -> Message {
 fn result(n: usize) -> Message {
     Message::User(UserMessage {
         stall_execution: None,
+        workflow_meta: None,
         epilogue_start: None,
         intent: None,
         id: id("r", n),
@@ -150,6 +152,7 @@ fn compaction(k: usize, preserved: Option<(MessageId, MessageId)>) -> Vec<Messag
         })),
         Message::User(UserMessage {
             stall_execution: None,
+            workflow_meta: None,
             epilogue_start: None,
             intent: None,
             id: summary,

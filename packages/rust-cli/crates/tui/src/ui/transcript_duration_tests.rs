@@ -64,6 +64,7 @@ fn typed(app: &mut App, seq: &mut u64, id: &str) {
         vec![KernelEvent::MessageDone {
             message: Message::User(UserMessage {
                 stall_execution: None,
+                workflow_meta: None,
                 epilogue_start: None,
                 intent: None,
                 id: MessageId::new(id),

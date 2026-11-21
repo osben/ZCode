@@ -36,6 +36,7 @@ pub mod texts;
 pub mod title;
 mod words;
 pub mod workflow_notice;
+pub mod workflow_terminal;
 
 pub use words::{SlugWords, slug_words};
 

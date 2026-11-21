@@ -68,6 +68,7 @@ fn request(source: QuerySource) -> ContextRequest {
 fn user(id: &str, text: &str) -> Message {
     Message::User(UserMessage {
         stall_execution: None,
+        workflow_meta: None,
         epilogue_start: None,
         intent: None,
         id: MessageId::new(id),

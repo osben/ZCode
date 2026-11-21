@@ -937,7 +937,7 @@ fn usage_block(detail: &Value) -> String {
 }
 
 /// Node `formatWorkflowProviderStopError`: the cause, the action, the facts and the raw message of a provider stop.
-fn provider_stop_text(stop: &Value, run_id: &str) -> String {
+pub fn provider_stop_text(stop: &Value, run_id: &str) -> String {
     let provider_id = text_of(stop, "providerId");
     let provider_label = text_of(stop, "providerLabel");
     let provider = provider_label.or(provider_id).unwrap_or("the provider");

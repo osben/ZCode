@@ -192,6 +192,7 @@ impl Engine<'_> {
         let meta = |text: &str, source: &str| {
             Message::User(UserMessage {
                 stall_execution: None,
+                workflow_meta: None,
                 epilogue_start: None,
                 intent: None,
                 id: self.ports.ids.message(),
@@ -213,6 +214,7 @@ impl Engine<'_> {
         // 摘要提示是一条普通 user 消息。
         messages.push(Message::User(UserMessage {
             stall_execution: None,
+            workflow_meta: None,
             epilogue_start: None,
             intent: None,
             id: self.ports.ids.message(),
@@ -412,6 +414,7 @@ impl Engine<'_> {
         };
         let summary = UserMessage {
             stall_execution: None,
+            workflow_meta: None,
             epilogue_start: None,
             intent: None,
             id: summary_id.clone(),

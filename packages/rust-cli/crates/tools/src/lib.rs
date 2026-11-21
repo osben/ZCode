@@ -152,6 +152,7 @@ pub use tool_search::{ToolCatalog, ToolSearchTool};
 pub use user_input::UserInputTools;
 pub use web_fetch::{SideModel, WebFetchTool};
 pub use web_search::WebSearchTool;
+pub use workflow_run_detail::provider_stop_text;
 pub use workflow_run_tools::run_tools as workflow_run_tools;
 pub use workflow_tools::{
     contracts as workflow_tool_contracts, is_amend_workflow_owned_predecessor,

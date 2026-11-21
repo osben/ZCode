@@ -17,6 +17,7 @@ use crate::test_support::{CWD, facts, workspace};
 fn user(text: &str, origin: UserOrigin) -> Message {
     Message::User(UserMessage {
         stall_execution: None,
+        workflow_meta: None,
         epilogue_start: None,
         intent: None,
         id: MessageId::new("u"),
@@ -39,6 +40,7 @@ fn body(text: &str) -> Message {
 fn launched(name: &str) -> Message {
     Message::User(UserMessage {
         stall_execution: None,
+        workflow_meta: None,
         epilogue_start: None,
         intent: None,
         id: MessageId::new("r"),

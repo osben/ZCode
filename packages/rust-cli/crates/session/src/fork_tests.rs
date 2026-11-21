@@ -75,6 +75,7 @@ fn the_resume_reply_is_not_copied() {
     let input = |id: &str| {
         Message::User(UserMessage {
             stall_execution: None,
+            workflow_meta: None,
             epilogue_start: None,
             intent: None,
             id: MessageId::new(id),

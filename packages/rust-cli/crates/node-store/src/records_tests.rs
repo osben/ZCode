@@ -129,6 +129,7 @@ async fn the_node_records_read_back_as_kernel_messages() {
     let user = |id: &str, text: &str| {
         Message::User(UserMessage {
             stall_execution: None,
+            workflow_meta: None,
             epilogue_start: None,
             intent: None,
             id: MessageId::new(id),

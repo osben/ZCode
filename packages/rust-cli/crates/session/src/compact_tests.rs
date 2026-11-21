@@ -111,6 +111,7 @@ impl Compactor for FakeCompactor {
             },
             summary: UserMessage {
                 stall_execution: None,
+                workflow_meta: None,
                 epilogue_start: None,
                 intent: None,
                 id: MessageId::new("msg_s"),
@@ -212,6 +213,7 @@ async fn session_with_hooks(
     }));
     let history = vec![Message::User(UserMessage {
         stall_execution: None,
+        workflow_meta: None,
         epilogue_start: None,
         intent: None,
         id: MessageId::new("msg_u"),

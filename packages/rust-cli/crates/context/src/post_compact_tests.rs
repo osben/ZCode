@@ -94,6 +94,7 @@ fn sources(items: &[AttachmentMessage]) -> Vec<&str> {
 fn human(id: &str) -> Message {
     Message::User(UserMessage {
         stall_execution: None,
+        workflow_meta: None,
         epilogue_start: None,
         intent: None,
         id: MessageId::new(id),
@@ -124,6 +125,7 @@ async fn compacted(assembler: &PromptAssembler) -> Vec<Message> {
     )));
     history.push(Message::User(UserMessage {
         stall_execution: None,
+        workflow_meta: None,
         epilogue_start: None,
         intent: None,
         id: MessageId::new("msg_summary"),

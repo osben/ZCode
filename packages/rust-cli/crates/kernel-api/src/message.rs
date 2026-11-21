@@ -315,6 +315,11 @@ pub struct UserMessage {
     /// (Node's `subagentStall.executionId`, written by the store and the projection). `None` for every other message.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub stall_execution: Option<String>,
+    /// Fork (9.51, W8d): the origin fragment of a workflow run notice that opened this message (Node's
+    /// `workflowNotification` or `workflowBlocked` key of `originMeta`), set only on a message that is exactly one such
+    /// notice. `None` for every other message. Written by the store and the projection, as `stall_execution` is.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub workflow_meta: Option<Value>,
     /// The start of the turn's epilogue in UTF-16 code units (Node `runTurn`'s `epilogueStart`, persisted as the message's
     /// `metadata.epilogueStart`). `Some(0)` for a nudged turn; `None` when the turn has no boundary, and nothing is stored.
     #[serde(default, skip_serializing_if = "Option::is_none")]

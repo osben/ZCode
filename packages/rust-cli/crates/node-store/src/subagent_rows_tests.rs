@@ -31,6 +31,7 @@ fn tool_result(message: &str, assistant: &str, call: &str) -> Fact {
     Fact::MessageAppended {
         message: Message::User(UserMessage {
             stall_execution: None,
+            workflow_meta: None,
             epilogue_start: None,
             intent: None,
             id: MessageId::new(message),

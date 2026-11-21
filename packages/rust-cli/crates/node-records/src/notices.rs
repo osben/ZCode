@@ -94,6 +94,7 @@ pub fn hydrate(record: &WithParts) -> Option<Message> {
             .collect();
         return Some(Message::User(UserMessage {
             stall_execution: None,
+            workflow_meta: None,
             epilogue_start: None,
             intent: None,
             id,
@@ -115,6 +116,7 @@ pub fn hydrate(record: &WithParts) -> Option<Message> {
         }),
         META => Message::User(UserMessage {
             stall_execution: None,
+            workflow_meta: None,
             epilogue_start: None,
             intent: None,
             id,
@@ -129,6 +131,7 @@ pub fn hydrate(record: &WithParts) -> Option<Message> {
         }),
         INTERRUPT | BASH_OUTPUT => Message::User(UserMessage {
             stall_execution: None,
+            workflow_meta: None,
             epilogue_start: None,
             intent: None,
             id,

@@ -21,6 +21,7 @@ const COMPACTED: &str = "✓ Compact";
 fn user(id: &str, text: &str) -> Message {
     Message::User(UserMessage {
         stall_execution: None,
+        workflow_meta: None,
         epilogue_start: None,
         intent: None,
         id: MessageId::new(id),
@@ -57,6 +58,7 @@ fn compaction(k: usize, kept: Option<&str>) -> Vec<Message> {
         })),
         Message::User(UserMessage {
             stall_execution: None,
+            workflow_meta: None,
             epilogue_start: None,
             intent: None,
             id: summary,

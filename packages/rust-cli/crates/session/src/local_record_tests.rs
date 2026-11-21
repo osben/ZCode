@@ -444,6 +444,7 @@ fn workflow_control_records_are_records_and_not_human_input() {
         stall_execution: None,
         epilogue_start: None,
         intent: None,
+        workflow_meta: None,
         id: rust_cli_kernel_api::ids::MessageId::new("m"),
         content: Vec::new(),
         origin: UserOrigin::Meta {

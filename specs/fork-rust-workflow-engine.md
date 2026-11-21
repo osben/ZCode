@@ -4319,6 +4319,214 @@ coordinator reversed that for parity with Node, which always reads the events. 6
 of each erased id once the rows are gone. A refused erase keeps the gates. A clock stopped before a file-failure refusal restarts
 at the session's next turn edge (9.47's note on 501). 682. The erase test checks the clock and the gate of both sessions of a tree (root and subagent), with the rules of `session_delete`.
 
+### 9.51 W8d: terminal run notification and notification payloads (as built, gate off)
+
+**Scope built.**
+
+- **The terminal notice** (`prompts/src/workflow_terminal.rs`, Node `formatLocalWorkflowTaskNotification`, `buildWorkflowTaskSummary`
+  and `workflowDeliveryGuidance`). A `<task-notification>` with `<task-id>`, `<tool-use-id>` (when the run has one), `<status>` (the
+  run's own terminal word), `<stop-reason>`, `<description>`, `<summary>`, `<result>`, and `<error>` (a provider stop uses the copy
+  table's block, escaped for `<>&` as Node does), then the guidance. Golden tests in `workflow_terminal_tests.rs` (9).
+- **The hook** (`runtime/src/workflow_run_terminal.rs`, `workflow_run.rs`). The owner thread's settle path calls
+  `Inner::post_terminal_notice` once, after `settle_run` and beside the quota module's settlement hook. It reads the run row through the
+  run store and builds the notice with `terminal_notice`. Nothing is posted for a run that is not terminal, has no parent session, or
+  was superseded (Node's `workflow_run_superseded`). The post goes to `AgentSignals::workflow_notice` of the parent session, wired by
+  `configure_terminal_notices` in `app_server.rs`. `tools::provider_stop_text` is now public, so GetWorkflowRun and the terminal notice
+  share one copy table, as Node does.
+- **The payload carrier.** `AgentSignal::WorkflowNotice` and `AgentSignals::workflow_notice` carry an optional `workflow` fragment
+  (`{"workflowNotification": …}` or `{"workflowBlocked": …}`). It travels with the notice: the hub channel, `Waiting::WorkflowNotice`,
+  and the turn's user message (`UserMessage::workflow_meta`, a new field set only on a message that is exactly one notice, as
+  `stall_execution` is). node-store writes it into the stored `originMeta`, and the live projection's notification row uses it. The
+  base (`backgroundSource`, `workId`, `title`) is read from the text, as the other background metas are (`origin_meta`, with the
+  `<workflow-…>` block's `<run-id>` and `<run>`, or a terminal notice's `<task-id>` and `<description>`). The payload is never parsed back
+  from the text.
+- **The builders** (`kernel-api/src/workflow_notice_meta.rs`, each with a caller): `terminal` (called by the runtime), `escalation`,
+  `hole` and `stall` (called by the progress host when each notice is made), and `blocked` (called by the reminder host's `remind`).
+  Bounds are Node's, in UTF-16 units.
+- **Lane order.** A notice whose text is a `<task-notification>` sorts with the terminal notifications (group 0 of
+  `order_for_parsing`), as Node's `orderTaskNotificationsForParsing` puts terminal notifications first.
+
+**Closed here.** 630 (the terminal notification is built and posted, except its reports and artifacts sections: 703). 631 (the payloads
+reach the store and the GUI row, live: 716 is the cold gap). 351 for the live path (the notices are titled by their run). The run label
+of a terminal notice is the run's name, else its id (710).
+
+**Not done.** The cold replay of notices (637, 716). The reports and artifacts sections and the script path (703, 704). The durations
+(703). The gate.
+
+**Tests.** Red-first was kept for the terminal formatter's expectations only in part: the module and its nine goldens were written in one
+pass, and the first run failed on one expectation, which was corrected to Node's output (`escapeXml` escapes quotes in `<summary>` too,
+so the summary reads `&quot;Audit&quot;`). The payload builders, the origin merge and the stored `originMeta` were written with their tests
+and passed on the first run. Green after the final edits: prompts (346), kernel-api (452), agents (361), session (75), node-store (413),
+protocol-zcode (1019), runtime (366, including six terminal tests), tools (662), workflow (463), the cli bin filter `workflow` (20), `cargo fmt
+--all --check` and `cargo clippy --workspace --all-targets --locked -- -D warnings` clean.
+
+**Node divergences (new in W8d, numbered from 700).**
+
+700. The terminal notice goes through the agents' workflow channel, as the progress notices do (9.38, 350), not through Node's
+     `enqueueBackgroundTaskNotification` queue. There is no ledger row and no branch fence.
+701. Posted once per settlement: the owner's settle path calls the hook after the row is terminal. A close that stops a run settles it on
+     its owner, and posts there; a closing session drops it without an ack (356). Not tested at the service level (see 723).
+702. A superseded run posts nothing, as Node suppresses `workflow_run_superseded`. The suppression is in `terminal_notice`.
+703. The `<reports>` and `<artifacts>` sections are not built (they need the journal's report rows and the published artifact reads).
+     The guidance takes the no-artifacts branch, and the payload has no `reports` or `artifacts` key. `durationMs` is absent: the row keeps
+     no timestamps (`RunRow`), so the payload cannot carry a duration.
+704. No script path: the run has no file reference here, so the `scriptPath` line and the "edit that file in place" wording are absent.
+     The errored and model-stop guidance use the no-file wording (Node's `scriptPath === undefined` branch).
+705. A plain error is the row's `failure.message`. A provider stop has the copy table's block in `<error>` (the text) and the raw message
+     in the payload's `error` (Node's `snapshot.error`).
+706. The `<tool-use-id>` is the row's `tool_call_id`. A run launched from the hub, or by a settings turn, has none; Node's launch id
+     is not in Rust. Not checked whether a resumed run keeps the original tool call id.
+707. The run's title is its `name`, else its id. Node's chain starts with the registry description, which Rust does not keep (352).
+708. `resultForm` is `prose` for a string value and `json` for any other; the text is the string itself or `serde_json`'s compact JSON.
+     Node's `JSON.stringify` differs in key order and number formatting where serde_json differs; not compared against a Node run.
+709. The text is posted bare, as the escalation and stall notices are. Node's `enqueueBackgroundTaskNotification` takes the same bare
+     text, but the model-side wrapping of a `<task-notification>` in Node was not traced for this notice.
+710. The label of a terminal notice is the run's name, else the run id (707).
+711. The payload `summary` is the title bounded to 500 units, as Node's `buildWorkflowTerminalNotification` passes the subject.
+712. The lane puts a terminal notice first among the notices of a batch (the `<task-notification>` prefix), as Node does.
+713. A batch of notices keeps the base meta only (Node `batch_meta`). A workflow payload is kept only for a message that is exactly one
+     notice, the same rule as the execution of a stall (`stall_execution`).
+714. The payload is a sidecar field on `UserMessage` (`workflow_meta`, new). The literal sites that construct a `UserMessage` gained
+     `workflow_meta: None` (about 230 lines, mostly tests), the same churn `stall_execution` caused.
+715. The base is read from the text. The `<run>` tag is the title, as Node's `runLabel` is (the description or the run id, 352).
+716. Cold open: the stored `originMeta` carries the payload, but a reopened session's projection reads the base from the text and
+     `UserMessage::workflow_meta` is `None` after hydration (node-store does not read the stored meta back, as it does not read
+     `stall_execution` back). A reopened session shows the run notice's title, not its row, until the cold read carries the payload
+     (637). This is the same gap the stall reminder has.
+717. The escalation payload's `askedAt` is the progress payload's epoch milliseconds as an integer (a whole, non-negative number; a float that is whole is read as that integer), as Node writes it.
+718. The hole payload carries the ordinal from the progress payload, which the text does not, and the same type, prompt (4000 units) and
+     line as the text. `before`, `after` and `draftPath` are absent, as the text has them absent (633, 634). `reachedAt` is absent (224).
+719. The stall payload floors `sinceMs` and `cap` and bounds `reason` at 64 units, as Node does.
+720. The blocked payload is built in `SessionReminders::remind` from the reminder's open set. `sinceMs` is the longest wait among the open
+     questions and holes, counted from the reminder's time (Node's `Math.max(0, …)`). The reminder clock's wiring is as 9.41 left it; it
+     was not re-verified here.
+721. A `stopReason` is set on the terminal payload only for a stopped run, as Node's branch does.
+722. Cold replay (637) is not done: the escalation, hole, stall, blocked and terminal notices are not posted again on a reopen.
+723. Tests not written: a service-level test that a settled run posts exactly one notice (the code path is one call after `settle_run`);
+     a lane-order test for a terminal notice in a batch (712); a progress-host test that the hole payload carries the ordinal. Each
+     is covered by a unit of its own, not by the composition.
+724. The terminal notice's `<error>` for an errored run without a message is absent. Node writes `<error>` only when `error` is defined.
+725. The `superseded` branch of the guidance is present but unreachable from the terminal path (702 suppresses the post), as Node keeps
+     it for older ports.
+
+**Review round (ocr on #610, 27 findings; four medium).** Fixed, with the tests named:
+
+- Stop reason gated on a stopped status, and a non-completed status summarises as failed (medium, `prompts` `workflow_terminal`).
+  A completed or errored row with a residual stop reason says what its status says (test `a_stop_reason_is_only_read_from_a_stopped_run`).
+- Closes 723: a service-level test settles a run through the production owner over a real session database and counts the
+  posted notices (`runtime` `workflow_run_terminal_service_tests`: exactly one; and an unconfigured service posts none).
+- The terminal group is decided by the payload's `terminal` kind, not the text prefix (medium, `session` `lane`; test
+  `a_run_terminal_notice_sorts_with_the_terminal_group_by_its_payload_kind`).
+- The payload carrier is tested end to end: a workflow notice's payload reaches the notice-opening message (medium, `session`
+  `agent_signals`; test `a_workflow_notices_payload_is_kept_on_the_message_that_opens_its_turn`).
+- The hook warns when a settled run's row is missing or not terminal, and matches the superseded reason by its variant.
+- Payload assertions: the escalation, stall and hole fragments in `protocol-zcode`, the blocked fragment from the reminder host,
+  the live turn header in the projection, and a batch's drop of the payload in node-store.
+- `stall` takes `u64` (no silent float saturation), the wait is one helper shared by the reminder text and payload, the
+  terminal module is private, the status comes from `RunStatus::as_str`, the escape is `monitor::escape` (the same policy),
+  and the `NoticeBlock` tuple is a named struct.
+- Docs for `origin_meta`, the lane variant and the agent signal are updated.
+
+Rejected: the shared artifact-text helper with `tools` (a one-line rule, not a policy like the provider-stop table; a copy is kept
+in the terminal module, and the two would be edited together only if Node's rule changed).
+
+**Second review round (ocr on 68c294d92, 11 items).** Fixed: the workflow base needs no opening `<task-notification>` marker (telemetry passes each block after its split); a workflow payload merges only onto a workflow base; `askedAt` is an integer end to end (the progress host, the builder and its tests); the UTF-16 bounds use `rust_cli_base::js::string`; the terminal `auto_resumes` is the quota module's own predicate (`quota_resume_at`) and only where quota is configured; the store-less sink is logged on its own, the gate-off path stays silent; the "not terminal" log no longer claims a failed status write; the two fixed sleeps are gone; the duplicate projection-test import is removed.
+
+### 9.52 W8e: runs in the background list and concurrency-only amend (as built, gate off)
+
+**Scope built.**
+
+- The AmendWorkflow tool retunes a concurrency-only call in place (divergence 455, closed at the tool). `tools/src/workflow_amend.rs`:
+  a call with only `max_concurrency` passes validation and asks for nothing (Node's `prepareApproval`: no script, no window, for any
+  owner). It calls the port's `retune_concurrency` (9.50): `Retuned` answers Node's `retuneResponse` text, `Unchanged` answers
+  `workflow_retune_unchanged` with the limit in force, `NotLive` falls back to a revision. The fallback reads the run's detail
+  (`get_run_detail`). A run this session owns and the user did not stop is revised with its stored script and no window (the owner
+  exemption, Node's `isAmendWorkflowOwnedPredecessor`); any other run answers `workflow_run_not_retunable` or `workflow_run_settled`,
+  or `run_not_found` for a run the session does not hold. The revision's post-approval body is `finish_revision`, shared by both.
+- Runs in `backgroundWorks` (divergence 609, closed for the snapshot). `kernel-api` `DynamicWorkflowRunPort::background_runs` (default
+  empty) returns `BackgroundRunWork` for the session's live runs. `runtime` answers it from the live table, in start order. The
+  protocol's `Projection::background_table` lists them after the shell commands as `{workId, kind: "workflow", title, status:
+"running", startedAt, cancellable: true, anchorRowId: null}`. `Live::shell_deltas` reads them on the same refresh as the commands.
+
+**Not built.**
+
+- The TUI `/tasks` entries. The kernel's `BackgroundKind` has no workflow variant, and 55 match sites in `tui`, `agents`, `tools` and
+  `executor-host` depend on its shape. A new variant is a shared-enum change for a separate PR (divergence 741).
+- Terminal notification and GUI notice payloads (W8d), the v4 settings and start commands (W9a): not in this row.
+
+**Node divergences (new in W8e, numbered from 730).**
+
+730. The unchanged check. Node refuses an unchanged limit before the port call, from the snapshot's limit (`refuseUnchangedBound`). Rust
+     asks the port, which answers `unchanged` from the engine's cap. The text is the same. The difference is a settled run whose limit
+     equals the request: Node answers `workflow_retune_unchanged` from the snapshot, Rust falls to the not-live answer.
+731. The owner exemption is applied only to the retune race (the fallback). A revision that is not a retune still asks its window
+     (454 stays open for the revision route).
+732. The fallback amends an owned run that settled, whatever its status, as Node does (owned and not user-stopped is the rule).
+733. The retune's failure has no error code. The text carries Node's code (`workflow_retune_unchanged`, `workflow_run_settled`,
+     `workflow_run_not_retunable`, `run_not_found`), as the tool's other refusals do (465).
+734. A host whose port has no retune (unsupported) answers `workflow_retune_unavailable`, a Rust-only text. Node falls through to a
+     revision, which needs a stored script the host may not have.
+735. The retuned display is `{diagnostics, ok, retuned: {runId, maxConcurrency, previous, defaultConcurrency}}`, as Node's `retuned`.
+     It carries no `status` (no backgrounded run), as Node.
+736. The unchanged text names the limit in force from the engine's cap. Node names the snapshot's limit. Both read the same value for a
+     live run.
+737. The background entry's title is the run's name, else its id. Node's `workflowTaskSubject` falls back to the script path, which the
+     run's launch metadata does not keep here.
+738. Only live runs are listed (pending or running here), in start order; a settled run leaves the list. Node's tracker drops a run at
+     its settlement.
+739. Closed (see 749). The list used to refresh only on the commands' flush; a run that settled with none of those events stayed listed.
+740. `cancellable` is true for every listed run. Node's `canCancelBackgroundTask` for the run's tool is not checked against a live
+     Node session.
+741. The TUI `/tasks` list does not show runs (see Not built).
+742. The snapshot row has no `childSessionId`, `blocked` or `endedAt`. A run has no child session in this host, and the run's blocked
+     state is not projected here.
+743. The `startedAt` is the run's launch time (`RunMeta.started_at_ms`), kept across refreshes. Node's tracker start time is not compared.
+744. Divergence 609 is closed for the snapshot only. The run is cancelled by its id through TaskStop (9.48), as before.
+745. Divergence 610, checked. Node's subagent runtimes receive the parent's `runtimeTaskRegistry` (`runtime/methods/subagent.ts:99`), so
+     Node's TaskStop and `cancelBackgroundWork` see the runs of the whole session tree from the top session. Rust keeps the exact session
+     (9.48). Not changed: tree membership needs a lookup in the run path that the run service does not hold, and it is a separate PR.
+746. Not verified against a live Node run. The checks are source reads and the Rust tests.
+747. The retry text changed. A refused retune (`workflow_run_settled`, `workflow_run_not_retunable`) told the model to call AmendWorkflow
+     again. Here a call with only `max_concurrency` always retunes, so that retry refused again, forever. The text now names `name`
+     as the route: a call with `name` set is a revision with the run's own script, which asks and then starts. Node's plain retry
+     works because its route detection reads a fresh snapshot.
+748. A run detail that this host does not read (`getRunDetail` unsupported) answers `workflow_retune_unavailable` with its own text,
+     not the port's internal wording.
+749. Closes 739. The run service counts every change of its live run set (a start, a settlement, the host closing) on a watch
+     channel (`DynamicWorkflowRunPort::background_changes`). Each session's watcher re-reads its background works on a tick, as the
+     subagent table watcher does, so a run that settles on its own leaves the list without a kernel event. Every session watcher
+     reads its own runs on any tick, which is cheap (in memory plus the ledger).
+750. `cancellable: true` stands. The review said the cancel routes cannot reach a run, because `StopTask` resolves only commands and
+     subagents. That is not the path: `Agents::stop_task` (the `cancelBackgroundWork` and `/tasks` route) calls TaskStop's `stop`, whose
+     `stop_run` runs before the kernel lookup and calls `port.cancel(run, User)` (9.48, with the user's `stop_task` test). A hub-started
+     run (W9a, its divergence 760) reaches the same command, so no new routing is needed for it either.
+751. The order of runs is launch order: start time, then the launch token. The run id is not ordered by launch, so an id sort
+     would list two runs launched in the same millisecond out of order. The sort matches `list_runs_of`'s tie-break.
+752. A failed run read leaves the published list as it was (no patch), as the ledger read beside it does. An empty answer would have
+     stripped every live run until the next good read. Not covered by a test: `Live` has no harness for a failing run port.
+753. The live-run label source is one shared constant (`LABEL_SOURCE_NAME`), used by the label and the background title.
+754. The review's reads of a session's runs run on the blocking pool, as the sibling reads do.
+
+**Tests.**
+
+- `tools` `workflow_amend_tests` (ten new, plus the concurrency-only validation): red observed for the ten behavioural cases before the
+  implementation (the call refused `workflow_amend_script_unavailable` or the old `workflow_retune_unavailable`). Green after: the amend
+  tests 26, the workflow filter 200.
+- `protocol-zcode` `projection::background_shells_tests::a_live_workflow_run_is_a_running_work_until_it_settles`: the run appears after
+  the shell command, keeps its start time, gives no patch when unchanged, and leaves when not live. Red was a compile error (the
+  `background_table` method and `BackgroundRunWork` did not exist), not a behaviour red.
+- `runtime` `workflow_run_tests::a_session_lists_its_live_runs_as_background_works_only`: written with the implementation, green on the first
+  run. No behavioural red was captured for it.
+- `cargo fmt --all --check` and `cargo clippy --workspace --all-targets --locked -- -D warnings` clean. Lib tests green for runtime,
+  workflow, kernel-api, protocol-zcode, node-store and tools (no failures). CLI bin filter `workflow` 20.
+- Review round (ocr on #609, eleven findings, 747 to 754). New tests: the retry takes the revision route (`name`), an unreadable
+  detail on a retune, the launch-order and name test with the change tick (`background_works_follow_launch_order_and_name_and_tick_on_change`).
+  The retry and detail tests were written with their fixes, so no behaviour red was captured for them.
+- Second ocr round on #609 (four items): `Live`'s Drop now aborts the run-set watcher (it parks on a server-scoped channel);
+  the doc line of `watch_subagents` is back on that function; the `shell_table` doc link points at `background_table`; and
+  `closing_the_host_ticks_the_change_receiver_and_empties_the_background_works` covers the close tick. The close test passed on
+  its first run, so no red was captured.
+
 ### 9.53 W9a: v4 run commands, settings turn and launch turn (as built, gate off)
 
 **Scope built.** The two v4 run controls are registered and routed, behind the session gate. Both answer through the
@@ -4360,7 +4568,7 @@ controls answer `capabilityUnsupported` while the gate is off.
 
 - `tools` `workflow_start` (6): an unknown name (both scopes) with Node's text, a saved file resolves with its scope and
   script, an undeclared argument is `invalid_args`, an invalid name, an out-of-enum scope, a malformed metadata block.
-- `runtime` `workflow_run_start_tests` (7; the seventh checks the run row's v7 anchor and draft path): no ports is unsupported; an unknown name leaves the parent untouched; a script
+- `runtime` `workflow_run_start_tests` (8; the seventh checks the run row's v7 anchor and draft path, the eighth lists the hub run as a background work): no ports is unsupported; an unknown name leaves the parent untouched; a script
   with diagnostics is refused before any activation; a clean start activates once, submits once, and records the launch turn
   with Node's text and the `launch-` id; the launch text carries the arguments as a JSON block; a long compile text is cut at
   2000 characters.
@@ -4379,13 +4587,13 @@ controls answer `capabilityUnsupported` while the gate is off.
 
 **Node divergences (new in W9a, numbered from 760).**
 
-760. Corrected on review (PR #611). A hub-started run, and a settings successor, are cancellable through the user's stop
-     without a kernel task. `cancelBackgroundWork` is `Command::StopTask`, which reaches the agents' `stop_task` and then
-     `TaskStopTool::stop`, and `stop` calls `stop_run` first: that asks the session's run port to cancel the run id, with no
-     kernel registry lookup. The existing test `the_user_stops_a_workflow_run_through_the_same_path`
-     (`agents/src/task_stop_run_tests.rs`) covers it for a run the kernel does not list. The part not yet true is the
-     listing: `backgroundWorks` shows a live run only once the W8e snapshot change (PR #609) lists the run service's live
-     table. Not a blocker for the gate flip, provided #609 lands first; verify the listing when it merges.
+760. Verified and closed (PR #611, after #609 merged). A hub-started run, and a settings successor, are cancellable through the
+     user's stop without a kernel task: `cancelBackgroundWork` is `Command::StopTask`, which reaches the agents' `stop_task`
+     and `TaskStopTool::stop`, and `stop` calls `stop_run` first. That asks the session's run port to cancel the run id, with
+     no kernel registry lookup. The existing test `the_user_stops_a_workflow_run_through_the_same_path`
+     (`agents/src/task_stop_run_tests.rs`) covers it. The listing is verified too: a hub-started run is a live run of its
+     session, so `background_runs` lists it, titled by its saved name. The test is
+     `runtime` `workflow_run_start_tests::a_hub_started_run_is_listed_as_a_background_work_of_its_session`. Not a blocker.
 761. A script that names models is not bound and not refused. Node binds them with `bindScriptModels` and reports an unbound
      name as `compile_failed`. CreateWorkflow in Rust has no binding either (9.39), so the two agree, and both differ from Node.
 762. The launch carries no `phaseNames` or `phaseAlongside` (Node passes the display phases). The run's phase table comes from

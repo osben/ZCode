@@ -34,6 +34,7 @@ pub(crate) fn is_record(user: &UserMessage) -> bool {
 fn meta_message(ids: &dyn Ids, source: String, text: String) -> Message {
     Message::User(UserMessage {
         stall_execution: None,
+        workflow_meta: None,
         epilogue_start: None,
         intent: None,
         id: ids.message(),

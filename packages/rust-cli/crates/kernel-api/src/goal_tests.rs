@@ -91,6 +91,7 @@ fn stop_conditions_and_verdicts_round_trip() {
     });
     let feedback = Message::User(UserMessage {
         stall_execution: None,
+        workflow_meta: None,
         epilogue_start: None,
         intent: None,
         id: MessageId::new("msg_2"),

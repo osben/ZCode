@@ -368,3 +368,32 @@ async fn a_clean_start_puts_its_v7_anchor_and_its_draft_on_the_run_row() {
         .expect("the draft copy is recorded");
     assert!(script_path.contains("digest"), "{script_path}");
 }
+
+/// Divergence 760 (W9a, corrected with #609): a hub-started run is a live run of its session, so it is listed as a background
+/// work, titled by its saved name.
+#[tokio::test]
+async fn a_hub_started_run_is_listed_as_a_background_work_of_its_session() {
+    use rust_cli_kernel_api::ids::SessionId;
+    use rust_cli_kernel_api::workflow_run::DynamicWorkflowRunSessions;
+    let fx = fixture(Some(clean()));
+    save_global(&fx, "digest", SAVED);
+    let answer = fx
+        .service
+        .start_saved(PARENT, request(&fx.cwd, "digest"), &Recorder::default())
+        .await
+        .expect("the start answers");
+    let StartSavedOutcome::Started { run_id, .. } = answer else {
+        panic!("a clean script starts: {answer:?}");
+    };
+    let listed = fx
+        .service
+        .for_session(&SessionId::new(PARENT))
+        .background_runs()
+        .await
+        .expect("the works are listed");
+    let work = listed
+        .iter()
+        .find(|work| work.run_id == run_id)
+        .unwrap_or_else(|| panic!("the hub run is a work of its session: {listed:?}"));
+    assert_eq!(work.title, "digest");
+}

@@ -23,6 +23,7 @@ fn written(path: &str) -> Vec<Message> {
         }),
         Message::User(UserMessage {
             stall_execution: None,
+            workflow_meta: None,
             epilogue_start: None,
             intent: None,
             id: MessageId::new("u"),
@@ -93,6 +94,7 @@ async fn restored_keys_follow_the_tool_path_rule() {
         }),
         Message::User(UserMessage {
             stall_execution: None,
+            workflow_meta: None,
             epilogue_start: None,
             intent: None,
             id: MessageId::new("u"),
@@ -138,6 +140,7 @@ async fn a_restored_read_is_not_checked_for_changes_on_disk() {
         }),
         Message::User(UserMessage {
             stall_execution: None,
+            workflow_meta: None,
             epilogue_start: None,
             intent: None,
             id: MessageId::new("u"),

@@ -16,6 +16,7 @@ fn prompt(id: &str) -> Message {
 fn meta(id: &str, source: &str) -> Message {
     Message::User(UserMessage {
         stall_execution: None,
+        workflow_meta: None,
         epilogue_start: None,
         intent: None,
         id: MessageId::new(id),
@@ -45,6 +46,7 @@ fn wakeup(id: &str, tool: &str, noop: bool) -> Message {
 fn result(id: &str, tool: &str, text: &str, is_error: bool) -> Message {
     Message::User(UserMessage {
         stall_execution: None,
+        workflow_meta: None,
         epilogue_start: None,
         intent: None,
         id: MessageId::new(id),
@@ -115,6 +117,7 @@ fn work_or_foreign_input_vetoes_the_fold() {
     let vetoes: Vec<Message> = vec![
         Message::User(UserMessage {
             stall_execution: None,
+            workflow_meta: None,
             epilogue_start: None,
             intent: None,
             id: MessageId::new("h"),

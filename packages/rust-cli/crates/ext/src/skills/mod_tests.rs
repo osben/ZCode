@@ -30,6 +30,7 @@ fn read(path: &str) -> Vec<Message> {
         }),
         Message::User(UserMessage {
             stall_execution: None,
+            workflow_meta: None,
             epilogue_start: None,
             intent: None,
             id: MessageId::new("u1"),

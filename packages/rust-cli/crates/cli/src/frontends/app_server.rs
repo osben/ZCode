@@ -379,6 +379,10 @@ async fn serve(
         }
     }
     let workflow_service = workflow_service.map(Arc::new);
+    // Fork (9.51, W8d): a settled run posts its terminal notice to the parent session's model, through the agents' channel.
+    if let Some(service) = &workflow_service {
+        service.configure_terminal_notices(built.kernel.workflow_agents().signals());
+    }
     // Fork (9.44): the reminder clocks read each session's runs from the service's memory.
     if let Some(service) = &workflow_service
         && !reminders.set_runs(Arc::new(workflow_service::ServiceRunDecisions(

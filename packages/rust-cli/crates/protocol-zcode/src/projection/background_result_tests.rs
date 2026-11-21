@@ -13,6 +13,7 @@ use rust_cli_kernel_api::background_origin::origin_meta;
 fn notification(id: &str, task: &str, summary: &str) -> Message {
     Message::User(UserMessage {
         stall_execution: None,
+        workflow_meta: None,
         epilogue_start: None,
         intent: None,
         id: MessageId::new(id),
@@ -236,6 +237,7 @@ fn one_notification_message_with_two_blocks_is_one_batch_header() {
     };
     let batch = Message::User(UserMessage {
         stall_execution: None,
+        workflow_meta: None,
         epilogue_start: None,
         intent: None,
         id: MessageId::new("msg_n"),
@@ -296,6 +298,7 @@ fn agent_block(task: &str, call: &str, status: &str, summary: &str) -> ContentBl
 fn notifications(id: &str, blocks: Vec<ContentBlock>) -> Message {
     Message::User(UserMessage {
         stall_execution: None,
+        workflow_meta: None,
         epilogue_start: None,
         intent: None,
         id: MessageId::new(id),
@@ -406,6 +409,7 @@ fn a_single_failed_notification_settles_its_card_live_and_cold() {
             agent_calls(&["call_1"]),
             Message::User(UserMessage {
                 stall_execution: None,
+                workflow_meta: None,
                 epilogue_start: None,
                 intent: None,
                 id: MessageId::new("msg_r1"),
@@ -431,5 +435,40 @@ fn a_single_failed_notification_settles_its_card_live_and_cold() {
     assert_eq!(
         row["output"]["text"],
         "Agent \"one\" failed: provider & quota"
+    );
+}
+
+/// W8d (9.51): a workflow run notice's payload reaches the live turn header; the base (title and work id) is read from the text.
+#[test]
+fn a_workflow_run_notice_turn_carries_its_payload_in_the_header() {
+    let mut feed = Feed::new();
+    feed.apply(KernelEvent::TurnStarted {
+        turn: TurnId::new("turn_w"),
+        command: None,
+    });
+    let message = Message::User(UserMessage {
+        stall_execution: None,
+        workflow_meta: Some(json!({"workflowNotification": {"kind": "escalation", "qid": "q-1", "actor": "Scout", "question": "Which file?"}})),
+        epilogue_start: None,
+        intent: None,
+        id: MessageId::new("msg_w"),
+        content: vec![ContentBlock::Text {
+            text: "<workflow-escalation>\n  <run-id>dwfrun-7</run-id>\n  <run>Audit</run>\n</workflow-escalation>".into(),
+        }],
+        origin: UserOrigin::Meta {
+            source: "task-notification".into(),
+        },
+    });
+    feed.apply(KernelEvent::MessageDone { message });
+    let header = row_of(&feed.projection, "turnHeader", "turn_w");
+    assert_eq!(header["origin"], "backgroundResult");
+    assert_eq!(
+        header["originMeta"],
+        json!({
+            "backgroundSource": "workflow",
+            "title": "Audit",
+            "workId": "dwfrun-7",
+            "workflowNotification": {"kind": "escalation", "qid": "q-1", "actor": "Scout", "question": "Which file?"},
+        })
     );
 }
