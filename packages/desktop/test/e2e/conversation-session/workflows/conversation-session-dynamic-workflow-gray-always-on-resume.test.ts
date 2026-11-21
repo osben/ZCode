@@ -1,5 +1,4 @@
 import { readFile, rm, writeFile } from "node:fs/promises";
-import { TID_V4_TIMELINE } from "@zcode/shared/test-ids";
 import { join } from "node:path";
 import {
   countUpstreamRequests,
@@ -37,6 +36,7 @@ import { isOutsideClosedHistory, openClosedHistoryFolds } from "#e2e/helpers/v4-
 const COUNT_FILE = join(DEFAULT_WORKSPACE, ".e2e-dwu-a-count");
 const RELEASE_FILE = join(DEFAULT_WORKSPACE, ".e2e-dwu-b-release");
 const HELD_RETRY_FIXTURE = "dwu-a-agent-held-retry";
+const GROUP_ASK_FIXTURE = "dwu-c-agent-group";
 const SUBAGENT_LINE = "You are a subagent inside a dynamic workflow run";
 const DIGEST = '[data-workflow-run-digest="true"]';
 const NOTIFICATION_ROW = '[data-testid^="chat-workflow-notification-row-"]';
@@ -175,31 +175,6 @@ function countNotificationRows(kindLabel: string): Promise<number> {
       ).length,
     NOTIFICATION_ROW,
     kindLabel,
-  );
-}
-
-/**
- * Scroll the virtual timeline back to its bottom and wait for the notice row to mount.
- * Cause (W9h): DWU-03 scrolls to the top to find the launch card; the completion notice row lands
- * at the bottom while the reader is up there, so the virtualizer does not mount it and the count
- * read 0 (Node in the Linux box, intermittent). Same wheel-then-scroll intent as
- * scrollV4TimelineToTop, so the timeline treats it as the user's scroll.
- */
-async function scrollTimelineToBottomFor(kindLabel: string): Promise<void> {
-  await browser.waitUntil(
-    async () => {
-      await browser.execute((timelineTestId) => {
-        const timeline = document.querySelector<HTMLElement>(`[data-testid="${timelineTestId}"]`);
-        if (!timeline) return;
-        timeline.dispatchEvent(
-          new WheelEvent("wheel", { bubbles: true, cancelable: true, deltaY: 600 }),
-        );
-        timeline.scrollTop = timeline.scrollHeight;
-        timeline.dispatchEvent(new Event("scroll"));
-      }, TID_V4_TIMELINE);
-      return (await countNotificationRows(kindLabel)) > 0;
-    },
-    { timeout: 30_000, timeoutMsg: `滚回底部后没有挂载「${kindLabel}」通知行` },
   );
 }
 
@@ -495,11 +470,16 @@ describe("动态工作流 · 恢复停下的 run", () => {
         (await getLatestUpstreamToolResultByToolCallId("toolu_dwu_c_fill"))?.isError === false,
       { timeout: 60_000, timeoutMsg: "恢复后的 FillWorkflowHole 未执行成功" },
     );
+    // 补全体里的一问被关卡拦住，补全那一轮先结束，run 才跑完：完成通知唤起自己的一轮、画出自己的通知行。
+    // 不拦的话 run 在补全那一轮里就跑完，通知被 steer 进那一轮（transcript-and-notifications.md
+    // 「Delivery adds nothing new」），没有通知行（W9h：Linux box 上时有时无）。
+    await waitForV4AssistantMessageContaining("E2E_DWU_C_FILLED", 60_000);
+    await waitForV4Pane((pane) => !pane.canStop, "补全那一轮没有结束", 60_000);
+    await releaseControlledReplay(GROUP_ASK_FIXTURE);
     await waitForDigest(runId, (card) => card.status === "completed", "补全后 run 没有跑完");
     await waitForV4AssistantMessageContaining("E2E_DWU_C_DONE", 120_000);
     await waitForV4Pane((pane) => !pane.canStop, "完成通知那一轮没有结束", 60_000);
     expect(await countUpstreamRequests(terminalNotice(runId, "completed"))).toBe(1);
-    await scrollTimelineToBottomFor("工作流已完成");
     expect(await countNotificationRows("工作流已完成")).toBe(1);
   });
 
