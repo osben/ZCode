@@ -5605,7 +5605,7 @@ column}`) are bound into `modelBindings` (Node `readScriptModelBindings`); an un
   `a_cold_settings_record_draws_the_same_turn`, `a_workflow_record_keeps_its_launch_metadata_and_reads_it_back`;
   `a_record_without_launch_metadata_draws_no_row` passed before and after.
 
-**questions (DWQ-01), a test-side race that Node shares (spec fixed by the review round below).** It failed again in the Rust sweep
+**questions (DWQ-01), a test-side race that Node shares (the spec is fixed in the review round below).** It failed again in the Rust sweep
 (out-w9g-sweep). Three Node runs of the spec in the box on this head (out-w9g-node-q) gave FAIL, PASS, FAIL, and the
 kept Node failure has the same signature as every Rust one: the row's text has the question and the context but not
 the qid. `WorkflowRunQuestionRow` renders the question, the context, the waited label and the qid from one
@@ -5632,9 +5632,21 @@ while the side panel the chip click opens is still laying out, with that span cl
   `RunStore::launch_binds_models` is removed (default, SQLite impl, lazy-store delegation); nothing called it after the
   settings path moved to `launch_payload`.
 - The questions spec now waits for the qid text in the row before it reads it, as it already waits for the context. The
-  change is test-only. Box runs after the fix: not run. The box image `zcode-e2e-box:latest` and every `zcode-box-*`
-  volume were gone from the docker host before the first run (not removed by this session), so the Rust and Node re-runs
-  of questions, run-pane-details and save-window are pending.
+  change is test-only.
+
+**Box after the review (head f9299748f).** The box image was rebuilt (4c3fef724e11) and its volumes were recreated. The
+first run did a cold install and a cold Rust build; the binary was built fresh at the run and carries
+`Models named in the script`.
+
+| Run             | Runtime | Spec                            | Result           |
+| --------------- | ------- | ------------------------------- | ---------------- |
+| out-w9g-r3      | Rust    | gray-always-on-questions        | PASS, PASS, PASS |
+| out-w9g-r3      | Rust    | gray-always-on-run-pane-details | PASS             |
+| out-w9g-r3      | Rust    | gray-always-on-save-window      | PASS             |
+| out-w9g-node-q2 | Node    | gray-always-on-questions        | PASS, PASS       |
+
+Before the spec fix, questions failed 2 of 3 times on Node (out-w9g-node-q) and in the Rust sweep. After it, it passed
+3 of 3 on Rust and 2 of 2 on Node.
 
 **Divergences.**
 
