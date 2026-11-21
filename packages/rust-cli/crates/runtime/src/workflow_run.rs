@@ -323,6 +323,8 @@ impl Drop for Reservation {
 
 /// The launch facts the progress sink reads, taken from the config before the config moves into the owner factory.
 struct LaunchFacts {
+    /// Fork (9.61): the run's user-given name, for the progress notices.
+    run_name: Option<String>,
     parent_session_id: Option<String>,
     run_id: String,
     tool_call_id: Option<String>,
@@ -345,6 +347,7 @@ impl LaunchFacts {
             None => (None, None),
         };
         Self {
+            run_name: config.name.clone(),
             parent_session_id: config.parent_session_id.clone(),
             run_id: config.run_id.clone(),
             tool_call_id: config.tool_call_id.clone(),
@@ -385,6 +388,7 @@ fn session_hooks(
             subagent_model: facts.subagent_model,
             model_bindings: facts.model_bindings,
             default_concurrency,
+            run_name: facts.run_name,
             projection: hooks
                 .projection
                 .get_or_insert_with(shared_projection)
@@ -581,6 +585,7 @@ impl LaunchFacts {
     /// Facts for a hook that carries no run (the quota module alone).
     fn none() -> Self {
         Self {
+            run_name: None,
             parent_session_id: None,
             run_id: String::new(),
             tool_call_id: None,

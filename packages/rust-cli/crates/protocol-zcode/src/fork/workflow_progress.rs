@@ -118,11 +118,17 @@ impl WorkflowRunProgressPort for WorkflowProgressHost {
         }
         if let (Some(notices), Some(run_id)) = (&self.notices, run_id) {
             let payload = progress.get("payload").unwrap_or(&Value::Null);
+            // Fork (9.61): the run's display name (Node's registry description), which the sink adds for a named run;
+            // an unnamed run is called by its id, as Node's caller falls back.
+            let label = str_field(progress, RUN_NAME_KEY)
+                .filter(|name| !name.is_empty())
+                .unwrap_or(run_id);
             let posted = match event_type {
-                Some(ESCALATION_RAISED) => escalation_text(run_id, payload),
-                Some(RUN_STALLED) => stall_text(run_id, payload),
+                Some(ESCALATION_RAISED) => escalation_text(run_id, label, payload),
+                Some(RUN_STALLED) => stall_text(run_id, label, payload),
                 Some(HOLE_REACHED) => hole_text(
                     run_id,
+                    label,
                     parent_session_id,
                     payload,
                     self.reminders.as_deref(),
@@ -145,6 +151,7 @@ const OPEN_SET_EVENT_TYPES: [&str; 4] = [
     "hole-filled",
 ];
 const ESCALATION_RAISED: &str = "escalation-raised";
+use rust_cli_kernel_api::workflow_run_progress::RUN_NAME_KEY;
 const RUN_STALLED: &str = "run-stalled";
 const HOLE_REACHED: &str = "hole-reached";
 
@@ -157,6 +164,7 @@ const HOLE_PROMPT_MAX_UNITS: usize = 4_000;
 /// type it must return. Without that read the type is `unknown`, as Node's fallback. A malformed payload is skipped.
 fn hole_text(
     run_id: &str,
+    label: &str,
     parent_session_id: &str,
     payload: &Value,
     reminders: Option<&WorkflowReminders>,
@@ -190,7 +198,7 @@ fn hole_text(
     let prompt = str_field(payload, "prompt").map(bound_hole_prompt);
     // The draft path is not in the projection yet (divergence 488), and the payload does not name the phases (9.49).
     let text = rust_cli_prompts::workflow_notice::hole(&Hole {
-        run_label: run_id,
+        run_label: label,
         run_id,
         hole_id: site_id,
         name,
@@ -228,7 +236,7 @@ fn bound_hole_prompt(prompt: &str) -> String {
 
 /// `escalation-raised` → the parked question's notice. A payload without a question id or text is skipped, and never
 /// panics: the notice is an observation, and the run's truth is in the journal.
-fn escalation_text(run_id: &str, payload: &Value) -> Option<(String, Value)> {
+fn escalation_text(run_id: &str, label: &str, payload: &Value) -> Option<(String, Value)> {
     let (Some(qid), Some(question)) = (str_field(payload, "qid"), str_field(payload, "question"))
     else {
         tracing::warn!(
@@ -243,8 +251,7 @@ fn escalation_text(run_id: &str, payload: &Value) -> Option<(String, Value)> {
         .unwrap_or_else(|| actor_ref_label(payload.get("actor")));
     let context = str_field(payload, "context");
     let text = rust_cli_prompts::workflow_notice::escalation(&Escalation {
-        // The run's display name is the registry's description (Node); the progress path has no registry, so the id stands.
-        run_label: run_id,
+        run_label: label,
         run_id,
         qid,
         actor: &actor,
@@ -258,7 +265,7 @@ fn escalation_text(run_id: &str, payload: &Value) -> Option<(String, Value)> {
 }
 
 /// `run-stalled` → the run's stall notice. A `sinceMs` that is not a finite, non-negative number is skipped.
-fn stall_text(run_id: &str, payload: &Value) -> Option<(String, Value)> {
+fn stall_text(run_id: &str, label: &str, payload: &Value) -> Option<(String, Value)> {
     let Some(since) = payload
         .get("sinceMs")
         .and_then(Value::as_f64)
@@ -278,7 +285,7 @@ fn stall_text(run_id: &str, payload: &Value) -> Option<(String, Value)> {
         .map(|cap| cap.floor() as u64);
     let reason = str_field(payload, "reason");
     let text = rust_cli_prompts::workflow_notice::stall(&Stall {
-        run_label: run_id,
+        run_label: label,
         run_id,
         since_ms: since.floor() as u64,
         reason,

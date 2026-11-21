@@ -438,3 +438,27 @@ fn a_hole_carries_its_ordinal_which_the_text_does_not() {
     assert_eq!(workflow["workflowNotification"]["name"], "Plan");
     assert_eq!(workflow["workflowNotification"]["prompt"], "Write it");
 }
+
+/// 9.61: a named run's notices call it by its name (Node's registry description); an unnamed run keeps its id.
+#[test]
+fn a_named_runs_escalation_and_stall_call_it_by_its_name() {
+    let posted = Arc::new(Posted::default());
+    let mut named = raised();
+    named["runName"] = json!("E2E 提问工作流");
+    host(&posted)
+        .record("ses_parent", &named, &[])
+        .expect("recorded");
+    let mut stall =
+        stalled(json!({"sinceMs": 1_200_000, "dominantReason": "rate_limit", "cap": 4}));
+    stall["runName"] = json!("E2E 提问工作流");
+    host(&posted)
+        .record("ses_parent", &stall, &[])
+        .expect("recorded");
+
+    let posted = posted.0.lock().expect("posted");
+    assert_eq!(posted.len(), 2);
+    for (_, text) in posted.iter() {
+        assert!(text.contains("<run>E2E 提问工作流</run>"), "{text}");
+        assert!(text.contains("<run-id>dwfrun-7</run-id>"), "{text}");
+    }
+}
