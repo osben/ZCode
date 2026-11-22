@@ -17,6 +17,7 @@ import {
   openPlusMenu,
   openSlashPanelWithCatalogReady,
   readDynamicWorkflowGrayMockStatus,
+  skipWhenPackagedBuildForcesAlwaysOn,
   setComposerDraft,
 } from "#e2e/helpers/dynamic-workflow-gray";
 import { clearAppData, pinE2ELocale, waitForTestIdByDom } from "#e2e/helpers/desktop-app";
@@ -125,7 +126,8 @@ async function reopenSession(sessionId: string) {
 }
 
 describe("动态工作流灰度 · onDemand", () => {
-  before(async () => {
+  before(async function () {
+    skipWhenPackagedBuildForcesAlwaysOn(this);
     await prepareV4ConversationE2E();
     // 断言中文文案：固定界面语言，不跟随宿主系统语言（容器里默认英文）。
     await pinE2ELocale("zh-CN");
