@@ -687,6 +687,7 @@ describe("直接启动 E2E", () => {
     await writeFile(LAUNCH_SLEEP_FILE, LAUNCH_SLEEP_SEED, "utf-8");
     await writeFile(LAUNCH_SAVE_FILE, LAUNCH_SAVE_SEED, "utf-8");
     await writeFile(LAUNCH_ARTIFACT_FILE, LAUNCH_ARTIFACT_SEED, "utf-8");
+    await writeFile(LAUNCH_MANY_FILE, LAUNCH_MANY_SEED, "utf-8");
   });
 
   after(async () => {
@@ -1142,16 +1143,19 @@ describe("直接启动 E2E", () => {
         timeoutMsg: "点开胶囊后「工作流」分区没有直接显示 run 行（名字 + 时长 / 灯 + 词两行）",
       },
     );
-    await $(rowSelector).moveTo();
+    // The panel is still expanding when the row first appears, so one pointer move can land where the row was;
+    // move again on each poll until the hover lands (W9h: on the Linux box the single move left Stop hidden).
     await browser.waitUntil(
-      async () =>
-        browser.execute((selector) => {
+      async () => {
+        await $(rowSelector).moveTo();
+        return browser.execute((selector) => {
           const stop = document.querySelector<HTMLElement>(
             `${selector} [data-testid^="v4-background-work-cancel-"]`,
           );
           return stop !== null && getComputedStyle(stop).opacity === "1";
-        }, rowSelector),
-      { timeout: 5000, timeoutMsg: "悬停 run 行时 Stop 没有出现" },
+        }, rowSelector);
+      },
+      { timeout: 15000, timeoutMsg: "悬停 run 行时 Stop 没有出现" },
     );
   });
 
@@ -1198,7 +1202,15 @@ describe("直接启动 E2E", () => {
       timeoutMsg: "点 Configure 后没有设置弹层",
     });
     // The stepper sits at the default concurrency D = max(4, min(16, cores − 2)), so minus one always has room to go lower.
-    const defaultBound = Number(await readTestIdText("workflow-run-settings-bound-value"));
+    // The value fills a tick after the popover mounts (W9h: read at once it was "", so the bound became 0).
+    let defaultBound = 0;
+    await browser.waitUntil(
+      async () => {
+        defaultBound = Number(await readTestIdText("workflow-run-settings-bound-value"));
+        return defaultBound > 0;
+      },
+      { timeout: 10000, timeoutMsg: "设置弹层的并发数步进器没有读数" },
+    );
     // Not yet changed: no consequence sentence (before the change, either sentence could read wrong).
     expect(await readTestIdText("workflow-run-settings-consequence")).toBe("");
     await clickTestIdByDom("workflow-run-settings-bound-decrease", {
@@ -1277,7 +1289,12 @@ describe("直接启动 E2E", () => {
       timeout: 20000,
       timeoutMsg: "点芯片后没有进入工作流详情页",
     });
-    expect((await readTestIdText(TID_WORKFLOW_DETAIL)) ?? "").toContain(LAUNCH_SAVE_NAME);
+    // The hub may still show the detail it showed last until the chip's navigation lands (W9h: the box read the
+    // previous case's workflow), so wait for this workflow's detail.
+    await browser.waitUntil(
+      async () => ((await readTestIdText(TID_WORKFLOW_DETAIL)) ?? "").includes(LAUNCH_SAVE_NAME),
+      { timeout: 20000, timeoutMsg: "点芯片后详情页不是保存用例的工作流" },
+    );
 
     // 4) Delete it in the hub: the hub refresh invalidates the card's read cache, so this run is no longer "Saved".
     await clickTestIdByWebDriver(TID_WORKFLOW_DETAIL_MENU, {
