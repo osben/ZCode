@@ -19,7 +19,7 @@ use crate::server::Server;
 /// Node's subagent runs carry `rootSessionId ?? parent` (core subagent/runner.ts). The stored trace is not used: Node
 /// writes a trace id there, not the root. A parent that cannot be read is taken as the root; an interactive or fork
 /// session is its own root (`None`).
-pub(super) async fn root_by<F, Fut>(session: &str, meta: F) -> Option<String>
+pub(crate) async fn root_by<F, Fut>(session: &str, meta: F) -> Option<String>
 where
     F: Fn(String) -> Fut,
     Fut: std::future::Future<Output = Option<rust_cli_kernel_api::store::SessionMeta>>,
