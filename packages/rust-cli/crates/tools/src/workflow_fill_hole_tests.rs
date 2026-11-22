@@ -416,6 +416,39 @@ async fn a_hole_of_another_sessions_live_run_is_refused_before_any_window() {
     ));
 }
 
+#[tokio::test]
+async fn a_hole_of_a_stopped_or_settled_run_is_refused_before_any_window() {
+    // W9h (9.64), Node `findWaitingHole`: a stopped run points at ResumeWorkflowRun, a settled one says so, and neither
+    // opens the window (gray-always-on-resume DWU-03 asked for permission instead).
+    let cases = [
+        (
+            json!({"runId": "run-1", "ownedByThisSession": true, "status": "stopped", "stopReason": "user"}),
+            "hole_not_waiting: run run-1 is stopped (user), so nothing is waiting at h1. Continue it with ResumeWorkflowRun first; the hole will ask again once the script reaches it. Nothing was filled.",
+        ),
+        (
+            json!({"runId": "run-1", "ownedByThisSession": true, "status": "stopped"}),
+            "hole_not_waiting: run run-1 is stopped (unknown reason), so nothing is waiting at h1. Continue it with ResumeWorkflowRun first; the hole will ask again once the script reaches it. Nothing was filled.",
+        ),
+        (
+            json!({"runId": "run-1", "ownedByThisSession": true, "status": "completed"}),
+            "hole_not_waiting: run run-1 has already completed, so nothing is waiting at h1. Nothing was filled.",
+        ),
+        (
+            json!({"runId": "run-1", "ownedByThisSession": false, "status": "errored"}),
+            "hole_not_waiting: run run-1 has already errored, so nothing is waiting at h1. Nothing was filled.",
+        ),
+    ];
+    let input = json!({"run_id": "run-1", "hole_id": "h1", "script": "return 1;"});
+    for (detail, expected) in cases {
+        let runs: Arc<dyn DynamicWorkflowRunSessions> =
+            Arc::new(OneSession(Arc::new(Detail(detail.clone()))));
+        let tool = tool_with(Some(runs));
+        let ctx = context(Arc::new(SkillLoaded));
+        let message = invalid_message(tool.validate_input(&input, &ctx).await);
+        assert_eq!(message, expected, "{detail}");
+    }
+}
+
 /// An analyzer that draws a one-step graph naming the script it was given.
 struct Draws;
 

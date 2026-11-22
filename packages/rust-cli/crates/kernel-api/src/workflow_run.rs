@@ -719,10 +719,18 @@ impl WorkflowRecordSource {
 ///
 /// The records are best effort and are not acknowledged to the caller: a record that the session cannot store is logged
 /// by the sink, and the start or the change still answers as it did (divergence 773 in the W9a spec section).
+#[async_trait]
 pub trait WorkflowTurnSink: Send + Sync {
     /// A successful start or configuration activates the workflow tools (Node, `source: "run_control"`). `false` when the
     /// session has no gate record to activate in.
     fn activate(&self) -> bool;
+    /// Fork (W9h, 9.64; closes 766): Node `ensureSessionPersisted(name)` of a hub start, after the compile and before the
+    /// submit. A fresh new-task draft has no session row yet, and the run's parent bindings read that row, so the start
+    /// gives the draft its row (titled with the workflow's name) first. A refused start persists nothing. The default
+    /// has nothing to persist.
+    async fn persist_parent(&self, _title: &str) -> Result<(), String> {
+        Ok(())
+    }
     /// Queues the settings turn to the parent as a control-only turn, after the work in flight.
     fn settings_turn(&self, turn: SettingsTurn);
     /// Records the launch turn of a hub start as a control-only turn, after the work in flight.

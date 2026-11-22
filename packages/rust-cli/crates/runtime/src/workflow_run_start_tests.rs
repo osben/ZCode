@@ -109,12 +109,23 @@ fn clean() -> Arc<dyn WorkflowAnalyzer> {
 struct Recorder {
     activated: Mutex<usize>,
     launches: Mutex<Vec<LaunchTurn>>,
+    /// The titles the parent was persisted with (W9h, 9.64).
+    persisted: Mutex<Vec<String>>,
 }
 
+#[async_trait]
 impl WorkflowTurnSink for Recorder {
     fn activate(&self) -> bool {
         *self.activated.lock().expect("the recorder") += 1;
         true
+    }
+
+    async fn persist_parent(&self, title: &str) -> Result<(), String> {
+        self.persisted
+            .lock()
+            .expect("the recorder")
+            .push(title.to_owned());
+        Ok(())
     }
 
     fn settings_turn(&self, _turn: SettingsTurn) {}
@@ -271,6 +282,10 @@ async fn a_script_with_diagnostics_is_refused_before_anything_starts() {
         0,
         "no activation before a clean compile"
     );
+    assert!(
+        sink.persisted.lock().expect("sink").is_empty(),
+        "a refused start persists no session"
+    );
     assert!(fx.fake.launches().is_empty());
 }
 
@@ -298,6 +313,11 @@ async fn a_clean_start_activates_the_parent_submits_and_records_the_launch_turn(
         run_id.as_str()
     );
     assert_eq!(*sink.activated.lock().expect("sink"), 1);
+    // Node `ensureSessionPersisted(name)` (W9h, 9.64; closes 766): the parent gets its row, titled with the name.
+    assert_eq!(
+        *sink.persisted.lock().expect("sink"),
+        vec!["digest".to_owned()]
+    );
     let launches = sink.launches.lock().expect("sink");
     assert_eq!(launches.len(), 1);
     assert_eq!(launches[0].run_id, run_id);
@@ -408,6 +428,106 @@ async fn a_clean_start_puts_its_v7_anchor_and_its_draft_on_the_run_row() {
         .as_str()
         .expect("the draft copy is recorded");
     assert!(script_path.contains("digest"), "{script_path}");
+}
+
+/// W9h (9.64, closes 761): an analyzer whose clean verdict names the models in `names`, each on its own line.
+fn naming(names: &[&str]) -> Arc<dyn WorkflowAnalyzer> {
+    Arc::new(Verdict(WorkflowAnalysis {
+        model_references: names
+            .iter()
+            .enumerate()
+            .map(
+                |(index, name)| rust_cli_kernel_api::workflow_analysis::ModelReference {
+                    name: (*name).to_owned(),
+                    line: 4 + index as i64,
+                    column: 7,
+                },
+            )
+            .collect(),
+        display: None,
+        ok: true,
+        diagnostics: Vec::new(),
+    }))
+}
+
+/// W9h (9.64): one DeepSeek model, no levels.
+struct Catalog;
+
+#[async_trait]
+impl rust_cli_kernel_api::provider::ModelDirectory for Catalog {
+    async fn catalog(&self) -> rust_cli_kernel_api::provider::ModelCatalog {
+        rust_cli_kernel_api::provider::ModelCatalog {
+            revision: 1,
+            models: vec![rust_cli_kernel_api::provider::CatalogModel {
+                provider: "deepseek".to_owned(),
+                provider_name: "DeepSeek".to_owned(),
+                model: "deepseek-v4-pro".to_owned(),
+                protocol: rust_cli_kernel_api::provider::WireProtocol::AnthropicMessages,
+                reasoning_levels: Vec::new(),
+                default_reasoning_level: None,
+                context_window: 1,
+                max_output_tokens: 1,
+                capabilities: Default::default(),
+                connection: None,
+                host: None,
+            }],
+            default: None,
+        }
+    }
+}
+
+/// W9h (9.64, closes 761): Node `startSavedWorkflowRun` binds the models the script names (`bindScriptModels`); a name
+/// that does not bind is a 9011 diagnostic under `compile_failed`, and nothing starts (hub "脚本点名的模型解不出来").
+#[tokio::test]
+async fn a_script_naming_an_unbound_model_is_refused_as_a_compile_failure() {
+    let fx = fixture(Some(naming(&["no-such-model-e2e"])));
+    save_global(&fx, "digest", SAVED);
+    let sink = Recorder::default();
+    let answer = fx
+        .service
+        .start_saved(PARENT, request(&fx.cwd, "digest"), &sink)
+        .await
+        .expect("the refusal is an answer");
+    let StartSavedOutcome::Refused(StartRefusal::CompileFailed { message }) = answer else {
+        panic!("an unbound model is a compile failure: {answer:?}");
+    };
+    assert!(
+        message.starts_with("The saved workflow 'digest' has errors:\nL4:C7 "),
+        "{message}"
+    );
+    // Without a catalog the text is Node's no-catalog one (the fix is in the script, not the arguments).
+    assert!(
+        message.contains("This host cannot choose models"),
+        "{message}"
+    );
+    assert!(sink.persisted.lock().expect("sink").is_empty());
+    assert_eq!(*sink.activated.lock().expect("sink"), 0);
+    assert!(fx.fake.launches().is_empty());
+}
+
+/// W9h (9.64, closes 761): a name that binds goes on the run's launch as `modelBindings`, as CreateWorkflow's does.
+#[tokio::test]
+async fn the_models_a_saved_script_names_are_bound_on_its_launch() {
+    let fx = fixture(Some(naming(&["deepseek-v4-pro"])));
+    let models = Arc::new(rust_cli_kernel_api::provider::LateModelDirectory::default());
+    assert!(models.set(Arc::new(Catalog)));
+    assert!(fx.service.configure_models(models));
+    save_global(&fx, "digest", SAVED);
+    let answer = fx
+        .service
+        .start_saved(PARENT, request(&fx.cwd, "digest"), &Recorder::default())
+        .await
+        .expect("the start answers");
+    let StartSavedOutcome::Started { run_id, .. } = answer else {
+        panic!("a bound model starts: {answer:?}");
+    };
+    let payload = dwf::run_launched_payload(&open(&fx.path), run_id.as_str())
+        .expect("the journal reads")
+        .expect("the run has its launched event");
+    assert_eq!(
+        payload["modelBindings"],
+        json!({"deepseek-v4-pro": "deepseek/deepseek-v4-pro"})
+    );
 }
 
 /// Divergence 760 (W9a, corrected with #609): a hub-started run is a live run of its session, so it is listed as a background

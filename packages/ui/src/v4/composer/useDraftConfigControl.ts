@@ -41,10 +41,55 @@ import {
 import { resolveAppFollowupMode } from "@/v4/composer/followupModeSettings.js";
 import { isComposerEditScopeId } from "@/composer-edit-mode/contract.js";
 import { logger } from "@/logger.js";
-import { useZCodeSessionStore } from "@/store/zcodeSessionStore.js";
+import {
+  readSlashCatalogRevision,
+  useSlashCatalogRevisionStore,
+  useZCodeSessionStore,
+} from "@/store/zcodeSessionStore.js";
+import type { ConfigOptionsStatus } from "@/store/zcodeSessionStoreTypes.js";
 
 /** 目录水合单飞（per workspaceKey）：draft、已有 session 和严格模式双挂载共享一次 RPC。 */
 const workspaceCatalogHydrationFlights = new Map<string, Promise<void>>();
+
+/**
+ * Fork (W9h, ocr #623): how a catalog hydration read settles. A read that started before a slash
+ * catalog invalidation (`stale`) leaves the status to a newer read of the same workspace; with no
+ * newer read and the status still "loading" it reports its failure, and a success releases that
+ * stranded "loading" without writing its pre-invalidation catalog.
+ */
+export type CatalogFlightSettlement = "write" | "drop" | "settle-ready";
+
+/** The single-flight key of one workspace's catalog read at one catalog revision. */
+export function catalogFlightKey(workspaceKey: string, revision: number): string {
+  return `${workspaceKey}#${revision}`;
+}
+
+/** Whether a read of this workspace keyed at a revision later than `revision` is still in flight. */
+export function hasNewerCatalogFlight(
+  flightKeys: Iterable<string>,
+  workspaceKey: string,
+  revision: number,
+): boolean {
+  const prefix = `${workspaceKey}#`;
+  for (const key of flightKeys) {
+    if (!key.startsWith(prefix)) continue;
+    const suffix = key.slice(prefix.length);
+    if (/^\d+$/.test(suffix) && Number(suffix) > revision) return true;
+  }
+  return false;
+}
+
+export function catalogFlightSettlement(params: {
+  outcome: "success" | "failure";
+  stale: boolean;
+  newerFlightInProgress: boolean;
+  status: ConfigOptionsStatus;
+}): CatalogFlightSettlement {
+  if (!params.stale) return "write";
+  // A newer read still running, or one that already settled the status, owns it.
+  if (params.newerFlightInProgress || params.status !== "loading") return "drop";
+  return params.outcome === "failure" ? "write" : "settle-ready";
+}
 
 // Compare the identity and reasoning level only; object key order is not selection identity.
 function isSameModelSelection(left: ModelSelection, right: ModelSelection): boolean {
@@ -233,6 +278,8 @@ export function useDraftConfigControl(params: {
   } = params;
   const workspaceKey = workspaceIdentity?.trim() || workspacePath;
   const displayProvider = provider ?? ZCODE_AGENT_PROVIDER;
+  // Fork (W9h): a cached catalog invalidation (zcodeSessionStore.ts) re-runs the hydration below.
+  const slashCatalogRevision = useSlashCatalogRevisionStore((state) => state.revision);
   const agentService = useZCodeAgentService(workspacePath, null, workspaceIdentity);
   useEffect(() => {
     const subscription = agentService.onDynamicPluginStartupDegraded({
@@ -1022,6 +1069,9 @@ export function useDraftConfigControl(params: {
       (option) => option.category === "mode" && option.type === "select",
     );
     const hasSlashCommandCatalog = workspaceState.slashCommands.length > 0;
+    // One flight per workspace and catalog revision: a read that started before an invalidation
+    // must not hold off the fresh read, and its result is dropped below.
+    const flightKey = catalogFlightKey(workspaceKey, slashCatalogRevision);
     const shouldHydrateCatalog = shouldHydrateWorkspaceCatalog({
       configOptions,
       sessionId,
@@ -1031,11 +1081,11 @@ export function useDraftConfigControl(params: {
       catalogScope: isDraft ? "draft" : "known-session",
       hasModePresentation,
       hasSlashCommandCatalog,
-      flightInProgress: workspaceCatalogHydrationFlights.has(workspaceKey),
+      flightInProgress: workspaceCatalogHydrationFlights.has(flightKey),
       configOptionsStatus: workspaceState.configOptionsStatus,
       workspaceKey,
     });
-    const existingFlight = workspaceCatalogHydrationFlights.get(workspaceKey);
+    const existingFlight = workspaceCatalogHydrationFlights.get(flightKey);
     if (existingFlight) {
       return;
     }
@@ -1044,6 +1094,19 @@ export function useDraftConfigControl(params: {
     }
 
     store.setConfigOptionsStatus(workspacePath, "loading", workspaceIdentity);
+    const settleCatalogFlight = (outcome: "success" | "failure") => {
+      return catalogFlightSettlement({
+        outcome,
+        stale: readSlashCatalogRevision() !== slashCatalogRevision,
+        newerFlightInProgress: hasNewerCatalogFlight(
+          workspaceCatalogHydrationFlights.keys(),
+          workspaceKey,
+          slashCatalogRevision,
+        ),
+        status: useZCodeSessionStore.getState().getWorkspaceState(workspacePath, workspaceIdentity)
+          .configOptionsStatus,
+      });
+    };
     const flight = prepareWorkspaceWithZCodeSessionService({
       workspacePath,
       workspaceIdentity,
@@ -1062,6 +1125,15 @@ export function useDraftConfigControl(params: {
           ),
           workspaceKey,
         });
+        const settlement = settleCatalogFlight("success");
+        if (settlement === "settle-ready") {
+          useZCodeSessionStore
+            .getState()
+            .setConfigOptionsStatus(workspacePath, "ready", workspaceIdentity);
+        }
+        if (settlement !== "write") {
+          return;
+        }
         const latest = useZCodeSessionStore.getState();
         latest.setConfigOptions(workspacePath, baseOptions, workspaceIdentity);
         latest.setConfigOptionsStatus(workspacePath, "ready", workspaceIdentity);
@@ -1072,19 +1144,27 @@ export function useDraftConfigControl(params: {
         );
       })
       .catch((error) => {
+        if (settleCatalogFlight("failure") === "drop") {
+          logger.debug("[v4-workspace-catalog] stale hydration failure dropped", {
+            error: String(error),
+            workspaceKey,
+          });
+          return;
+        }
         useZCodeSessionStore
           .getState()
           .setConfigOptionsStatus(workspacePath, "error", workspaceIdentity);
         logger.warn(`[v4-workspace-catalog] workspace 目录水合失败: ${String(error)}`);
       })
       .finally(() => {
-        workspaceCatalogHydrationFlights.delete(workspaceKey);
+        workspaceCatalogHydrationFlights.delete(flightKey);
       });
-    workspaceCatalogHydrationFlights.set(workspaceKey, flight);
+    workspaceCatalogHydrationFlights.set(flightKey, flight);
   }, [
     agentStartupAllowed,
     displayProvider,
     sessionId,
+    slashCatalogRevision,
     workspaceIdentity,
     workspaceKey,
     workspacePath,

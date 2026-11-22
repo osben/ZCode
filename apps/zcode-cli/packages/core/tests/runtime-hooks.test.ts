@@ -429,6 +429,56 @@ describe("AgentRuntime lifecycle hooks", () => {
     expect(hookCallCount).toBe(4);
   });
 
+  // W9h (9.64): the v3.18.0 merge (#402) dropped these methods from the runtime prototype, so a
+  // manual /compact failed with "this.runPreCompactHooks is not a function".
+  it("runs PreCompact and PostCompact hooks with the trigger and token counts", async () => {
+    const sessionId = createSessionId("runtime-compact-hooks");
+    const eventStore = createTestSessionEventStore();
+    const inputs: HookInput[] = [];
+    const record = async (input: HookInput) => {
+      inputs.push(input);
+      return undefined;
+    };
+    const hookRunner = createInMemoryHookRunner({
+      hooks: [
+        { event: HookEventName.PreCompact, callback: record },
+        { event: HookEventName.PostCompact, callback: record },
+      ],
+    });
+    const runtime = createTestAgentRuntime(sessionId, {}, { eventStore, hookRunner }) as unknown as {
+      runPreCompactHooks(
+        trigger: "manual",
+        customInstructions: string | undefined,
+        preCompactTokenCount: number,
+        traceContext: unknown,
+      ): Promise<unknown>;
+      runPostCompactHooks(
+        trigger: "manual",
+        preCompactTokenCount: number,
+        postCompactTokenCount: number,
+        traceContext: unknown,
+      ): Promise<unknown>;
+    };
+    const traceContext = createRootTraceContext({ sessionId });
+
+    await runtime.runPreCompactHooks("manual", "keep the plan", 120, traceContext);
+    await runtime.runPostCompactHooks("manual", 120, 30, traceContext);
+
+    expect(inputs).toHaveLength(2);
+    expect(inputs[0]).toMatchObject({
+      hookEventName: HookEventName.PreCompact,
+      trigger: "manual",
+      customInstructions: "keep the plan",
+      preCompactTokenCount: 120,
+    });
+    expect(inputs[1]).toMatchObject({
+      hookEventName: HookEventName.PostCompact,
+      trigger: "manual",
+      preCompactTokenCount: 120,
+      postCompactTokenCount: 30,
+    });
+  });
+
   it("runs SessionEnd hooks with the close reason", async () => {
     const sessionId = createSessionId("runtime-session-end-hook");
     const eventStore = createTestSessionEventStore();

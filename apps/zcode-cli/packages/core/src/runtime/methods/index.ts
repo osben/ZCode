@@ -132,6 +132,9 @@ import { finishTargetTurnAccounting } from "./target.js";
 import { pauseActiveTargetForCancellation } from "./target.js";
 import { activatePausedTargetAfterResume } from "./target.js";
 import {
+  runPostCompactHooks,
+  runPreCompactHooks,
+  runSessionEndHooks,
   runSessionStartHooks,
   runStopHooks,
   runUserPromptSubmitHooks,
@@ -354,6 +357,10 @@ export function installAgentRuntimeMethods(ctor: AgentRuntimeConstructor): void 
   proto.runSessionStartHooks = runSessionStartHooks;
   proto.runUserPromptSubmitHooks = runUserPromptSubmitHooks;
   proto.runStopHooks = runStopHooks;
+  // Fork: the v3.18.0 merge (#402) dropped these three; compact-active and session-facade still call them.
+  proto.runPreCompactHooks = runPreCompactHooks;
+  proto.runPostCompactHooks = runPostCompactHooks;
+  proto.runSessionEndHooks = runSessionEndHooks;
   proto.shouldContinueAfterStopHooks = shouldContinueAfterStopHooks;
   proto.executeTurn = executeTurn;
   proto.admitPrompt = admitPrompt;

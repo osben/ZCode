@@ -218,7 +218,9 @@ describe("动态工作流 · CreateWorkflow 确认窗的选项", () => {
     expect(toolResultAt).toBeGreaterThanOrEqual(0);
     expect(body.indexOf("E2E_DWC_REFINE_FEEDBACK")).toBeGreaterThan(toolResultAt);
 
-    // 模型修订重提：新窗画出修订后的名字；用数字键 3 直接拒绝。
+    // 模型修订重提：新窗画出修订后的名字；用数字键 3 选中拒绝，回车确认。
+    // The fork's PermissionDialog (a6cfcca1c) makes a digit only move the selection, so a stray
+    // digit cannot approve or deny; upstream's spec pressed 3 alone. Confirm with Enter.
     await waitForWorkflowWindow("E2E_DWC_REFINE_RUN_2");
     await browser.waitUntil(
       async () =>
@@ -228,9 +230,21 @@ describe("动态工作流 · CreateWorkflow 确认窗的选项", () => {
       { timeout: 5000, timeoutMsg: "修订后的确认窗打开后焦点不在第一个选项上" },
     );
     await browser.keys("3");
+    await browser.waitUntil(
+      async () =>
+        browser.execute(
+          () =>
+            document.activeElement
+              ?.getAttribute("data-permission-option-kind")
+              ?.startsWith("reject") === true,
+        ),
+      { timeout: 5000, timeoutMsg: "数字键 3 没有选中拒绝" },
+    );
+    expect(await hasV4PermissionDialog()).toBe(true);
+    await browser.keys("Enter");
     await browser.waitUntil(async () => !(await hasV4PermissionDialog()), {
       timeout: 15000,
-      timeoutMsg: "数字键 3 没有直接拒绝",
+      timeoutMsg: "数字键 3 加回车没有拒绝",
     });
     expect((await waitForToolResult("toolu_dwc_refine_create_2")).isError).toBe(true);
     await waitForV4AssistantMessageContaining("E2E_DWC_REFINE_DONE", 60000);

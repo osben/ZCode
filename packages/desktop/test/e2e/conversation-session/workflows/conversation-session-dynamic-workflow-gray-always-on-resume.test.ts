@@ -36,6 +36,7 @@ import { isOutsideClosedHistory, openClosedHistoryFolds } from "#e2e/helpers/v4-
 const COUNT_FILE = join(DEFAULT_WORKSPACE, ".e2e-dwu-a-count");
 const RELEASE_FILE = join(DEFAULT_WORKSPACE, ".e2e-dwu-b-release");
 const HELD_RETRY_FIXTURE = "dwu-a-agent-held-retry";
+const GROUP_ASK_FIXTURE = "dwu-c-agent-group";
 const SUBAGENT_LINE = "You are a subagent inside a dynamic workflow run";
 const DIGEST = '[data-workflow-run-digest="true"]';
 const NOTIFICATION_ROW = '[data-testid^="chat-workflow-notification-row-"]';
@@ -469,6 +470,12 @@ describe("动态工作流 · 恢复停下的 run", () => {
         (await getLatestUpstreamToolResultByToolCallId("toolu_dwu_c_fill"))?.isError === false,
       { timeout: 60_000, timeoutMsg: "恢复后的 FillWorkflowHole 未执行成功" },
     );
+    // 补全体里的一问被关卡拦住，补全那一轮先结束，run 才跑完：完成通知唤起自己的一轮、画出自己的通知行。
+    // 不拦的话 run 在补全那一轮里就跑完，通知被 steer 进那一轮（transcript-and-notifications.md
+    // 「Delivery adds nothing new」），没有通知行（W9h：Linux box 上时有时无）。
+    await waitForV4AssistantMessageContaining("E2E_DWU_C_FILLED", 60_000);
+    await waitForV4Pane((pane) => !pane.canStop, "补全那一轮没有结束", 60_000);
+    await releaseControlledReplay(GROUP_ASK_FIXTURE);
     await waitForDigest(runId, (card) => card.status === "completed", "补全后 run 没有跑完");
     await waitForV4AssistantMessageContaining("E2E_DWU_C_DONE", 120_000);
     await waitForV4Pane((pane) => !pane.canStop, "完成通知那一轮没有结束", 60_000);

@@ -126,17 +126,29 @@ impl Tool for AgentTool {
         true
     }
 
-    fn description(&self, _context: &PromptContext) -> String {
-        if self.core.fork
+    fn description(&self, context: &PromptContext) -> String {
+        let mut description = if self.core.fork
             && let Some(fork) = rust_cli_prompts::agents::fork_tool()
         {
-            return fork.description.clone();
+            fork.description.clone()
+        } else {
+            let description = &rust_cli_prompts::definition(NAME).description;
+            if self.core.node_desktop {
+                crate::desktop_prompt::description(description)
+            } else {
+                description.clone()
+            }
+        };
+        // W9h (9.64): Node's CreateWorkflow line, present exactly when the workflow tools are offered this request.
+        let offers_workflows = context
+            .tool_names
+            .iter()
+            .any(|name| name == rust_cli_kernel_api::tool_names::CREATE_WORKFLOW);
+        if offers_workflows {
+            description.push('\n');
+            description.push_str(crate::desktop_prompt::CREATE_WORKFLOW_LINE);
         }
-        let description = &rust_cli_prompts::definition(NAME).description;
-        if self.core.node_desktop {
-            return crate::desktop_prompt::description(description);
-        }
-        description.clone()
+        description
     }
 
     /// 权限交给子代理自己的工具，Agent 本身算只读。

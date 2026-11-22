@@ -28,12 +28,34 @@ struct Fake {
     amend_error: Mutex<Option<DynamicWorkflowRunError>>,
     /// A successful start activates the parent and records its launch turn through the sink.
     drive_sink: bool,
+    /// The run ids the GUI resume asked for, and the port's answer (Node's result union as JSON).
+    resumes: Mutex<Vec<String>>,
+    resume_answer: Mutex<Option<Value>>,
+    resume_error: Mutex<Option<DynamicWorkflowRunError>>,
 }
 
 struct Port(Arc<Fake>);
 
 #[async_trait]
 impl DynamicWorkflowRunPort for Port {
+    async fn resume(&self, run_id: &WorkflowRunId) -> Result<Value, DynamicWorkflowRunError> {
+        self.0
+            .resumes
+            .lock()
+            .expect("fake")
+            .push(run_id.as_str().to_owned());
+        if let Some(error) = self.0.resume_error.lock().expect("fake").clone() {
+            return Err(error);
+        }
+        Ok(self
+            .0
+            .resume_answer
+            .lock()
+            .expect("fake")
+            .clone()
+            .unwrap_or_else(|| json!({"ok": false, "reason": "not_found"})))
+    }
+
     async fn start_saved(
         &self,
         request: StartSavedRequest,
@@ -751,6 +773,117 @@ mod deliver {
         }
     }
 
+    use rust_cli_kernel_api::ids::SessionId;
+    use rust_cli_kernel_api::metering::{
+        ActivityQuery, ActivityStats, RequestStats, SessionMetering,
+    };
+    use rust_cli_kernel_api::store::{Admission, FrontendRecord, StoreError, StoreQueries};
+    use std::sync::Arc;
+
+    /// A store whose input admission writes `title`, or fails as a full disk would.
+    struct AdmittingStore {
+        title: Option<String>,
+        fail: bool,
+        inputs: Mutex<Vec<String>>,
+    }
+
+    fn double<T>() -> Result<T, StoreError> {
+        Err(StoreError::Unsupported {
+            what: "test double".to_owned(),
+        })
+    }
+
+    #[async_trait::async_trait]
+    impl StoreQueries for AdmittingStore {
+        async fn metering(&self, _session: &SessionId) -> Result<SessionMetering, StoreError> {
+            double()
+        }
+
+        async fn request_stats(&self, _session: &SessionId) -> Result<RequestStats, StoreError> {
+            double()
+        }
+
+        async fn activity(&self, _query: ActivityQuery) -> Result<ActivityStats, StoreError> {
+            double()
+        }
+
+        async fn put_record(
+            &self,
+            _session: &SessionId,
+            _record: &FrontendRecord,
+        ) -> Result<(), StoreError> {
+            double()
+        }
+
+        async fn records(
+            &self,
+            _session: &SessionId,
+            _kind: &str,
+        ) -> Result<Vec<FrontendRecord>, StoreError> {
+            Ok(Vec::new())
+        }
+
+        async fn persist_for_input(
+            &self,
+            _session: &SessionId,
+            input: &str,
+        ) -> Result<Admission, StoreError> {
+            self.inputs.lock().unwrap().push(input.to_owned());
+            if self.fail {
+                return Err(StoreError::Storage {
+                    message: "database or disk is full: /home/u/.zcode/cli/db/db.sqlite".to_owned(),
+                });
+            }
+            Ok(Admission {
+                persisted: true,
+                title: self.title.clone(),
+            })
+        }
+    }
+
+    /// Node `ensureSessionPersisted(name)` (W9h, 9.64; closes 766): the hub start persists the parent with the workflow's
+    /// name, and the title the store wrote reaches the session before the launch record, as `admit_input` sends it.
+    #[tokio::test]
+    async fn the_title_the_persistence_wrote_is_adopted_before_the_records() {
+        let store = Arc::new(AdmittingStore {
+            title: Some("digest".to_owned()),
+            fail: false,
+            inputs: Mutex::new(Vec::new()),
+        });
+        let turns = ParentTurns::for_test_with(store.clone());
+        turns.persist_parent("digest").await.expect("persisted");
+        turns.launch_turn(launch("started"));
+        let sent: Mutex<Vec<String>> = Mutex::new(Vec::new());
+        turns
+            .deliver_with(|_id, command| {
+                sent.lock().unwrap().push(match command {
+                    Command::AdoptTitle { title } => format!("title:{title}"),
+                    Command::RecordWorkflowTurn { text, .. } => format!("record:{text}"),
+                    other => panic!("unexpected command: {other:?}"),
+                });
+                std::future::ready(accepted())
+            })
+            .await;
+        assert_eq!(*store.inputs.lock().unwrap(), vec!["digest".to_owned()]);
+        assert_eq!(
+            *sent.lock().unwrap(),
+            vec!["title:digest".to_owned(), "record:started".to_owned()]
+        );
+    }
+
+    /// A persistence failure refuses the start with a text that names no storage detail.
+    #[tokio::test]
+    async fn a_failed_persistence_names_no_storage_detail() {
+        let turns = ParentTurns::for_test_with(Arc::new(AdmittingStore {
+            title: None,
+            fail: true,
+            inputs: Mutex::new(Vec::new()),
+        }));
+        let message = turns.persist_parent("digest").await.expect_err("refused");
+        assert!(!message.contains("db.sqlite"), "{message}");
+        assert!(message.contains("persisting the session"), "{message}");
+    }
+
     #[tokio::test]
     async fn the_records_are_sent_in_arrival_order_with_their_sources_and_taken_once() {
         let turns = parent();
@@ -850,4 +983,75 @@ mod busy_decision {
     fn an_answer_the_actor_cannot_give_is_busy_so_the_start_fails_closed() {
         assert!(busy_from(None, false));
     }
+}
+
+// Fork (W9h, 9.64): the GUI Resume on a stopped run card (desktop E2E DWU-01). Node `resumeWorkflowRun`
+// (`interaction-background.ts`): success is a plain accepted ack, a refusal is a `failed` ack with
+// `fault.command.workflowRunResumeRejected.<reason>` and the port's message.
+
+#[tokio::test]
+async fn a_gui_resume_asks_the_run_service_and_is_accepted() {
+    let fake = Arc::new(Fake::default());
+    *fake.resume_answer.lock().expect("fake") =
+        Some(json!({"ok": true, "runId": "run-1", "toolCallId": "tc-1"}));
+    let (_scope, server) = session(Some(true), Some(fake.clone())).await;
+    let ack = send(
+        &server,
+        "resumeWorkflowRun",
+        json!({"workId": "run-1", "name": "digest"}),
+    )
+    .await;
+    assert_eq!(ack["status"], json!("accepted"), "{ack}");
+    assert_eq!(
+        *fake.resumes.lock().expect("fake"),
+        vec!["run-1".to_owned()]
+    );
+}
+
+#[tokio::test]
+async fn a_refused_gui_resume_carries_the_reason_code_and_the_message() {
+    let fake = Arc::new(Fake::default());
+    *fake.resume_answer.lock().expect("fake") = Some(json!({
+        "ok": false, "reason": "compile_failed", "message": "line 3: oops",
+    }));
+    let (_scope, server) = session(Some(true), Some(fake)).await;
+    let ack = send(&server, "resumeWorkflowRun", json!({"workId": "run-1"})).await;
+    assert_eq!(ack["status"], json!("failed"), "{ack}");
+    assert_eq!(
+        ack["reasonCode"],
+        json!("fault.command.workflowRunResumeRejected.compile_failed")
+    );
+    assert_eq!(ack["message"], json!("line 3: oops"));
+}
+
+#[tokio::test]
+async fn a_gui_resume_with_the_gate_closed_answers_as_a_missing_capability() {
+    let fake = Arc::new(Fake::default());
+    let (_scope, server) = session(Some(false), Some(fake.clone())).await;
+    let ack = send(&server, "resumeWorkflowRun", json!({"workId": "run-1"})).await;
+    assert_eq!(ack["reasonCode"], unsupported(), "{ack}");
+    assert!(fake.resumes.lock().expect("fake").is_empty());
+}
+
+#[tokio::test]
+async fn a_gui_resume_without_a_work_id_is_an_invalid_payload() {
+    let fake = Arc::new(Fake::default());
+    let (_scope, server) = session(Some(true), Some(fake.clone())).await;
+    let ack = send(&server, "resumeWorkflowRun", json!({"name": "digest"})).await;
+    assert_eq!(ack["status"], json!("rejected"), "{ack}");
+    assert_eq!(ack["reasonCode"], json!("proto.invalidPayload"));
+    assert!(fake.resumes.lock().expect("fake").is_empty());
+}
+
+#[tokio::test]
+async fn a_failed_gui_resume_answers_as_an_execution_failure() {
+    let fake = Arc::new(Fake::default());
+    *fake.resume_error.lock().expect("fake") = Some(DynamicWorkflowRunError::new(
+        "the run has no working directory",
+    ));
+    let (_scope, server) = session(Some(true), Some(fake)).await;
+    let ack = send(&server, "resumeWorkflowRun", json!({"workId": "run-1"})).await;
+    assert_eq!(ack["status"], json!("failed"), "{ack}");
+    assert_eq!(ack["reasonCode"], json!("fault.command.executionFailed"));
+    assert_eq!(ack["message"], json!("the run has no working directory"));
 }

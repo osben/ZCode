@@ -118,6 +118,20 @@ describe("count strings resolve through plural families in the shipped catalogs"
         "Ви збираєтеся надіслати повідомлення. Очистити 5 раніше доданих повідомлень з черги?",
       ],
     },
+    // Upstream 3.18.0 (merged in 5e5e55725) renamed the English count from "agents" to "subagents";
+    // the plural family must follow, or it shadows the bare key (workflow E2E DWI-01).
+    {
+      id: "chat.toolCall.workflow.card.agents",
+      en: ["1 subagent", "2 subagents"],
+      zh: ["1 个子代理", "2 个子代理"],
+      uk: ["1 агент", "2 агенти", "5 агентів"],
+    },
+    {
+      id: "chat.toolCall.workflow.card.agentsWorking",
+      en: ["1 subagent working", "2 subagents working"],
+      zh: ["1 个子代理工作中", "2 个子代理工作中"],
+      uk: ["1 агент працює", "2 агенти працюють", "5 агентів працюють"],
+    },
   ];
 
   for (const { id, en, zh, uk } of cases) {

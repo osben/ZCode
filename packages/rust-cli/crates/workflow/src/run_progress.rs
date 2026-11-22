@@ -27,6 +27,12 @@ use crate::model::StoredEvent;
 /// implementation has to keep that promise itself.
 pub trait RunProgress: Send {
     fn progress(&mut self, stored: &StoredEvent);
+
+    /// Fork (W9h, 9.64): a row journaled before the sink was attached (see `WorkflowRunProgressPort::record_backlog`).
+    /// The default is `progress`.
+    fn backlog(&mut self, stored: &StoredEvent) {
+        self.progress(stored);
+    }
 }
 
 /// One session's `workflowRuns` projection, shared by the session's runs (the run service keeps one per parent).
@@ -122,7 +128,12 @@ impl ProgressSink {
     }
 
     /// Applies the envelope to the projection, then hands the progress and its deltas to the port.
-    fn append(&self, sequence: u64, envelope: &WorkflowRunEnvelope) -> Result<(), String> {
+    fn append(
+        &self,
+        sequence: u64,
+        envelope: &WorkflowRunEnvelope,
+        backlog: bool,
+    ) -> Result<(), String> {
         let deltas = {
             let mut projection = self
                 .projection
@@ -135,13 +146,28 @@ impl ProgressSink {
             progress[rust_cli_kernel_api::workflow_run_progress::RUN_NAME_KEY] =
                 Value::String(name.clone());
         }
-        self.port
-            .record(self.recording_session(), &progress, &deltas)
+        if backlog {
+            self.port
+                .record_backlog(self.recording_session(), &progress, &deltas)
+        } else {
+            self.port
+                .record(self.recording_session(), &progress, &deltas)
+        }
     }
 }
 
 impl RunProgress for ProgressSink {
     fn progress(&mut self, stored: &StoredEvent) {
+        self.deliver(stored, false);
+    }
+
+    fn backlog(&mut self, stored: &StoredEvent) {
+        self.deliver(stored, true);
+    }
+}
+
+impl ProgressSink {
+    fn deliver(&self, stored: &StoredEvent, backlog: bool) {
         // The identity gate: an explicit parent that is not this app's session is never appended (Node's
         // `session_mismatch`). An absent parent is this session by construction. The warning is logged for each such
         // event, as Node logs it for each call (finding 4: no latch).
@@ -173,7 +199,9 @@ impl RunProgress for ProgressSink {
                 return;
             }
         };
-        match catch_unwind(AssertUnwindSafe(|| self.append(stored.sequence, &envelope))) {
+        match catch_unwind(AssertUnwindSafe(|| {
+            self.append(stored.sequence, &envelope, backlog)
+        })) {
             Ok(Ok(())) => {}
             Ok(Err(error)) => tracing::warn!(
                 event = "dynamic_workflow.run_progress.append_failed",

@@ -1216,6 +1216,44 @@ async fn the_progress_backlog_is_delivered_on_the_owner_thread_not_the_launch_ta
     wait_until("the run to settle", || h.service.run_count() == 0).await;
 }
 
+/// W9h (9.64): the rows journaled before the sink is attached reach it as backlog, not as live progress, so a resumed
+/// run's earlier `hole-reached` posts no second notice.
+#[test]
+fn the_journal_reaches_a_new_sink_as_backlog() {
+    use rust_cli_workflow::model::StoredEvent;
+    use rust_cli_workflow::run_progress::RunProgress;
+    #[derive(Default)]
+    struct Split {
+        live: Arc<Mutex<Vec<u64>>>,
+        backlog: Arc<Mutex<Vec<u64>>>,
+    }
+    struct Sink(Arc<Split>);
+    impl RunProgress for Sink {
+        fn progress(&mut self, stored: &StoredEvent) {
+            self.0.live.lock_unpoisoned().push(stored.sequence);
+        }
+        fn backlog(&mut self, stored: &StoredEvent) {
+            self.0.backlog.lock_unpoisoned().push(stored.sequence);
+        }
+    }
+    let mut owner = ActorDriverOwner::new(
+        config("wf_backlog", None),
+        MemoryJournal::new(),
+        FakeSessions,
+    )
+    .expect("owner");
+    let split = Arc::new(Split::default());
+    owner.set_progress(Box::new(Sink(split.clone())));
+    assert!(
+        !split.backlog.lock_unpoisoned().is_empty(),
+        "the journal arrives as backlog"
+    );
+    assert!(
+        split.live.lock_unpoisoned().is_empty(),
+        "none of it as live progress"
+    );
+}
+
 /// Finding 5: a second sink on one owner does not replay the backlog (the first sink has it already).
 #[test]
 fn a_second_progress_sink_does_not_replay_the_backlog() {

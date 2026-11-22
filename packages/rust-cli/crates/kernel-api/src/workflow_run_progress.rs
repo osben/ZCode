@@ -19,4 +19,16 @@ pub trait WorkflowRunProgressPort: Send + Sync {
         progress: &serde_json::Value,
         deltas: &[serde_json::Value],
     ) -> Result<(), String>;
+
+    /// Fork (W9h, 9.64): an event journaled before this sink was attached (a resumed run's earlier lifetimes, the
+    /// `run-started` of this one). Its deltas rebuild the projection; it was already told to the model when it happened,
+    /// so a host posts no model notice for it (Node's progress port only sees live events). The default is `record`.
+    fn record_backlog(
+        &self,
+        parent_session_id: &str,
+        progress: &serde_json::Value,
+        deltas: &[serde_json::Value],
+    ) -> Result<(), String> {
+        self.record(parent_session_id, progress, deltas)
+    }
 }

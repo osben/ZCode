@@ -99,6 +99,26 @@ impl WorkflowRunProgressPort for WorkflowProgressHost {
         progress: &Value,
         deltas: &[Value],
     ) -> Result<(), String> {
+        self.deliver(parent_session_id, progress, deltas);
+        self.post_notice(parent_session_id, progress);
+        Ok(())
+    }
+
+    /// Fork (W9h, 9.64): a journaled row replayed when the sink attaches. The deltas and the reminder clocks are
+    /// rebuilt; the model was told of it when it happened, so no notice is posted.
+    fn record_backlog(
+        &self,
+        parent_session_id: &str,
+        progress: &Value,
+        deltas: &[Value],
+    ) -> Result<(), String> {
+        self.deliver(parent_session_id, progress, deltas);
+        Ok(())
+    }
+}
+
+impl WorkflowProgressHost {
+    fn deliver(&self, parent_session_id: &str, progress: &Value, deltas: &[Value]) {
         if !deltas.is_empty() {
             self.delivery.deliver(parent_session_id, deltas.to_vec());
         }
@@ -116,6 +136,11 @@ impl WorkflowRunProgressPort for WorkflowProgressHost {
         {
             reminders.open_set_changed(parent_session_id, run_id);
         }
+    }
+
+    fn post_notice(&self, parent_session_id: &str, progress: &Value) {
+        let event_type = str_field(progress, "eventType");
+        let run_id = str_field(progress, "runId");
         if let (Some(notices), Some(run_id)) = (&self.notices, run_id) {
             let payload = progress.get("payload").unwrap_or(&Value::Null);
             // Fork (9.61): the run's display name (Node's registry description), which the sink adds for a named run;
@@ -139,7 +164,6 @@ impl WorkflowRunProgressPort for WorkflowProgressHost {
                 notices.post(parent_session_id, text, Some(workflow));
             }
         }
-        Ok(())
     }
 }
 

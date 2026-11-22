@@ -58,7 +58,7 @@ pub(crate) fn card_with_fill(
 
 /// The longest prefix of `text` within `limit` UTF-16 units. JavaScript's `slice` may split a surrogate pair; a Rust
 /// string cannot hold half of one, so a pair across the limit is left out whole.
-fn cut_units(text: &str, limit: usize) -> &str {
+pub(crate) fn cut_units(text: &str, limit: usize) -> &str {
     let mut units = 0;
     for (index, ch) in text.char_indices() {
         units += ch.len_utf16();

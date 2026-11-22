@@ -474,6 +474,31 @@ async fn the_agent_tool_has_no_model_parameter_and_drops_unknown_keys() {
     assert!(!stop.strips_unknown_keys());
 }
 
+/// W9h (9.64): Node's Agent description carries its CreateWorkflow line exactly when the workflow tools are registered
+/// (`buildAgentProviderDescription`, `dynamicWorkflowEnabled`); gray-on-demand reads it before and after activation.
+#[tokio::test]
+async fn the_agent_description_names_create_workflow_only_when_the_tool_is_offered() {
+    let harness = harness(None);
+    let tool = harness.agents.registry().find("Agent").unwrap();
+    let prompt = |tool_names: Vec<String>| rust_cli_kernel_api::tool::PromptContext {
+        tool_names,
+        mode: rust_cli_kernel_api::permission::PermissionMode::Default,
+    };
+    let without = tool.description(&prompt(vec!["Read".to_owned()]));
+    assert!(!without.contains("CreateWorkflow"), "{without}");
+    let with = tool.description(&prompt(vec![
+        "Read".to_owned(),
+        rust_cli_kernel_api::tool_names::CREATE_WORKFLOW.to_owned(),
+    ]));
+    assert!(
+        with.ends_with(&format!(
+            "\n{}",
+            crate::desktop_prompt::CREATE_WORKFLOW_LINE
+        )),
+        "{with}"
+    );
+}
+
 /// 修复线 F51b（用户决定 2026-10-22，agents.md §2）：本工程不支持 isolation，Agent 没有 `isolation` 参数，描述里
 /// 不说明它，也不提 SDK 的 `agents` 选项；`validate_input` 不再拒绝 isolation（管线已丢掉这个键）。
 #[tokio::test]

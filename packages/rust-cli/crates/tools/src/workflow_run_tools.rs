@@ -446,7 +446,8 @@ impl Tool for RunTool {
                         .unwrap_or(&run_id)
                         .to_owned();
                     let mut output = text(format!("The workflow run {started}{RESUMED_TEXT}"));
-                    output.display = json!({"ok": true, "runId": started});
+                    // Node `createResumeWorkflowRunDisplay` (W9h, 9.64): the kind joins the row to the run card.
+                    output.display = json!({"kind": "resume_workflow_run", "runId": started});
                     return Ok(output);
                 }
                 let reason = answer

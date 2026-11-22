@@ -294,7 +294,7 @@
           "id": "toolu_dwy_fail_outside",
           "name": "EvalWorkflowSnippet",
           "input": {
-            "code": "return await files.read(\"{{e2eRuntimeRoot}}/dwy-ok-snippet.ts\");"
+            "code": "return await files.read(\"../dwy-outside-workspace.ts\");"
           }
         }
       }
@@ -383,7 +383,7 @@
           "id": "toolu_dwy_gate_eval_1",
           "name": "EvalWorkflowSnippet",
           "input": {
-            "code": "const result = await world.run(\"node\", [\"-e\", \"require(\\\"node:fs\\\").writeFileSync(\\\"{{e2eRuntimeRoot}}/dwy-gate-output.txt\\\", \\\"ran\\\\n\\\")\"]);\nreturn { marker: \"E2E_DWY_GATE_VALUE\", exitCode: result.exitCode };"
+            "code": "const result = await world.run(\"node\", [\"-e\", \"require(\\\"node:fs\\\").writeFileSync(\\\"{{e2eRuntimeRoot}}/dwy-gate-output.out\\\", \\\"ran\\\\n\\\")\"]);\nreturn { marker: \"E2E_DWY_GATE_VALUE\", exitCode: result.exitCode };"
           }
         }
       }
@@ -445,7 +445,7 @@
           "id": "toolu_dwy_gate_eval_2",
           "name": "EvalWorkflowSnippet",
           "input": {
-            "code": "const result = await world.run(\"node\", [\"-e\", \"require(\\\"node:fs\\\").writeFileSync(\\\"{{e2eRuntimeRoot}}/dwy-gate-output.txt\\\", \\\"ran\\\\n\\\")\"]);\nreturn { marker: \"E2E_DWY_GATE_VALUE\", exitCode: result.exitCode };"
+            "code": "const result = await world.run(\"node\", [\"-e\", \"require(\\\"node:fs\\\").writeFileSync(\\\"{{e2eRuntimeRoot}}/dwy-gate-output.out\\\", \\\"ran\\\\n\\\")\"]);\nreturn { marker: \"E2E_DWY_GATE_VALUE\", exitCode: result.exitCode };"
           }
         }
       }
