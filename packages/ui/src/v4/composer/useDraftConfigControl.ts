@@ -41,11 +41,11 @@ import {
 import { resolveAppFollowupMode } from "@/v4/composer/followupModeSettings.js";
 import { isComposerEditScopeId } from "@/composer-edit-mode/contract.js";
 import { logger } from "@/logger.js";
-import { useZCodeSessionStore } from "@/store/zcodeSessionStore.js";
 import {
   readSlashCatalogRevision,
   useSlashCatalogRevisionStore,
-} from "@/store/slashCatalogRevision.js";
+  useZCodeSessionStore,
+} from "@/store/zcodeSessionStore.js";
 
 /** 目录水合单飞（per workspaceKey）：draft、已有 session 和严格模式双挂载共享一次 RPC。 */
 const workspaceCatalogHydrationFlights = new Map<string, Promise<void>>();
@@ -237,7 +237,7 @@ export function useDraftConfigControl(params: {
   } = params;
   const workspaceKey = workspaceIdentity?.trim() || workspacePath;
   const displayProvider = provider ?? ZCODE_AGENT_PROVIDER;
-  // Fork (W9h): a cached catalog invalidation (slashCatalogRevision.ts) re-runs the hydration below.
+  // Fork (W9h): a cached catalog invalidation (zcodeSessionStore.ts) re-runs the hydration below.
   const slashCatalogRevision = useSlashCatalogRevisionStore((state) => state.revision);
   const agentService = useZCodeAgentService(workspacePath, null, workspaceIdentity);
   useEffect(() => {

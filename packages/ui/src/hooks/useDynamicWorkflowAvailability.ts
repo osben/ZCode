@@ -6,7 +6,7 @@ import {
   useDynamicWorkflowAvailabilityStore,
   type DynamicWorkflowAvailabilitySnapshot,
 } from "@/store/dynamicWorkflowAvailabilityStore.js";
-import { invalidateSlashCatalogs } from "@/store/slashCatalogRevision.js";
+import { invalidateSlashCatalogs } from "@/store/zcodeSessionStore.js";
 
 /**
  * Read the dynamic-workflow rollout snapshot.

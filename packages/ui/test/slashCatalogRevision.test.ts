@@ -3,8 +3,11 @@ import { cleanup, renderHook, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { ZCodeSlashCommand } from "@zcode/shared";
 import { useDynamicWorkflowUserModeSync } from "@/hooks/useDynamicWorkflowAvailability.js";
-import { invalidateSlashCatalogs, readSlashCatalogRevision } from "@/store/slashCatalogRevision.js";
-import { useZCodeSessionStore } from "@/store/zcodeSessionStore.js";
+import {
+  invalidateSlashCatalogs,
+  readSlashCatalogRevision,
+  useZCodeSessionStore,
+} from "@/store/zcodeSessionStore.js";
 
 const WORKFLOW: ZCodeSlashCommand = {
   name: "workflow",
