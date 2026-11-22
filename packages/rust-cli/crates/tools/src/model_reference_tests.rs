@@ -243,6 +243,7 @@ fn model(provider: &str, model: &str, levels: &[&str]) -> CatalogModel {
         model: model.to_owned(),
         protocol: WireProtocol::AnthropicMessages,
         reasoning_levels: levels.iter().map(|level| (*level).to_owned()).collect(),
+        default_reasoning_level: None,
         context_window: 1,
         max_output_tokens: 1,
         capabilities: Default::default(),
@@ -272,6 +273,25 @@ fn the_catalog_entries_mark_the_session_model_and_default_to_the_last_level() {
     assert_eq!(
         ok("deepseek-v4-pro", &entries).canonical,
         "deepseek/deepseek-v4-pro$high"
+    );
+}
+
+/// 9.65 (closes 917): Node `reasoning.default ?? reasoning.values.at(-1)`: the configured default wins over the last
+/// level, so a bare name runs on it.
+#[test]
+fn the_configured_default_level_wins_over_the_last_level() {
+    let mut configured = model("deepseek", "deepseek-v4-pro", &["low", "medium", "high"]);
+    configured.default_reasoning_level = Some("medium".to_owned());
+    let catalog = ModelCatalog {
+        revision: 1,
+        models: vec![configured],
+        default: None,
+    };
+    let entries = catalog_entries(&catalog, None);
+    assert_eq!(entries[0].default_level.as_deref(), Some("medium"));
+    assert_eq!(
+        ok("deepseek-v4-pro", &entries).canonical,
+        "deepseek/deepseek-v4-pro$medium"
     );
 }
 

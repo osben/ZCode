@@ -553,6 +553,8 @@ async fn a_fill_of_another_sessions_run_is_refused_as_run_not_found() {
 struct ScriptedFill {
     fake: Arc<FakeChildRunner>,
     outcome: FillPrepareOutcome,
+    /// Every preparation's input, in order (9.65, 906).
+    inputs: Arc<std::sync::Mutex<Vec<FillPrepareInput>>>,
 }
 
 #[async_trait]
@@ -569,8 +571,9 @@ impl WorkflowChildRunner for ScriptedFill {
 
     async fn prepare_fill(
         &self,
-        _input: FillPrepareInput,
+        input: FillPrepareInput,
     ) -> Result<FillPrepareOutcome, LaunchError> {
+        self.inputs.lock().unwrap().push(input);
         Ok(self.outcome.clone())
     }
 }
@@ -590,6 +593,14 @@ fn fixture_scripted_fills(
     seed: impl FnOnce(&rusqlite::Connection),
     outcome: FillPrepareOutcome,
 ) -> Fixture {
+    fixture_recorded_fills(seed, outcome, Arc::default())
+}
+
+fn fixture_recorded_fills(
+    seed: impl FnOnce(&rusqlite::Connection),
+    outcome: FillPrepareOutcome,
+    inputs: Arc<std::sync::Mutex<Vec<FillPrepareInput>>>,
+) -> Fixture {
     let dir = tempfile::tempdir().expect("temp dir");
     let path = dir.path().join("session.db");
     let conn = open(&path);
@@ -601,6 +612,7 @@ fn fixture_scripted_fills(
     let runner: Arc<dyn WorkflowChildRunner> = Arc::new(ScriptedFill {
         fake: fake.clone(),
         outcome,
+        inputs,
     });
     let factory = production_owner_factory(
         OwnerStores {
@@ -662,6 +674,47 @@ async fn a_fill_the_helper_refuses_as_compile_failed_keeps_the_hole_waiting() {
         .await
         .expect("the script reads");
     assert_eq!(stored.as_deref(), Some("return 1\n"));
+}
+
+/// 9.65 (closes 906 and 512): the fill carries the run's journaled model bindings to the helper (Node passes
+/// `entry.modelBindings` to `unboundFillModelDiagnostics`), so a fill whose body names a model the run did not bind is
+/// refused there; a run that named no model sends none.
+#[tokio::test]
+async fn a_fill_carries_the_runs_model_bindings_to_the_helper() {
+    for (bindings, expected) in [
+        (
+            Some(json!({"poet": "deepseek/deepseek-v4-flash"})),
+            Some(json!({"poet": "deepseek/deepseek-v4-flash"})),
+        ),
+        (None, None),
+    ] {
+        let inputs: Arc<std::sync::Mutex<Vec<FillPrepareInput>>> = Arc::default();
+        let fx = fixture_recorded_fills(
+            |conn| {
+                interrupted(conn, "dwfrun-bound", PARENT, "return 1\n");
+                if let Some(bindings) = &bindings {
+                    dwf::append_event(
+                        conn,
+                        "dwfrun-bound",
+                        &json!({"type": "run-launched", "modelBindings": bindings}),
+                        2,
+                    )
+                    .expect("seed the launch event");
+                }
+            },
+            compile_refusal(),
+            inputs.clone(),
+        );
+        fx.service
+            .for_session(&SessionId::new(PARENT))
+            .resume(&WorkflowRunId::new("dwfrun-bound"))
+            .await
+            .expect("the resume answers");
+        fill(&fx.service, fill_request("dwfrun-bound")).await;
+        let seen = inputs.lock().unwrap().clone();
+        assert_eq!(seen.len(), 1, "one preparation");
+        assert_eq!(seen[0].model_bindings, expected, "{bindings:?}");
+    }
 }
 
 /// W7-12 (9.45): a fill the helper prepares and the owner applies returns `Filled` with the phases it added and the
@@ -1150,6 +1203,7 @@ impl rust_cli_kernel_api::provider::ModelDirectory for Catalog {
             model: name.to_owned(),
             protocol: rust_cli_kernel_api::provider::WireProtocol::AnthropicMessages,
             reasoning_levels: Vec::new(),
+            default_reasoning_level: None,
             context_window: 1,
             max_output_tokens: 1,
             capabilities: Default::default(),
@@ -1242,13 +1296,12 @@ async fn an_unusable_subagent_model_is_refused_before_anything_changes() {
             .amend_settings(PARENT, request, &sink)
             .await
             .expect("answers");
-        assert!(
-            matches!(
-                answer,
-                SettingsOutcome::Refused(SettingsRefusal::ModelUnavailable { .. })
-            ),
-            "{answer:?}"
-        );
+        let SettingsOutcome::Refused(SettingsRefusal::ModelUnavailable { message }) = answer else {
+            panic!("refused: {answer:?}");
+        };
+        // 9.65 (closes 921): Node sends the resolver's message only with a catalog; without one the GUI gets the
+        // reason alone (the model-facing "omit subagent_model" text is not for people).
+        assert_eq!(message.is_some(), catalog, "{message:?}");
         assert!(fx.fake.launches().is_empty());
         assert_eq!(row(&fx, "dwfrun-model").status, DwfStatus::Stopped);
         assert!(sink.turns.lock().unwrap().is_empty());
@@ -1288,7 +1341,10 @@ async fn a_run_whose_launch_names_models_is_rebound_or_refused_before_the_predec
             assert_eq!(launch["modelBindings"], json!({ "poet": bound }));
             continue;
         }
-        let SettingsOutcome::Refused(SettingsRefusal::ModelUnavailable { message }) = answer else {
+        let SettingsOutcome::Refused(SettingsRefusal::ModelUnavailable {
+            message: Some(message),
+        }) = answer
+        else {
             panic!("a bound model that is gone refuses: {answer:?}");
         };
         assert!(
@@ -1334,7 +1390,10 @@ async fn a_settings_refusal_for_many_unusable_models_is_bounded() {
         )
         .await
         .expect("answers");
-    let SettingsOutcome::Refused(SettingsRefusal::ModelUnavailable { message }) = answer else {
+    let SettingsOutcome::Refused(SettingsRefusal::ModelUnavailable {
+        message: Some(message),
+    }) = answer
+    else {
         panic!("the gone models refuse: {answer:?}");
     };
     assert!(
@@ -1347,6 +1406,228 @@ async fn a_settings_refusal_for_many_unusable_models_is_bounded() {
         message
             .starts_with("The models named in the script of run dwfrun-many cannot be used now:")
     );
+}
+
+/// 9.65 (918): the settings route's checker. A script containing `BROKEN` has one error at L1:C7; each line
+/// `// model <name>` names `<name>` at that line, column 4 (a persona's model reference).
+struct Checker;
+
+#[async_trait]
+impl rust_cli_kernel_api::workflow_analysis::WorkflowAnalyzer for Checker {
+    async fn analyze(
+        &self,
+        script: &str,
+    ) -> Result<
+        rust_cli_kernel_api::workflow_analysis::WorkflowAnalysis,
+        rust_cli_kernel_api::workflow_analysis::WorkflowAnalysisError,
+    > {
+        use rust_cli_kernel_api::workflow_analysis::{
+            ModelReference, WorkflowAnalysis, WorkflowDiagnostic,
+        };
+        if script.contains("BROKEN") {
+            return Ok(WorkflowAnalysis {
+                ok: false,
+                diagnostics: vec![WorkflowDiagnostic {
+                    code: 2322,
+                    line: 1,
+                    column: 7,
+                    message: "Type 'string' is not assignable to type 'number'.".to_owned(),
+                }],
+                model_references: Vec::new(),
+                display: None,
+            });
+        }
+        let model_references = script
+            .lines()
+            .enumerate()
+            .filter_map(|(index, line)| {
+                line.strip_prefix("// model ").map(|name| ModelReference {
+                    name: name.to_owned(),
+                    line: index as i64 + 1,
+                    column: 4,
+                })
+            })
+            .collect();
+        Ok(WorkflowAnalysis {
+            ok: true,
+            diagnostics: Vec::new(),
+            model_references,
+            display: Some(
+                json!({"kind": "create_workflow", "ok": true, "causalityGraph": {"steps": []}}),
+            ),
+        })
+    }
+}
+
+fn with_checker(fx: &Fixture) {
+    assert!(
+        fx.service
+            .configure_saved_start(fx.path.with_file_name("home"), Arc::new(Checker))
+    );
+}
+
+/// 9.65 (closes 918): the settings route compiles the stored script first (Node step 8): a script that no longer
+/// compiles is `compile_failed` with Node's bounded diagnostics, and nothing changes.
+#[tokio::test]
+async fn a_stored_script_that_no_longer_compiles_refuses_the_settings_change() {
+    let fx = fixture(|conn| interrupted(conn, "dwfrun-broken", PARENT, "BROKEN\n"));
+    with_checker(&fx);
+    let sink = Recorder::default();
+    let answer = fx
+        .service
+        .amend_settings(PARENT, settings("dwfrun-broken", Some(Some(2.0))), &sink)
+        .await
+        .expect("answers");
+    assert_eq!(
+        answer,
+        SettingsOutcome::Refused(SettingsRefusal::CompileFailed {
+            message: "The stored script of run dwfrun-broken has errors:\nL1:C7 Type 'string' is not assignable to type 'number'.".to_owned(),
+        })
+    );
+    assert!(fx.fake.launches().is_empty());
+    assert_eq!(row(&fx, "dwfrun-broken").superseded_by, None);
+    assert!(sink.turns.lock().unwrap().is_empty());
+}
+
+/// 9.65 (closes 918): the models are bound over the compiled script's references (Node `bindScriptModels(analysis,
+/// catalog, snapshot.modelBindings)`), not the launch table's keys: a name the launch did not bind is resolved fresh,
+/// and a refusal names each reference at its line and column.
+#[tokio::test]
+async fn the_settings_route_binds_the_compiled_scripts_models_with_their_positions() {
+    let fx = fixture(|conn| {
+        interrupted(
+            conn,
+            "dwfrun-fresh",
+            PARENT,
+            "// model deepseek-v4-flash\nreturn 1\n",
+        );
+    });
+    with_catalog(&fx);
+    with_checker(&fx);
+    let answer = fx
+        .service
+        .amend_settings(
+            PARENT,
+            settings("dwfrun-fresh", Some(Some(2.0))),
+            &Recorder::default(),
+        )
+        .await
+        .expect("answers");
+    let SettingsOutcome::Amended { run_id, .. } = answer else {
+        panic!("the fresh name binds: {answer:?}");
+    };
+    let launch = launch_of(&fx, run_id.as_str()).await;
+    assert_eq!(
+        launch["modelBindings"],
+        json!({"deepseek-v4-flash": "deepseek/deepseek-v4-flash"})
+    );
+
+    let fx = fixture(|conn| {
+        interrupted(conn, "dwfrun-gone", PARENT, "return 1\n// model gpt-x\n");
+    });
+    with_catalog(&fx);
+    with_checker(&fx);
+    let answer = fx
+        .service
+        .amend_settings(
+            PARENT,
+            settings("dwfrun-gone", Some(Some(2.0))),
+            &Recorder::default(),
+        )
+        .await
+        .expect("answers");
+    let SettingsOutcome::Refused(SettingsRefusal::ModelUnavailable {
+        message: Some(message),
+    }) = answer
+    else {
+        panic!("an unknown name refuses: {answer:?}");
+    };
+    assert!(
+        message.starts_with(
+            "The models named in the script of run dwfrun-gone cannot be used now:\nL2:C4 "
+        ),
+        "{message}"
+    );
+    assert!(fx.fake.launches().is_empty());
+}
+
+/// 9.65 (919): two providers that both serve `shared`, and the parent's current model on the second.
+struct TwoProviders;
+
+#[async_trait]
+impl rust_cli_kernel_api::provider::ModelDirectory for TwoProviders {
+    async fn catalog(&self) -> rust_cli_kernel_api::provider::ModelCatalog {
+        let model = |provider: &str, name: &str| rust_cli_kernel_api::provider::CatalogModel {
+            provider: provider.to_owned(),
+            provider_name: provider.to_owned(),
+            model: name.to_owned(),
+            protocol: rust_cli_kernel_api::provider::WireProtocol::AnthropicMessages,
+            reasoning_levels: Vec::new(),
+            default_reasoning_level: None,
+            context_window: 1,
+            max_output_tokens: 1,
+            capabilities: Default::default(),
+            connection: None,
+            host: None,
+        };
+        rust_cli_kernel_api::provider::ModelCatalog {
+            revision: 1,
+            models: vec![
+                model("alpha", "shared"),
+                model("beta", "shared"),
+                model("beta", "home"),
+            ],
+            default: None,
+        }
+    }
+}
+
+/// The parent session runs on `beta/home`.
+struct OnBeta;
+
+impl ActorBindingsPort for OnBeta {
+    fn parent_bindings(&self, parent: &str) -> Result<Option<ParentBindings>, String> {
+        Ok((parent == PARENT).then(|| ParentBindings {
+            selection: Some(rust_cli_kernel_api::model::ModelSelection::new(
+                "beta", "home",
+            )),
+            workspace: rust_cli_kernel_api::env::WorkspaceRef {
+                environment: rust_cli_kernel_api::ids::EnvironmentId::new("local"),
+                root: rust_cli_kernel_api::env::EnvPath::new("/work"),
+            },
+            interactions: None,
+        }))
+    }
+
+    fn parent_permission_mode(&self, _parent: &str) -> Result<Option<PermissionMode>, String> {
+        Ok(Some(PermissionMode::Default))
+    }
+}
+
+/// 9.65 (closes 919): the settings route marks the parent session's model as current in the catalog (Node's
+/// `currentSelection()` in `createModelCatalogPort`), so a bare name two providers serve resolves to the session's
+/// provider instead of being refused as ambiguous.
+#[tokio::test]
+async fn a_bare_model_name_prefers_the_parent_sessions_provider() {
+    let fx = fixture_with_bindings(
+        |conn| interrupted(conn, "dwfrun-bare", PARENT, "return 1\n"),
+        Arc::new(OnBeta),
+    );
+    let models = Arc::new(rust_cli_kernel_api::provider::LateModelDirectory::default());
+    assert!(models.set(Arc::new(TwoProviders)));
+    assert!(fx.service.configure_models(models));
+    let mut request = settings("dwfrun-bare", None);
+    request.subagent_model = Some(Some("shared".to_owned()));
+    let answer = fx
+        .service
+        .amend_settings(PARENT, request, &Recorder::default())
+        .await
+        .expect("answers");
+    let SettingsOutcome::Amended { run_id, .. } = answer else {
+        panic!("the session's provider wins: {answer:?}");
+    };
+    let launch = launch_of(&fx, run_id.as_str()).await;
+    assert_eq!(launch["subagentModel"], json!("beta/shared"));
 }
 
 /// 9.63: an amend carries the run's subagent model and the script's table to the successor's launch (Node).

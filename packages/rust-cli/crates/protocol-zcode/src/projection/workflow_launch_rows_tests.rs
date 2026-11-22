@@ -116,7 +116,7 @@ fn a_cold_settings_record_draws_the_same_turn() {
     assert_eq!(headers[1]["origin"], "workflowLaunch");
 }
 
-/// A record without `workflowLaunch` metadata (a hub launch, divergence 916) draws nothing, as before.
+/// A record without `workflowLaunch` metadata draws nothing, as before (a hub launch carries it since 9.65, 916).
 #[test]
 fn a_record_without_launch_metadata_draws_no_row() {
     let mut feed = Feed::new();
@@ -126,4 +126,23 @@ fn a_record_without_launch_metadata_draws_no_row() {
     }
     feed.apply(KernelEvent::MessageDone { message: record });
     assert!(feed.projection.rows.is_empty());
+}
+
+/// 9.65 (closes 916): a hub launch record (source `workflow_launch`) with its metadata draws the same control-only turn,
+/// live and cold, as the settings record does.
+#[test]
+fn a_hub_launch_record_draws_the_launch_turn_live_and_cold() {
+    let mut record = settings_record("msg_set");
+    if let Message::User(user) = &mut record {
+        user.origin = UserOrigin::Meta {
+            source: "workflow_launch".into(),
+        };
+    }
+    let mut feed = Feed::new();
+    feed.apply(KernelEvent::MessageDone {
+        message: record.clone(),
+    });
+    assert_launch_turn(&feed.projection);
+    let cold = Projection::from_view(&view(vec![record]), Followup::Queue, Vec::new());
+    assert_launch_turn(&cold);
 }

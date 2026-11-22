@@ -4,11 +4,12 @@
 //! The order is Node's. Resolution, argument checks and the compile come first and have no side effect: a refusal there
 //! starts nothing and writes nothing. Then the parent is activated, the draft copy is written, the run is submitted with
 //! the launch anchor (a UUID v7, recorded as the run's `run-launched.inputId`), and the launch turn is recorded for the
-//! parent. A failure after the submit is not rolled back, as Node does not roll it back.
+//! parent with Node's `workflowLaunch` metadata (9.65, closes 916). A failure after the submit is not rolled back, as
+//! Node does not roll it back.
 //!
 //! Not built here (divergences 760 to 774): the models a script names (Node binds them; this host refuses none and binds
-//! none), the phase table of the launch (no `phaseNames`/`phaseAlongside` on the run), the background tracker
-//! registration, and the metadata of the launch turn (the turn records its text and origin only). The launch turn does
+//! none), the phase table of the launch (no `phaseNames`/`phaseAlongside` on the run) and the background tracker
+//! registration. The launch turn does
 //! not carry the anchor: Node shares one id between the run and the turn, this host stores it on the run alone.
 
 use std::path::PathBuf;
@@ -144,6 +145,16 @@ impl WorkflowRunService {
             run_id: run_id.clone(),
             tool_call_id: tool_call_id.clone(),
             name: resolved.name.clone(),
+            // Fork (9.65, closes 916): Node's `workflowLaunch` metadata. The display is the analysis's when it is a create
+            // window, the arguments only when the workflow has some.
+            scope: resolved.scope.as_str().to_owned(),
+            path: resolved.path.clone(),
+            args: (!resolved.args.is_empty()).then(|| resolved.args.clone()),
+            description: resolved.description.clone(),
+            display: analysis.display.clone().filter(|display| {
+                display.get("kind").and_then(Value::as_str) == Some("create_workflow")
+            }),
+            script: resolved.script.clone(),
         });
         Ok(StartSavedOutcome::Started {
             run_id,

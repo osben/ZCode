@@ -423,25 +423,18 @@ struct Draws;
 impl rust_cli_kernel_api::workflow_analysis::WorkflowAnalyzer for Draws {
     async fn analyze(
         &self,
-        _script: &str,
+        script: &str,
     ) -> Result<
         rust_cli_kernel_api::workflow_analysis::WorkflowAnalysis,
         rust_cli_kernel_api::workflow_analysis::WorkflowAnalysisError,
     > {
         Ok(rust_cli_kernel_api::workflow_analysis::WorkflowAnalysis {
             model_references: Vec::new(),
+            display: Some(json!({"kind": "create_workflow", "ok": true,
+                "causalityGraph": {"steps": [{"id": script}], "phases": [{"id": "p1", "fill": "hole#1"}]}})),
             ok: true,
             diagnostics: Vec::new(),
         })
-    }
-
-    async fn display(
-        &self,
-        script: &str,
-        _model_bindings: Option<&serde_json::Map<String, Value>>,
-    ) -> Result<Option<Value>, rust_cli_kernel_api::workflow_analysis::WorkflowAnalysisError> {
-        Ok(Some(json!({"kind": "create_workflow", "ok": true,
-            "causalityGraph": {"steps": [{"id": script}], "phases": [{"id": "p1", "fill": "hole#1"}]}})))
     }
 }
 

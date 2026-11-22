@@ -9,16 +9,18 @@ use futures_util::StreamExt;
 use rust_cli_base::sync::LockUnpoisoned;
 use rust_cli_kernel_api::ids::{SessionId, WorkflowRunId};
 use rust_cli_kernel_api::workflow_run::{
-    BackgroundRunWork, DynamicWorkflowRunError, DynamicWorkflowRunPort, DynamicWorkflowRunSessions,
+    BackgroundRunStatus, BackgroundRunWork, DynamicWorkflowRunError, DynamicWorkflowRunPort,
+    DynamicWorkflowRunSessions,
 };
 use tokio::sync::watch;
 
 use crate::test_support::harness;
 
-/// The session's live runs in launch order, as the run port answers them. `settle` drops one and ticks the change channel,
-/// as the run service does when a run ends on its own.
+/// The session's runs in launch order, as the run port answers them. `settle` ends one and ticks the change channel, as
+/// the run service does when a run ends on its own. The ended run stays listed with a terminal status and its end, as
+/// the run service keeps it since 9.65 (911), so `/tasks` must filter it out.
 struct Board {
-    runs: Mutex<Vec<(String, i64)>>,
+    runs: Mutex<Vec<BackgroundRunWork>>,
     changes: watch::Sender<u64>,
 }
 
@@ -28,7 +30,13 @@ impl Board {
         Arc::new(Self {
             runs: Mutex::new(
                 runs.iter()
-                    .map(|(id, at)| ((*id).to_owned(), *at))
+                    .map(|(id, at)| BackgroundRunWork {
+                        run_id: WorkflowRunId::new(*id),
+                        title: (*id).to_owned(),
+                        started_at_ms: *at,
+                        status: BackgroundRunStatus::Running,
+                        ended_at_ms: None,
+                    })
                     .collect(),
             ),
             changes,
@@ -36,7 +44,12 @@ impl Board {
     }
 
     fn settle(&self, id: &str) {
-        self.runs.lock_unpoisoned().retain(|(run, _)| run != id);
+        for run in self.runs.lock_unpoisoned().iter_mut() {
+            if run.run_id.as_str() == id {
+                run.status = BackgroundRunStatus::ResultPending;
+                run.ended_at_ms = Some(run.started_at_ms + 1_000);
+            }
+        }
         self.changes.send_modify(|tick| *tick += 1);
     }
 }
@@ -44,16 +57,7 @@ impl Board {
 #[async_trait]
 impl DynamicWorkflowRunPort for Board {
     async fn background_runs(&self) -> Result<Vec<BackgroundRunWork>, DynamicWorkflowRunError> {
-        Ok(self
-            .runs
-            .lock_unpoisoned()
-            .iter()
-            .map(|(id, at)| BackgroundRunWork {
-                run_id: WorkflowRunId::new(id),
-                title: id.clone(),
-                started_at_ms: *at,
-            })
-            .collect())
+        Ok(self.runs.lock_unpoisoned().clone())
     }
 
     fn background_changes(&self) -> Option<watch::Receiver<u64>> {

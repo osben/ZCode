@@ -5673,6 +5673,151 @@ the fill path still passes none (with 512).
 attributes added). Lib tests: runtime 394, workflow 468, kernel-api 461, protocol-zcode 1075, node-store 366 (1 ignored,
 existing), tools 728, session 422, node-records 36; cli bin tests 565.
 
+### 9.65 W9i: the open workflow divergences 906, 911, 916–921 under zcode-rs (as built, gate off by default)
+
+Node is the oracle. Each item was first a red Rust unit test (a failing assertion, or a compile failure where the type had
+no place for the fact), then the fix. There is no 9.64.
+
+**ocr #618: one script analysis per confirmation ask.** The create and fill asks ran the helper twice: once for the
+verdict (`analyze`), once for the window (`display`). The helper's `helper/workflow/format` analysis reply now carries
+Node's `displayOfAnalysis` of the same analysis (`display`, null when there is none). `WorkflowAnalysis` gains `display`,
+and the `display()` port method is gone. CreateWorkflow, the fill card and the settings route read the window from the
+one analysis. Tests: `one_ask_runs_the_script_analysis_once_and_still_draws_the_window` (red: two analyses),
+`an_analysis_reply_carries_its_display_into_the_verdict`, and the helper vitest
+`formats the analysis of a script as the JSON of analyzeWorkflowScript, with its display`, which expects the display to
+equal `prepareApproval({script}).display`.
+
+**918, closed: the settings route compiles the stored script.** It follows Node's settings step 8. `analyzeScript` runs on
+the stored script. Errors refuse with `compile_failed` and Node's bounded diagnostics, under the heading
+`The stored script of run <id> has errors:`. `SettingsRefusal::CompileFailed` adds `compile_failed` to 674's vocabulary.
+Otherwise `bindScriptModels` runs over the analysis's model references, with their `L:C` positions, and the launch table
+as the inherited bindings. Tests: `a_stored_script_that_no_longer_compiles_refuses_the_settings_change`,
+`the_settings_route_binds_the_compiled_scripts_models_with_their_positions` (both red).
+
+**921, closed: settings refusals take Node's message shape.** A refusal has a message only for `compile_failed`,
+`start_failed`, and `model_unavailable` when a catalog is set. Every other ack says
+`workflow run settings rejected: <reason>`, as Node's fallback does. `SettingsRefusal::ModelUnavailable.message` is
+optional, and `settings_ack_message` builds the fallback. Tests:
+`a_settings_refusal_without_a_message_acks_with_nodes_fallback_text`; the runtime refusal tests assert
+`message.is_some() == catalog` (red as a compile change).
+
+**920, closed: AmendWorkflow uses Node's codes.** A revision's unusable subagent model refuses with code 23
+(`SUBAGENT_MODEL`), and a live run held by another session refuses with code 30 (`HELD_ELSEWHERE`). Tests:
+`an_inherited_subagent_model_that_is_gone_is_refused_as_inherited` (23) and
+`a_revision_of_another_sessions_live_run_is_refused_before_any_window` (30), both red with 400.
+
+**917, closed for workflow models: the configured default reasoning level wins.** `CatalogModel` gains
+`default_reasoning_level`, filled from the model rule's `reasoningLevel.default` when it is one of the levels. The
+workflow catalog takes Node's `reasoning.default ?? values.at(-1)`. Tests:
+`the_configured_default_level_wins_over_the_last_level` (red: `high` instead of `medium`),
+`the_configured_default_level_reaches_the_catalog_entry`.
+
+**919, closed: a bare model name prefers the parent session's provider.** The settings route reads the parent's current
+selection (`parent_bindings`) and passes it to the catalog entries, so the session's provider marks the current entry, as
+in Node. If the read fails, it is logged (`workflow.run.settings.parent_selection_unread`) and no entry is current. Test:
+`a_bare_model_name_prefers_the_parent_sessions_provider` (red: refused as ambiguous).
+
+**906 and 512, closed: a fill carries the run's model bindings.** The fill reads the run's journaled `run-launched`
+payload and passes its non-empty `modelBindings` to the helper. The helper then refuses a body that names a model the run
+did not bind, which is Node's `unboundFillModelDiagnostics` over `entry.modelBindings`. A launch that cannot be read fails
+the fill. The subagent model is not part of a fill: Node's fill path never touches it, and the fill joins the live owner,
+which keeps the launch facts. Test: `a_fill_carries_the_runs_model_bindings_to_the_helper` (red: no bindings sent).
+
+**916, closed: a hub launch record carries `workflowLaunch` metadata.** `LaunchTurn` gains Node's launch facts:
+
+- the definition's scope, path and description;
+- the arguments, when there are any;
+- the analysis display, only when it is a `create_workflow` window;
+- the script.
+
+`LaunchTurn::workflow_launch_meta` ports `boundWorkflowLaunchMeta`. Arguments over 4096 bytes of JSON become
+`{"…": "arguments omitted (N bytes)"}`. A description over 500 chars is cut to 499 plus `…`. A script over 256000 chars
+is left out. The projection draws the control-only launch turn from the metadata whatever the record's source, so the hub
+launch now draws the launch card. Tests: `a_launch_record_carries_nodes_workflow_launch_metadata` (red: `None`),
+`the_launch_metadata_is_bounded_as_node_bounds_it`, `the_launch_turn_carries_the_definition_and_its_create_window`,
+`a_hub_launch_record_draws_the_launch_turn_live_and_cold`. The node-store and the projection already treat both record
+sources alike (`is_record_source`), so the stored record keeps `metadata.workflowLaunch`.
+
+**911, closed: a settled run stays in `backgroundWorks`.** When a run settles, `settle_run` reads its journal row before
+taking the lock and keeps an ended entry: one per run id, with the first start time, the title and the end time. The
+status maps like Node's tracker: completed is `resultPending`, stopped is `cancelled`, and anything else, or an
+unreadable row, is `failed`. A live run of the same id hides its ended entry. A close clears the entries with the live
+runs. `BackgroundRunWork` gains `status` and `ended_at_ms`. The projection writes the status, adds `endedAt`, and sets
+`cancellable` only while the run is running, as Node's `backgroundInfoFromRuntimeTask` does. `/tasks` still lists only
+running runs. A settled row that is not terminal reads as `failed` and is logged
+(`workflow.run.background_status_not_terminal`). Tests: `a_settled_run_stays_listed_as_an_ended_background_work` (red
+with the retention off), `a_completed_hub_run_stays_listed_as_result_pending_over_the_real_journal` (the production
+owner and journal: the row is settled before the read), `an_ended_run_is_an_ended_work_with_its_end_and_no_cancel`.
+
+**DWN-02** stays closed in 9.62 (71bdad10c), and nothing changes here.
+
+**Divergences.**
+
+922. The settings route falls back to the launch table's rebind when the host has no saved-start analyzer
+     (`configure_saved_start` not called). The launch-table keys stand in for the script's references at `L0:C0`.
+     Production always configures the analyzer.
+923. An analyzer failure on the settings route (the helper did not answer) refuses with `start_failed`
+     (`the stored script of run <id> could not be checked: …`). Node's in-process analysis cannot fail that way.
+924. AmendWorkflow's call-time model failures, which come after the decision, are `ToolError::Failed` and carry no failure
+     code. Only the validation refusals carry 23 and 30.
+925. Only the workflow catalog takes the configured default level. The platform's model picker and the request default
+     still use the last level (`catalog.rs`).
+926. The launch metadata counts the description and script lengths in chars, while Node counts UTF-16 units. They differ
+     only for text outside the BMP.
+927. Ended background works live in the run service's memory. A restart starts with an empty list, and a cold open does
+     not rebuild them from the journal.
+928. A run service without a run store (test hosts only) keeps no ended entry, since there is no journaled status to read.
+
+**Unchanged.** 760–774: a hub start still binds no script models and registers no tracker entry of its own; the
+background list is the run service's view.
+
+**Box.** These runs are Rust unless marked Node. out-w9i-1 ran on 10afd8010. The later runs ran on f1f5e2d6a, whose only
+production change since then is one log line.
+
+| Run       | Specs                                               | Result                                     |
+| --------- | --------------------------------------------------- | ------------------------------------------ |
+| out-w9i-1 | run-pane-details, holes, run, lookup, cross-session | PASS (5/5)                                 |
+| out-w9i-1 | automations-workflows-hub                           | FAIL, the same 4 tests as Node (see below) |
+| out-w9i-2 | the 26-spec sweep (`w9g-specs.txt`)                 | 17 PASS, 9 FAIL                            |
+| out-w9i-3 | questions ×2                                        | PASS, PASS                                 |
+| out-w9i-4 | questions (Node)                                    | PASS                                       |
+
+The sweep failed the same nine specs as the 9.63 sweep (out-w9g-sweep):
+
+- confirm, english-dark, questions, resume, snippet, user-choice, disabled, on-demand, hub.
+
+That is no new failure. questions then passed twice on Rust and once on Node, so its sweep failure was the race 9.63
+describes; this time the question element was not displayed within 30 s.
+
+The hub spec fails the same four tests on Node in the box (out-final-node, out-node-1, out-node-3) and on every earlier
+Rust run. In each case the workflows page shows no project group, so the direct-start test stops before its launch. The
+hub launch card (916) is therefore not seen end to end in the box. The unit and projection tests above cover it.
+
+**Gate.** `cargo fmt --all --check` clean. `cargo clippy --workspace --all-targets --locked -- -D warnings` rc 0, with no
+allow attributes added. Lib tests:
+
+| Crate          | Passed | Ignored |
+| -------------- | ------ | ------- |
+| runtime        | 402    | 0       |
+| workflow       | 468    | 0       |
+| kernel-api     | 461    | 0       |
+| protocol-zcode | 1079   | 0       |
+| node-store     | 366    | 1       |
+| tools          | 732    | 0       |
+| platform       | 204    | 1       |
+| agents         | 351    | 0       |
+| session        | 422    | 0       |
+| node-records   | 36     | 0       |
+| tui            | 576    | 0       |
+
+The ignored tests already existed. tui's integration suites pass 277 with 5 ignored. cli bin tests pass 565. The helper
+vitest `workflow-compile.test.ts` passes 23/23.
+
+**Review (ocr of #622, fixed in 61165659d).** The `/tasks` fake now keeps a settled run with a terminal status, so the
+`Running` filter is exercised (red with the filter removed). The retired `display` route is gone on both sides (the Rust
+`display()`/`display_params()`/`parse_display()` with their 2 tests, the helper `kind: "display"` branch and schema variant with
+its 3 vitest cases). The `catalog_entries` doc states the 917 rule.
+
 ## 10. Open questions
 
 Each has a recommendation. The user decides. Until decided, the recommendation is the default.

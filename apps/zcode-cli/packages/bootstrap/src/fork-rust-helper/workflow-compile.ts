@@ -1,10 +1,9 @@
 import {
-  CREATE_WORKFLOW_TOOL_NAME,
   GET_WORKFLOW_RUN_TOOL_NAME,
   LIST_WORKFLOW_RUNS_TOOL_NAME,
   ListWorkflowRunsInputSchema,
 } from "@zcode/contracts";
-import { builtInTools } from "@zcode/core";
+import { builtInTools, displayOfAnalysis } from "@zcode/core";
 import {
   analyzeWorkflowScript,
   collectDiagnostics,
@@ -122,14 +121,13 @@ export function jsonShape(value: unknown): unknown {
 }
 
 /**
- * A tool entry of Node's `builtInTools` as far as the format methods use it. The formatters and the window display are
- * Node's own, reached through the entry, so nothing here re-implements them (specs/fork-rust-workflow-engine.md, 9.17).
+ * A tool entry of Node's `builtInTools` as far as the format methods use it. The handlers and the formatters are Node's
+ * own, reached through the entry, so nothing here re-implements them (specs/fork-rust-workflow-engine.md, 9.17).
  */
 interface NodeToolEntry {
   metadata: { name: string };
   handler: (input: unknown, context: unknown) => Promise<unknown>;
   formatModelContent?: (output: unknown) => unknown;
-  prepareApproval?: (input: unknown) => { gate: string; display?: unknown };
 }
 
 function nodeTool(name: string): NodeToolEntry {
@@ -159,25 +157,17 @@ function formatted(entry: NodeToolEntry, output: unknown): string {
 }
 
 /**
- * `helper/workflow/format`: `analysis` is the analysis of `analyzeWorkflowScript`, for the window graph; `display` is the
- * CreateWorkflow confirmation window (Node's `prepareApproval`, so the same `displayOfAnalysis` path as the dialog);
- * `runList` and `runDetail` run Node's handler on the port data Rust sends and format the output with Node's formatter.
+ * `helper/workflow/format`: `analysis` is the analysis of `analyzeWorkflowScript`, for the window graph, with the
+ * CreateWorkflow confirmation display of that same analysis (Node's `displayOfAnalysis`, ocr #618); `runList` and
+ * `runDetail` run Node's handler on the port data Rust sends and format the output with Node's formatter.
  */
 export async function formatWorkflowForRust(raw: unknown) {
   const params = parseParams(workflowFormatParamsSchema, raw);
   switch (params.kind) {
-    case "analysis":
-      return { analysis: analyzeWorkflowScript(params.scriptText) };
-    case "display": {
-      // Node's prepareApproval reads the input resolveInput produces, where `model_bindings` sits.
-      const decision = nodeTool(CREATE_WORKFLOW_TOOL_NAME).prepareApproval?.({
-        script: params.scriptText,
-        ...(params.modelBindings === undefined ? {} : { model_bindings: params.modelBindings }),
-      });
-      return {
-        display:
-          decision?.gate === "ask" && decision.display !== undefined ? decision.display : null,
-      };
+    case "analysis": {
+      // ocr #618: the display of this same analysis (Node displayOfAnalysis), so the Rust side never analyzes twice.
+      const analysis = analyzeWorkflowScript(params.scriptText);
+      return { analysis, display: displayOfAnalysis(analysis) ?? null };
     }
     case "runList": {
       // Node's own input schema, parsed here so a bad query is -32602 instead of a ZodError from inside the handler.

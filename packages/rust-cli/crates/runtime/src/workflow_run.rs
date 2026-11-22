@@ -296,6 +296,9 @@ struct State {
     retired: cancel::RetiredQuestions,
     /// Gives each launch a token, so a settled run removes only its own entry (a run id may be launched again).
     next_token: u64,
+    /// Fork (9.65, closes 911): the settled runs the background list keeps, as Node's tracker keeps ended entries. One
+    /// entry per run id (a later settlement of the same id replaces it); a close clears them with the live runs.
+    ended: Vec<list::EndedRun>,
 }
 
 struct RunEntry {
@@ -658,12 +661,38 @@ impl WorkflowRunService {
         self.inner.models.set(models).is_ok()
     }
 
-    /// The catalog's entries now, or `None` without one (no session model is marked: the GUI sends a qualified id).
+    /// The catalog's entries now, or `None` without one. Fork (9.65, closes 919): `parent`'s current model is marked
+    /// current (Node's `currentSelection()` in `createModelCatalogPort`), so a bare name prefers the session's
+    /// provider. A parent whose bindings cannot be read marks none (logged): a qualified id still resolves.
     pub(crate) async fn model_entries(
         &self,
+        parent: &str,
     ) -> Option<Vec<rust_cli_tools::model_reference::CatalogEntry>> {
         let directory = self.inner.models.get()?.get()?;
-        rust_cli_tools::model_reference::read_entries(Some(directory.as_ref()), None).await
+        let selection = match self.inner.bindings.get().cloned() {
+            Some(bindings) => {
+                let parent = parent.to_owned();
+                let read =
+                    list::on_blocking_pool(move || Ok(bindings.parent_bindings(&parent))).await;
+                match read {
+                    Ok(Ok(found)) => found.and_then(|bindings| bindings.selection),
+                    Ok(Err(error))
+                    | Err(rust_cli_kernel_api::workflow_run::DynamicWorkflowRunError {
+                        message: error,
+                    }) => {
+                        tracing::warn!(
+                            event = "workflow.run.settings.parent_selection_unread",
+                            %error,
+                            "the parent's model could not be read; no catalog entry is current"
+                        );
+                        None
+                    }
+                }
+            }
+            None => None,
+        };
+        rust_cli_tools::model_reference::read_entries(Some(directory.as_ref()), selection.as_ref())
+            .await
     }
 
     /// Fork (W9a, 9.53): sets the hub start's ports, the user's home (where saved workflows live) and the compile checker
@@ -1028,6 +1057,7 @@ impl WorkflowRunService {
         let (runs, modules) = {
             let mut state = inner.state.lock_unpoisoned();
             state.closed = true;
+            state.ended.clear();
             let runs = std::mem::take(&mut state.runs);
             inner.runs_changed();
             let modules: Vec<Arc<QuotaAutoResume>> = inner
@@ -1185,13 +1215,29 @@ fn settle_run(
 ) -> Vec<(String, String)> {
     stop.stop();
     log_failures(run_id, &failures);
+    // The settled row's status, read before the lock (the row is settled when the owner stops serving).
+    let ended = list::ended_status(inner, run_id);
+    let ended_at_ms = list::clock_ms(inner);
     let mut state = inner.state.lock_unpoisoned();
     let owned = state
         .runs
         .get(run_id)
         .is_some_and(|entry| entry.token == token);
     if owned {
-        state.runs.remove(run_id);
+        if let Some(entry) = state.runs.remove(run_id)
+            && let Some(status) = ended
+        {
+            state.ended.retain(|run| run.run_id != run_id);
+            state.ended.push(list::EndedRun {
+                run_id: run_id.to_owned(),
+                parent: entry.parent,
+                token,
+                title: list::background_title(run_id, &entry.meta),
+                started_at_ms: entry.meta.started_at_ms,
+                status,
+                ended_at_ms,
+            });
+        }
         inner.runs_changed();
         buffer_failures(&mut state.failures, failures);
         return Vec::new();

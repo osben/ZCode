@@ -954,6 +954,7 @@ impl rust_cli_kernel_api::workflow_analysis::WorkflowAnalyzer for PassingChecker
     > {
         Ok(rust_cli_kernel_api::workflow_analysis::WorkflowAnalysis {
             model_references: Vec::new(),
+            display: None,
             ok: true,
             diagnostics: Vec::new(),
         })

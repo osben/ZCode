@@ -68,6 +68,9 @@ export {
 // Use the same type checker (docs/dynamic-workflow/launch.md, “`SaveWorkflow`”) when the GUI saves directly from a run—
 // “it saves but cannot run” is one of the hardest failures to explain, and compiling separately in the two entry points is a common cause.
 export { analyzeScript } from "./tool/handlers/workflow-script-analysis.js";
+// Fork (Rust helper, ocr #618): the helper's analysis reply carries the display of the same analysis, so one
+// confirmation ask under zcode-rs costs one analysis, as Node's prepareApproval.
+export { displayOfAnalysis } from "./tool/handlers/workflow-analysis-display.js";
 // Keep draft naming rules in one place (docs/dynamic-workflow/launch.md, “The draft after a fill”): the bootstrap run
 // service receives this through injection and uses it to create a draft when completing a run that was not saved as one at launch, rather than duplicating slug / `-2` / `wx` logic.
 export {

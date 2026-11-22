@@ -350,6 +350,7 @@ fn provider_and_failover_types_round_trip() {
             model: "m".to_owned(),
             protocol: WireProtocol::OpenAiResponses,
             reasoning_levels: vec!["low".to_owned(), "high".to_owned()],
+            default_reasoning_level: None,
             context_window: 200_000,
             max_output_tokens: 32_000,
             connection: None,

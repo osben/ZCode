@@ -79,6 +79,8 @@ fn a_live_workflow_run_is_a_running_work_until_it_settles() {
         run_id: WorkflowRunId::new("wf_1"),
         title: "Audit the tests".into(),
         started_at_ms: 4000,
+        status: rust_cli_kernel_api::workflow_run::BackgroundRunStatus::Running,
+        ended_at_ms: None,
     };
     let started = feed.projection.background_table(
         &[shell("b1", BackgroundStatus::Running)],
@@ -131,6 +133,45 @@ fn a_live_workflow_run_is_a_running_work_until_it_settles() {
         1
     );
     assert_eq!(settled[0]["patch"]["backgroundWorks"][0]["workId"], "b1");
+}
+
+/// 9.65 (closes 911): an ended run is Node's ended tracker entry: its summary status, `endedAt`, not cancellable, and the
+/// start time it was first listed with.
+#[test]
+fn an_ended_run_is_an_ended_work_with_its_end_and_no_cancel() {
+    use rust_cli_kernel_api::ids::WorkflowRunId;
+    use rust_cli_kernel_api::workflow_run::{BackgroundRunStatus, BackgroundRunWork};
+
+    let mut feed = Feed::new();
+    let live = BackgroundRunWork {
+        run_id: WorkflowRunId::new("wf_1"),
+        title: "Audit the tests".into(),
+        started_at_ms: 4000,
+        status: BackgroundRunStatus::Running,
+        ended_at_ms: None,
+    };
+    feed.projection
+        .background_table(&[], std::slice::from_ref(&live), 5000);
+    let ended = BackgroundRunWork {
+        started_at_ms: 4500,
+        status: BackgroundRunStatus::ResultPending,
+        ended_at_ms: Some(9000),
+        ..live
+    };
+    let patch = feed.projection.background_table(&[], &[ended], 9000);
+    assert_eq!(
+        patch[0]["patch"]["backgroundWorks"],
+        json!([{
+            "workId": "wf_1",
+            "kind": "workflow",
+            "title": "Audit the tests",
+            "status": "resultPending",
+            "startedAt": 4000,
+            "endedAt": 9000,
+            "cancellable": false,
+            "anchorRowId": null,
+        }])
+    );
 }
 
 /// A command without a known Bash description is titled by its command line; subagents are not shells.

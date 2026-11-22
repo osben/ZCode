@@ -1383,3 +1383,62 @@ impl StatusName for rust_cli_workflow::model::RunStatus {
         }
     }
 }
+
+/// 9.65 (closes 911): a settled run stays in the background list as an ended work, as Node's tracker keeps it: its
+/// status is its journal status mapped as the tracker maps it (completed is `resultPending`, errored is `failed`, stopped
+/// is `cancelled`), with its end time, in start order among the live runs.
+#[tokio::test]
+async fn a_settled_run_stays_listed_as_an_ended_background_work() {
+    use rust_cli_kernel_api::ids::WorkflowRunId;
+    use rust_cli_kernel_api::workflow_run::{BackgroundRunStatus, CancelInitiator};
+    let fx = fixture(|conn| {
+        for (id, status) in [
+            ("wf_ok", DwfStatus::Completed),
+            ("wf_err", DwfStatus::Errored),
+            ("wf_stop", DwfStatus::Stopped),
+            ("wf_live", DwfStatus::Running),
+        ] {
+            seed(conn, Some(PARENT), id, status, None, "return 1", 1);
+        }
+    });
+    for id in ["wf_ok", "wf_err", "wf_stop", "wf_live"] {
+        fx.service
+            .launch(input(id), config(id))
+            .await
+            .expect("launched");
+    }
+    let own = port(&fx.service, PARENT);
+    for id in ["wf_ok", "wf_err", "wf_stop"] {
+        own.cancel(&WorkflowRunId::new(id), CancelInitiator::User)
+            .await
+            .expect("cancel");
+    }
+    let deadline = std::time::Instant::now() + Duration::from_secs(5);
+    while fx.service.run_count() > 1 {
+        assert!(
+            std::time::Instant::now() < deadline,
+            "the cancelled runs settle"
+        );
+        tokio::time::sleep(Duration::from_millis(5)).await;
+    }
+    let listed = own.background_runs().await.expect("listed");
+    let seen: Vec<(&str, BackgroundRunStatus, Option<i64>)> = listed
+        .iter()
+        .map(|run| (run.run_id.as_str(), run.status, run.ended_at_ms))
+        .collect();
+    let ended = Some(i64::try_from(START_MS).unwrap());
+    assert_eq!(
+        seen,
+        [
+            ("wf_ok", BackgroundRunStatus::ResultPending, ended),
+            ("wf_err", BackgroundRunStatus::Failed, ended),
+            ("wf_stop", BackgroundRunStatus::Cancelled, ended),
+            ("wf_live", BackgroundRunStatus::Running, None),
+        ]
+    );
+    fx.service.close().await;
+    assert!(
+        own.background_runs().await.expect("listed").is_empty(),
+        "a closed host lists no background run"
+    );
+}

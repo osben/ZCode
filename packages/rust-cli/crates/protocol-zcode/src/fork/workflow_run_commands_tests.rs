@@ -14,7 +14,7 @@ use rust_cli_kernel_api::workflow_run::{
 };
 use serde_json::{Value, json};
 
-use super::{settings_refusal_code, settings_request, start_refusal_code};
+use super::{settings_ack_message, settings_refusal_code, settings_request, start_refusal_code};
 use crate::fork::legacy_session::tests::server;
 
 /// What the fake run service was asked, the answers it gives, and whether it drives the parent's sink as the run service does.
@@ -66,6 +66,12 @@ impl DynamicWorkflowRunPort for Port {
                 run_id: run_id.clone(),
                 tool_call_id: tool_call_id.clone(),
                 name: "digest".to_owned(),
+                scope: "project".to_owned(),
+                path: "digest.ts".to_owned(),
+                args: None,
+                description: String::new(),
+                display: None,
+                script: "return 1".to_owned(),
             });
         }
         Ok(answer)
@@ -582,12 +588,48 @@ fn the_refusal_codes_are_nodes_vocabulary() {
         settings_refusal_code(&SettingsRefusal::MissingBoundaries).0,
         "missing_boundaries"
     );
+    // 9.65 (918): a stored script that no longer compiles is Node's `compile_failed`, with its diagnostics.
+    assert_eq!(
+        settings_refusal_code(&SettingsRefusal::CompileFailed {
+            message: "The stored script of run r has errors:".to_owned()
+        }),
+        (
+            "compile_failed",
+            Some("The stored script of run r has errors:".to_owned())
+        )
+    );
     let (code, message) = settings_refusal_code(&SettingsRefusal::ModelUnavailable {
-        message: "the host's message".to_owned(),
+        message: Some("the resolver's message".to_owned()),
     });
     assert_eq!(
-        (code, message.as_str()),
-        ("model_unavailable", "the host's message")
+        (code, message.as_deref()),
+        ("model_unavailable", Some("the resolver's message"))
+    );
+}
+
+/// 9.65 (closes 921): Node's shape. A refusal Node sends without a message (`model_unavailable` with no catalog, and the
+/// reasons that never carry one) has none, so the ack's message is Node's `V4WorkflowRunSettingsRejectedError`
+/// fallback, `workflow run settings rejected: <reason>`.
+#[test]
+fn a_settings_refusal_without_a_message_acks_with_nodes_fallback_text() {
+    for refusal in [
+        SettingsRefusal::ModelUnavailable { message: None },
+        SettingsRefusal::NotFound,
+        SettingsRefusal::NotConfigurable,
+        SettingsRefusal::Unchanged,
+        SettingsRefusal::ScriptMissing,
+        SettingsRefusal::MissingBoundaries,
+    ] {
+        let (reason, message) = settings_refusal_code(&refusal);
+        assert_eq!(message, None, "{refusal:?}");
+        assert_eq!(
+            settings_ack_message(reason, message),
+            format!("workflow run settings rejected: {reason}")
+        );
+    }
+    assert_eq!(
+        settings_ack_message("start_failed", Some("boom".to_owned())),
+        "boom"
     );
 }
 
@@ -630,7 +672,77 @@ mod deliver {
             run_id: rust_cli_kernel_api::ids::WorkflowRunId::new("dwfrun-1"),
             tool_call_id: "launch-1".to_owned(),
             name: "digest".to_owned(),
+            scope: "project".to_owned(),
+            path: "/work/.zcode/workflows/digest.ts".to_owned(),
+            args: None,
+            description: "Daily digest".to_owned(),
+            display: Some(
+                serde_json::json!({"kind": "create_workflow", "causalityGraph": {"steps": []}}),
+            ),
+            script: "return 1".to_owned(),
         }
+    }
+
+    /// 9.65 (closes 916): a hub launch's record carries Node's `workflowLaunch` metadata (`boundWorkflowLaunchMeta`),
+    /// so the desktop draws the launch card with its graph and script.
+    #[tokio::test]
+    async fn a_launch_record_carries_nodes_workflow_launch_metadata() {
+        let turns = parent();
+        turns.launch_turn(launch("started"));
+        let metas: Mutex<Vec<Option<serde_json::Value>>> = Mutex::new(Vec::new());
+        turns
+            .deliver_with(|_id, command| {
+                let Command::RecordWorkflowTurn { meta, .. } = command else {
+                    panic!("only the records are sent: {command:?}");
+                };
+                metas.lock().unwrap().push(meta);
+                std::future::ready(accepted())
+            })
+            .await;
+        assert_eq!(
+            *metas.lock().unwrap(),
+            vec![Some(serde_json::json!({
+                "runId": "dwfrun-1",
+                "toolCallId": "launch-1",
+                "name": "digest",
+                "scope": "project",
+                "path": "/work/.zcode/workflows/digest.ts",
+                "description": "Daily digest",
+                "display": {"kind": "create_workflow", "causalityGraph": {"steps": []}},
+                "script": "return 1",
+            }))]
+        );
+    }
+
+    /// 9.65 (916): Node's bounds. Arguments over 4096 bytes of JSON become a note, a description over 500 chars is cut
+    /// with `…`, and a script over 256000 chars is left out.
+    #[test]
+    fn the_launch_metadata_is_bounded_as_node_bounds_it() {
+        let mut turn = launch("started");
+        let mut args = serde_json::Map::new();
+        args.insert("blob".to_owned(), serde_json::json!("x".repeat(5_000)));
+        let bytes = serde_json::to_string(&args).unwrap().len();
+        turn.args = Some(args);
+        turn.description = "d".repeat(600);
+        turn.script = "s".repeat(256_001);
+        let meta = turn.workflow_launch_meta();
+        assert_eq!(
+            meta["args"],
+            serde_json::json!({"…": format!("arguments omitted ({bytes} bytes)")})
+        );
+        let description = meta["description"].as_str().unwrap();
+        assert_eq!(description.chars().count(), 500);
+        assert!(description.ends_with('…'));
+        assert!(meta.get("script").is_none());
+        let mut small = launch("started");
+        small.args = Some(serde_json::Map::from_iter([(
+            "topic".to_owned(),
+            serde_json::json!("rust"),
+        )]));
+        assert_eq!(
+            small.workflow_launch_meta()["args"],
+            serde_json::json!({"topic": "rust"})
+        );
     }
 
     fn accepted() -> KernelAck {

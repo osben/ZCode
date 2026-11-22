@@ -24,6 +24,7 @@ impl ModelDirectory for Directory {
                 model: main.model,
                 protocol: WireProtocol::AnthropicMessages,
                 reasoning_levels: vec!["off".to_owned(), "high".to_owned()],
+                default_reasoning_level: None,
                 context_window: 200_000,
                 max_output_tokens: self.0,
                 connection: None,

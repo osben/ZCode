@@ -671,8 +671,12 @@ impl AgentSignals for Signals {
             return Vec::new();
         };
         match sessions.for_session(session).background_runs().await {
+            // `/tasks` lists the runs in flight; the ended works the background list keeps (9.65, 911) are not tasks.
             Ok(runs) => runs
                 .into_iter()
+                .filter(|run| {
+                    run.status == rust_cli_kernel_api::workflow_run::BackgroundRunStatus::Running
+                })
                 .map(|run| rust_cli_kernel_api::panels::WorkflowRunTask {
                     id: run.run_id.as_str().to_owned(),
                     title: run.title,

@@ -192,15 +192,19 @@ describe("fork: helper/workflow/compile and helper/workflow/format (W4)", () => 
     await helper.done;
   });
 
-  it("formats the analysis of a script as the JSON of analyzeWorkflowScript", async () => {
+  it("formats the analysis of a script as the JSON of analyzeWorkflowScript, with its display", async () => {
     const helper = await startHelper();
     const reply = await helper.request("helper/workflow/format", {
       kind: "analysis",
       scriptText: VALID_SCRIPT,
     });
     expect(reply.error).toBeUndefined();
+    // ocr #618: the display is Node's confirmation display of the same analysis, so one ask costs one analysis.
+    const window = nodeEntry(CREATE_WORKFLOW_TOOL_NAME).prepareApproval!({ script: VALID_SCRIPT });
+    expect(window.display).toBeDefined();
     expect(reply.result).toEqual({
       analysis: JSON.parse(JSON.stringify(analyzeWorkflowScript(VALID_SCRIPT))),
+      display: JSON.parse(JSON.stringify(window.display)),
     });
     helper.close();
     await helper.done;
@@ -332,74 +336,10 @@ describe("fork: helper/workflow/format run list, run detail and window display (
     await helper.done;
   });
 
-  it("returns the CreateWorkflow window display as Node's confirmation display", async () => {
-    const expected = nodeEntry(CREATE_WORKFLOW_TOOL_NAME).prepareApproval!({
-      script: VALID_SCRIPT,
-    });
-    expect(expected.gate).toBe("ask");
-    expect(expected.display).toBeDefined();
-    const helper = await startHelper();
-    const reply = await helper.request("helper/workflow/format", {
-      kind: "display",
-      scriptText: VALID_SCRIPT,
-    });
-    expect(reply.error).toBeUndefined();
-    expect(reply.result).toEqual({ display: JSON.parse(JSON.stringify(expected.display)) });
-    helper.close();
-    await helper.done;
-  });
-
-  it("answers null when Node asks for no window (a script that does not analyze)", async () => {
-    const helper = await startHelper();
-    const reply = await helper.request("helper/workflow/format", {
-      kind: "display",
-      scriptText: BROKEN_SCRIPT,
-    });
-    expect(reply.error).toBeUndefined();
-    expect(reply.result).toEqual({ display: null });
-    helper.close();
-    await helper.done;
-  });
-
   it("refuses a run list without its listed rows as -32602", async () => {
     const helper = await startHelper();
     const reply = await helper.request("helper/workflow/format", { kind: "runList", input: {} });
     expect(reply.error?.code).toBe(-32602);
-    helper.close();
-    await helper.done;
-  });
-
-  // ocr finding (HIGH): Node's resolveInput writes model_bindings before prepareApproval, so a script that names a model
-  // opens its window only with its bindings. The helper must thread them through.
-  it("opens the window for a script that names a model only when its bindings are given", async () => {
-    const MODEL_SCRIPT = [
-      'const MODELS = { light: model("gpt-5") };',
-      'const answer = await agent("answerer", { model: MODELS.light }).ask("go");',
-      "return answer;",
-    ].join("\n");
-    const BINDINGS = { "gpt-5": "zhipu/gpt-5" };
-    const withBindings = nodeEntry(CREATE_WORKFLOW_TOOL_NAME).prepareApproval!({
-      script: MODEL_SCRIPT,
-      model_bindings: BINDINGS,
-    });
-    expect(withBindings.gate).toBe("ask");
-    expect(withBindings.display).toBeDefined();
-    expect(
-      nodeEntry(CREATE_WORKFLOW_TOOL_NAME).prepareApproval!({ script: MODEL_SCRIPT }).gate,
-    ).toBe("proceed");
-    const helper = await startHelper();
-    const bound = await helper.request("helper/workflow/format", {
-      kind: "display",
-      scriptText: MODEL_SCRIPT,
-      modelBindings: BINDINGS,
-    });
-    expect(bound.error).toBeUndefined();
-    expect(bound.result).toEqual({ display: JSON.parse(JSON.stringify(withBindings.display)) });
-    const unbound = await helper.request("helper/workflow/format", {
-      kind: "display",
-      scriptText: MODEL_SCRIPT,
-    });
-    expect(unbound.result).toEqual({ display: null });
     helper.close();
     await helper.done;
   });
