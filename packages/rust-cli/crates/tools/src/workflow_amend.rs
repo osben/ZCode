@@ -648,9 +648,10 @@ impl Tool for AmendWorkflowTool {
         if applied.is_empty() {
             return Ok(None);
         }
-        // The final input must still be a call the tool accepts: its handler has no second path for adjustments.
+        // The final input must still be a call the tool accepts: its handler has no second path for adjustments. One that
+        // leaves only `max_concurrency` would take the retune route before the call takes its approval (ocr #625).
         let still_valid = serde_json::from_value::<AmendInput>(Value::Object(next.clone()))
-            .is_ok_and(|input| input.limit().is_ok());
+            .is_ok_and(|input| input.limit().is_ok() && !input.is_concurrency_only());
         if !still_valid {
             return Err(adjusted_failure(
                 workflow_settings::INVALID_AFTER_ADJUSTMENT.to_owned(),
@@ -1217,7 +1218,8 @@ impl AmendWorkflowTool {
         let settings = workflow_settings::describe_run_settings(
             &applied,
             default_concurrency,
-            || concurrency_sentence(limit, default_concurrency),
+            // Node describes the resolved input: the predecessor's limit when the call omitted it (9.67, ocr #625).
+            || concurrency_sentence(models.effective_limit(input), default_concurrency),
             || describe_subagent_model(models.subagent_model.as_deref()),
             || describe_script_bindings(&models.bindings),
         );

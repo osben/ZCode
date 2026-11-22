@@ -18,7 +18,7 @@ fn wrapped(i: usize, by: i64, n: usize) -> usize {
     (i as i64 + by).rem_euclid(n as i64) as usize
 }
 
-/// 选择器给 `m` 显示的档位：← → 设过而它有的，否则它最高的。
+/// 选择器给 `m` 显示的档位：← → 设过而它有的，否则模型配置的缺省档位，没有就取最高的。
 pub fn effort_of(m: &CatalogModel, wish: &str) -> String {
     if m.reasoning_levels.iter().any(|e| e == wish) {
         wish.to_owned()

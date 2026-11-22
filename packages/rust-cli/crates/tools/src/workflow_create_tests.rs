@@ -1758,8 +1758,13 @@ async fn an_unusable_adjustment_fails_the_call_and_an_empty_one_changes_nothing(
             &ctx,
         )
         .await
-        .expect_err("a model that does not resolve fails")
-        .to_string();
+        .expect_err("a model that does not resolve fails");
+    // 9.67 (ocr #625): Node passes `CREATE_WORKFLOW_FAILURE_CODE` (400).
+    assert!(
+        matches!(&message, ToolError::FailedWithCode { code: 400, .. }),
+        "{message:?}"
+    );
+    let message = message.to_string();
     assert!(
         message.starts_with("workflow_subagent_model_unresolved: the subagent model the user chose in the confirmation window cannot be used now. No configured model matches `gpt-9`."),
         "{message}"

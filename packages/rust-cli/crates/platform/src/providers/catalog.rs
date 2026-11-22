@@ -5,7 +5,7 @@
 //! - 推理档位是 `optionSpecs.reasoningLevel.values`；没指定档位时用最后一个（Node `toModelOption`）；
 //! - 请求补丁 = reasoningLevel map(档位) + maxOutputTokens map(max)；
 //! - 默认选择：Node `resolveInitialModelSelection`——个人配置的 `defaultModelSelection` 可选（档位有效）时用它，
-//!   否则目录第一项、最后一个档位；
+//!   否则目录第一项、缺省档位或最后一个档位；
 //! - Team Plan（工作线 F49，platform.md §9.3）：团队 provider 的模型按可用的团队项目展开，每个项目一组，目录项与
 //!   选择带团队项目；按选择找端点时团队项目也要相同（选择没带时取这个模型的第一个团队项目）。
 
@@ -360,7 +360,7 @@ pub(crate) fn configured_model(configured: &Value) -> Option<String> {
 
 /// Node `resolveInitialModelSelection`（docs/specs/rust-cli/workspace-trust.md §3.1）：配置的缺省“可选”时原样用它
 /// ——provider 不隐藏、模型在目录里、`options.reasoningLevel` 有值且在模型的档位里；否则目录第一项（第一个非隐藏
-/// provider 的第一个有档位的模型）、最后一个档位（Node `completeNewModelSelection`）。
+/// provider 的第一个有档位的模型）、模型配置的缺省档位，没有就取最后一个档位（Node `completeNewModelSelection`，9.67）。
 ///
 /// L31 修正：之前缺省没有档位或档位无效时仍用这个模型（取最后一个档位），与 Node 不同——Node 判它不可选、回到
 /// 目录第一项（登录写的 `{providerId, modelId}` 也是这样），Node CLI 与本工程的新会话会选到不同的模型。
@@ -375,8 +375,14 @@ fn default_selection(templates: &[Template], configured: &Value) -> Option<Model
     });
     let (template, reasoning) = match selectable {
         Some(found) => found,
-        // Node `completeNewModelSelection` takes the last level only (`values.at(-1)`), not the configured default.
-        None => visible().find_map(|template| Some((template, template.levels.last()?.clone())))?,
+        // Node `model-selection-config.ts`: `reasoningSpec?.default ?? reasoningSpec?.values?.at(-1)` (9.67, 925).
+        None => visible().find_map(|template| {
+            let level = template
+                .default_level
+                .clone()
+                .or_else(|| template.levels.last().cloned())?;
+            Some((template, level))
+        })?,
     };
     Some(ModelSelection {
         reasoning: Some(reasoning),

@@ -960,12 +960,14 @@ impl Tool for CreateWorkflowTool {
             Some(None) => applied.subagent_model = next.remove("subagent_model").map(|_| None),
             Some(Some(requested)) => {
                 let Some(entries) = self.entries(context).await else {
-                    return Err(failed(workflow_settings::model_failure(
+                    return Err(adjusted_failure(workflow_settings::model_failure(
                         workflow_settings::MODEL_WITHOUT_CATALOG,
                     )));
                 };
                 let canonical = resolve_model(requested, &entries)
-                    .map_err(|refusal| failed(workflow_settings::model_failure(&refusal.message)))?
+                    .map_err(|refusal| {
+                        adjusted_failure(workflow_settings::model_failure(&refusal.message))
+                    })?
                     .canonical;
                 if next.get("subagent_model").and_then(Value::as_str) != Some(canonical.as_str()) {
                     applied.subagent_model = Some(Some(canonical.clone()));
@@ -1357,6 +1359,14 @@ impl Tool for CreateWorkflowTool {
 /// The causality graph of the analyzer's window display, when it drew one.
 fn graph_of(display: Option<&Value>) -> Option<&Value> {
     display.and_then(|display| display.get("causalityGraph"))
+}
+
+/// Fork (9.67, ocr #625): Node's `applyWorkflowSettingsAdjustments` passes `CREATE_WORKFLOW_FAILURE_CODE` for both failures.
+fn adjusted_failure(message: String) -> ToolError {
+    ToolError::FailedWithCode {
+        message,
+        code: FAILURE_CODE,
+    }
 }
 
 fn invalid(code: Option<i32>, message: &str) -> Validation {

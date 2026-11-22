@@ -262,7 +262,7 @@ impl rust_cli_kernel_api::clock::Ids for NodeShapedIds {
         rust_cli_kernel_api::ids::MessageId::new(format!(
             "msg_{}_{}",
             rust_cli_base::js::base36(self.ms),
-            unique.as_str()
+            unique.as_str().trim_start_matches("msg_")
         ))
     }
 

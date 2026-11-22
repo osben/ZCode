@@ -1414,6 +1414,40 @@ async fn an_adjustment_equal_to_the_inherited_settings_is_not_applied() {
     assert_eq!(port.amends()[0].max_concurrency, None);
 }
 
+/// 9.67 (ocr #625): the result's limit sentence names the limit the revision runs under, the predecessor's when the call
+/// omitted it (Node `describeWorkflowRunSettings` over the resolved input), not the default.
+#[tokio::test]
+async fn the_limit_sentence_names_the_inherited_limit() {
+    let (tool, ctx, _guard, _port) = with_catalog(foreign_settled());
+    let input = json!({"run_id": "run-1", "script": REVISED});
+    let output = run(&tool, input, ctx).await.expect("the amend runs");
+    let text = output_text(&output);
+    assert!(text.contains("At most 2 subagents run at once"), "{text}");
+}
+
+/// 9.67 (ocr #625): an adjustment that would leave only `max_concurrency` changes the route (the call would retune before
+/// it takes its approval), so it is refused with the subagent model code.
+#[tokio::test]
+async fn an_adjustment_that_leaves_only_the_limit_is_refused() {
+    let (tool, ctx, _guard, port) = with_catalog(foreign_settled());
+    let input = json!({"run_id": "run-1"});
+    let _ = tool.check_permissions(&input, &ctx).await;
+    let error = tool
+        .apply_input_adjustments(
+            &ctx.tool_use,
+            &input,
+            &adjustments(json!({"max_concurrency": 3})),
+            &ctx,
+        )
+        .await
+        .expect_err("the route would change");
+    let ToolError::FailedWithCode { code, .. } = error else {
+        panic!("a coded failure: {error:?}");
+    };
+    assert_eq!(code, 23);
+    assert!(port.amends().is_empty());
+}
+
 /// 9.67 (930): a model chosen in the window that cannot be resolved now refuses the call with Node's text and
 /// `AMEND_WORKFLOW_ERROR_CODE.SUBAGENT_MODEL` (23), and nothing starts.
 #[tokio::test]

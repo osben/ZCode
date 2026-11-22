@@ -312,10 +312,10 @@ fn the_configured_model_is_the_raw_default_model_selection() {
 }
 
 /// 9.67 (closes 925): a request with no level takes the configured default level, the last level only when the model
-/// names none. The new session's first-model fallback is not changed: Node's `completeNewModelSelection` takes
-/// `values.at(-1)` only.
+/// names none. The new session's first-model fallback does the same (this repo's `model-selection-config.ts`:
+/// `reasoningSpec?.default ?? reasoningSpec?.values?.at(-1)`).
 #[test]
-fn a_request_with_no_level_uses_the_configured_default_level() {
+fn a_request_and_a_new_session_use_the_configured_default_level() {
     let snapshot = fixture_snapshot();
     let mut template = snapshot
         .templates
@@ -349,9 +349,12 @@ fn a_request_with_no_level_uses_the_configured_default_level() {
     let fallback = default_selection(std::slice::from_ref(&template), &Value::Null).unwrap();
     assert_eq!(
         fallback.reasoning.as_deref(),
-        Some(last.as_str()),
-        "a new session still takes the last level"
+        Some(first.as_str()),
+        "a new session takes the configured default level"
     );
+    template.default_level = None;
+    let fallback = default_selection(std::slice::from_ref(&template), &Value::Null).unwrap();
+    assert_eq!(fallback.reasoning.as_deref(), Some(last.as_str()));
 }
 
 /// 不带团队项目的选择（按 provider 与模型找模板）。
