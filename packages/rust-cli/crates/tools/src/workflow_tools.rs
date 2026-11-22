@@ -115,17 +115,19 @@ pub fn workflow_tools(
     runs: Option<Arc<dyn DynamicWorkflowRunSessions>>,
     snippets: Option<Arc<dyn WorkflowSnippetPort>>,
     models: Arc<rust_cli_kernel_api::provider::LateModelDirectory>,
+    ids: Arc<dyn rust_cli_kernel_api::clock::Ids>,
 ) -> Vec<Arc<dyn Tool>> {
     let mut tools: Vec<Arc<dyn Tool>> = Vec::new();
     if let Some(analyzer) = analyzer {
-        // Fork (9.63): both resolve model names against the session's catalog, set once the host has one.
+        // Fork (9.63): both resolve model names against the session's catalog, set once the host has one. Both mint the
+        // Refine follow-up's message id from `ids` (9.67, closes 932).
         tools.push(Arc::new(
-            CreateWorkflowTool::new(analyzer.clone(), runs.clone(), home.clone())
+            CreateWorkflowTool::new(analyzer.clone(), runs.clone(), home.clone(), ids.clone())
                 .with_models(models.clone()),
         ));
         // Node's order: CreateWorkflow, AmendWorkflow, SaveWorkflow (9.43).
         tools.push(Arc::new(
-            AmendWorkflowTool::new(analyzer.clone(), runs.clone()).with_models(models),
+            AmendWorkflowTool::new(analyzer.clone(), runs.clone(), ids).with_models(models),
         ));
         // FillWorkflowHole sits next to AmendWorkflow (9.45); it stays on the child denylist.
         tools.push(Arc::new(

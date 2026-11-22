@@ -975,6 +975,7 @@ async fn a_create_workflow_ask_offers_the_session_option() {
         Arc::new(PassingChecker),
         None,
         std::path::PathBuf::from("/home"),
+        crate::test_more::NodeShapedIds::shared(),
     ));
     // A saved run passes the input checks without the Skill; the call itself then finds no such saved workflow.
     let _ = pipeline

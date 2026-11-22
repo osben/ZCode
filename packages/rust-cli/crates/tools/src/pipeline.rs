@@ -319,7 +319,7 @@ impl Pipeline {
                 }
                 tool.apply_input_adjustments(&context.tool_use, input, &adjustments, context)
                     .await
-                    .map_err(error)
+                    .map_err(|failure| error(failure.to_string()))
             }
             // Fork (9.66, divergence 141): the window's Refine. A tool that takes it refuses with its own text and a message
             // that follows the result; any other tool refuses as for a plain denial.

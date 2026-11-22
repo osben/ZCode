@@ -346,7 +346,11 @@ fn harness(port: Arc<FakeRun>) -> (AmendWorkflowTool, ToolUseContext, tempfile::
     let cwd = guard.path().join("project");
     rust_cli_fs::ensure_dir(&cwd).expect("project dir");
     let sessions: Arc<dyn DynamicWorkflowRunSessions> = Arc::new(OneSession(port));
-    let tool = AmendWorkflowTool::new(Arc::new(Checker), Some(sessions));
+    let tool = AmendWorkflowTool::new(
+        Arc::new(Checker),
+        Some(sessions),
+        crate::test_more::NodeShapedIds::shared(),
+    );
     let mut ctx = Ctx::with_ops(Arc::new(History(loaded_skill()))).build();
     ctx.workspace.root = rust_cli_kernel_api::env::EnvPath::new(cwd.display().to_string());
     ctx.session = SessionId::new("ses_p");
@@ -992,7 +996,11 @@ async fn an_amend_without_a_loaded_skill_is_refused_when_it_carries_a_script() {
     let port = FakeRun::new(Answer::Started { superseded: None }, Some(CLEAN));
     let guard = tempfile::TempDir::new().expect("tempdir");
     let sessions: Arc<dyn DynamicWorkflowRunSessions> = Arc::new(OneSession(port.clone()));
-    let tool = AmendWorkflowTool::new(Arc::new(Checker), Some(sessions));
+    let tool = AmendWorkflowTool::new(
+        Arc::new(Checker),
+        Some(sessions),
+        crate::test_more::NodeShapedIds::shared(),
+    );
     let mut ctx = Ctx::with_ops(Arc::new(History(Vec::new()))).build();
     ctx.workspace.root = rust_cli_kernel_api::env::EnvPath::new(guard.path().display().to_string());
     let validation = tool
@@ -1285,6 +1293,158 @@ async fn a_call_time_model_failure_carries_the_subagent_model_code() {
     assert!(port.amends().is_empty());
 }
 
+/// The window's reply as the tool reads it.
+fn adjustments(reply: Value) -> serde_json::Map<String, Value> {
+    reply.as_object().cloned().expect("an object")
+}
+
+/// A settled run of another session, which opens a window, that ran with a limit of 2 on the flash model.
+fn foreign_settled() -> Value {
+    json!({
+        "runId": "run-1", "ownedByThisSession": false, "status": "completed",
+        "maxConcurrency": 2, "subagentModel": "deepseek/deepseek-v4-flash"
+    })
+}
+
+/// 9.67 (closes 930, Node `workflowAdjustableSettings` through `withWorkflowAdjustableSettings`): the ask carries the
+/// settings block next to the revision's resolved settings: the limit inherited from the predecessor and its subagent
+/// model in canonical form, which the window's stepper and picker start from.
+#[tokio::test]
+async fn the_ask_carries_the_adjustable_settings_next_to_the_resolved_settings() {
+    let (tool, ctx, _guard, _port) = with_catalog(foreign_settled());
+    let input = json!({"run_id": "run-1", "script": REVISED});
+    let decision = tool.check_permissions(&input, &ctx).await;
+    assert!(
+        matches!(decision, PermissionDecision::Ask { .. }),
+        "{decision:?}"
+    );
+    let shown = tool
+        .ask_input(&ctx.tool_use)
+        .expect("the ask shows an input");
+    assert_eq!(shown["run_id"], "run-1");
+    assert_eq!(shown["max_concurrency"], 2);
+    assert_eq!(shown["subagent_model"], "deepseek/deepseek-v4-flash");
+    assert_eq!(
+        shown["adjustable_settings"],
+        json!({"subagent_model": true, "concurrency_ceiling": 4})
+    );
+    // The model's own values are replaced by the resolved ones, never kept next to them.
+    let own = json!({"run_id": "run-1", "script": REVISED, "max_concurrency": null, "subagent_model": null});
+    let ctx = ctx_for(&ctx, "tu-2");
+    let _ = tool.check_permissions(&own, &ctx).await;
+    let shown = tool
+        .ask_input(&ctx.tool_use)
+        .expect("the ask shows an input");
+    assert!(shown.get("max_concurrency").is_none(), "{shown}");
+    assert!(shown.get("subagent_model").is_none(), "{shown}");
+}
+
+/// A call context of the same session with another tool use id.
+fn ctx_for(ctx: &ToolUseContext, id: &str) -> ToolUseContext {
+    let mut next = ctx.clone();
+    next.tool_use = rust_cli_kernel_api::ids::ToolUseId::new(id);
+    next
+}
+
+/// 9.67 (closes 930, Node `applyWorkflowSettingsAdjustments` for AmendWorkflow): the window's changes become the input the
+/// call runs. A model resolves to its canonical form and `null` is written as `null`, because an absent key in this tool's
+/// input means "keep the predecessor's". The amend gets the changed settings, and the result names them before the usual
+/// sentences for what was not changed.
+#[tokio::test]
+async fn the_adjusted_settings_reach_the_amend_and_the_result_names_them() {
+    let (tool, ctx, _guard, port) = with_catalog(foreign_settled());
+    let input = json!({"run_id": "run-1", "script": REVISED});
+    let _ = tool.check_permissions(&input, &ctx).await;
+    let adjusted = tool
+        .apply_input_adjustments(
+            &ctx.tool_use,
+            &input,
+            &adjustments(json!({"subagent_model": "deepseek-v4-pro", "max_concurrency": null})),
+            &ctx,
+        )
+        .await
+        .expect("the adjustment applies")
+        .expect("the input changes");
+    assert_eq!(adjusted["subagent_model"], "deepseek/deepseek-v4-pro");
+    assert_eq!(adjusted["max_concurrency"], Value::Null);
+    let (tx, _rx) = mpsc::channel(4);
+    let output = tool.call(adjusted, ctx, tx).await.expect("the amend runs");
+    let amend = &port.amends()[0];
+    assert_eq!(
+        amend.subagent_model.as_ref().and_then(Value::as_str),
+        Some("deepseek/deepseek-v4-pro")
+    );
+    assert_eq!(amend.max_concurrency, Some(4.0), "null is the default");
+    let text = output_text(&output);
+    assert!(
+        text.contains(
+            "Before approving, the user adjusted the settings in the confirmation window: subagents run on deepseek/deepseek-v4-pro (the main agent stays on the session model); the limit on subagents at once is back to the default."
+        ),
+        "{text}"
+    );
+    assert!(
+        !text.contains("Subagents run on"),
+        "the usual sentence is not repeated: {text}"
+    );
+}
+
+/// 9.67 (930): a change equal to what the revision already has is not applied and not told (Node: "a change identical to
+/// the original input is not applied"), judged against the settings the decision resolved (the inherited limit and
+/// model), not against the model's raw input. `null` for a model the revision did not have is no change either.
+#[tokio::test]
+async fn an_adjustment_equal_to_the_inherited_settings_is_not_applied() {
+    let (tool, ctx, _guard, port) = with_catalog(foreign_settled());
+    let input = json!({"run_id": "run-1", "script": REVISED});
+    let _ = tool.check_permissions(&input, &ctx).await;
+    let adjusted = tool
+        .apply_input_adjustments(
+            &ctx.tool_use,
+            &input,
+            &adjustments(
+                json!({"subagent_model": "deepseek/deepseek-v4-flash", "max_concurrency": 2}),
+            ),
+            &ctx,
+        )
+        .await
+        .expect("no failure");
+    assert_eq!(adjusted, None, "nothing changed, so the input stays");
+    let (tx, _rx) = mpsc::channel(4);
+    let output = tool.call(input, ctx, tx).await.expect("the amend runs");
+    assert!(!output_text(&output).contains("the user adjusted"));
+    assert_eq!(port.amends()[0].max_concurrency, None);
+}
+
+/// 9.67 (930): a model chosen in the window that cannot be resolved now refuses the call with Node's text and
+/// `AMEND_WORKFLOW_ERROR_CODE.SUBAGENT_MODEL` (23), and nothing starts.
+#[tokio::test]
+async fn an_adjusted_model_that_does_not_resolve_fails_with_the_subagent_model_code() {
+    let (tool, ctx, _guard, port) = with_catalog(foreign_settled());
+    let input = json!({"run_id": "run-1", "script": REVISED});
+    let _ = tool.check_permissions(&input, &ctx).await;
+    let error = tool
+        .apply_input_adjustments(
+            &ctx.tool_use,
+            &input,
+            &adjustments(json!({"subagent_model": "gpt-9"})),
+            &ctx,
+        )
+        .await
+        .expect_err("a model that does not resolve fails");
+    let ToolError::FailedWithCode { message, code } = error else {
+        panic!("a coded failure: {error:?}");
+    };
+    assert_eq!(code, 23);
+    assert!(
+        message.starts_with("workflow_subagent_model_unresolved: the subagent model the user chose in the confirmation window cannot be used now. No configured model matches `gpt-9`."),
+        "{message}"
+    );
+    assert!(
+        message.ends_with(" Nothing was started; ask the user which model to use."),
+        "{message}"
+    );
+    assert!(port.amends().is_empty());
+}
+
 /// 9.66 (divergence 141, Node `withWorkflowRefineDeniedFollowUp` covers AmendWorkflow too): Refine in this tool's window
 /// refuses the call and the feedback follows as a user message.
 #[tokio::test]
@@ -1308,4 +1468,6 @@ async fn refine_refuses_an_amend_and_the_feedback_follows_as_a_user_message() {
         rust_cli_kernel_api::hooks::queued_command::sourced(steer),
         Some(("workflow_refine_feedback", "keep the first phase"))
     );
+    // 9.67 (closes 932): Node's message id, which the store dates by.
+    assert_eq!(steer.id.created_ms(), Some(1_700_000_000_123));
 }

@@ -375,13 +375,8 @@ fn default_selection(templates: &[Template], configured: &Value) -> Option<Model
     });
     let (template, reasoning) = match selectable {
         Some(found) => found,
-        None => visible().find_map(|template| {
-            let level = template
-                .default_level
-                .clone()
-                .or_else(|| template.levels.last().cloned())?;
-            Some((template, level))
-        })?,
+        // Node `completeNewModelSelection` takes the last level only (`values.at(-1)`), not the configured default.
+        None => visible().find_map(|template| Some((template, template.levels.last()?.clone())))?,
     };
     Some(ModelSelection {
         reasoning: Some(reasoning),

@@ -194,6 +194,9 @@ async fn serve(
         run_sessions.clone(),
         snippets,
         workflow_models.clone(),
+        // Fork (9.67, closes 932): the workflow tools' Refine follow-up gets Node's `msg_<base36 ms>_<uuid>` id from the
+        // process clock, as every message the kernel mints.
+        Arc::new(rust_cli_node_store::NodeIds::new(clock.clone())),
     ));
     spec.node_helper = node_helper;
     // Fork: the Host's off-peak store (specs/fork-rust-automations.md, slice 3).

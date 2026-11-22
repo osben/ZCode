@@ -311,21 +311,29 @@ fn the_configured_model_is_the_raw_default_model_selection() {
     assert!(fixture_snapshot().configured_model.is_some());
 }
 
-/// 不带团队项目的选择（按 provider 与模型找模板）。
-/// 9.67 (closes 925): a request with no level and the catalog's first-model fallback take the configured default level,
-/// and the last level only when the model names none.
+/// 9.67 (closes 925): a request with no level takes the configured default level, the last level only when the model
+/// names none. The new session's first-model fallback is not changed: Node's `completeNewModelSelection` takes
+/// `values.at(-1)` only.
 #[test]
-fn the_request_and_the_new_session_default_use_the_configured_default_level() {
+fn a_request_with_no_level_uses_the_configured_default_level() {
     let snapshot = fixture_snapshot();
     let mut template = snapshot
         .templates
         .iter()
-        .find(|template| template.levels.len() > 1 && !template.hidden)
-        .expect("a leveled model")
+        .find(|template| {
+            template.levels.len() > 1
+                && !template.hidden
+                && template
+                    .patches(template.levels.first().map(String::as_str), None)
+                    .ok()
+                    != template
+                        .patches(template.levels.last().map(String::as_str), None)
+                        .ok()
+        })
+        .expect("a model whose levels write different patches")
         .clone();
     let first = template.levels[0].clone();
     let last = template.levels.last().cloned().unwrap();
-    assert_ne!(first, last);
     let patches_of =
         |template: &Template, level: &str| template.patches(Some(level), None).unwrap();
     template.default_level = None;
@@ -333,17 +341,20 @@ fn the_request_and_the_new_session_default_use_the_configured_default_level() {
         template.patches(None, None).unwrap(),
         patches_of(&template, &last)
     );
-    let fallback = default_selection(std::slice::from_ref(&template), &Value::Null).unwrap();
-    assert_eq!(fallback.reasoning.as_deref(), Some(last.as_str()));
     template.default_level = Some(first.clone());
     assert_eq!(
         template.patches(None, None).unwrap(),
         patches_of(&template, &first)
     );
     let fallback = default_selection(std::slice::from_ref(&template), &Value::Null).unwrap();
-    assert_eq!(fallback.reasoning.as_deref(), Some(first.as_str()));
+    assert_eq!(
+        fallback.reasoning.as_deref(),
+        Some(last.as_str()),
+        "a new session still takes the last level"
+    );
 }
 
+/// 不带团队项目的选择（按 provider 与模型找模板）。
 fn sel(provider: &str, model: &str) -> rust_cli_kernel_api::model::ModelSelection {
     rust_cli_kernel_api::model::ModelSelection::new(provider.to_owned(), model.to_owned())
 }

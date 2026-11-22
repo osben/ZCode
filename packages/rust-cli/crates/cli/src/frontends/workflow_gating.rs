@@ -28,6 +28,7 @@ pub(crate) fn gating(
     runs: Arc<dyn DynamicWorkflowRunSessions>,
     snippets: Option<Arc<dyn WorkflowSnippetPort>>,
     models: Arc<rust_cli_kernel_api::provider::LateModelDirectory>,
+    ids: Arc<dyn rust_cli_kernel_api::clock::Ids>,
 ) -> DynamicWorkflowGating {
     let analyzer = helper.map(|helper| {
         Arc::new(HelperWorkflowAnalyzer::new(helper.clone())) as Arc<dyn WorkflowAnalyzer>
@@ -35,7 +36,7 @@ pub(crate) fn gating(
     let gates: Arc<dyn DynamicWorkflowGates> = gates;
     DynamicWorkflowGating {
         gates,
-        tools: wired_workflow_tools(analyzer, home, runs, snippets, models),
+        tools: wired_workflow_tools(analyzer, home, runs, snippets, models, ids),
     }
 }
 

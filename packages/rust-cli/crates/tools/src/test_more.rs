@@ -227,6 +227,66 @@ impl Files for TextEnv {
     }
 }
 
+/// A message id source in Node's format, `msg_<base36 ms>_<uuid>`, over a fixed time (9.67, divergence 932): the shape the
+/// session's `NodeIds` mints. The other ids come from `SequentialIds`.
+pub(crate) struct NodeShapedIds {
+    ms: u64,
+    inner: rust_cli_kernel_api::testing::SequentialIds,
+}
+
+impl NodeShapedIds {
+    pub(crate) fn at(ms: u64) -> Self {
+        Self {
+            ms,
+            inner: Default::default(),
+        }
+    }
+
+    /// The default for tests that do not read the id.
+    pub(crate) fn shared() -> Arc<dyn rust_cli_kernel_api::clock::Ids> {
+        Arc::new(Self::at(1_700_000_000_123))
+    }
+}
+
+impl rust_cli_kernel_api::clock::Ids for NodeShapedIds {
+    fn session(&self) -> SessionId {
+        self.inner.session()
+    }
+
+    fn subagent(&self) -> (AgentId, SessionId) {
+        self.inner.subagent()
+    }
+
+    fn message(&self) -> rust_cli_kernel_api::ids::MessageId {
+        let unique = self.inner.message();
+        rust_cli_kernel_api::ids::MessageId::new(format!(
+            "msg_{}_{}",
+            rust_cli_base::js::base36(self.ms),
+            unique.as_str()
+        ))
+    }
+
+    fn turn(&self) -> rust_cli_kernel_api::ids::TurnId {
+        self.inner.turn()
+    }
+
+    fn run(&self) -> RunId {
+        self.inner.run()
+    }
+
+    fn execution(&self) -> String {
+        self.inner.execution()
+    }
+
+    fn operation(&self) -> OperationId {
+        self.inner.operation()
+    }
+
+    fn interaction(&self) -> rust_cli_kernel_api::ids::InteractionId {
+        self.inner.interaction()
+    }
+}
+
 #[async_trait]
 impl Fetch for TextEnv {
     async fn fetch_url(
