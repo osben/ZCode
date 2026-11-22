@@ -5771,9 +5771,47 @@ owner and journal: the row is settled before the read), `an_ended_run_is_an_ende
 **Unchanged.** 760–774: a hub start still binds no script models and registers no tracker entry of its own; the
 background list is the run service's view.
 
-**Box.** To be filled from the runs below.
+**Box.** These runs are Rust unless marked Node. out-w9i-1 ran on 10afd8010. The later runs ran on f1f5e2d6a, whose only
+production change since then is one log line.
 
-**Gate.** To be filled.
+| Run       | Specs                                               | Result                                     |
+| --------- | --------------------------------------------------- | ------------------------------------------ |
+| out-w9i-1 | run-pane-details, holes, run, lookup, cross-session | PASS (5/5)                                 |
+| out-w9i-1 | automations-workflows-hub                           | FAIL, the same 4 tests as Node (see below) |
+| out-w9i-2 | the 26-spec sweep (`w9g-specs.txt`)                 | 17 PASS, 9 FAIL                            |
+| out-w9i-3 | questions ×2                                        | PASS, PASS                                 |
+| out-w9i-4 | questions (Node)                                    | PASS                                       |
+
+The sweep failed the same nine specs as the 9.63 sweep (out-w9g-sweep):
+
+- confirm, english-dark, questions, resume, snippet, user-choice, disabled, on-demand, hub.
+
+That is no new failure. questions then passed twice on Rust and once on Node, so its sweep failure was the race 9.63
+describes; this time the question element was not displayed within 30 s.
+
+The hub spec fails the same four tests on Node in the box (out-final-node, out-node-1, out-node-3) and on every earlier
+Rust run. In each case the workflows page shows no project group, so the direct-start test stops before its launch. The
+hub launch card (916) is therefore not seen end to end in the box. The unit and projection tests above cover it.
+
+**Gate.** `cargo fmt --all --check` clean. `cargo clippy --workspace --all-targets --locked -- -D warnings` rc 0, with no
+allow attributes added. Lib tests:
+
+| Crate          | Passed | Ignored |
+| -------------- | ------ | ------- |
+| runtime        | 402    | 0       |
+| workflow       | 468    | 0       |
+| kernel-api     | 461    | 0       |
+| protocol-zcode | 1081   | 0       |
+| node-store     | 366    | 1       |
+| tools          | 732    | 0       |
+| platform       | 204    | 1       |
+| agents         | 351    | 0       |
+| session        | 422    | 0       |
+| node-records   | 36     | 0       |
+| tui            | 576    | 0       |
+
+The ignored tests already existed. tui's integration suites pass 277 with 5 ignored. cli bin tests pass 565. The helper
+vitest `workflow-compile.test.ts` passes 26/26.
 
 ## 10. Open questions
 
