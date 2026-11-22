@@ -248,3 +248,9 @@ rust-cli-protocol-zcode = { path = "crates/protocol-zcode" }
 [profile.release]
 lto = "thin"
 strip = true
+
+# 构建期的单元（proc-macro、build script 及其依赖）不 strip：Xcode 27 的 strip 会把 proc-macro dylib 写坏
+#（dyld 报 "mis-aligned LINKEDIT string pool"，随后 rustc 报 E0463 找不到 serde_derive、rustversion 等）。
+# 发布的 zcode-rs 仍按上面的 strip = true 处理。
+[profile.release.build-override]
+strip = false
