@@ -585,6 +585,85 @@ pub struct LaunchTurn {
     pub run_id: WorkflowRunId,
     pub tool_call_id: String,
     pub name: String,
+    /// Fork (W9h, 9.64): the rest of Node's launch metadata (`startSavedWorkflowRun`): `project` or `global`.
+    pub scope: String,
+    /// The saved file the run started from (Node `found.path`).
+    pub path: Option<String>,
+    /// The validated arguments; empty when the workflow declares none (Node sends no `args` then).
+    pub args: Map<String, Value>,
+    /// The definition's description line (Node `found.meta.description`).
+    pub description: Option<String>,
+    /// The `create_workflow` display of the compiled script (Node `displayOfAnalysis`), when the checker gave one.
+    pub display: Option<Value>,
+    /// The script body that runs (Node `found.script`).
+    pub script: String,
+}
+
+/// Node `WORKFLOW_LAUNCH_ARGS_MAX_BYTES`, `WORKFLOW_LAUNCH_DESCRIPTION_MAX_CHARS` and `WORKFLOW_LAUNCH_SCRIPT_MAX_CHARS`
+/// (contracts `events/session.events.ts`); the two character bounds count UTF-16 units, as JavaScript strings do.
+const LAUNCH_ARGS_MAX_BYTES: usize = 4_096;
+const LAUNCH_DESCRIPTION_MAX_UNITS: usize = 500;
+const LAUNCH_SCRIPT_MAX_UNITS: usize = 256_000;
+
+impl LaunchTurn {
+    /// Fork (W9h, 9.64; closes 916): Node's `boundWorkflowLaunchMeta` of a hub launch, the `workflowLaunch` metadata its
+    /// rows carry. Arguments over the byte bound become one `…` marker, a long description is cut with an ellipsis, and a
+    /// script over its bound is left out.
+    pub fn workflow_launch_meta(&self) -> Value {
+        let mut meta = Map::new();
+        meta.insert("runId".into(), Value::from(self.run_id.as_str()));
+        meta.insert("toolCallId".into(), Value::from(self.tool_call_id.as_str()));
+        meta.insert("name".into(), Value::from(self.name.as_str()));
+        meta.insert("scope".into(), Value::from(self.scope.as_str()));
+        if let Some(path) = &self.path {
+            meta.insert("path".into(), Value::from(path.as_str()));
+        }
+        if !self.args.is_empty() {
+            let bytes = Value::Object(self.args.clone()).to_string().len();
+            let args = if bytes > LAUNCH_ARGS_MAX_BYTES {
+                let mut marker = Map::new();
+                marker.insert(
+                    "…".into(),
+                    Value::from(format!("arguments omitted ({bytes} bytes)")),
+                );
+                marker
+            } else {
+                self.args.clone()
+            };
+            meta.insert("args".into(), Value::Object(args));
+        }
+        if let Some(description) = &self.description {
+            meta.insert(
+                "description".into(),
+                Value::from(bound_units(description, LAUNCH_DESCRIPTION_MAX_UNITS)),
+            );
+        }
+        if let Some(display) = &self.display {
+            meta.insert("display".into(), display.clone());
+        }
+        if self.script.encode_utf16().count() <= LAUNCH_SCRIPT_MAX_UNITS {
+            meta.insert("script".into(), Value::from(self.script.as_str()));
+        }
+        Value::Object(meta)
+    }
+}
+
+/// Node's `slice(0, max - 1) + "…"` for a text over `max` UTF-16 units; the cut never splits a character.
+fn bound_units(text: &str, max: usize) -> String {
+    if text.encode_utf16().count() <= max {
+        return text.to_owned();
+    }
+    let mut units = 0;
+    let mut out = String::new();
+    for character in text.chars() {
+        units += character.len_utf16();
+        if units > max - 1 {
+            break;
+        }
+        out.push(character);
+    }
+    out.push('…');
+    out
 }
 
 /// The origin a workflow control record carries on the parent's transcript: a closed set, so a producer names one of these
@@ -622,10 +701,18 @@ impl WorkflowRecordSource {
 ///
 /// The records are best effort and are not acknowledged to the caller: a record that the session cannot store is logged
 /// by the sink, and the start or the change still answers as it did (divergence 773 in the W9a spec section).
+#[async_trait]
 pub trait WorkflowTurnSink: Send + Sync {
     /// A successful start or configuration activates the workflow tools (Node, `source: "run_control"`). `false` when the
     /// session has no gate record to activate in.
     fn activate(&self) -> bool;
+    /// Fork (W9h, 9.64; closes 766): Node `ensureSessionPersisted(name)` of a hub start, after the compile and before the
+    /// submit. A fresh new-task draft has no session row yet, and the run's parent bindings read that row, so the start
+    /// gives the draft its row (titled with the workflow's name) first. A refused start persists nothing. The default
+    /// has nothing to persist.
+    async fn persist_parent(&self, _title: &str) -> Result<(), String> {
+        Ok(())
+    }
     /// Queues the settings turn to the parent as a control-only turn, after the work in flight.
     fn settings_turn(&self, turn: SettingsTurn);
     /// Records the launch turn of a hub start as a control-only turn, after the work in flight.

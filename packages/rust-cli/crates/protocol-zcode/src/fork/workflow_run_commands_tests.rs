@@ -88,6 +88,12 @@ impl DynamicWorkflowRunPort for Port {
                 run_id: run_id.clone(),
                 tool_call_id: tool_call_id.clone(),
                 name: "digest".to_owned(),
+                scope: "project".to_owned(),
+                path: None,
+                args: serde_json::Map::new(),
+                description: None,
+                display: None,
+                script: "return 1;".to_owned(),
             });
         }
         Ok(answer)
@@ -652,13 +658,190 @@ mod deliver {
             run_id: rust_cli_kernel_api::ids::WorkflowRunId::new("dwfrun-1"),
             tool_call_id: "launch-1".to_owned(),
             name: "digest".to_owned(),
+            scope: "project".to_owned(),
+            path: Some("/p/.zcode/workflows/digest.dwf.ts".to_owned()),
+            args: serde_json::Map::new(),
+            description: Some("Digest".to_owned()),
+            display: None,
+            script: "return 1;".to_owned(),
         }
+    }
+
+    /// Node `boundWorkflowLaunchMeta` (W9h, 9.64; closes 916): a hub launch's record carries the launch card's metadata.
+    #[tokio::test]
+    async fn a_launch_record_carries_nodes_bounded_launch_metadata() {
+        let turns = parent();
+        let mut turn = launch("started");
+        turn.args.insert("topic".into(), serde_json::json!("x"));
+        turn.description = Some("d".repeat(600));
+        turn.display = Some(serde_json::json!({"kind": "create_workflow"}));
+        turns.launch_turn(turn);
+        let mut big = launch("big");
+        big.args
+            .insert("blob".into(), serde_json::json!("y".repeat(5_000)));
+        big.script = "z".repeat(256_001);
+        turns.launch_turn(big);
+        let sent: Mutex<Vec<Option<serde_json::Value>>> = Mutex::new(Vec::new());
+        turns
+            .deliver_with(|_id, command| {
+                let Command::RecordWorkflowTurn { meta, .. } = command else {
+                    panic!("only the records are sent: {command:?}");
+                };
+                sent.lock().unwrap().push(meta);
+                std::future::ready(accepted())
+            })
+            .await;
+        let sent = sent.into_inner().unwrap();
+        let first = sent[0]
+            .as_ref()
+            .expect("the launch record carries its metadata");
+        assert_eq!(first["runId"], "dwfrun-1");
+        assert_eq!(first["toolCallId"], "launch-1");
+        assert_eq!(first["name"], "digest");
+        assert_eq!(first["scope"], "project");
+        assert_eq!(first["path"], "/p/.zcode/workflows/digest.dwf.ts");
+        assert_eq!(first["args"], serde_json::json!({"topic": "x"}));
+        let description = first["description"].as_str().unwrap();
+        assert_eq!(description.chars().count(), 500);
+        assert!(description.ends_with('…'), "{description}");
+        assert_eq!(
+            first["display"],
+            serde_json::json!({"kind": "create_workflow"})
+        );
+        assert_eq!(first["script"], "return 1;");
+        let second = sent[1]
+            .as_ref()
+            .expect("the second record carries its metadata");
+        let args = second["args"].as_object().unwrap();
+        assert_eq!(args.len(), 1);
+        assert!(
+            args["…"]
+                .as_str()
+                .unwrap()
+                .starts_with("arguments omitted ("),
+            "{args:?}"
+        );
+        assert!(
+            second.get("script").is_none(),
+            "an over-bound script is left out"
+        );
     }
 
     fn accepted() -> KernelAck {
         KernelAck::Accepted {
             result: CommandResult::Done,
         }
+    }
+
+    use rust_cli_kernel_api::ids::SessionId;
+    use rust_cli_kernel_api::metering::{
+        ActivityQuery, ActivityStats, RequestStats, SessionMetering,
+    };
+    use rust_cli_kernel_api::store::{Admission, FrontendRecord, StoreError, StoreQueries};
+    use std::sync::Arc;
+
+    /// A store whose input admission writes `title`, or fails as a full disk would.
+    struct AdmittingStore {
+        title: Option<String>,
+        fail: bool,
+        inputs: Mutex<Vec<String>>,
+    }
+
+    fn double<T>() -> Result<T, StoreError> {
+        Err(StoreError::Unsupported {
+            what: "test double".to_owned(),
+        })
+    }
+
+    #[async_trait::async_trait]
+    impl StoreQueries for AdmittingStore {
+        async fn metering(&self, _session: &SessionId) -> Result<SessionMetering, StoreError> {
+            double()
+        }
+
+        async fn request_stats(&self, _session: &SessionId) -> Result<RequestStats, StoreError> {
+            double()
+        }
+
+        async fn activity(&self, _query: ActivityQuery) -> Result<ActivityStats, StoreError> {
+            double()
+        }
+
+        async fn put_record(
+            &self,
+            _session: &SessionId,
+            _record: &FrontendRecord,
+        ) -> Result<(), StoreError> {
+            double()
+        }
+
+        async fn records(
+            &self,
+            _session: &SessionId,
+            _kind: &str,
+        ) -> Result<Vec<FrontendRecord>, StoreError> {
+            Ok(Vec::new())
+        }
+
+        async fn persist_for_input(
+            &self,
+            _session: &SessionId,
+            input: &str,
+        ) -> Result<Admission, StoreError> {
+            self.inputs.lock().unwrap().push(input.to_owned());
+            if self.fail {
+                return Err(StoreError::Storage {
+                    message: "database or disk is full: /home/u/.zcode/cli/db/db.sqlite".to_owned(),
+                });
+            }
+            Ok(Admission {
+                persisted: true,
+                title: self.title.clone(),
+            })
+        }
+    }
+
+    /// Node `ensureSessionPersisted(name)` (W9h, 9.64; closes 766): the hub start persists the parent with the workflow's
+    /// name, and the title the store wrote reaches the session before the launch record, as `admit_input` sends it.
+    #[tokio::test]
+    async fn the_title_the_persistence_wrote_is_adopted_before_the_records() {
+        let store = Arc::new(AdmittingStore {
+            title: Some("digest".to_owned()),
+            fail: false,
+            inputs: Mutex::new(Vec::new()),
+        });
+        let turns = ParentTurns::for_test_with(store.clone());
+        turns.persist_parent("digest").await.expect("persisted");
+        turns.launch_turn(launch("started"));
+        let sent: Mutex<Vec<String>> = Mutex::new(Vec::new());
+        turns
+            .deliver_with(|_id, command| {
+                sent.lock().unwrap().push(match command {
+                    Command::AdoptTitle { title } => format!("title:{title}"),
+                    Command::RecordWorkflowTurn { text, .. } => format!("record:{text}"),
+                    other => panic!("unexpected command: {other:?}"),
+                });
+                std::future::ready(accepted())
+            })
+            .await;
+        assert_eq!(*store.inputs.lock().unwrap(), vec!["digest".to_owned()]);
+        assert_eq!(
+            *sent.lock().unwrap(),
+            vec!["title:digest".to_owned(), "record:started".to_owned()]
+        );
+    }
+
+    /// A persistence failure refuses the start with a text that names no storage detail.
+    #[tokio::test]
+    async fn a_failed_persistence_names_no_storage_detail() {
+        let turns = ParentTurns::for_test_with(Arc::new(AdmittingStore {
+            title: None,
+            fail: true,
+            inputs: Mutex::new(Vec::new()),
+        }));
+        let message = turns.persist_parent("digest").await.expect_err("refused");
+        assert!(!message.contains("db.sqlite"), "{message}");
+        assert!(message.contains("persisting the session"), "{message}");
     }
 
     #[tokio::test]

@@ -93,6 +93,14 @@ impl WorkflowAnalyzer for Verdict {
     async fn analyze(&self, _script: &str) -> Result<WorkflowAnalysis, WorkflowAnalysisError> {
         Ok(self.0.clone())
     }
+
+    async fn display(
+        &self,
+        script: &str,
+        _model_bindings: Option<&Map<String, Value>>,
+    ) -> Result<Option<Value>, WorkflowAnalysisError> {
+        Ok(Some(json!({"kind": "create_workflow", "script": script})))
+    }
 }
 
 fn clean() -> Arc<dyn WorkflowAnalyzer> {
@@ -108,12 +116,23 @@ fn clean() -> Arc<dyn WorkflowAnalyzer> {
 struct Recorder {
     activated: Mutex<usize>,
     launches: Mutex<Vec<LaunchTurn>>,
+    /// The titles the parent was persisted with (W9h, 9.64).
+    persisted: Mutex<Vec<String>>,
 }
 
+#[async_trait]
 impl WorkflowTurnSink for Recorder {
     fn activate(&self) -> bool {
         *self.activated.lock().expect("the recorder") += 1;
         true
+    }
+
+    async fn persist_parent(&self, title: &str) -> Result<(), String> {
+        self.persisted
+            .lock()
+            .expect("the recorder")
+            .push(title.to_owned());
+        Ok(())
     }
 
     fn settings_turn(&self, _turn: SettingsTurn) {}
@@ -269,6 +288,10 @@ async fn a_script_with_diagnostics_is_refused_before_anything_starts() {
         0,
         "no activation before a clean compile"
     );
+    assert!(
+        sink.persisted.lock().expect("sink").is_empty(),
+        "a refused start persists no session"
+    );
     assert!(fx.fake.launches().is_empty());
 }
 
@@ -296,11 +319,27 @@ async fn a_clean_start_activates_the_parent_submits_and_records_the_launch_turn(
         run_id.as_str()
     );
     assert_eq!(*sink.activated.lock().expect("sink"), 1);
+    // Node `ensureSessionPersisted(name)` (W9h, 9.64; closes 766): the parent gets its row, titled with the name.
+    assert_eq!(
+        *sink.persisted.lock().expect("sink"),
+        vec!["digest".to_owned()]
+    );
     let launches = sink.launches.lock().expect("sink");
     assert_eq!(launches.len(), 1);
     assert_eq!(launches[0].run_id, run_id);
     assert_eq!(launches[0].tool_call_id, tool_call_id);
     assert_eq!(launches[0].name, "digest");
+    // Fork (W9h, 9.64; closes 916): the launch card's metadata, as Node's `startSavedWorkflowRun` fills it.
+    assert_eq!(launches[0].scope, "global");
+    let path = launches[0].path.as_deref().expect("the saved file's path");
+    assert!(path.ends_with("digest.dwf.ts"), "{path}");
+    assert_eq!(launches[0].description.as_deref(), Some("test"));
+    assert_eq!(launches[0].script, "return 2\n");
+    assert!(launches[0].args.is_empty());
+    assert_eq!(
+        launches[0].display,
+        Some(json!({"kind": "create_workflow", "script": "return 2\n"}))
+    );
     assert_eq!(
         launches[0].text,
         format!(
@@ -321,6 +360,8 @@ fn the_launch_text_carries_the_arguments_as_a_json_block_when_there_are_some() {
         script: "return 1".to_owned(),
         source: String::new(),
         args,
+        path: std::path::PathBuf::from("/p/.zcode/workflows/digest.dwf.ts"),
+        description: String::new(),
     };
     let text = launch_text(&resolved, "dwfrun-1");
     assert!(

@@ -2,14 +2,14 @@
 //! `startSavedWorkflowRun` in `core/src/runtime/methods/dynamic-workflow-run-start.ts`).
 //!
 //! The order is Node's. Resolution, argument checks and the compile come first and have no side effect: a refusal there
-//! starts nothing and writes nothing. Then the parent is activated, the draft copy is written, the run is submitted with
+//! starts nothing and writes nothing. Then the parent's session row is ensured, the parent is activated, the draft copy is written, the run is submitted with
 //! the launch anchor (a UUID v7, recorded as the run's `run-launched.inputId`), and the launch turn is recorded for the
 //! parent. A failure after the submit is not rolled back, as Node does not roll it back.
 //!
 //! Not built here (divergences 760 to 774): the models a script names (Node binds them; this host refuses none and binds
 //! none), the phase table of the launch (no `phaseNames`/`phaseAlongside` on the run), the background tracker
-//! registration, and the metadata of the launch turn (the turn records its text and origin only). The launch turn does
-//! not carry the anchor: Node shares one id between the run and the turn, this host stores it on the run alone.
+//! registration. The launch turn carries Node's launch metadata (W9h, 9.64; closes 916) but not the anchor: Node shares
+//! one id between the run and the turn, this host stores it on the run alone.
 
 use std::path::PathBuf;
 
@@ -82,8 +82,14 @@ impl WorkflowRunService {
             }));
         }
 
-        // No side effects up to here. The parent is activated before the run is submitted (Node activates after the
-        // session is persisted and before the draft and the submit).
+        // No side effects up to here. The parent's row comes first (Node `ensureSessionPersisted(name)`; W9h, 9.64, closes
+        // 766): a fresh new-task draft has none, and the run's parent bindings read it. Then the parent is activated
+        // before the run is submitted (Node activates after the session is persisted and before the draft and the submit).
+        if let Err(message) = sink.persist_parent(&resolved.name).await {
+            return Ok(StartSavedOutcome::Refused(StartRefusal::StartFailed {
+                message,
+            }));
+        }
         if !sink.activate() {
             tracing::warn!(
                 event = "workflow.run.start.activation_missed",
@@ -137,13 +143,26 @@ impl WorkflowRunService {
             }
         };
 
-        // (5) The launch turn: the parent's control-only record of the start (Node `emitControlOnlyUserTurn`).
+        // (5) The launch turn: the parent's control-only record of the start (Node `emitControlOnlyUserTurn`), with the
+        // card's graph from the same checker (Node `displayOfAnalysis`; best effort, as the settings turn's).
         let text = launch_text(&resolved, run_id.as_str());
+        let display = ports
+            .analyzer
+            .display(&resolved.script, None)
+            .await
+            .ok()
+            .flatten();
         sink.launch_turn(LaunchTurn {
             text,
             run_id: run_id.clone(),
             tool_call_id: tool_call_id.clone(),
             name: resolved.name.clone(),
+            scope: resolved.scope.as_str().to_owned(),
+            path: Some(resolved.path.display().to_string()),
+            args: resolved.args.clone(),
+            description: Some(resolved.description.clone()),
+            display,
+            script: resolved.script.clone(),
         });
         Ok(StartSavedOutcome::Started {
             run_id,

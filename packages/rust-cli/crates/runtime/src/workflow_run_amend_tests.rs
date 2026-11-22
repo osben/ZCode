@@ -889,6 +889,7 @@ struct Recorder {
     turns: TestMutex<Vec<SettingsTurn>>,
 }
 
+#[async_trait::async_trait]
 impl WorkflowTurnSink for Recorder {
     fn activate(&self) -> bool {
         *self.activations.lock().unwrap() += 1;

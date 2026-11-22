@@ -32,6 +32,10 @@ pub struct ResolvedStart {
     pub source: String,
     /// The validated arguments: the declared ones, with defaults filled in. Empty when the workflow declares none.
     pub args: Map<String, Value>,
+    /// Fork (W9h, 9.64): the saved file (Node `found.path`) and its description line (Node `found.meta.description`),
+    /// which the launch card's metadata carries.
+    pub path: PathBuf,
+    pub description: String,
 }
 
 /// Node `resolveSavedWorkflow` and `validateWorkflowArgs` for a hub start. `scope` is `project` or `global` when the
@@ -87,6 +91,8 @@ pub fn resolve_saved_start(
         script: found.script,
         source: found.source,
         args,
+        path: found.path,
+        description: found.meta.description,
     })
 }
 

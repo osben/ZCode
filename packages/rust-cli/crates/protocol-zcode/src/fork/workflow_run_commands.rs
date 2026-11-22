@@ -13,6 +13,7 @@ use std::sync::{Arc, Mutex};
 use rust_cli_base::sync::LockUnpoisoned;
 use rust_cli_kernel_api::ids::{SessionId, WorkflowRunId};
 use rust_cli_kernel_api::session_api::{Ack as KernelAck, Command, SessionHandle};
+use rust_cli_kernel_api::store::StoreQueries;
 use rust_cli_kernel_api::workflow_run::{
     LaunchTurn, SettingsOutcome, SettingsRefusal, SettingsRequest, SettingsTurn, StartRefusal,
     StartSavedOutcome, StartSavedRequest, WorkflowRecordSource, WorkflowTurnSink,
@@ -41,11 +42,16 @@ const SETTINGS_REJECTED: &str = "fault.command.workflowRunSettingsRejected.";
 pub(crate) struct ParentTurns {
     gates: Arc<rust_cli_kernel_api::dynamic_workflow::SessionGates>,
     session: SessionId,
+    /// The store a hub start persists the parent's draft row through (W9h, 9.64; closes 766). `None` in the delivery
+    /// tests, where there is nothing to persist.
+    queries: Option<Arc<dyn StoreQueries>>,
     state: Mutex<Pending>,
 }
 
 #[derive(Default)]
 struct Pending {
+    /// The title the parent's persistence wrote, handed to the session actor before the records (as `admit_input` does).
+    title: Option<String>,
     /// (source, text, `workflowLaunch` metadata) in the order the run asked for them.
     records: Vec<(WorkflowRecordSource, String, Option<serde_json::Value>)>,
     /// Set by the first `deliver`: records after it are dropped (and logged).
@@ -59,7 +65,17 @@ impl ParentTurns {
         Self {
             gates: Arc::default(),
             session: SessionId::new("ses_test"),
+            queries: None,
             state: Mutex::new(Pending::default()),
+        }
+    }
+
+    /// A test sink whose parent persists through `queries`.
+    #[cfg(test)]
+    pub(crate) fn for_test_with(queries: Arc<dyn StoreQueries>) -> Self {
+        Self {
+            queries: Some(queries),
+            ..Self::for_test()
         }
     }
 
@@ -67,6 +83,7 @@ impl ParentTurns {
         Self {
             gates: server.context.dynamic_workflow_gates().clone(),
             session,
+            queries: Some(server.kernel.queries()),
             state: Mutex::new(Pending::default()),
         }
     }
@@ -98,11 +115,15 @@ impl ParentTurns {
         F: FnMut(String, Command) -> Fut,
         Fut: std::future::Future<Output = KernelAck>,
     {
-        let records = {
+        let (title, records) = {
             let mut state = self.state.lock_unpoisoned();
             state.delivered = true;
-            std::mem::take(&mut state.records)
+            (state.title.take(), std::mem::take(&mut state.records))
         };
+        if let Some(title) = title {
+            let id = format!("workflow-title-{}", rust_cli_platform::ids::uuid_v4());
+            send_command(id, Command::AdoptTitle { title }).await;
+        }
         for (source, text, meta) in records {
             let id = format!("workflow-turn-{}", rust_cli_platform::ids::uuid_v4());
             match send_command(id, Command::RecordWorkflowTurn { text, source, meta }).await {
@@ -118,9 +139,30 @@ impl ParentTurns {
     }
 }
 
+#[async_trait::async_trait]
 impl WorkflowTurnSink for ParentTurns {
     fn activate(&self) -> bool {
         self.gates.activate(&self.session)
+    }
+
+    /// Node `ensureSessionPersisted(name)` (W9h, 9.64; closes 766): a fresh draft gets its row, titled with the workflow's
+    /// name, through the store's input admission. A row that exists is kept. The text names no storage detail.
+    async fn persist_parent(&self, title: &str) -> Result<(), String> {
+        let Some(queries) = &self.queries else {
+            return Ok(());
+        };
+        match queries.persist_for_input(&self.session, title).await {
+            Ok(admission) => {
+                if let Some(title) = admission.title {
+                    self.state.lock_unpoisoned().title = Some(title);
+                }
+                Ok(())
+            }
+            Err(error) => {
+                tracing::warn!(event = "workflow.run.start.persist_failed", session = %self.session.as_str(), error = %error, "persisting the parent session for a hub start failed");
+                Err("persisting the session for the workflow start failed".to_owned())
+            }
+        }
     }
 
     /// Fork (9.63): the settings turn carries its `workflowLaunch` metadata, so its rows draw the settings row.
@@ -129,9 +171,10 @@ impl WorkflowTurnSink for ParentTurns {
         self.push(WorkflowRecordSource::Settings, turn.text, Some(meta));
     }
 
-    /// A hub launch's record carries no metadata yet (divergence 916).
+    /// Fork (W9h, 9.64; closes 916): a hub launch's record carries Node's launch metadata, so its rows draw the launch card.
     fn launch_turn(&self, turn: LaunchTurn) {
-        self.push(WorkflowRecordSource::Launch, turn.text, None);
+        let meta = turn.workflow_launch_meta();
+        self.push(WorkflowRecordSource::Launch, turn.text, Some(meta));
     }
 }
 
