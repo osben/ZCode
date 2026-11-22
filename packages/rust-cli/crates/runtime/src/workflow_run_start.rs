@@ -7,8 +7,9 @@
 //! parent with Node's `workflowLaunch` metadata (9.65, closes 916). A failure after the submit is not rolled back, as
 //! Node does not roll it back.
 //!
-//! Not built here (divergences 760 to 774): the models a script names (Node binds them; this host refuses none and binds
-//! none), the phase table of the launch (no `phaseNames`/`phaseAlongside` on the run) and the background tracker
+//! The models a script names are bound as CreateWorkflow binds them (Node `bindScriptModels`; W9h, 9.64, closes 761).
+//!
+//! Not built here (divergences 760 to 774): the phase table of the launch (no `phaseNames`/`phaseAlongside` on the run) and the background tracker
 //! registration. The launch turn does
 //! not carry the anchor: Node shares one id between the run and the turn, this host stores it on the run alone.
 
@@ -21,6 +22,7 @@ use rust_cli_kernel_api::workflow_run::{
     SubmitRequest, WorkflowTurnSink,
 };
 use rust_cli_platform::ids::{uuid_v4, uuid_v7};
+use rust_cli_tools::model_reference::{all_bound, script_bindings, unbound_diagnostics};
 use rust_cli_tools::workflow_start::{ResolvedStart, resolve_saved_start, write_start_draft};
 use serde_json::{Map, Value};
 
@@ -76,10 +78,28 @@ impl WorkflowRunService {
                 }));
             }
         };
-        if !analysis.ok || !analysis.diagnostics.is_empty() {
+        // Node `bindScriptModels` (W9h, 9.64, closes 761): the models the script names, resolved as CreateWorkflow resolves
+        // them; an unbound name is a 9011 diagnostic beside the compile's, under compile_failed.
+        let mut diagnostics = analysis.diagnostics.clone();
+        let mut model_bindings = None;
+        if analysis.ok && !analysis.model_references.is_empty() {
+            let entries = self.model_entries(parent).await;
+            let bindings = script_bindings(&analysis.model_references, entries.as_deref(), None);
+            if all_bound(&analysis.model_references, &bindings) {
+                model_bindings = Some(bindings);
+            } else {
+                diagnostics.extend(unbound_diagnostics(
+                    &analysis.model_references,
+                    &bindings,
+                    entries.as_deref(),
+                    None,
+                ));
+            }
+        }
+        if !analysis.ok || !diagnostics.is_empty() {
             let heading = format!("The saved workflow '{}' has errors:", resolved.name);
             return Ok(StartSavedOutcome::Refused(StartRefusal::CompileFailed {
-                message: bounded_diagnostics(&heading, &analysis.diagnostics),
+                message: bounded_diagnostics(&heading, &diagnostics),
             }));
         }
 
@@ -130,7 +150,7 @@ impl WorkflowRunService {
                     phase_alongside: None,
                     // A hub start runs on the session model; its saved definition names no subagent model.
                     subagent_model: None,
-                    model_bindings: None,
+                    model_bindings,
                 },
                 Some(launch_input_id),
             )
