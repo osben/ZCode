@@ -2814,3 +2814,121 @@ fn a_user_row_carries_its_epilogue_start() {
     assert_eq!(inputs[0]["epilogueStart"], json!(4));
     assert!(inputs[1].get("epilogueStart").is_none());
 }
+
+/// Fork (9.66, divergence 141): the window of CreateWorkflow and AmendWorkflow offers Refine after the standard options
+/// (Node `product-projection.ts`: a `custom` option whose static response is a plain denial, so a consumer that does not
+/// know it refuses). Any other tool's ask has no such option.
+#[test]
+fn a_workflow_ask_offers_refine_after_the_standard_options() {
+    for (tool, expected) in [
+        ("CreateWorkflow", true),
+        ("AmendWorkflow", true),
+        ("SaveWorkflow", false),
+        ("Write", false),
+    ] {
+        let mut feed = Feed::new();
+        feed.apply(KernelEvent::TurnStarted {
+            turn: TurnId::new("turn_1"),
+            command: None,
+        });
+        let tool_use = ToolUseId::new("toolu_1");
+        feed.apply(KernelEvent::ToolScheduled {
+            tool_use: tool_use.clone(),
+            name: tool.into(),
+            input: json!({}),
+        });
+        let asked = feed.apply(KernelEvent::InteractionAsked {
+            interaction: InteractionId::new("int_1"),
+            request: InteractionRequest::Permission {
+                origin: None,
+                tool_use,
+                tool: tool.into(),
+                input: json!({}),
+                message: "Run it?".into(),
+                suggestions: Vec::new(),
+                rule_seed: None,
+                asked_by: None,
+                machine: Default::default(),
+                once: false,
+                independent: false,
+                session_allow: true,
+                display: None,
+            },
+        });
+        let pending = asked
+            .iter()
+            .find_map(|event| event["patch"]["pendingInteractions"].get(0))
+            .expect("the ask is listed");
+        let options = pending["payload"]["options"].as_array().unwrap();
+        let ids: Vec<&str> = options
+            .iter()
+            .map(|option| option["optionId"].as_str().unwrap())
+            .collect();
+        if expected {
+            assert_eq!(
+                ids,
+                ["allowOnce", "allowSession", "deny", "workflowRefine"],
+                "{tool}"
+            );
+            assert_eq!(
+                options[3],
+                json!({"optionId": "workflowRefine", "label": "Refine", "kind": "custom",
+                    "response": {"decision": "deny", "reason": "Denied"}}),
+                "{tool}"
+            );
+        } else {
+            assert_eq!(ids, ["allowOnce", "allowSession", "deny"], "{tool}");
+        }
+    }
+}
+
+/// Fork (9.66): an ask that offers the session allow carries Node's `optionsPolicy: "session-always-allow"`, and an ask with
+/// an options policy offers no permission mode switch (`product-projection.ts`: `!payload.optionsPolicy`). A workflow
+/// confirmation window is such an ask, so its dock lists no full access row. A plain ask still offers the switch.
+#[test]
+fn an_ask_with_the_session_allow_offers_no_mode_switch() {
+    for (session_allow, expected) in [(true, false), (false, true)] {
+        let mut feed = Feed::new();
+        feed.apply(KernelEvent::TurnStarted {
+            turn: TurnId::new("turn_1"),
+            command: None,
+        });
+        let tool_use = ToolUseId::new("toolu_1");
+        feed.apply(KernelEvent::ToolScheduled {
+            tool_use: tool_use.clone(),
+            name: "CreateWorkflow".into(),
+            input: json!({}),
+        });
+        let asked = feed.apply(KernelEvent::InteractionAsked {
+            interaction: InteractionId::new("int_1"),
+            request: InteractionRequest::Permission {
+                origin: None,
+                tool_use,
+                tool: "CreateWorkflow".into(),
+                input: json!({}),
+                message: "Run it?".into(),
+                suggestions: Vec::new(),
+                rule_seed: None,
+                asked_by: None,
+                machine: Default::default(),
+                once: false,
+                independent: false,
+                session_allow,
+                display: None,
+            },
+        });
+        let pending = asked
+            .iter()
+            .find_map(|event| event["patch"]["pendingInteractions"].get(0))
+            .expect("the ask is listed");
+        let payload = &pending["payload"];
+        assert_eq!(
+            (
+                payload.get("modeSwitch").is_some(),
+                payload.get("fullAccessOption").is_some()
+            ),
+            (expected, expected),
+            "session_allow {session_allow}"
+        );
+    }
+}

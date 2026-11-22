@@ -1261,3 +1261,28 @@ async fn the_call_submits_the_models_the_decision_resolved() {
         Some("deepseek/deepseek-v4-pro")
     );
 }
+
+/// 9.66 (divergence 141, Node `withWorkflowRefineDeniedFollowUp` covers AmendWorkflow too): Refine in this tool's window
+/// refuses the call and the feedback follows as a user message.
+#[tokio::test]
+async fn refine_refuses_an_amend_and_the_feedback_follows_as_a_user_message() {
+    let (tool, ctx, _guard) = harness(FakeRun::new(
+        Answer::Started { superseded: None },
+        Some(CLEAN),
+    ));
+    let refused = tool
+        .refined(&ctx.tool_use, "keep the first phase")
+        .expect("the tool takes Refine");
+    assert!(refused.output.is_error);
+    assert_eq!(
+        output_text(&refused.output),
+        "The workflow run was not approved by the user."
+    );
+    let [Message::Attachment(steer)] = refused.new_messages.as_slice() else {
+        panic!("one follow-up message: {:?}", refused.new_messages);
+    };
+    assert_eq!(
+        rust_cli_kernel_api::hooks::queued_command::sourced(steer),
+        Some(("workflow_refine_feedback", "keep the first phase"))
+    );
+}

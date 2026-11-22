@@ -31,7 +31,7 @@ impl HookRunner for RecordingHooks {
     }
 }
 
-fn context(answer: PermissionAnswer) -> ToolUseContext {
+pub(super) fn context(answer: PermissionAnswer) -> ToolUseContext {
     let env = Arc::new(UnusedEnvironment);
     ToolUseContext {
         workspace: WorkspaceRef {
@@ -84,7 +84,7 @@ async fn run(
     (output, events)
 }
 
-fn text(output: &ToolOutput) -> String {
+pub(super) fn text(output: &ToolOutput) -> String {
     match &output.content[0] {
         ToolResultContent::Text { text } => text.clone(),
         other => panic!("{other:?}"),

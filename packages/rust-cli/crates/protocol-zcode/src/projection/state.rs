@@ -340,6 +340,13 @@ pub fn single_use_permission_options() -> Value {
     )
 }
 
+/// Fork (9.66, divergence 141): the workflow window's Refine (Node `WORKFLOW_REFINE_PERMISSION_OPTION_ID`): its static response is
+/// a plain denial, so an answer without feedback refuses like any other.
+pub fn workflow_refine_option() -> Value {
+    json!({"optionId": "workflowRefine", "label": "Refine", "kind": "custom",
+        "response": {"decision": "deny", "reason": "Denied"}})
+}
+
 /// “完全访问”选项（与 Node 的 V4 投影相同）：选它时会话切到 yolo（bypassPermissions）并放行这一次。
 pub fn full_access_option() -> Value {
     json!({"optionId": "fullAccess", "label": "Full access", "kind": "custom",

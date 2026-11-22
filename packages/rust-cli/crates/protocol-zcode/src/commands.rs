@@ -2183,8 +2183,14 @@ async fn resolve(
     let Some((offered, tool)) = Offered::of(&request) else {
         return resolve_elicitation(handle, live, envelope, revision, &resolved, &request).await;
     };
-    let answer = permission_answer(option, offered, resolved.answer.free_text.as_deref());
-    if let PermissionAnswer::Deny { .. } = &answer {
+    let answer = permission_answer(
+        option,
+        offered,
+        resolved.answer.free_text.as_deref(),
+        resolved.answer.content.as_ref(),
+    );
+    // Fork (9.66): Refine refuses the call like a denial, so the card settles as cancelled.
+    if let PermissionAnswer::Deny { .. } | PermissionAnswer::Refine { .. } = &answer {
         live.deny(&tool);
     }
     let command = Command::ResolveInteraction {
@@ -2302,6 +2308,9 @@ struct Offered {
     always: bool,
     /// Fork (F3b a): the ask offers "Always allow in this session" instead of the project option.
     session: bool,
+    /// Fork (9.66, divergence 141): the ask is a workflow confirmation window (CreateWorkflow or AmendWorkflow): it offers
+    /// Refine and takes the settings changed in the window.
+    workflow: bool,
 }
 
 impl Offered {
@@ -2331,6 +2340,7 @@ impl Offered {
             suggestions,
             always: plain && !session_allow,
             session: plain && *session_allow,
+            workflow: is_workflow_window(tool),
         };
         Some((offered, tool_use.clone()))
     }
@@ -2350,8 +2360,19 @@ fn permission_answer(
     option: Option<&str>,
     offered: Offered,
     free_text: Option<&str>,
+    content: Option<&serde_json::Map<String, Value>>,
 ) -> PermissionAnswer {
-    match option {
+    let workflow = offered.workflow;
+    let answer = match option {
+        // Fork (9.66, divergence 141): Node `v4AnswerToPermissionResponse`: Refine with feedback is a refusal whose feedback
+        // follows as a user message. An empty feedback, or Refine on any other tool, falls to the ordinary denial.
+        Some("workflowRefine")
+            if workflow && free_text.is_some_and(|text| !text.trim().is_empty()) =>
+        {
+            return PermissionAnswer::Refine {
+                feedback: free_text.map(str::trim).unwrap_or_default().to_owned(),
+            };
+        }
         Some("allowOnce") => PermissionAnswer::Allow {
             remember: Vec::new(),
         },
@@ -2365,8 +2386,41 @@ fn permission_answer(
                 .filter(|text| !text.is_empty())
                 .map(str::to_owned),
         },
+    };
+    // Fork (9.66, divergence 141): Node `withWorkflowSettingsAdjustment`: the settings changed in the window travel with an
+    // approval of CreateWorkflow or AmendWorkflow only (a refusal starts nothing), as the two keys the contract knows. The
+    // tool parses them; one of the wrong shape voids the reply there, and the call runs as it was approved.
+    if workflow
+        && matches!(
+            answer,
+            PermissionAnswer::Allow { .. } | PermissionAnswer::AllowSession
+        )
+        && let Some(content) = content
+    {
+        let adjustments: serde_json::Map<String, Value> = content
+            .iter()
+            .filter(|(key, _)| ADJUSTABLE_KEYS.contains(&key.as_str()))
+            .map(|(key, value)| (key.clone(), value.clone()))
+            .collect();
+        if !adjustments.is_empty() {
+            return PermissionAnswer::Adjusted {
+                adjustments,
+                answer: Box::new(answer),
+            };
+        }
     }
+    answer
 }
+
+/// Fork (9.66, divergence 141): the two tools whose confirmation window offers Refine and settings (Node
+/// `CREATE_WORKFLOW_TOOL_NAME` and `AMEND_WORKFLOW_TOOL_NAME` in the broker).
+fn is_workflow_window(tool: &str) -> bool {
+    tool == rust_cli_kernel_api::tool_names::CREATE_WORKFLOW
+        || tool == rust_cli_kernel_api::tool_names::AMEND_WORKFLOW
+}
+
+/// Node `WorkflowSettingsAdjustmentSchema`'s keys, the same list the tool parses.
+const ADJUSTABLE_KEYS: [&str; 2] = rust_cli_kernel_api::tool_names::WORKFLOW_ADJUSTABLE_SETTINGS;
 
 async fn resolve_elicitation(
     handle: &dyn SessionHandle,

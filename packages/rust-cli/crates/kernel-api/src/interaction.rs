@@ -31,6 +31,17 @@ pub enum PermissionAnswer {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         feedback: Option<String>,
     },
+    /// Fork (9.66, divergence 141): an approval that carries the settings the user changed in a workflow confirmation
+    /// window (Node `inputAdjustments`, `withWorkflowSettingsAdjustment`). `answer` is the approval itself (`Allow` or
+    /// `AllowSession`); the pipeline hands `adjustments` to the tool's `apply_input_adjustments` after the approval.
+    Adjusted {
+        adjustments: serde_json::Map<String, serde_json::Value>,
+        answer: Box<PermissionAnswer>,
+    },
+    /// Fork (9.66, divergence 141): the workflow window's Refine (Node `reasonSource: workflow_refine_feedback`): a
+    /// refusal whose feedback follows the result as a user message. Only an ask of CreateWorkflow or AmendWorkflow
+    /// turns into it (protocol-zcode); the pipeline asks the tool for the follow-up.
+    Refine { feedback: String },
     /// 没有人能回答（例如 `-p` 没有交互）：按拒绝处理，模型收到的是询问本身的文本
     /// （print 模式的行为，docs/specs/rust-cli/shell-permissions.md §4）。
     Unavailable,
@@ -144,6 +155,10 @@ impl Answer {
             Self::Permission(PermissionAnswer::Allow { .. }) => "allow",
             Self::Permission(PermissionAnswer::AllowSession) => "allow_session",
             Self::Permission(PermissionAnswer::Deny { .. }) => "deny",
+            Self::Permission(PermissionAnswer::Refine { .. }) => "refine",
+            Self::Permission(PermissionAnswer::Adjusted { answer, .. }) => {
+                Self::Permission((**answer).clone()).decision()
+            }
             Self::Permission(PermissionAnswer::Unavailable) => "unavailable",
             Self::Permission(PermissionAnswer::NoPrompts) => "no_prompts",
             Self::Question(QuestionAnswer::Answered { .. }) => "answered",
@@ -160,8 +175,13 @@ impl Answer {
     pub fn remembered(&self) -> &[PermissionRule] {
         match self {
             Self::Permission(PermissionAnswer::Allow { remember }) => remember,
+            Self::Permission(PermissionAnswer::Adjusted { answer, .. }) => match &**answer {
+                PermissionAnswer::Allow { remember } => remember,
+                _ => &[],
+            },
             Self::Permission(
                 PermissionAnswer::AllowSession
+                | PermissionAnswer::Refine { .. }
                 | PermissionAnswer::Deny { .. }
                 | PermissionAnswer::Unavailable
                 | PermissionAnswer::NoPrompts,

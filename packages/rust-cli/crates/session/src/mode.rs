@@ -249,13 +249,17 @@ fn grantable(request: &InteractionRequest, mode: PermissionMode) -> Result<(), &
     let InteractionRequest::Permission {
         once,
         independent,
+        session_allow,
         origin: None,
         ..
     } = request
     else {
         return Err(NOT_SUPPORTED);
     };
+    // Fork (9.66): an ask that offers the session allow carries Node's `optionsPolicy: "session-always-allow"`, so it
+    // registers no grant hook.
     if *independent
+        || *session_allow
         || !matches!(
             mode,
             PermissionMode::BypassPermissions | PermissionMode::Guarded

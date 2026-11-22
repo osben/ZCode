@@ -908,7 +908,15 @@ impl Projection {
                 self.phase_patch(&mut patch);
             }
             KernelEvent::TurnControlOnly { turn } => self.control_only(turn.as_str(), &mut out),
-            KernelEvent::MessageDone { message } => self.message(message, now, seq, &mut out),
+            KernelEvent::MessageDone { message } => {
+                let phase = self.phase;
+                self.message(message, now, seq, &mut out);
+                // Fork (9.66, divergence 929): a workflow launch record can end a session's draft phase; the phase's own
+                // facts (control, availability, input routing) change with it.
+                if self.phase != phase {
+                    self.phase_patch(&mut patch);
+                }
+            }
             KernelEvent::StreamDelta {
                 turn,
                 response,

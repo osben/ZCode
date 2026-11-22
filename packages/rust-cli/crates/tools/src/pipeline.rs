@@ -220,14 +220,15 @@ impl Pipeline {
     /// 询问用户；先跑 PermissionRequest hooks（D10：跑完再决定是否询问）。返回 hook 改过的输入。
     /// 取消时按拒绝处理（中断的结果由执行器统一替换）。
     ///
-    /// Fork: `dispatches` 收走 PermissionRequest 的 hook runs（HK-UP-01），拒绝时也带上。
+    /// Fork: `messages.dispatches` 收走 PermissionRequest 的 hook runs（HK-UP-01），拒绝时也带上。Fork (9.66): a Refine's follow-up
+    /// message goes to `messages.after`.
     async fn ask(
         &self,
         tool: &dyn Tool,
         input: &Value,
         asking: Asking,
         call: &Routed,
-        dispatches: &mut Vec<rust_cli_kernel_api::hooks::HookInvocation>,
+        messages: &mut HookMessages,
     ) -> Result<Option<Value>, ToolOutput> {
         let context = &call.context;
         let Asking {
@@ -254,7 +255,7 @@ impl Pipeline {
             let request = self.hooks.run(event, context.cancel.clone()).await;
             // Fork: the dispatch is kept even when the hook denies the call (HK-UP-01): its runs still ran.
             self.record(
-                dispatches,
+                &mut messages.dispatches,
                 HookEventName::PermissionRequest,
                 &request,
                 &context.tool_use,
@@ -299,6 +300,43 @@ impl Pipeline {
                 }
                 Ok(None)
             }
+            // Fork (9.66, divergence 141): an approval with the settings changed in the window. The session actor handed it
+            // the approval as a plain `Allow`; the tool turns the approved input and the changes into the input it runs,
+            // and a change it cannot apply refuses the call with its message.
+            Some(PermissionAnswer::Adjusted {
+                adjustments,
+                answer: approval,
+            }) => {
+                // The session actor hands it as `Allow`; an unnormalized `AllowSession` is an approval with nothing to
+                // remember here (ocr #624), never a refusal.
+                let remember = match *approval {
+                    PermissionAnswer::Allow { remember } => remember,
+                    PermissionAnswer::AllowSession => Vec::new(),
+                    _ => return Err(error(rejection(context, None))),
+                };
+                if !remember.is_empty() {
+                    self.gate.local_rules_committed(&call.hooks.workspace).await;
+                }
+                tool.apply_input_adjustments(&context.tool_use, input, &adjustments, context)
+                    .await
+                    .map_err(error)
+            }
+            // Fork (9.66, divergence 141): the window's Refine. A tool that takes it refuses with its own text and a message
+            // that follows the result; any other tool refuses as for a plain denial.
+            Some(PermissionAnswer::Refine { feedback }) => {
+                match tool.refined(&context.tool_use, &feedback) {
+                    Some(ToolCallOutput {
+                        output,
+                        mut new_messages,
+                        stop_turn,
+                    }) => {
+                        messages.after.append(&mut new_messages);
+                        messages.stop_turn |= stop_turn;
+                        Err(output)
+                    }
+                    None => Err(error(rejection(context, None))),
+                }
+            }
             Some(PermissionAnswer::Deny {
                 feedback: Some(feedback),
             }) if !feedback.trim().is_empty() => Err(error(rejection(context, Some(&feedback)))),
@@ -325,9 +363,9 @@ impl Pipeline {
         input: Value,
         asking: Asking,
         call: &Routed,
-        dispatches: &mut Vec<rust_cli_kernel_api::hooks::HookInvocation>,
+        messages: &mut HookMessages,
     ) -> Result<Value, ToolOutput> {
-        match self.ask(tool, &input, asking, call, dispatches).await? {
+        match self.ask(tool, &input, asking, call, messages).await? {
             Some(updated) => Self::revalidate(tool, schema, updated),
             None => Ok(input),
         }
@@ -340,7 +378,7 @@ impl Pipeline {
         schema: &Value,
         input: Value,
         call: &Routed,
-        dispatches: &mut Vec<rust_cli_kernel_api::hooks::HookInvocation>,
+        messages: &mut HookMessages,
     ) -> Result<Value, ToolOutput> {
         match self.gate.decide(tool, &input, &call.context).await {
             PermissionDecision::Allow {
@@ -363,7 +401,7 @@ impl Pipeline {
                     once,
                     independent,
                 };
-                self.ask_for(tool, schema, input, asking, call, dispatches)
+                self.ask_for(tool, schema, input, asking, call, messages)
                     .await
             }
             // 没有理由的询问文字只在 policy 的 `texts`（F132 的 T15：以前这里内联了同一句）。
@@ -374,7 +412,7 @@ impl Pipeline {
                     once: false,
                     independent: false,
                 };
-                self.ask_for(tool, schema, input, asking, call, dispatches)
+                self.ask_for(tool, schema, input, asking, call, messages)
                     .await
             }
         }
@@ -472,7 +510,7 @@ impl Pipeline {
                 match self.gate.check_rules(tool, &input, context).await {
                     Some(PermissionDecision::Deny { message }) => Err(other(error(message))),
                     Some(PermissionDecision::Ask { .. }) => self
-                        .decide(tool, &schema, input, &call, &mut messages.dispatches)
+                        .decide(tool, &schema, input, &call, messages)
                         .await
                         .map_err(other),
                     Some(PermissionDecision::Allow { .. } | PermissionDecision::Passthrough)
@@ -490,7 +528,7 @@ impl Pipeline {
             }) => match self.gate.check_rules(tool, &input, context).await {
                 Some(PermissionDecision::Deny { message }) => Err(other(error(message))),
                 Some(PermissionDecision::Ask { .. }) => self
-                    .decide(tool, &schema, input, &call, &mut messages.dispatches)
+                    .decide(tool, &schema, input, &call, messages)
                     .await
                     .map_err(other),
                 Some(PermissionDecision::Allow { .. } | PermissionDecision::Passthrough) | None => {
@@ -500,20 +538,13 @@ impl Pipeline {
                         once,
                         independent,
                     };
-                    self.ask_for(
-                        tool,
-                        &schema,
-                        input,
-                        asking,
-                        &call,
-                        &mut messages.dispatches,
-                    )
-                    .await
-                    .map_err(other)
+                    self.ask_for(tool, &schema, input, asking, &call, messages)
+                        .await
+                        .map_err(other)
                 }
             },
             Some(PermissionDecision::Passthrough) | None => self
-                .decide(tool, &schema, input, &call, &mut messages.dispatches)
+                .decide(tool, &schema, input, &call, messages)
                 .await
                 .map_err(other),
         }?;
@@ -720,6 +751,11 @@ mod tests;
 #[cfg(test)]
 #[path = "pipeline_hook_tests.rs"]
 mod hook_tests;
+
+// Fork (9.66, divergence 141): the answers of a workflow confirmation window.
+#[cfg(test)]
+#[path = "pipeline_workflow_tests.rs"]
+mod workflow_tests;
 
 #[cfg(test)]
 #[path = "pipeline_message_tests.rs"]

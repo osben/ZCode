@@ -187,7 +187,7 @@ impl rust_cli_kernel_api::tool::Tool for AskingTool {
         context: rust_cli_kernel_api::tool::ToolUseContext,
         _progress: tokio::sync::mpsc::Sender<rust_cli_kernel_api::tool::ToolProgress>,
     ) -> Result<rust_cli_kernel_api::tool::ToolOutput, rust_cli_kernel_api::tool::ToolError> {
-        // Fork (B3, grant_mode_tests.rs): `{"permission": {"once", "independent", "subagent"}}` asks a permission.
+        // Fork (B3, grant_mode_tests.rs): `{"permission": {"once", "independent", "subagent", "session_allow"}}` asks a permission.
         let request = match input.get("permission") {
             Some(permission) => {
                 rust_cli_kernel_api::orchestration::InteractionRequest::Permission {
@@ -211,7 +211,7 @@ impl rust_cli_kernel_api::tool::Tool for AskingTool {
                     machine: Default::default(),
                     once: permission["once"].as_bool().unwrap_or(false),
                     independent: permission["independent"].as_bool().unwrap_or(false),
-                    session_allow: false,
+                    session_allow: permission["session_allow"].as_bool().unwrap_or(false),
                     display: None,
                 }
             }

@@ -63,6 +63,9 @@ mod workspace_path;
 mod workflow_card;
 // Fork: CreateWorkflow (W7-8a).
 mod workflow_create;
+// Fork (9.66, divergence 141): the two run settings a confirmation window adjusts, and Refine.
+mod workflow_refine;
+mod workflow_settings;
 /// Fork (W9a, 9.53): the hub's saved-start resolution (Node `startSavedWorkflowRun` steps 1 and 2).
 pub mod workflow_start;
 // Fork: AmendWorkflow (W7-10, specs/fork-rust-workflow-engine.md, 9.43).

@@ -342,3 +342,86 @@ async fn a_create_workflow_session_grant_answers_its_next_ask_without_a_prompt()
     ));
     assert!(handle.view().await.unwrap().pending.is_empty());
 }
+
+/// Fork (9.66, divergence 141): "Always allow in this session" answered with the settings changed in the window grants
+/// the tool like the plain answer, and the waiter gets the adjustments with a plain allow. The adjusted answer to an ask
+/// that did not offer it is refused, adjustments dropped with it.
+#[tokio::test]
+async fn an_adjusted_session_answer_grants_the_tool_and_delivers_its_adjustments() {
+    let store = Arc::new(MemoryStore::default());
+    let kernel = Arc::new(kernel_with(store));
+    let (id, handle) = open(&kernel).await;
+    let mut events = handle.subscribe(Some(0));
+    let adjustments = serde_json::json!({"max_concurrency": 5})
+        .as_object()
+        .cloned()
+        .unwrap();
+    let first = {
+        let (port, request) = (port(&kernel, &id).await, ask("app__search", true));
+        tokio::spawn(async move { port.ask(request).await })
+    };
+    let interaction = asked(&mut events).await;
+    answer(
+        &handle,
+        interaction,
+        PermissionAnswer::Adjusted {
+            adjustments: adjustments.clone(),
+            answer: Box::new(PermissionAnswer::AllowSession),
+        },
+    )
+    .await;
+    let first = tokio::time::timeout(Duration::from_secs(5), first)
+        .await
+        .expect("the adjusted answer reached the waiter")
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        first.answer,
+        Answer::Permission(PermissionAnswer::Adjusted {
+            adjustments,
+            answer: Box::new(PermissionAnswer::Allow {
+                remember: Vec::new()
+            }),
+        })
+    );
+    // The grant is the plain one: the next ask of the tool is answered without a prompt.
+    let again = tokio::time::timeout(Duration::from_secs(5), async {
+        port(&kernel, &id).await.ask(ask("app__search", true)).await
+    })
+    .await
+    .expect("answered without a prompt")
+    .unwrap();
+    assert!(matches!(
+        again.answer,
+        Answer::Permission(PermissionAnswer::Allow { .. })
+    ));
+
+    // An ask that did not offer the session grant refuses the adjusted answer.
+    let asking = {
+        let (port, request) = (port(&kernel, &id).await, ask("app__other", false));
+        tokio::spawn(async move { port.ask(request).await })
+    };
+    let interaction = asked(&mut events).await;
+    handle
+        .send(CommandEnvelope {
+            id: CommandId::new("c2"),
+            command: Command::ResolveInteraction {
+                interaction,
+                answer: PermissionAnswer::Adjusted {
+                    adjustments: serde_json::Map::new(),
+                    answer: Box::new(PermissionAnswer::AllowSession),
+                }
+                .into(),
+            },
+        })
+        .await;
+    let refused = tokio::time::timeout(Duration::from_secs(5), asking)
+        .await
+        .expect("the refusal reached the waiter")
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        refused.answer,
+        Answer::Permission(PermissionAnswer::Deny { feedback: None })
+    );
+}

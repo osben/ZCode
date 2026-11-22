@@ -260,6 +260,28 @@ pub trait Tool: Send + Sync {
         None
     }
 
+    /// Fork (9.66, divergence 141): Node `ToolEntry.applyInputAdjustments`. After the user approved the ask this tool raised
+    /// in `tool_use` with settings changed in the window (`PermissionAnswer::Adjusted`), the tool turns the approved `input`
+    /// and the changes into the input it runs, and keeps what it applied for its call (the pipeline never reads it).
+    /// `Ok(None)` leaves the input as it is; `Err` is the model-facing failure of the call, and nothing runs. The default
+    /// ignores the changes, as Node does for a tool that declares no such step.
+    async fn apply_input_adjustments(
+        &self,
+        _tool_use: &ToolUseId,
+        _input: &Value,
+        _adjustments: &serde_json::Map<String, Value>,
+        _context: &ToolUseContext,
+    ) -> Result<Option<Value>, String> {
+        Ok(None)
+    }
+
+    /// Fork (9.66, divergence 141): Node `withWorkflowRefineDeniedFollowUp`. The user answered the ask raised in `tool_use`
+    /// with Refine (`PermissionAnswer::Refine`): `Some` is the call's refusal and the message that follows it (the feedback
+    /// as a user message). `None` for a tool with no Refine, which then refuses like any other denial.
+    fn refined(&self, _tool_use: &ToolUseId, _feedback: &str) -> Option<ToolCallOutput> {
+        None
+    }
+
     fn is_enabled(&self) -> bool {
         true
     }
