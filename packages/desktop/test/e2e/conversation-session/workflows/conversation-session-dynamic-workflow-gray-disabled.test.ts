@@ -25,6 +25,7 @@ import {
   openPlusMenu,
   openSlashPanelWithCatalogReady,
   readDynamicWorkflowGrayMockStatus,
+  skipWhenPackagedBuildForcesAlwaysOn,
   readDynamicWorkflowModeTriggerText,
   readPlusMenuAddOptionIds,
   selectDynamicWorkflowMode,
@@ -39,7 +40,8 @@ import { sel } from "#e2e/helpers/selectors";
 // 契约见 docs/dynamic-workflow/launch.md「Gray release: the `dynamicWorkflow` feature key」。
 // E2E_DWF_GRAY：只读入口，不发送 prompt；空 provider fixture 是有意的合同。
 describe("动态工作流灰度未命中（disabled）", () => {
-  before(async () => {
+  before(async function () {
+    skipWhenPackagedBuildForcesAlwaysOn(this);
     await prepareV4ConversationE2E();
     // 断言中文文案：固定界面语言，不跟随宿主系统语言（容器里默认英文）。
     await pinE2ELocale("zh-CN");

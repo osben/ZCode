@@ -44,6 +44,15 @@ export const PLUS_WORKFLOW_OPTION_ID = "add-workflow";
 /** 自动化页内容容器；灰度两档都在场，用来把「页面没渲染」和「标签不在场」区分开。 */
 export const AUTOMATIONS_CONTENT_SELECTOR = "[data-automations-content]";
 
+/**
+ * 打包的 Preview 构建里 Main 固定把 ZCODE_DYNAMIC_WORKFLOW_MODE 写成 alwaysOn（desktopRuntimeEnv.ts
+ * resolveDynamicWorkflowModeHostEnv），服务端灰度快照不再决定档位。disabled / onDemand 两档只能靠
+ * 未打包 dev 构建验证，用打包产物（ZCODE_E2E_PACKAGED_APP_PATH）跑时跳过。
+ */
+export function skipWhenPackagedBuildForcesAlwaysOn(context: { skip(): void }): void {
+  if (process.env.ZCODE_E2E_PACKAGED_APP_PATH?.trim()) context.skip();
+}
+
 export function automationsPageTabTestId(tab: "automation" | "workflow"): string {
   return testId(TID_AUTOMATIONS_PAGE_TAB, tab);
 }
