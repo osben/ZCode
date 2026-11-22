@@ -47,7 +47,8 @@ export const AUTOMATIONS_CONTENT_SELECTOR = "[data-automations-content]";
 /**
  * 打包的 Preview 构建里 Main 固定把 ZCODE_DYNAMIC_WORKFLOW_MODE 写成 alwaysOn（desktopRuntimeEnv.ts
  * resolveDynamicWorkflowModeHostEnv），服务端灰度快照不再决定档位。disabled / onDemand 两档只能靠
- * 未打包 dev 构建验证，用打包产物（ZCODE_E2E_PACKAGED_APP_PATH）跑时跳过。
+ * 未打包 dev 构建验证，用打包产物（ZCODE_E2E_PACKAGED_APP_PATH）跑时跳过。打包的 production 构建不写这个值、
+ * 仍由服务端灰度决定，这里也一并跳过：目前打包 E2E 只跑 Preview 产物，以后要跑 production 产物时需按产品身份收窄。
  */
 export function skipWhenPackagedBuildForcesAlwaysOn(context: { skip(): void }): void {
   if (process.env.ZCODE_E2E_PACKAGED_APP_PATH?.trim()) context.skip();
