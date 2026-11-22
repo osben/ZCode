@@ -2521,8 +2521,11 @@ draft that cannot be written; the run label. `saved_workflow_tests.rs` gains 3 r
      (`create-workflow.ts`: `boundGraphOfAnalysis`, `displayOfAnalysis`). The analyzer port returns `ok` and the
      diagnostics only, so the output has no `causalityGraph` and the ask has no display. Needs the helper's display (W7-2)
      and the bounds.
-141. No window adjustments. Node's `applyInputAdjustments`, the `adjustable_settings` fill and the "the user adjusted the
-     settings" sentence are not built. The user cannot change the limit or the model in the window.
+141. Closed in 9.66 (W9j) for CreateWorkflow: the ask carries `adjustable_settings`, the window's changes reach the tool
+     (`PermissionAnswer::Adjusted`, `Tool::apply_input_adjustments`) and the result tells the model what changed. AmendWorkflow's
+     window still has no settings: divergence 930. The original text: No window adjustments. Node's `applyInputAdjustments`, the
+     `adjustable_settings` fill and the "the user adjusted the settings" sentence are not built. The user cannot change the limit
+     or the model in the window.
 142. No model catalog port. `subagent_model` is refused on every call with Node's no-catalog text
      ("This host cannot choose a subagent model; omit subagent_model."). Node resolves the name when a catalog exists, so a
      host with one accepts a model this host refuses.
@@ -5678,7 +5681,8 @@ existing), tools 728, session 422, node-records 36; cli bin tests 565.
 
 ### 9.64 W9h: the workflow desktop E2E specs that failed on both runtimes (as built, gate on)
 
-Status: done. Node passes all eight specs. Rust passes six; confirm (DWC-01, 02, 04) and one hub case (929) are not met.
+Status: done. Node passes all eight specs. Rust passes six; confirm (DWC-01, 02, 04) and one hub case (929) are not met
+here; both are closed in 9.66 (W9j).
 
 Before: the full sweeps on fork e9b73905d (Node `out-final-node`, Rust `out-final-rust`). After: runs 18 (Rust) and 19 (Node)
 in the OrbStack box on the branch at 96361b103 (the later commits change only this spec), which has W9i (#622, 63607d8ae) merged in. CI runs no desktop wdio E2E (`pr-checks.yml`
@@ -5794,7 +5798,9 @@ Classes: (a) test race or stale assertion, (b) box environment gap, (c) TS or No
 
 **Divergences.**
 
-929. Under zcode-rs a hub-started running run grows no sidebar run line. A probe of the box DOM (run 17) found no
+929. Closed in 9.66 (W9j): the hub launch record left the session in the `draft` phase, which the task-index syncer skips, so
+     the row never took its `workflowActivity`. The record now ends the draft phase (divergence 931 records how). The original
+     text: Under zcode-rs a hub-started running run grows no sidebar run line. A probe of the box DOM (run 17) found no
      `[data-workflow-run-line]` in any task row while the run card at the top of the session showed the run running, so
      the sessions-index row carries no `workflowActivity`. Checked and not the cause: `workflow_activity::activity` (the
      port of `deriveSessionWorkflowActivity`), the delta fold `apply_workflow_run_deltas`, and the one row writer
@@ -5949,6 +5955,156 @@ vitest `workflow-compile.test.ts` passes 23/23.
 `Running` filter is exercised (red with the filter removed). The retired `display` route is gone on both sides (the Rust
 `display()`/`display_params()`/`parse_display()` with their 2 tests, the helper `kind: "display"` branch and schema variant with
 its 3 vitest cases). The `catalog_entries` doc states the 917 rule.
+
+### 9.66 W9j: the last three workflow desktop E2E gaps in the Linux box (as built, gate on)
+
+Status: done. Each gap below was reproduced in the OrbStack box, its first wrong step found from the logs and probes, and
+fixed at the layer that owns it. CI runs no desktop wdio E2E (9.64), so these specs are checked only in the box.
+
+Before: the full 26-spec sweeps on fork 33805d4ef (Rust `out-final-rust`, Node `out-final-node`): Rust 24/26, Node 25/26.
+After: the sweeps on the code head ab5b2f48f (the commit after it changes only this spec), in `out-w9j-r26` (Rust) and
+`out-w9j-n26` (Node): both pass 26/26. The confirm spec passes 4/4 and the hub spec 10/10 on both runtimes. Five single-spec Node
+runs of the stop spec, each in its own box run on the same head (`out-w9j-m1` to `m5`), all pass. Earlier interim runs
+(`out-w9j-n1` to `n5`, on a first form of the fix that passed the button as an element and did not read it again) also passed;
+they are not counted.
+
+| Gap                                                 | Node before       | Rust before | Node after | Rust after | Class | Cause and fix                                                                                                                     |
+| --------------------------------------------------- | ----------------- | ----------- | ---------- | ---------- | ----- | --------------------------------------------------------------------------------------------------------------------------------- |
+| gray-always-on-stop (DWX-01, DWX-02)                | FAIL 7 of 24 runs | PASS        | PASS       | PASS       | a     | the Stop click raced the header relayout after the run pane opened; the spec waits for the button to hold still                   |
+| automations-workflows-hub, "唯一在跑的工作流" (929) | PASS 10/10        | FAIL 9/10   | PASS 10/10 | PASS 10/10 | d     | a hub launch record left the session in the `draft` phase, which the task-index syncer skips; the record now ends the draft phase |
+| gray-always-on-confirm (DWC-01, 02, 04)             | PASS 4/4          | FAIL 3/4    | PASS 4/4   | PASS 4/4   | d     | divergence 141 (the window's settings) and the Refine path, plus an offered full access row Node does not offer                   |
+
+Classes as in 9.64: (a) test race or stale assertion, (d) Rust bug.
+
+**Gap 1: the Stop click raced the relayout (Node, intermittent; class a).**
+
+The failure was DWX-01 "run 卡没有落到 stopped" (the card digest stays running), then DWX-02 (no `stop-reason=user`
+notification reached the model). On the unmodified spec 7 of 24 runs failed: 3 of 6 (`out-w9j-2`), 2 of 8 (`out-w9j-3`, with
+logging in the renderer handler and the agent's cancel handler) and 2 of 8 (`out-w9j-5`, with a pointer probe), and none of
+2 in the first box run (`out-w9j-1`). It is not the first run after a build: the failing runs were the 2nd, 5th and 6th of a
+box run, then the 5th and 8th, then the 3rd and 6th.
+
+- The journal of a failing run (`dwf_event`) shows `run-started`, `phase-entered`, `node-queued`, `node-dispatched`, then
+  `run-settled` with `stopReason: interrupted, the owning session closed`, two minutes later. No `stop` ever reached the run.
+- The renderer's `handleCancelBackgroundWork` and the agent's `cancelBackgroundWork` handler, both logged for the probe run, wrote
+  no line in any failing run. So the command was never dispatched: this is not the runtime, the protocol or the helper.
+- The pointer probe (capture-phase listeners on `pointerdown`, `pointerup` and `click`) of two failing runs: pointerdown
+  landed on the Stop button at (756, 355), whose rect was then 743,342 28x28; 7 ms later pointerup landed on the neighbouring
+  open-details button, and the click event went to their common ancestor. The Stop button had moved 26px left and 4px up
+  between the hit point chromedriver computed and the pointerdown. The second run shows the same: pointerdown on open-details,
+  because Stop had already moved off the point. The spec clicks open-details a hundred milliseconds before Stop, and that opens
+  the run pane, which relays the card header out.
+- Fix (spec only): `waitForSettledPosition` polls the button's rect until it is the same for three polls in a row, then the spec
+  reads the button again (the card can remount during the relayout) and clicks it. No product change: a header that moves while a
+  pane opens is ordinary layout.
+- Verification: no unit test can express it. The stop spec passed on Node in five single-spec box runs on the committed head
+  (`out-w9j-m1` to `m5`), in the Node sweep, and on Rust in the Rust sweep.
+
+**Gap 2: a hub launch left the session in the draft phase (Rust, 929; class d).**
+
+The sidebar's run line is drawn from the sessions-index row's `workflowActivity`. A probe on `Live::write` (logged phase,
+the preparation marker and the activity of every published row) showed the hub-started session's row published with
+`workflowActivity` present (one running run, `phases: []`, so the implicit rail) and `phase: "draft"`, with no preparation
+marker. The box DOM of the failing case (`[W9J-PROBE-SIDEBAR]`) showed the three task rows with no `data-workflow-run-lines`.
+So the activity was sent and the sidebar did not use it.
+
+- Node's launch is a real turn boundary: `emitControlOnlyUserTurn` emits `TurnStarted` (control-only) and `TurnComplete`, so the
+  session leaves the draft phase. Rust's record (9.63) opened and settled the launch turn's rows "without touching the
+  session's phase", so the session stayed `draft` until a real turn.
+- The task-index syncer (`zcodeTaskIndexSyncer.ts` `processSummary`) returns early for a summary in the `draft` phase unless a
+  preparation is pending ("Drafts are in-memory only"). The row never became a visible task for the run line, so the line was
+  never drawn. The first non-draft phase came 40 seconds later, when the run finished and the notification turn started.
+- Fix: `Projection::workflow_launch_turn` takes a `draft` projection to `completedSuccess`, live and cold, and `apply` emits the
+  phase patch (control, availability, input routing) when a message changed the phase. A running turn keeps its phase. Red
+  first: `a_hub_launch_record_takes_a_draft_session_out_of_the_draft_phase` (left `Draft`).
+- Verification: the hub spec passes 10/10 on Rust (`out-w9j-8`, and `out-w9j-r26` on the committed head) and 10/10 on Node
+  (`out-w9j-n26`).
+
+**Gap 3: the confirmation window's settings and Refine (Rust, divergence 141; class d).**
+
+On the previous head DWC-01 failed at the settings rows, DWC-02 at the Refine row and DWC-04 at the stepper. Node is the
+oracle; each part was checked against it.
+
+- **The ask names what the window may adjust** (`workflow_settings::adjustable_settings`, Node `workflowAdjustableSettings`).
+  CreateWorkflow's shown input carries `adjustable_settings`: `subagent_model` is true when a catalog is set, and
+  `concurrency_ceiling` is the run port's default concurrency, when it has one. A host with no run port has no block. A value
+  the model filled in is overwritten.
+- **The settings changed in the window reach the tool** (`PermissionAnswer::Adjusted`). The v4 `resolveInteraction` answer's
+  `content` becomes `Adjusted { adjustments, answer }` for CreateWorkflow and AmendWorkflow approvals only, as the two keys
+  Node's schema knows (`protocol-zcode/commands.rs` `permission_answer`). The session actor unwraps it, grants a session allow
+  as it does for a plain answer and re-wraps the plain `Allow` (`session/turn_interact.rs`). The pipeline then calls
+  `Tool::apply_input_adjustments` (`tools/pipeline.rs`). A change the tool cannot apply fails the call with its message.
+- **CreateWorkflow applies them** (`workflow_create.rs`, Node `applyWorkflowSettingsAdjustments`). A model resolves through the
+  catalog to its canonical form, `null` takes a setting back to its default, a bound is a whole number of at least 1, an
+  unusable model fails with Node's `workflow_subagent_model_unresolved` text, and a reply of the wrong shape voids the whole
+  adjustment. The run's model is the one the call keeps in its decision. The result tells the model what changed, ahead of the
+  usual limit and model sentences (`describe_run_settings`, Node `describeWorkflowRunSettings`), word for word.
+- **Refine** (`PermissionAnswer::Refine`, `Tool::refined`, `tools/workflow_refine.rs`). The projection adds the `workflowRefine`
+  option (a `custom` option whose static response is a plain denial) to a CreateWorkflow or AmendWorkflow ask. An answer with
+  that option and non-empty feedback becomes `Refine`; empty feedback, or the option on another tool, is an ordinary denial.
+  The pipeline refuses the call with "The workflow run was not approved by the user." and appends the feedback to the batch as a
+  user message of the `workflow_refine_feedback` steer source, so the model sees it after the tool result. The card settles as
+  cancelled. Both tools take it.
+- **No mode switch on this window** (found by DWC-01: the dock listed a fourth `custom` row). Node gives an ask an
+  `optionsPolicy` from the tool's `askOptions.allowAlways` (`session-always-allow` for these tools), and an ask with an options
+  policy offers no permission mode switch (`product-projection.ts` `!payload.optionsPolicy`) and registers no grant hook (the
+  broker). Rust's B3 offered the switch on every session ask. The projection and the session's `grantable` now treat an ask that
+  offers the session allow like Node. This is Node parity, and it is user-visible beyond workflows under zcode-rs: it removes the
+  "full access" row from every ask that offers the session allow (the MCP app tools' asks included).
+
+Tests, each seen red first unless marked: `an_adjusted_session_answer_grants_the_tool_and_delivers_its_adjustments` (runtime; the
+answer reached the waiter unchanged and nothing was granted); in `workflow_create`: `the_ask_names_the_settings_the_window_may_adjust`,
+`a_bound_adjusted_in_the_window_runs_and_is_told_to_the_model`, `a_model_adjusted_in_the_window_resolves_runs_and_is_told_to_the_model`,
+`an_unusable_adjustment_fails_the_call_and_an_empty_one_changes_nothing`, `refine_refuses_the_call_and_the_feedback_follows_as_a_user_message`
+and the saved-run ask test (all red with the three hooks switched off); in the pipeline: `an_adjusted_approval_runs_the_call_on_the_adjusted_input`,
+`an_adjustment_the_tool_refuses_fails_the_call_and_runs_nothing`, `refine_refuses_the_call_and_its_message_follows_the_result` (red with
+the two arms off), `a_tool_with_no_adjustment_step_runs_the_approved_input` and `refine_on_a_tool_without_it_is_an_ordinary_refusal`
+(guards, green); `a_workflow_ask_offers_refine_after_the_standard_options` (three options, no Refine) and
+`an_ask_with_the_session_allow_offers_no_mode_switch` in the projection, and the extended `asks_without_a_mode_switch_refuse_the_grant`
+(session: the grant was accepted); `a_workflow_window_answers_refine_and_carries_the_settings_with_an_approval` (a compile change:
+`permission_answer` takes the reply's content). Not seen red: the four `workflow_settings` tests (written with the module) and
+`refine_refuses_an_amend_and_the_feedback_follows_as_a_user_message` (written with the one-line impl).
+
+- Verification: DWC-01 to DWC-04 pass on Rust (`out-w9j-8`, and `out-w9j-r26` on the committed head) and on Node
+  (`out-w9j-n26`). The first Rust run with this code (`out-w9j-7`) passed DWC-03 and DWC-04 and failed DWC-01 and DWC-02 on the
+  fourth `custom` row, which the mode-switch change removed.
+
+**Divergences.**
+
+930. AmendWorkflow's window has no settings. Node's Amend also fills `adjustable_settings` (only when the resolved input has a
+     script), applies the adjustments with `AMEND_WORKFLOW_ERROR_CODE.SUBAGENT_MODEL` and tells the model what changed, as
+     CreateWorkflow does. Here Amend takes Refine (both tools, above) and the `Adjusted` answer reaches its pipeline step,
+     which the default `apply_input_adjustments` ignores, so a change made in an Amend window is dropped and the run starts as
+     approved. The Amend window draws no settings rows, since the ask carries no block. No spec exercises it. The port is small
+     because `workflow_settings.rs` is shared: the revision's three-state input and its `Pending.models` are the work.
+931. A hub launch record takes the session from `draft` to `completedSuccess` in one step. Node goes through `running`
+     (`TurnStarted` control-only) to `completedSuccess` (`TurnComplete`). The task-index syncer therefore takes the terminal
+     transition branch (`becameTerminal`, with `moveGroupedTaskToTop`) without the became-visible branch that Node's running step
+     takes (the immediate mirror and the `task_created` broadcast). The terminal branch mirrors the summary, patches the row to
+     completed, broadcasts and resyncs the row, and the hub spec passes, so the visible result is the same: the row exists and
+     carries the run line. The spinner Node shows during the control turn is not shown.
+932. The Refine follow-up message has the id `msg_refine_<tool use id>`, where Node's is `msg_<base36 ms>_<uuid>`. The tools
+     have no id source (`CreateWorkflowTool` is built without `Ids`, and threading one through `workflow_tools` and the
+     composition is a signature change across three layers). The id is unique per call. The store takes a message's time from the
+     id and falls back to the commit time for an id of another shape (`node-store` `created_at`), so the row sorts by when it
+     was committed.
+     Divergence 141 is closed for CreateWorkflow and carries a pointer to 930 for AmendWorkflow; 929 is closed (both edited in place).
+
+**Gate.** `cargo fmt --all --check` clean. `cargo clippy --workspace --all-targets --locked -- -D warnings` rc 0, with no allow
+attributes added. Lib tests:
+
+| Crate          | Passed | Ignored |
+| -------------- | ------ | ------- |
+| kernel-api     | 462    | 0       |
+| workflow       | 469    | 0       |
+| runtime        | 406    | 0       |
+| protocol-zcode | 1091   | 0       |
+| node-store     | 366    | 1       |
+| tools          | 751    | 0       |
+| agents         | 352    | 0       |
+| session        | 422    | 0       |
+
+The ignored test already existed. cli bin tests pass 565. `pnpm typecheck`, `pnpm lint` (0 errors) and `pnpm test-copy:check` pass.
 
 ## 10. Open questions
 
