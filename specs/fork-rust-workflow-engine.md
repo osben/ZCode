@@ -6083,11 +6083,12 @@ the two arms off), `a_tool_with_no_adjustment_step_runs_the_approved_input` and 
      takes (the immediate mirror and the `task_created` broadcast). The terminal branch mirrors the summary, patches the row to
      completed, broadcasts and resyncs the row, and the hub spec passes, so the visible result is the same: the row exists and
      carries the run line. The spinner Node shows during the control turn is not shown.
-932. The Refine follow-up message has the id `msg_refine_<tool use id>`, where Node's is `msg_<base36 ms>_<uuid>`. The tools
+932. The Refine follow-up message has the id `refine_<tool use id>`, where Node's is `msg_<base36 ms>_<uuid>`. The tools
      have no id source (`CreateWorkflowTool` is built without `Ids`, and threading one through `workflow_tools` and the
      composition is a signature change across three layers). The id is unique per call. The store takes a message's time from the
      id and falls back to the commit time for an id of another shape (`node-store` `created_at`), so the row sorts by when it
-     was committed.
+     was committed. The id must not start with `msg_`: the first form, `msg_refine_<id>`, made `message_created_ms` read
+     "refine" as base-36 milliseconds and dated the row January 1970 (ocr #624).
      Divergence 141 is closed for CreateWorkflow and carries a pointer to 930 for AmendWorkflow; 929 is closed (both edited in place).
 
 **Gate.** `cargo fmt --all --check` clean. `cargo clippy --workspace --all-targets --locked -- -D warnings` rc 0, with no allow

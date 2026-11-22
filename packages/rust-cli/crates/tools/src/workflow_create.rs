@@ -21,6 +21,7 @@ use rust_cli_kernel_api::tool::{
     Validation, failed, text,
 };
 use rust_cli_kernel_api::tool_names;
+use rust_cli_kernel_api::tool_names::WORKFLOW_SETTING_SUBAGENT_MODEL;
 use rust_cli_kernel_api::workflow_analysis::{
     WorkflowAnalysis, WorkflowAnalyzer, WorkflowDiagnostic,
 };
@@ -988,10 +989,14 @@ impl Tool for CreateWorkflowTool {
             return Err(workflow_settings::INVALID_AFTER_ADJUSTMENT.to_owned());
         }
         if let Some(prepared) = self.approvals().by_id.get_mut(tool_use) {
-            prepared.subagent_model = next
-                .get("subagent_model")
-                .and_then(Value::as_str)
-                .map(str::to_owned);
+            // Only a model the window changed replaces the canonical one the ask resolved (ocr #624): the input's own
+            // `subagent_model` is the model's raw alias.
+            if adjustment.subagent_model.is_some() {
+                prepared.subagent_model = next
+                    .get(WORKFLOW_SETTING_SUBAGENT_MODEL)
+                    .and_then(Value::as_str)
+                    .map(str::to_owned);
+            }
             prepared.applied = applied;
         }
         Ok(Some(Value::Object(next)))

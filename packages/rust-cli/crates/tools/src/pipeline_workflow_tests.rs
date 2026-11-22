@@ -162,6 +162,20 @@ async fn an_adjusted_approval_runs_the_call_on_the_adjusted_input() {
     assert_eq!(*tool.calls.lock().unwrap(), vec![json!({"bound": 9})]);
 }
 
+/// ocr #624: an approval for the session inside the window's changes is still an approval; a producer that does not
+/// normalize it to `Allow` first must not turn it into a refusal.
+#[tokio::test]
+async fn an_adjusted_session_approval_runs_the_call_on_the_adjusted_input() {
+    let tool = Arc::new(Adjustable::new(false));
+    let answer = PermissionAnswer::Adjusted {
+        adjustments: json!({"bound": 9}).as_object().cloned().unwrap(),
+        answer: Box::new(PermissionAnswer::AllowSession),
+    };
+    let execution = execute(tool.clone(), json!({"bound": 2}), answer).await;
+    assert!(!execution.output.is_error, "{:?}", execution.output);
+    assert_eq!(*tool.calls.lock().unwrap(), vec![json!({"bound": 9})]);
+}
+
 /// A change the tool cannot apply refuses the call with the tool's message, and nothing runs.
 #[tokio::test]
 async fn an_adjustment_the_tool_refuses_fails_the_call_and_runs_nothing() {

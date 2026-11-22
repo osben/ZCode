@@ -2419,8 +2419,8 @@ fn is_workflow_window(tool: &str) -> bool {
         || tool == rust_cli_kernel_api::tool_names::AMEND_WORKFLOW
 }
 
-/// Node `WorkflowSettingsAdjustmentSchema`'s keys.
-const ADJUSTABLE_KEYS: [&str; 2] = ["subagent_model", "max_concurrency"];
+/// Node `WorkflowSettingsAdjustmentSchema`'s keys, the same list the tool parses.
+const ADJUSTABLE_KEYS: [&str; 2] = rust_cli_kernel_api::tool_names::WORKFLOW_ADJUSTABLE_SETTINGS;
 
 async fn resolve_elicitation(
     handle: &dyn SessionHandle,

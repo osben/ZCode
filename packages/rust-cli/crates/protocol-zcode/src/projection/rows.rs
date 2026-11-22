@@ -618,7 +618,8 @@ impl Projection {
                 // Fork (9.66, divergence 141): the window of CreateWorkflow and AmendWorkflow offers Refine after the standard
                 // options (Node `product-projection.ts`: a custom option whose static response is a plain denial, so a
                 // consumer that does not know it refuses; the feedback promotion lives in the answer mapping).
-                if matches!(tool.as_str(), "CreateWorkflow" | "AmendWorkflow")
+                if (tool == rust_cli_kernel_api::tool_names::CREATE_WORKFLOW
+                    || tool == rust_cli_kernel_api::tool_names::AMEND_WORKFLOW)
                     && let Some(options) = payload["options"].as_array_mut()
                 {
                     options.push(state::workflow_refine_option());

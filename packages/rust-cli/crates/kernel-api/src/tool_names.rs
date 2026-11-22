@@ -43,6 +43,14 @@ pub const OFF_PEAK_LIST: &str = "OffPeakList";
 /// stays closed until W9.
 pub const AMEND_WORKFLOW: &str = "AmendWorkflow";
 pub const CREATE_WORKFLOW: &str = "CreateWorkflow";
+/// Fork (9.66, divergence 141): the settings keys a workflow confirmation window may adjust (Node
+/// `WorkflowSettingsAdjustmentSchema`), shared by the protocol's reply filter and the tool's parse.
+pub const WORKFLOW_SETTING_SUBAGENT_MODEL: &str = "subagent_model";
+pub const WORKFLOW_SETTING_MAX_CONCURRENCY: &str = "max_concurrency";
+pub const WORKFLOW_ADJUSTABLE_SETTINGS: [&str; 2] = [
+    WORKFLOW_SETTING_SUBAGENT_MODEL,
+    WORKFLOW_SETTING_MAX_CONCURRENCY,
+];
 pub const EVAL_WORKFLOW_SNIPPET: &str = "EvalWorkflowSnippet";
 pub const FILL_WORKFLOW_HOLE: &str = "FillWorkflowHole";
 pub const GET_WORKFLOW_RUN: &str = "GetWorkflowRun";

@@ -21,7 +21,9 @@ pub(crate) fn follow_up(tool_use: &ToolUseId, feedback: &str) -> Option<ToolCall
         return None;
     }
     let steer = queued_command::steer_attachment(
-        MessageId::new(format!("msg_refine_{}", tool_use.as_str())),
+        // Not `msg_`: `message_created_ms` would read "refine" as base-36 milliseconds and date the row 1970 (ocr #624).
+        // With no creation time in the id, the store stamps the row with its commit time.
+        MessageId::new(format!("refine_{}", tool_use.as_str())),
         feedback,
         SteerSender::User,
         None,

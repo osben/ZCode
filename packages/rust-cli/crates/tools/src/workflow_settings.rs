@@ -6,6 +6,9 @@
 //! is changed there), the parse of the reply's `content` into the changes, and the sentence that tells the model what the
 //! user changed before approving. The model-facing wording is Node's, byte for byte.
 
+use rust_cli_kernel_api::tool_names::{
+    WORKFLOW_SETTING_MAX_CONCURRENCY, WORKFLOW_SETTING_SUBAGENT_MODEL,
+};
 use serde_json::{Map, Value, json};
 
 /// Node `WORKFLOW_SETTINGS_MAX_MODEL_CHARS`.
@@ -52,7 +55,7 @@ pub(crate) fn with_block(input: Option<Value>, raw: &Value, block: Value) -> Val
 /// approved), and a reply with no known key is no adjustment.
 pub(crate) fn parse(content: &Map<String, Value>) -> Option<Settings> {
     let mut settings = Settings::default();
-    match content.get("subagent_model") {
+    match content.get(WORKFLOW_SETTING_SUBAGENT_MODEL) {
         None => {}
         Some(Value::Null) => settings.subagent_model = Some(None),
         Some(Value::String(requested)) => {
@@ -64,7 +67,7 @@ pub(crate) fn parse(content: &Map<String, Value>) -> Option<Settings> {
         }
         Some(_) => return None,
     }
-    match content.get("max_concurrency") {
+    match content.get(WORKFLOW_SETTING_MAX_CONCURRENCY) {
         None => {}
         Some(Value::Null) => settings.max_concurrency = Some(None),
         Some(Value::Number(number)) => {

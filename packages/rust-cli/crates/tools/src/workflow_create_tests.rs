@@ -1621,6 +1621,36 @@ async fn a_bound_adjusted_in_the_window_runs_and_is_told_to_the_model() {
     assert!(!text.contains("back on the session model"), "{text}");
 }
 
+/// ocr #624: a change to the bound alone keeps the canonical model the call named, not the alias the model typed.
+#[tokio::test]
+async fn a_bound_only_adjustment_keeps_the_canonical_model_of_the_call() {
+    let harness = with_catalog(Some(FakeRun::new(Some(4), false)));
+    let input = json!({"script": CLEAN, "subagent_model": "deepseek-v4-pro"});
+    let ctx = harness.with_skill();
+    let _ = harness.tool.check_permissions(&input, &ctx).await;
+    let adjusted = harness
+        .tool
+        .apply_input_adjustments(
+            &ctx.tool_use,
+            &input,
+            &adjustments(json!({"max_concurrency": 6})),
+            &ctx,
+        )
+        .await
+        .expect("the adjustment applies")
+        .expect("the input changes");
+    let (tx, _rx) = mpsc::channel(4);
+    harness
+        .tool
+        .call(adjusted, ctx, tx)
+        .await
+        .expect("the call runs");
+    assert_eq!(
+        submits_of(&harness)[0].subagent_model.as_deref(),
+        Some("deepseek/deepseek-v4-pro")
+    );
+}
+
 /// 9.66 (divergence 141): a subagent model chosen in the window resolves through the catalog to its canonical form,
 /// reaches the submit, and is told as the adjustment; `null` puts the run back on the session model.
 #[tokio::test]
@@ -1790,4 +1820,6 @@ async fn refine_refuses_the_call_and_the_feedback_follows_as_a_user_message() {
         rust_cli_kernel_api::hooks::queued_command::sourced(steer),
         Some(("workflow_refine_feedback", "split it into two phases"))
     );
+    // ocr #624: the id carries no creation time, so the store stamps the row with its commit time, not 1970.
+    assert_eq!(steer.id.created_ms(), None, "{:?}", steer.id);
 }

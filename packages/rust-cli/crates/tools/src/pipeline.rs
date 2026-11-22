@@ -307,8 +307,12 @@ impl Pipeline {
                 adjustments,
                 answer: approval,
             }) => {
-                let PermissionAnswer::Allow { remember } = *approval else {
-                    return Err(error(rejection(context, None)));
+                // The session actor hands it as `Allow`; an unnormalized `AllowSession` is an approval with nothing to
+                // remember here (ocr #624), never a refusal.
+                let remember = match *approval {
+                    PermissionAnswer::Allow { remember } => remember,
+                    PermissionAnswer::AllowSession => Vec::new(),
+                    _ => return Err(error(rejection(context, None))),
                 };
                 if !remember.is_empty() {
                     self.gate.local_rules_committed(&call.hooks.workspace).await;
