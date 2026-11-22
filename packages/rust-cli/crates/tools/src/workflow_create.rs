@@ -21,7 +21,6 @@ use rust_cli_kernel_api::tool::{
     Validation, failed, text,
 };
 use rust_cli_kernel_api::tool_names;
-use rust_cli_kernel_api::tool_names::WORKFLOW_SETTING_SUBAGENT_MODEL;
 use rust_cli_kernel_api::workflow_analysis::{
     WorkflowAnalysis, WorkflowAnalyzer, WorkflowDiagnostic,
 };
@@ -993,7 +992,7 @@ impl Tool for CreateWorkflowTool {
             // `subagent_model` is the model's raw alias.
             if adjustment.subagent_model.is_some() {
                 prepared.subagent_model = next
-                    .get(WORKFLOW_SETTING_SUBAGENT_MODEL)
+                    .get("subagent_model")
                     .and_then(Value::as_str)
                     .map(str::to_owned);
             }
