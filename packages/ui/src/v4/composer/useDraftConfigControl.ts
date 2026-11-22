@@ -1085,6 +1085,10 @@ export function useDraftConfigControl(params: {
         );
       })
       .catch((error) => {
+        if (readSlashCatalogRevision() !== slashCatalogRevision) {
+          // A newer flight owns the status; a late failure of this stale read must not mark a fresh catalog as failed.
+          return;
+        }
         useZCodeSessionStore
           .getState()
           .setConfigOptionsStatus(workspacePath, "error", workspaceIdentity);
