@@ -1262,6 +1262,29 @@ async fn the_call_submits_the_models_the_decision_resolved() {
     );
 }
 
+/// 9.67 (closes 924): a model failure that reaches the call (the retune race fallback re-resolves the models after the
+/// decision) carries Node's `AMEND_WORKFLOW_ERROR_CODE.SUBAGENT_MODEL`, 23, as the validation refusal does.
+#[tokio::test]
+async fn a_call_time_model_failure_carries_the_subagent_model_code() {
+    let owned = json!({
+        "runId": "run-1", "ownedByThisSession": true, "status": "running",
+        "subagentModel": "deepseek/gone"
+    });
+    let (tool, ctx, _guard, port) = with_catalog(owned);
+    let error = run(&tool, json!({"run_id": "run-1", "max_concurrency": 5}), ctx)
+        .await
+        .expect_err("the inherited model is gone");
+    let ToolError::FailedWithCode { message, code } = error else {
+        panic!("a coded failure: {error:?}");
+    };
+    assert_eq!(code, 23);
+    assert!(
+        message.starts_with("workflow_subagent_model_unresolved: This amend inherited"),
+        "{message}"
+    );
+    assert!(port.amends().is_empty());
+}
+
 /// 9.66 (divergence 141, Node `withWorkflowRefineDeniedFollowUp` covers AmendWorkflow too): Refine in this tool's window
 /// refuses the call and the feedback follows as a user message.
 #[tokio::test]

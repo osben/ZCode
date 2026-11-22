@@ -180,6 +180,10 @@ pub enum ToolError {
     Environment(#[from] EnvError),
     #[error("{message}")]
     Failed { message: String },
+    /// Fork: a failure that carries Node's structured `errorCode` (`ToolHandlerFailure.errorCode`), for a call-time refusal
+    /// of a tool whose decision-time refusals carry it too. It reaches the model as `Failed` does.
+    #[error("{message}")]
+    FailedWithCode { message: String, code: i32 },
     #[error("not implemented: {what}")]
     Unsupported { what: String },
 }

@@ -23,7 +23,7 @@ pub fn effort_of(m: &CatalogModel, wish: &str) -> String {
     if m.reasoning_levels.iter().any(|e| e == wish) {
         wish.to_owned()
     } else {
-        m.reasoning_levels.last().cloned().unwrap_or_default()
+        m.default_level().unwrap_or_default()
     }
 }
 
@@ -478,3 +478,7 @@ impl App {
         }
     }
 }
+
+#[cfg(test)]
+#[path = "keys_tests.rs"]
+mod tests;

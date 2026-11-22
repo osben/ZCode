@@ -80,7 +80,12 @@ impl Template {
                     ),
                 });
             }
-            None => self.levels.last().map(String::as_str).unwrap_or_default(),
+            // Fork (9.67, 925): Node's `reasoning.default ?? values.at(-1)`.
+            None => self
+                .default_level
+                .as_deref()
+                .or_else(|| self.levels.last().map(String::as_str))
+                .unwrap_or_default(),
         };
         let invalid = |error: anyhow::Error| ModelError::InvalidRequest {
             message: format!("provider option map failed: {error:#}"),
@@ -370,7 +375,13 @@ fn default_selection(templates: &[Template], configured: &Value) -> Option<Model
     });
     let (template, reasoning) = match selectable {
         Some(found) => found,
-        None => visible().find_map(|template| Some((template, template.levels.last()?.clone())))?,
+        None => visible().find_map(|template| {
+            let level = template
+                .default_level
+                .clone()
+                .or_else(|| template.levels.last().cloned())?;
+            Some((template, level))
+        })?,
     };
     Some(ModelSelection {
         reasoning: Some(reasoning),

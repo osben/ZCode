@@ -421,6 +421,14 @@ fn confirmation_message(name: Option<&str>) -> String {
     }
 }
 
+/// Fork (9.67, closes 924): a model failure that reaches the call carries `SUBAGENT_MODEL_CODE`, as the validation does.
+fn model_failure(message: String) -> ToolError {
+    ToolError::FailedWithCode {
+        message,
+        code: SUBAGENT_MODEL_CODE,
+    }
+}
+
 fn invalid(code: Option<i32>, message: &str) -> Validation {
     Validation::Invalid {
         message: message.to_owned(),
@@ -656,7 +664,7 @@ impl Tool for AmendWorkflowTool {
                         &analysis.model_references,
                         &models.bindings,
                     ),
-                    Err(message) => return Err(failed(message.clone())),
+                    Err(message) => return Err(model_failure(message.clone())),
                 };
                 if analysis.ok && bound {
                     return Err(failed(
@@ -866,7 +874,7 @@ impl AmendWorkflowTool {
         } = pending;
         // Fork (9.63): the revision's models as the decision resolved them; a script model that does not bind is a 9011
         // diagnostic (Node).
-        let models = models.map_err(failed)?;
+        let models = models.map_err(model_failure)?;
         if analysis.ok
             && !crate::model_reference::all_bound(&analysis.model_references, &models.bindings)
         {

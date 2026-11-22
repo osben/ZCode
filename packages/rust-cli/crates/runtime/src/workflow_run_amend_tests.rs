@@ -1490,6 +1490,51 @@ async fn a_stored_script_that_no_longer_compiles_refuses_the_settings_change() {
     assert!(sink.turns.lock().unwrap().is_empty());
 }
 
+/// 9.67 (divergence 923, accepted): the checker is a helper process that Node's in-process analysis is not, so a checker
+/// that does not answer refuses the change with `start_failed` and touches nothing. The run is not decided on a failed
+/// check.
+#[tokio::test]
+async fn a_checker_that_does_not_answer_refuses_the_settings_change_without_touching_the_run() {
+    struct Silent;
+    #[async_trait]
+    impl rust_cli_kernel_api::workflow_analysis::WorkflowAnalyzer for Silent {
+        async fn analyze(
+            &self,
+            _script: &str,
+        ) -> Result<
+            rust_cli_kernel_api::workflow_analysis::WorkflowAnalysis,
+            rust_cli_kernel_api::workflow_analysis::WorkflowAnalysisError,
+        > {
+            Err(
+                rust_cli_kernel_api::workflow_analysis::WorkflowAnalysisError {
+                    message: "the helper did not answer".to_owned(),
+                },
+            )
+        }
+    }
+    let fx = fixture(|conn| interrupted(conn, "dwfrun-silent", PARENT, "return 1\n"));
+    assert!(
+        fx.service
+            .configure_saved_start(fx.path.with_file_name("home"), Arc::new(Silent))
+    );
+    let sink = Recorder::default();
+    let answer = fx
+        .service
+        .amend_settings(PARENT, settings("dwfrun-silent", Some(Some(2.0))), &sink)
+        .await
+        .expect("answers");
+    assert_eq!(
+        answer,
+        SettingsOutcome::Refused(SettingsRefusal::StartFailed {
+            message: "the stored script of run dwfrun-silent could not be checked: the helper did not answer"
+                .to_owned(),
+        })
+    );
+    assert!(fx.fake.launches().is_empty());
+    assert_eq!(row(&fx, "dwfrun-silent").superseded_by, None);
+    assert!(sink.turns.lock().unwrap().is_empty());
+}
+
 /// 9.65 (closes 918): the models are bound over the compiled script's references (Node `bindScriptModels(analysis,
 /// catalog, snapshot.modelBindings)`), not the launch table's keys: a name the launch did not bind is resolved fresh,
 /// and a refusal names each reference at its line and column.

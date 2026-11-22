@@ -80,10 +80,7 @@ pub fn catalog_entries(
                 provider_label: (!label.is_empty()).then(|| label.to_owned()),
                 reasoning_levels: model.reasoning_levels.clone(),
                 // Node `reasoning.default ?? reasoning.values.at(-1)` (9.65, closes 917).
-                default_level: model
-                    .default_reasoning_level
-                    .clone()
-                    .or_else(|| model.reasoning_levels.last().cloned()),
+                default_level: model.default_level(),
                 current: session.is_some_and(|session| {
                     session.provider == model.provider && session.model == model.model
                 }),
