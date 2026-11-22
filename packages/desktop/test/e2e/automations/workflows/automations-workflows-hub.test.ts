@@ -159,6 +159,35 @@ async function clickVisibleTestIdByDom(
   );
 }
 
+// The save popover can sit next to a hidden copy from an earlier case, so the first `workflow-save-name` in the DOM
+// may not be the shown one. Write the name into the shown input (native setter plus an input event, as React reads it)
+// and wait until the shown "save directly" button turns enabled, writing again on each poll in case a re-render reset it.
+async function setVisibleSaveNameUntilSubmittable(
+  name: string,
+  { timeout = 15000, timeoutMsg }: { timeout?: number; timeoutMsg: string },
+): Promise<void> {
+  await browser.waitUntil(
+    async () =>
+      browser.execute((nextValue) => {
+        const shown = <T extends HTMLElement>(tid: string) =>
+          Array.from(document.querySelectorAll<T>(`[data-testid="${tid}"]`)).find(
+            (item) => item.getClientRects().length > 0,
+          );
+        const input = shown<HTMLInputElement>("workflow-save-name");
+        if (!input) return false;
+        if (input.value !== nextValue) {
+          const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")?.set;
+          setter?.call(input, nextValue);
+          input.dispatchEvent(new Event("input", { bubbles: true }));
+          return false;
+        }
+        const submit = shown<HTMLButtonElement>("workflow-save-submit");
+        return Boolean(submit && !submit.disabled);
+      }, name),
+    { timeout, timeoutMsg },
+  );
+}
+
 // The hub keeps an earlier detail page mounted while it hides it, so read the one that is shown.
 async function readVisibleTestIdText(currentTestId: string): Promise<string | null> {
   return browser.execute((tid) => {
@@ -1380,8 +1409,8 @@ describe("直接启动 E2E", () => {
     // 6) "Save" → popover → save directly as-is: no model turn involved; what gets written is the exact script this run executed.
     await clickVisibleTestIdByDom("workflow-save-open", { timeoutMsg: "「保存」不可点击" });
     await waitForTestIdByDom("workflow-save-popover", { timeoutMsg: "点「保存」后没有弹层" });
-    await setInputValueByTestIdDom("workflow-save-name", LAUNCH_SAVE_NAME, {
-      timeoutMsg: "保存弹层没有名称输入框",
+    await setVisibleSaveNameUntilSubmittable(LAUNCH_SAVE_NAME, {
+      timeoutMsg: "保存弹层的名称没有写进去，或「直接保存」一直不可点",
     });
     await clickVisibleTestIdByDom("workflow-save-submit", {
       timeoutMsg: "保存弹层没有「直接保存」",
