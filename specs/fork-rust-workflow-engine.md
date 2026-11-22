@@ -5700,9 +5700,9 @@ Classes: (a) test race or stale assertion, (b) box environment gap, (c) TS or No
 
 **Causes and fixes (each fix has a test seen red first, unless noted).**
 
-- **A choice change left the slash catalog stale** (user-choice, gray-disabled DWG-23; class c; e5945a047). Turning the
+- **A choice change left the slash catalog stale** (user-choice, gray-disabled DWG-23; class c; e5945a047, folded into the session store in b439c36d3). Turning the
   workflow choice off and on did not refetch the cached slash catalogs, so `/workflow` stayed listed (or missing) until a
-  restart. `packages/ui/src/store/slashCatalogRevision.ts` keeps a revision the availability hook bumps on a mode change,
+  restart. `packages/ui/src/store/zcodeSessionStore.ts` keeps a revision the availability hook bumps on a mode change,
   and `useDraftConfigControl` keys its catalog on it. Red first: `packages/ui/test/slashCatalogRevision.test.ts` (in the
   fork manifest).
 - **The English run card said "agents"** (english-dark; class c; ea22ee9cb). The card plural family read "N agent(s)"
