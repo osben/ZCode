@@ -63,8 +63,8 @@ pub struct Refusal {
 }
 
 /// Node `createModelCatalogPort`'s entries: the catalog's models, the session's marked `current`. The default level is
-/// the last level: Rust's catalog carries no configured default, and the platform's own fallback is the last level too
-/// (divergence 917).
+/// the model's configured default when its rule sets one, else the last level (Node `reasoning.default ??
+/// values.at(-1)`; 9.65, closes 917).
 pub fn catalog_entries(
     catalog: &ModelCatalog,
     session: Option<&ModelSelection>,

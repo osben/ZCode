@@ -89,15 +89,6 @@ export const workflowFormatParamsSchema = z.discriminatedUnion("kind", [
   z.object({ kind: z.literal("analysis"), scriptText: z.string() }).strict(),
   z
     .object({
-      kind: z.literal("display"),
-      scriptText: z.string(),
-      // Node's resolveInput writes `model_bindings` before the window is decided; a script that names a model opens its
-      // window only when the bindings are given.
-      modelBindings: z.record(z.string(), z.string()).optional(),
-    })
-    .strict(),
-  z
-    .object({
       kind: z.literal("runList"),
       input: z.record(z.string(), z.unknown()),
       listed: listedSchema,

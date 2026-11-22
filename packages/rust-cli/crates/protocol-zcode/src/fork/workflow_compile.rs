@@ -71,29 +71,6 @@ pub async fn analysis(helper: &NodeHelper, script_text: &str) -> Result<Value, R
     parse_analysis(&reply)
 }
 
-/// The CreateWorkflow confirmation window of `script_text`, as Node builds it (`null` when Node opens no window).
-/// `model_bindings` is the script's model table as `resolveInput` writes it; a script that names a model opens its window
-/// only with the bindings.
-pub async fn display(
-    helper: &NodeHelper,
-    script_text: &str,
-    model_bindings: Option<&Map<String, Value>>,
-) -> Result<Option<Value>, RpcError> {
-    let reply = forward(helper, FORMAT, &display_params(script_text, model_bindings)).await?;
-    parse_display(&reply)
-}
-
-pub(crate) fn display_params(
-    script_text: &str,
-    model_bindings: Option<&Map<String, Value>>,
-) -> Value {
-    let mut params = json!({"kind": "display", "scriptText": script_text});
-    if let Some(bindings) = model_bindings {
-        params["modelBindings"] = Value::Object(bindings.clone());
-    }
-    params
-}
-
 /// The ListWorkflowRuns text for `input`, from the run port's `listed` result for that query. `working_directory` is the
 /// session's cwd, which Node's handler reads.
 pub async fn run_list_text(
@@ -152,14 +129,6 @@ pub(crate) fn run_detail_params(
         "detail": detail.cloned().unwrap_or(Value::Null),
         "workingDirectory": working_directory,
     })
-}
-
-pub(crate) fn parse_display(reply: &Value) -> Result<Option<Value>, RpcError> {
-    match reply.get("display") {
-        Some(Value::Null) => Ok(None),
-        Some(value) if value.is_object() => Ok(Some(value.clone())),
-        _ => Err(malformed()),
-    }
 }
 
 pub(crate) fn parse_text(reply: &Value) -> Result<String, RpcError> {

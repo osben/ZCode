@@ -1,5 +1,4 @@
 import {
-  CREATE_WORKFLOW_TOOL_NAME,
   GET_WORKFLOW_RUN_TOOL_NAME,
   LIST_WORKFLOW_RUNS_TOOL_NAME,
   ListWorkflowRunsInputSchema,
@@ -159,9 +158,9 @@ function formatted(entry: NodeToolEntry, output: unknown): string {
 }
 
 /**
- * `helper/workflow/format`: `analysis` is the analysis of `analyzeWorkflowScript`, for the window graph; `display` is the
- * CreateWorkflow confirmation window (Node's `prepareApproval`, so the same `displayOfAnalysis` path as the dialog);
- * `runList` and `runDetail` run Node's handler on the port data Rust sends and format the output with Node's formatter.
+ * `helper/workflow/format`: `analysis` is the analysis of `analyzeWorkflowScript`, for the window graph, with the
+ * CreateWorkflow confirmation display of that same analysis (Node's `displayOfAnalysis`, ocr #618); `runList` and
+ * `runDetail` run Node's handler on the port data Rust sends and format the output with Node's formatter.
  */
 export async function formatWorkflowForRust(raw: unknown) {
   const params = parseParams(workflowFormatParamsSchema, raw);
@@ -170,17 +169,6 @@ export async function formatWorkflowForRust(raw: unknown) {
       // ocr #618: the display of this same analysis (Node displayOfAnalysis), so the Rust side never analyzes twice.
       const analysis = analyzeWorkflowScript(params.scriptText);
       return { analysis, display: displayOfAnalysis(analysis) ?? null };
-    }
-    case "display": {
-      // Node's prepareApproval reads the input resolveInput produces, where `model_bindings` sits.
-      const decision = nodeTool(CREATE_WORKFLOW_TOOL_NAME).prepareApproval?.({
-        script: params.scriptText,
-        ...(params.modelBindings === undefined ? {} : { model_bindings: params.modelBindings }),
-      });
-      return {
-        display:
-          decision?.gate === "ask" && decision.display !== undefined ? decision.display : null,
-      };
     }
     case "runList": {
       // Node's own input schema, parsed here so a bad query is -32602 instead of a ZodError from inside the handler.
