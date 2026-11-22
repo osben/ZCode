@@ -121,14 +121,13 @@ export function jsonShape(value: unknown): unknown {
 }
 
 /**
- * A tool entry of Node's `builtInTools` as far as the format methods use it. The formatters and the window display are
- * Node's own, reached through the entry, so nothing here re-implements them (specs/fork-rust-workflow-engine.md, 9.17).
+ * A tool entry of Node's `builtInTools` as far as the format methods use it. The handlers and the formatters are Node's
+ * own, reached through the entry, so nothing here re-implements them (specs/fork-rust-workflow-engine.md, 9.17).
  */
 interface NodeToolEntry {
   metadata: { name: string };
   handler: (input: unknown, context: unknown) => Promise<unknown>;
   formatModelContent?: (output: unknown) => unknown;
-  prepareApproval?: (input: unknown) => { gate: string; display?: unknown };
 }
 
 function nodeTool(name: string): NodeToolEntry {
