@@ -320,6 +320,26 @@ async fn resume_answers_with_the_backgrounded_guidance_for_the_run() {
     assert_eq!(port.resumed.lock().unwrap().as_slice(), ["dwfrun-1"]);
 }
 
+/// W9h (9.64): Node `createResumeWorkflowRunDisplay` gives `{kind: "resume_workflow_run", runId}`; without the kind the
+/// chat row is not joined to the run, so the resumed run's compact card never shows (resume DWU-03).
+#[tokio::test]
+async fn resume_carries_nodes_resume_card_display() {
+    let (sessions, _port) = sessions(FakePort {
+        resume: Some(json!({"ok": true, "runId": "dwfrun-1"})),
+        ..FakePort::default()
+    });
+    let tool = tool(tool_names::RESUME_WORKFLOW_RUN, sessions);
+    let (tx, _rx) = mpsc::channel(4);
+    let output = tool
+        .call(json!({"run_id": "dwfrun-1"}), context("/w"), tx)
+        .await
+        .expect("answers");
+    assert_eq!(
+        output.display,
+        json!({"kind": "resume_workflow_run", "runId": "dwfrun-1"})
+    );
+}
+
 #[tokio::test]
 async fn resume_maps_each_refusal_to_its_message_and_keeps_the_discriminator_prefix() {
     let cases: [(Value, &str); 6] = [
