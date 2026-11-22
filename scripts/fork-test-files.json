@@ -413,6 +413,7 @@
   "packages/ui/test/uiFonts.test.ts",
   "packages/ui/test/ukLocaleTranslationCoverage.test.ts",
   "packages/ui/test/useAppPanelsTerminalWorktree.test.ts",
+  "packages/ui/test/useComposerVoiceInputEscapeDuringStart.test.ts",
   "packages/ui/test/useDictationTranscriptHandler.test.ts",
   "packages/ui/test/useGitBranchSwitcherWorktreeRace.test.ts",
   "packages/ui/test/useNowMinute.test.ts",

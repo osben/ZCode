@@ -219,6 +219,23 @@ idle ──点击──▶ requesting ──started──▶ recording ──点
 - 状态只由本地操作和服务端事件驱动，不额外加客户端超时。服务端有 start 5s、idle 15s、finish 15s 的超时，到期会发出错误并断开。
 - 同一时间只允许一个识别会话。
 
+### `requesting` 阶段的取消
+
+本地引擎（fork）在 Host 的 `start` 里加载模型，`start` 可能持续数秒。`start` 返回之前用户按 Escape 或切换会话，attempt 已经结束，`start` 返回后不再打开麦克风。
+
+```text
+Renderer hook（attempt owner）            Window Host（本地引擎）
+  点击 → requesting，ensureAccess
+  start(attemptId) ─────────RPC────────▶ 建立会话，加载模型 ……
+  Escape → cancel(attemptId) ──RPC─────▶ 同一通道按顺序送达：释放会话，加载完成后不发 started
+           attempt 清空，状态回到 idle
+  ◀──────── start 返回
+  attempt 已不是当前值 → 直接返回，不调用 getUserMedia
+```
+
+- 判断依据只有 attempt id：`ensureAccess` 返回后、`start` 返回后、`startPcmCapture` 返回后各检查一次，attempt 不是当前值就停止。
+- 验收：单元测试 `packages/ui/test/useComposerVoiceInputEscapeDuringStart.test.ts`（`start` 挂起时按 Escape，`start` 返回后不调用 `startPcmCapture`）。E2E 无法让本地引擎的 `start` 停在加载中，所以不加 E2E 用例。
+
 ## 链路
 
 ```text

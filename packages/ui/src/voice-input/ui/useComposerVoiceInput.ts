@@ -307,6 +307,9 @@ export function useComposerVoiceInput(options: {
         ? { modelId: voice.modelId, quant: voice?.quantByModel?.[voice.modelId] }
         : undefined,
     });
+    // Escape or a session change while the host was starting (the local engine loads its model
+    // here) already cancelled this attempt: do not open the microphone for it.
+    if (attemptRef.current !== attempt) return;
     try {
       const capture = await startPcmCapture({
         onChunk: (chunk, peak) => {
