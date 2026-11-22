@@ -134,6 +134,31 @@ async function readTestIdValue(currentTestId: string): Promise<string | null> {
   }, currentTestId);
 }
 
+// W9h: an earlier case's session pane stays mounted while hidden, with its own run card and side pane. The first
+// match in the DOM can be that pane's (the "ok" run's chip, whose script matched another saved file), so click the
+// shown one.
+async function clickVisibleTestIdByDom(
+  currentTestId: string,
+  { timeout = 10000, timeoutMsg }: { timeout?: number; timeoutMsg: string },
+): Promise<void> {
+  await browser.waitUntil(
+    async () =>
+      browser.execute((tid) => {
+        const shown = Array.from(
+          document.querySelectorAll<HTMLElement>(`[data-testid="${tid}"]`),
+        ).find(
+          (item) =>
+            item.getClientRects().length > 0 &&
+            !(item instanceof HTMLButtonElement && item.disabled),
+        );
+        if (!shown) return false;
+        shown.click();
+        return true;
+      }, currentTestId),
+    { timeout, timeoutMsg },
+  );
+}
+
 // The hub keeps an earlier detail page mounted while it hides it, so read the one that is shown.
 async function readVisibleTestIdText(currentTestId: string): Promise<string | null> {
   return browser.execute((tid) => {
@@ -650,8 +675,9 @@ async function readTestIdPrefixText(prefix: string): Promise<string | null> {
 async function readLaunchCardStatus(): Promise<string | null> {
   return browser.execute(
     (prefix) => {
+      // The shown card: an earlier case's session pane stays mounted, hidden, with its own completed card (W9h).
       const card = Array.from(document.querySelectorAll<HTMLElement>("[data-testid]")).find(
-        (item) => item.dataset.testid?.startsWith(prefix),
+        (item) => item.dataset.testid?.startsWith(prefix) && item.getClientRects().length > 0,
       );
       return card?.getAttribute("data-workflow-run-status") ?? null;
     },
@@ -776,7 +802,7 @@ describe("直接启动 E2E", () => {
 
     // 4b) The card's ⤢ opens the run details side pane: the provenance section says "launched by you from the workflows
     //     hub", plus the scope and the arg value just entered.
-    await clickTestIdByDom("workflow-card-open-details", {
+    await clickVisibleTestIdByDom("workflow-card-open-details", {
       timeoutMsg: "run 卡上没有「打开运行详情」",
     });
     await browser.waitUntil(async () => (await readLaunchProvenanceText()) !== null, {
@@ -1201,7 +1227,7 @@ describe("直接启动 E2E", () => {
       timeout: 60000,
       timeoutMsg: "run 卡没有进入 running",
     });
-    await clickTestIdByDom("workflow-card-open-details", {
+    await clickVisibleTestIdByDom("workflow-card-open-details", {
       timeoutMsg: "run 卡上没有「打开运行详情」",
     });
     await waitForTestIdByDom("workflow-run-configure", {
@@ -1214,7 +1240,7 @@ describe("直接启动 E2E", () => {
 
     // 3) Configure → stepper minus one → apply: only the bound changes while the run is in flight, taking effect in
     //    place (no new run).
-    await clickTestIdByDom("workflow-run-configure", { timeoutMsg: "Configure 不可点击" });
+    await clickVisibleTestIdByDom("workflow-run-configure", { timeoutMsg: "Configure 不可点击" });
     await waitForTestIdByDom("workflow-run-settings-popover", {
       timeoutMsg: "点 Configure 后没有设置弹层",
     });
@@ -1230,14 +1256,16 @@ describe("直接启动 E2E", () => {
     );
     // Not yet changed: no consequence sentence (before the change, either sentence could read wrong).
     expect(await readTestIdText("workflow-run-settings-consequence")).toBe("");
-    await clickTestIdByDom("workflow-run-settings-bound-decrease", {
+    await clickVisibleTestIdByDom("workflow-run-settings-bound-decrease", {
       timeoutMsg: "设置弹层没有「降低最大并发数」",
     });
     // Only the bound changed and the run is in flight: the consequence sentence is the "in-place" one, not "will stop the current run".
     expect(await readTestIdText("workflow-run-settings-consequence")).toMatch(
       /^(立即应用到当前运行，不会新起一次运行。|Applies to this run right away; no new run is started\.)$/,
     );
-    await clickTestIdByDom("workflow-run-settings-apply", { timeoutMsg: "设置弹层没有「应用」" });
+    await clickVisibleTestIdByDom("workflow-run-settings-apply", {
+      timeoutMsg: "设置弹层没有「应用」",
+    });
 
     // 4) The chip appears, with the bound's label and the lowered bound as its number.
     await browser.waitUntil(
@@ -1288,7 +1316,7 @@ describe("直接启动 E2E", () => {
 
     // 2) ⤢ opens the run side pane: a run launched from the hub is naturally "Saved" by the name rule — the chip sits in
     //    the status line and the verb is "Run again".
-    await clickTestIdByDom("workflow-card-open-details", {
+    await clickVisibleTestIdByDom("workflow-card-open-details", {
       timeoutMsg: "run 卡上没有「打开运行详情」",
     });
     await waitForTestIdByDom("workflow-saved-chip", {
@@ -1301,7 +1329,7 @@ describe("直接启动 E2E", () => {
     });
 
     // 3) The chip deep-links into that workflow's detail page in the hub.
-    await clickTestIdByDom("workflow-saved-chip", { timeoutMsg: "「已保存」芯片不可点击" });
+    await clickVisibleTestIdByDom("workflow-saved-chip", { timeoutMsg: "「已保存」芯片不可点击" });
     await waitForTestIdByDom(TID_WORKFLOW_DETAIL, {
       timeout: 20000,
       timeoutMsg: "点芯片后没有进入工作流详情页",
@@ -1340,7 +1368,7 @@ describe("直接启动 E2E", () => {
     );
     expect(sessionTaskTestId).not.toBeNull();
     await clickTestIdByDom(sessionTaskTestId!, { timeoutMsg: "侧栏里点不到发起它的会话" });
-    await clickTestIdByDom("workflow-card-open-details", {
+    await clickVisibleTestIdByDom("workflow-card-open-details", {
       timeout: 20000,
       timeoutMsg: "回到会话后 run 卡上没有「打开运行详情」",
     });
@@ -1350,12 +1378,14 @@ describe("直接启动 E2E", () => {
     });
 
     // 6) "Save" → popover → save directly as-is: no model turn involved; what gets written is the exact script this run executed.
-    await clickTestIdByDom("workflow-save-open", { timeoutMsg: "「保存」不可点击" });
+    await clickVisibleTestIdByDom("workflow-save-open", { timeoutMsg: "「保存」不可点击" });
     await waitForTestIdByDom("workflow-save-popover", { timeoutMsg: "点「保存」后没有弹层" });
     await setInputValueByTestIdDom("workflow-save-name", LAUNCH_SAVE_NAME, {
       timeoutMsg: "保存弹层没有名称输入框",
     });
-    await clickTestIdByDom("workflow-save-submit", { timeoutMsg: "保存弹层没有「直接保存」" });
+    await clickVisibleTestIdByDom("workflow-save-submit", {
+      timeoutMsg: "保存弹层没有「直接保存」",
+    });
     await browser.waitUntil(async () => fileExists(LAUNCH_SAVE_FILE), {
       timeout: 20000,
       timeoutMsg: "直接保存后磁盘上没有出现工作流文件",
@@ -1398,7 +1428,7 @@ describe("直接启动 E2E", () => {
     });
 
     // 2) ⤢ opens the run side pane → the only artifact is the primary artifact row → artifact tab, whose body is markdown.
-    await clickTestIdByDom("workflow-card-open-details", {
+    await clickVisibleTestIdByDom("workflow-card-open-details", {
       timeoutMsg: "run 卡上没有「打开运行详情」",
     });
     await clickTestIdByDom(TID_WORKFLOW_ARTIFACT_CARD, {
@@ -1424,7 +1454,7 @@ describe("直接启动 E2E", () => {
         await openPath.update();
         return openPath.mock.calls.map(([path]) => String(path));
       };
-      await clickTestIdByDom("workflow-artifact-open-as-file", {
+      await clickVisibleTestIdByDom("workflow-artifact-open-as-file", {
         timeoutMsg: "产物 tab 头部没有「作为文件打开」",
       });
       await browser.waitUntil(async () => (await readOpenedPaths()).length === 1, {
@@ -1437,7 +1467,7 @@ describe("直接启动 E2E", () => {
       expect(await readFile(openedPath!, "utf-8")).toBe(LAUNCH_ARTIFACT_MARKDOWN);
 
       // 4) Click again: the same version opens the same copy.
-      await clickTestIdByDom("workflow-artifact-open-as-file", {
+      await clickVisibleTestIdByDom("workflow-artifact-open-as-file", {
         timeoutMsg: "产物 tab 头部没有「作为文件打开」",
       });
       await browser.waitUntil(async () => (await readOpenedPaths()).length === 2, {
