@@ -1846,7 +1846,8 @@ The W7 estimate is about 21,000 lines (it was 2,500). The W6b parts 2b, 3, 5 and
 
 52. A session with no gate record sees no workflow tool. Node reads an absent `dynamicWorkflowEnabled` on a protocol session as enabled, and it fails closed only in `appRuntimePreferences`. The Rust record is fail-closed at every layer (W1 `resolve_gate` and this filter), so the Host must send the flag for every session that should have the tools.
 53. The session-less views (`tools()`, `find()`) never list or find a workflow tool. Node has one registry per runtime and no session-less view, so the split is structural: it keeps a tool from reaching a session whose gate is unknown.
-54. On-demand defers every workflow tool for every on-demand session, and nothing activates it. Node's `dynamic-workflow-activation.ts` (DWG-09 and DWG-10) activates on the `/workflow` turn and on cold-recovery history, and persists an entry. Rust has none of that yet, so an on-demand session finds the tools only through ToolSearch. The activation port is a W7 follow-up, before the first tool registers.
+54. Superseded by 9.64 (W9h): an on-demand session gets no workflow tool until it activates, as in Node. The original text:
+    On-demand defers every workflow tool for every on-demand session, and nothing activates it. Node's `dynamic-workflow-activation.ts` (DWG-09 and DWG-10) activates on the `/workflow` turn and on cold-recovery history, and persists an entry. Rust has none of that yet, so an on-demand session finds the tools only through ToolSearch. The activation port is a W7 follow-up, before the first tool registers.
 55. (Closed in 9.36, divergence 311.) The incognito `automationTools` exclusion (Node `resolveRuntimeDynamicWorkflowToolsIncluded`) is not in the gate yet. `IncognitoProfiles` is not reachable from `Server`, so the gate source cannot read it. This is a gap to close before any tool registers (W7-7 wires the source with the first tool).
 56. (Closed in 9.36, divergence 310.) `Extensions.dynamic_workflow` is set by no entry point. `Server` is built from a kernel that already holds the extensions, so a shared gate table, created before the kernel and held by both, is the wiring. It is inert in W7-1 because `workflow_tools()` returns nothing, and W7-7 adds it with the first tool.
 57. The generated asset and the registration use Node's `handlers/index.ts` order (create, amend, save, eval, list runs, get run, resume, resolve, fill, list saved). The W1 constant `tool_names::DYNAMIC_WORKFLOW_TOOLS` keeps the W1 order (list saved after save). Tests compare the set, not the order of that constant.
@@ -2963,7 +2964,7 @@ What is built:
      `os.homedir()`. The two match where the app's home is the user's home; a HOME override changes both alike.
 317. The standalone CLI (TUI and headless) gets no workflow tools here: only the app server sets `dynamic_workflow`. Node
      registers them in every entry point when the flag is on. Not opened by the Host yet, so nothing is lost today.
-318. On-demand activation (9.18 divergence 54) is still open. An on-demand session finds the tools only through ToolSearch.
+318. Superseded by 9.64 (W9h), with 54. The original text: On-demand activation (9.18 divergence 54) is still open. An on-demand session finds the tools only through ToolSearch.
      Node's activation on the `/workflow` turn and on cold recovery is not ported.
 319. Divergence 53 is unchanged: the session-less views never list or find a workflow tool.
 320. A record is removed when its session is deleted (`session_delete`), as before; the table is memory only, as Node's
@@ -4594,7 +4595,8 @@ controls answer `capabilityUnsupported` while the gate is off.
      (`agents/src/task_stop_run_tests.rs`) covers it. The listing is verified too: a hub-started run is a live run of its
      session, so `background_runs` lists it, titled by its saved name. The test is
      `runtime` `workflow_run_start_tests::a_hub_started_run_is_listed_as_a_background_work_of_its_session`. Not a blocker.
-761. A script that names models is not bound and not refused. Node binds them with `bindScriptModels` and reports an unbound
+761. Closed in 9.64 (W9h): `start_saved` binds the script's models against the run service's catalog and refuses an
+     unbound name as 9011 under `compile_failed`, as Node does. The original text: A script that names models is not bound and not refused. Node binds them with `bindScriptModels` and reports an unbound
      name as `compile_failed`. CreateWorkflow in Rust has no binding either (9.39), so the two agree, and both differ from Node.
 762. The launch carries no `phaseNames` or `phaseAlongside` (Node passes the display phases). The run's phase table comes from
      the compile check only, as CreateWorkflow's does (9.39).
@@ -4610,7 +4612,8 @@ controls answer `capabilityUnsupported` while the gate is off.
      (re-check under the session's queue, or route the admission through the actor as `sendText` does).
      The settings route has no busy check: Node's `amendWorkflowRunSettings` does not call `hasActiveOrQueuedTurnWork`
      (`dynamic-workflow-run-settings.ts`), so none is made here.
-766. Not verified: Node calls `ensureSessionPersisted(name)` before the submit, because the actor's `session_task_link` needs
+766. Closed in 9.64 (W9h): `start_saved` calls the sink's `persist_parent` after the compile and before the activation,
+     and the protocol adopts the written title before the records. The original text: Node calls `ensureSessionPersisted(name)` before the submit, because the actor's `session_task_link` needs
      the parent row. This host relies on the session row that createSession writes. W9b checks a hub start on a fresh session.
 767. A closed gate (or no gate record) answers `fault.command.capabilityUnsupported`, as Node answers a missing capability.
      Node's exact answer with its feature off was not separately read; the spec's first section says the run controls answer
@@ -5672,6 +5675,135 @@ the fill path still passes none (with 512).
 **Gate.** `cargo fmt --all --check` clean. `cargo clippy --workspace --all-targets --locked -- -D warnings` rc 0 (no allow
 attributes added). Lib tests: runtime 394, workflow 468, kernel-api 461, protocol-zcode 1075, node-store 366 (1 ignored,
 existing), tools 728, session 422, node-records 36; cli bin tests 565.
+
+### 9.64 W9h: the workflow desktop E2E specs that failed on both runtimes (as built, gate on)
+
+Status: done. Node passes all eight specs. Rust passes six; confirm (DWC-01, 02, 04) and one hub case (929) are not met.
+
+Before: the full sweeps on fork e9b73905d (Node `out-final-node`, Rust `out-final-rust`). After: runs 18 (Rust) and 19 (Node)
+in the OrbStack box on the branch at 96361b103 (the later commits change only this spec), which has W9i (#622, 63607d8ae) merged in. CI runs no desktop wdio E2E (`pr-checks.yml`
+and `scheduled-full-tests.yml` run unit, typecheck and build jobs only), so these specs are checked only in the box;
+nothing here changes a CI job.
+
+| Spec                        | Node before | Rust before | Node after | Rust after | Class           | First failing step and fix                                                                                                                                                |
+| --------------------------- | ----------- | ----------- | ---------- | ---------- | --------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| gray-always-on-confirm      | FAIL        | FAIL        | PASS 4/4   | FAIL 3/4   | a; Rust not met | DWC-02 pressed a digit, which only moves the selection (spec waits for focus, then Enter); Rust DWC-01/02/04 need divergence 141 and Refine                               |
+| gray-always-on-english-dark | FAIL        | FAIL        | PASS       | PASS       | c               | the card's agent plural (en-US now "subagent")                                                                                                                            |
+| gray-always-on-resume       | PASS        | FAIL        | PASS 4/4   | PASS 4/4   | a, d            | Node: the last ask raced the fill turn (held). Rust: GUI Resume, the stopped-run fill, the replayed hole notice, the resume card display                                  |
+| gray-always-on-snippet      | FAIL        | FAIL        | PASS       | PASS       | a, d            | the fixture's outside-workspace paths; Rust: the snippet display kind and the skill-gate text                                                                             |
+| gray-always-on-user-choice  | FAIL        | FAIL        | PASS       | PASS       | c               | the slash catalog was not refetched on a choice change                                                                                                                    |
+| gray-disabled               | FAIL        | FAIL        | PASS       | PASS       | c               | DWG-23, the same stale slash catalog                                                                                                                                      |
+| gray-on-demand              | FAIL        | FAIL        | PASS       | PASS       | c, d            | `/compact` threw (the dropped hook methods); Rust offered the tools before activation                                                                                     |
+| automations-workflows-hub   | FAIL        | FAIL        | PASS 10/10 | FAIL 9/10  | a, d            | no project in a fresh fork home; the unseeded many-args file; hidden-pane clicks and reads; Rust: the parent row and the script models. Rust "唯一在跑" is divergence 929 |
+
+Classes: (a) test race or stale assertion, (b) box environment gap, (c) TS or Node product bug, (d) Rust bug.
+
+**Causes and fixes (each fix has a test seen red first, unless noted).**
+
+- **A choice change left the slash catalog stale** (user-choice, gray-disabled DWG-23; class c; e5945a047). Turning the
+  workflow choice off and on did not refetch the cached slash catalogs, so `/workflow` stayed listed (or missing) until a
+  restart. `packages/ui/src/store/slashCatalogRevision.ts` keeps a revision the availability hook bumps on a mode change,
+  and `useDraftConfigControl` keys its catalog on it. Red first: `packages/ui/test/slashCatalogRevision.test.ts` (in the
+  fork manifest).
+- **The English run card said "agents"** (english-dark; class c; ea22ee9cb). The card plural family read "N agent(s)"
+  while the rest of the English copy and the spec say "subagent(s)". The `en-US` family now reads "N subagent(s)" and "N
+  subagent(s) working". Red first: `packages/ui/test/intlPlural.test.ts`.
+- **A digit only moves the selection** (confirm DWC-02 on Node; class a; ea22ee9cb). The fork's PermissionDialog
+  (a6cfcca1c) makes a digit key move the selection without answering, so no stray digit can approve or deny; the upstream
+  spec pressed 3 alone. The spec now waits for the reject option to be focused and presses Enter. The product change is
+  on purpose; spec only.
+- **The snippet fixture read outside the workspace from the wrong place** (snippet DWY-02; class a; e5945a047). The
+  fixture and spec use `.out` and `../dwy-outside-workspace.ts`, the paths the spec's own setup writes. Spec and fixture
+  only.
+- **`/compact` threw** (gray-on-demand DWO-02 on Node; class c; fdc9d5bc4). The v3.18.0 merge (#402) dropped the
+  `runPreCompactHooks`, `runPostCompactHooks` and `runSessionEndHooks` assignments from the runtime prototype, so
+  `/compact` failed with `this.runPreCompactHooks is not a function` and a session end ran no SessionEnd hook. They are
+  assigned again in `core/src/runtime/methods/index.ts`. Red first: the new PreCompact/PostCompact test in
+  `core/tests/runtime-hooks.test.ts`; its three SessionEnd tests were already red. The file was in no gate; it is now in
+  the fork manifest.
+- **The resumed run's last ask raced the fill turn** (resume DWU-03 on Node, intermittent; class a; a49b98b6f,
+  2446cce0c). The resumed script's next `agent().ask` answered while the fill turn was still open, so its notice was
+  steered into that turn and drew no notification row. The fixture holds that ask (`dwu-c-agent-group`,
+  `releaseAfterChunks` 2, `maxMatches` 1, marked as a controlled stream) and the spec releases it once the fill turn is
+  idle. Spec and fixture only.
+- **GUI Resume was unsupported under zcode-rs** (resume DWU-01..04 on Rust; class d; 95bcffeaf). The v4
+  `resumeWorkflowRun` command had no Rust handler. `fork/commands.rs` routes it and `workflow_run_commands.rs` resumes the
+  stopped run as the ResumeWorkflowRun tool does. Red first: the new command tests in `workflow_run_commands` tests.
+- **A fill of a stopped run opened the window** (resume DWU-03 on Rust; class d; 37ef30ef1). Node's `findWaitingHole`
+  refuses `hole_not_waiting` before any window for a stopped, completed or errored run; Rust went on to the permission
+  ask. `workflow_fill_hole.rs` `validate_input` now refuses first, with Node's texts. Red first:
+  `a_hole_of_a_stopped_or_settled_run_is_refused_before_any_window`.
+- **A resumed run told the model its old hole again** (resume DWU-03 on Rust; class d; 61818fbac). A resumed run attaches
+  a progress sink, and `DriverOwner::set_progress` replays the whole journal through it, earlier lifetimes included. The
+  earlier lifetime's `hole-reached` posted a second hole notice (run 11: one notice with the old `reachedAt`, steered into
+  the ResumeWorkflowRun result, then the re-reach), so the spec counted three upstream requests where Node makes two. The
+  replay now goes through `RunProgress::backlog` and `WorkflowRunProgressPort::record_backlog`: the deltas and the
+  reminder clocks are rebuilt, no notice is posted (Node's port sees live events only). Both trait methods default to the
+  live path, so other ports are unchanged. Red first: `the_journal_reaches_a_new_sink_as_backlog` (runtime),
+  `a_backlog_row_reaches_the_port_as_backlog` (workflow), `a_backlog_hole_reached_posts_no_notice` (protocol).
+- **The resumed run had no compact card** (resume DWU-03, DWU-04 on Rust; class d; ac2f59acb). Node's
+  `createResumeWorkflowRunDisplay` gives `{kind: "resume_workflow_run", runId}`; Rust sent `{ok, runId}`, so the chat row
+  was not joined to the run and "工作流实例已恢复" never showed. DWU-04 failed with it (it reads the completion of the run
+  DWU-03 resumes). Red first: `resume_carries_nodes_resume_card_display`.
+- **The snippet card had no duration and the gate text said "snippet"** (snippet DWY-01/04 and DWY-03 on Rust; class d;
+  7488411ba, 467469d16). The display kind is `eval_workflow_snippet` with Node's bounds, carrying the "N ms" duration; the
+  skill-gate refusal is Node's shared text (core `workflow-skill-gate.ts`). Red first: the display test in
+  `workflow_observation_display` tests and `without_the_dynamic_workflows_skill_the_call_is_refused_with_428` (now exact
+  text).
+- **On-demand offered the workflow tools before activation** (gray-on-demand DWO-01..04 on Rust; class d; 277079d4b).
+  Node registers no workflow tool in an on-demand session until it activates (`enabled ∧ (¬onDemand ∨ activated)`), and
+  the Agent description carries the CreateWorkflow line exactly when the tools are included
+  (`buildAgentProviderDescription`). Rust deferred them behind ToolSearch instead. `runtime/src/workflow_gate.rs` now
+  leaves them out until activation (the `OnDemand` deferring wrapper is removed), and `agents/src/agent_tool.rs` appends
+  Node's line when `CreateWorkflow` is offered. Red first:
+  `on_demand_leaves_every_workflow_tool_out_until_the_session_activates`,
+  `an_activated_on_demand_session_sees_the_workflow_tools_and_another_does_not`,
+  `the_agent_description_names_create_workflow_only_when_the_tool_is_offered`. This supersedes divergences 54 (9.18) and
+  318: an on-demand session no longer finds the tools through ToolSearch before activation.
+- **The hub assumed a project seeded from settings** (automations-workflows-hub, both runtimes; class a; fdab8f4e1). The
+  upstream spec expects the default workspace's project group in a fresh home, because upstream's first project migration
+  builds projects from settings `lastWorkspaceSession`. The fork's Host constructs `TaskIndexRepo` with no migration
+  settings (`services/src/node.ts`; `taskIndexRepo.ts`: "the default Host path seeds no projects", since a6cfcca1c), so a
+  fresh home has no project until one is added or a task is created. The fork's behaviour is on purpose:
+  `prepareHubCase` adds the default workspace through the sidebar (`ensureLocalProjectRow`, as
+  `project-sidebar-deferred-rows` does). Spec only.
+- **The hub's many-args case had no file, and four reads raced or read the wrong node** (hub, both runtimes; class a;
+  9cf7c92b5, 3a8561daf, 96361b103). The many-args case was added to the spec without its seed (since #402); its
+  `before()` now writes it. The hover wait re-hovers on each poll. The concurrency stepper's value is an input's `value`,
+  not its text (it read "", so the bound became 0). An earlier case's session pane stays mounted while hidden, with its own
+  completed run card: the save case clicked that pane's open-details and "Saved" chip, the "ok" run's, whose script
+  (`return { ok: true };`) matched the many-args file first in `findSavedWorkflowForRunOp`'s script scan, so the hub
+  opened the many-args detail (a probe of the deep link showed `name: direct-launch-many-args` with matching project
+  keys). The spec now clicks and reads the shown element. The artifact case failed only because the save case left the
+  app on the automations page. Spec only.
+- **A hub start named no models and persisted no parent** (hub on Rust; class d; 894b74ca0, 7abdc0804). `start_saved`
+  now calls the sink's `persist_parent` before the activation (Node `ensureSessionPersisted(name)`) and binds the models
+  the script names against the run service's catalog (Node `bindScriptModels`): an unbound name is a 9011 diagnostic
+  under `compile_failed` and nothing starts. Red first: the clean-start test's `persisted` assertion (left `[]`),
+  `a_script_naming_an_unbound_model_is_refused_as_a_compile_failure`, `the_models_a_saved_script_names_are_bound_on_its_launch`.
+  Closes 761 and 766.
+
+**Rust-only, not met.**
+
+- gray-always-on-confirm DWC-01, DWC-02 and DWC-04 need the permission window's settings rows
+  (`workflow-permission-settings-model`, `workflow-permission-settings-bound`) and the Refine feedback textarea. That is
+  divergence 141 (no window adjustments: `applyInputAdjustments` and the `adjustable_settings` fill) plus the Refine path
+  (a projection option, the broker's deny with `workflow_refine_feedback` steered into the turn, and executor turn
+  control), a multi-layer port outside this PR. DWC-03 passes. Node passes all four.
+- automations-workflows-hub "唯一在跑的工作流" (the sidebar run line): divergence 929 below.
+
+**Divergences.**
+
+929. Under zcode-rs a hub-started running run grows no sidebar run line. A probe of the box DOM (run 17) found no
+     `[data-workflow-run-line]` in any task row while the run card at the top of the session showed the run running, so
+     the sessions-index row carries no `workflowActivity`. Checked and not the cause: `workflow_activity::activity` (the
+     port of `deriveSessionWorkflowActivity`), the delta fold `apply_workflow_run_deltas`, and the one row writer
+     (`LiveSession::write`, gated on `indexed` and `still_draft`). Not found yet; Node passes the case.
+
+**Gate.** `cargo fmt --check` and `cargo clippy --workspace --all-targets -D warnings`; lib tests of kernel-api, workflow,
+runtime, protocol-zcode, tools, agents and session; `pnpm typecheck`, `test:fork` (two `acp-agent-runtime` process-tree
+tests fail on this Mac with or without this branch, which does not touch that package), `test:node`, `test-copy:check`,
+`lint` and the `rust-agent` checks.
 
 ### 9.65 W9i: the open workflow divergences 906, 911, 916–921 under zcode-rs (as built, gate off by default)
 
