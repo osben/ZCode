@@ -180,6 +180,10 @@ pub enum ToolError {
     Environment(#[from] EnvError),
     #[error("{message}")]
     Failed { message: String },
+    /// Fork: a failure that carries Node's structured `errorCode` (`ToolHandlerFailure.errorCode`), for a call-time refusal
+    /// of a tool whose decision-time refusals carry it too. It reaches the model as `Failed` does.
+    #[error("{message}")]
+    FailedWithCode { message: String, code: i32 },
     #[error("not implemented: {what}")]
     Unsupported { what: String },
 }
@@ -263,7 +267,8 @@ pub trait Tool: Send + Sync {
     /// Fork (9.66, divergence 141): Node `ToolEntry.applyInputAdjustments`. After the user approved the ask this tool raised
     /// in `tool_use` with settings changed in the window (`PermissionAnswer::Adjusted`), the tool turns the approved `input`
     /// and the changes into the input it runs, and keeps what it applied for its call (the pipeline never reads it).
-    /// `Ok(None)` leaves the input as it is; `Err` is the model-facing failure of the call, and nothing runs. The default
+    /// `Ok(None)` leaves the input as it is; `Err` is the model-facing failure of the call, and nothing runs (its text
+    /// reaches the model; a tool that has Node's `errorCode` for it returns `ToolError::FailedWithCode`). The default
     /// ignores the changes, as Node does for a tool that declares no such step.
     async fn apply_input_adjustments(
         &self,
@@ -271,7 +276,7 @@ pub trait Tool: Send + Sync {
         _input: &Value,
         _adjustments: &serde_json::Map<String, Value>,
         _context: &ToolUseContext,
-    ) -> Result<Option<Value>, String> {
+    ) -> Result<Option<Value>, ToolError> {
         Ok(None)
     }
 

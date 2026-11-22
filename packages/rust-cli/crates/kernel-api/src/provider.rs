@@ -182,6 +182,16 @@ impl Default for ModelCapabilities {
     }
 }
 
+impl CatalogModel {
+    /// Fork (9.67, closes 925): the level a request and the model picker use when none is chosen, Node's
+    /// `reasoning.default ?? values.at(-1)`. `None` for a model without levels.
+    pub fn default_level(&self) -> Option<String> {
+        self.default_reasoning_level
+            .clone()
+            .or_else(|| self.reasoning_levels.last().cloned())
+    }
+}
+
 /// 目录里的一个可选模型。
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct CatalogModel {

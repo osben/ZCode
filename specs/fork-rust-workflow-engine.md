@@ -2523,7 +2523,7 @@ draft that cannot be written; the run label. `saved_workflow_tests.rs` gains 3 r
      and the bounds.
 141. Closed in 9.66 (W9j) for CreateWorkflow: the ask carries `adjustable_settings`, the window's changes reach the tool
      (`PermissionAnswer::Adjusted`, `Tool::apply_input_adjustments`) and the result tells the model what changed. AmendWorkflow's
-     window still has no settings: divergence 930. The original text: No window adjustments. Node's `applyInputAdjustments`, the
+     window got the same in 9.67 (W9k), divergence 930. The original text: No window adjustments. Node's `applyInputAdjustments`, the
      `adjustable_settings` fill and the "the user adjusted the settings" sentence are not built. The user cannot change the limit
      or the model in the window.
 142. No model catalog port. `subagent_model` is refused on every call with Node's no-catalog text
@@ -5891,20 +5891,42 @@ owner and journal: the row is settled before the read), `an_ended_run_is_an_ende
 
 **Divergences.**
 
-922. The settings route falls back to the launch table's rebind when the host has no saved-start analyzer
-     (`configure_saved_start` not called). The launch-table keys stand in for the script's references at `L0:C0`.
-     Production always configures the analyzer.
-923. An analyzer failure on the settings route (the helper did not answer) refuses with `start_failed`
-     (`the stored script of run <id> could not be checked: …`). Node's in-process analysis cannot fail that way.
-924. AmendWorkflow's call-time model failures, which come after the decision, are `ToolError::Failed` and carry no failure
-     code. Only the validation refusals carry 23 and 30.
-925. Only the workflow catalog takes the configured default level. The platform's model picker and the request default
-     still use the last level (`catalog.rs`).
-926. The launch metadata counts the description and script lengths in chars, while Node counts UTF-16 units. They differ
-     only for text outside the BMP.
-927. Ended background works live in the run service's memory. A restart starts with an empty list, and a cold open does
-     not rebuild them from the journal.
-928. A run service without a run store (test hosts only) keeps no ended entry, since there is no journaled status to read.
+922. Accepted in 9.67 (W9k). The settings route falls back to the launch table's rebind when the host has no saved-start
+     analyzer (`configure_saved_start` not called). The launch-table keys stand in for the script's references at `L0:C0`.
+     Production always configures the analyzer (`app_server.rs`), so only a test host without one reaches the fallback. Node
+     has no such host: its analysis is in-process. A fallback that refused instead would break every runtime test that builds
+     the service without a helper, and it would not change what a running app does. Pinned by
+     `a_run_whose_launch_names_models_is_rebound_or_refused_before_the_predecessor_is_stopped` (no checker configured).
+923. Accepted in 9.67 (W9k). An analyzer failure on the settings route (the helper did not answer) refuses with
+     `start_failed` (`the stored script of run <id> could not be checked: …`). Node's in-process analysis cannot fail that
+     way; here the analysis is the Node helper process that Node does not have, so "did not answer" is a state Rust must
+     handle. Refusing is the safe answer: nothing is decided on a failed check, and the old run is untouched. Pinned by
+     `a_checker_that_does_not_answer_refuses_the_settings_change_without_touching_the_run` (a pin: it passed when written).
+924. Closed in 9.67 (W9k). AmendWorkflow's call-time model failures (the retune fallback and a call without a decision
+     re-resolve the models after the decision) were `ToolError::Failed` and carried no failure code. They are now
+     `ToolError::FailedWithCode { code: 23 }` (`AMEND_WORKFLOW_ERROR_CODE.SUBAGENT_MODEL`), as the validation refusal is. The
+     original text: Only the validation refusals carry 23 and 30.
+925. Closed in 9.67 (W9k). `CatalogModel::default_level()` is Node's `reasoning.default ?? values.at(-1)`. `--model`, the
+     TUI picker (`model_name::selection`, `effort_of`), a request with no level (`Template::patches`) and a new session's
+     first-model fallback (`default_selection`) use it. The oracle for the fallback is this repo's
+     `packages/provider/src/model-selection-config.ts` (`reasoningSpec?.default ?? reasoningSpec?.values?.at(-1)`); the
+     installed app bundle is upstream 3.19.1, not the fork. The original text: Only the workflow catalog takes the configured default level. The platform's
+     model picker and the request default still use the last level (`catalog.rs`).
+926. Closed in 9.67 (W9k), with one residue. The launch metadata counts the description and script lengths in UTF-16 units
+     (`utf16_len`, `utf16_prefix`). The residue: Node's `slice(0, 499)` can cut an astral character in half and keep a lone
+     high surrogate; a Rust string cannot hold it, so a cut that lands inside a pair drops the whole character. The original
+     text: The launch metadata counts the description and script lengths in chars, while Node counts UTF-16 units.
+927. Closed in 9.67 (W9k), with residues. `background_works_of` adds the session's settled journal rows that the service did
+     not settle itself (a restart, or a session opened cold: `shells_changed` runs at every open): status mapped as the tracker
+     maps it, the row's creation as the start and its last update as the end, in start order after the in-memory entries, a
+     live run hiding its row, a closed service listing none. Residues: the read is the newest 32 rows (Node's roster size,
+     divergence 128), the end is the row's `time_updated` (it moves when a successor sets `superseded_by`), and the times are
+     the row's, not the session event times Node replays. The original text: Ended background works live in the run service's
+     memory. A restart starts with an empty list, and a cold open does not rebuild them from the journal.
+928. Accepted in 9.67 (W9k). A run service without a run store (test hosts only) keeps no ended entry, since there is no
+     journaled status to read. Production always sets the store; the status of a settled run is a fact of its row, and
+     inventing one for a host without rows would be a guess (Node reads `failed` for a row it cannot read, which needs a row
+     to fail on). Pinned by `a_session_lists_its_own_runs_and_a_storeless_host_keeps_no_ended_work`.
 
 **Unchanged.** 760–774: a hub start still binds no script models and registers no tracker entry of its own; the
 background list is the run service's view.
@@ -6071,19 +6093,24 @@ the two arms off), `a_tool_with_no_adjustment_step_runs_the_approved_input` and 
 
 **Divergences.**
 
-930. AmendWorkflow's window has no settings. Node's Amend also fills `adjustable_settings` (only when the resolved input has a
+930. Closed in 9.67 (W9k). The ask carries the `adjustable_settings` block next to the resolved settings (`ask_input`), the
+     window's changes become the input the call runs (`apply_input_adjustments`), and the result names them (`describe_run_settings`).
+     The original text: AmendWorkflow's window has no settings. Node's Amend also fills `adjustable_settings` (only when the resolved input has a
      script), applies the adjustments with `AMEND_WORKFLOW_ERROR_CODE.SUBAGENT_MODEL` and tells the model what changed, as
      CreateWorkflow does. Here Amend takes Refine (both tools, above) and the `Adjusted` answer reaches its pipeline step,
      which the default `apply_input_adjustments` ignores, so a change made in an Amend window is dropped and the run starts as
      approved. The Amend window draws no settings rows, since the ask carries no block. No spec exercises it. The port is small
      because `workflow_settings.rs` is shared: the revision's three-state input and its `Pending.models` are the work.
-931. A hub launch record takes the session from `draft` to `completedSuccess` in one step. Node goes through `running`
+931. Closed in 9.67 (W9k). `Live::event` opens the launch turn as `running`, publishes that summary, and then applies the
+     record, whose rows end the turn. The original text: A hub launch record takes the session from `draft` to
+     `completedSuccess` in one step. Node goes through `running`
      (`TurnStarted` control-only) to `completedSuccess` (`TurnComplete`). The task-index syncer therefore takes the terminal
      transition branch (`becameTerminal`, with `moveGroupedTaskToTop`) without the became-visible branch that Node's running step
      takes (the immediate mirror and the `task_created` broadcast). The terminal branch mirrors the summary, patches the row to
      completed, broadcasts and resyncs the row, and the hub spec passes, so the visible result is the same: the row exists and
      carries the run line. The spinner Node shows during the control turn is not shown.
-932. The Refine follow-up message has the id `refine_<tool use id>`, where Node's is `msg_<base36 ms>_<uuid>`. The tools
+932. Closed in 9.67 (W9k). The tools take the composition's id source (a required constructor argument), and the follow-up has
+     Node's `msg_<base36 ms>_<uuid>` id. The original text: The Refine follow-up message has the id `refine_<tool use id>`, where Node's is `msg_<base36 ms>_<uuid>`. The tools
      have no id source (`CreateWorkflowTool` is built without `Ids`, and threading one through `workflow_tools` and the
      composition is a signature change across three layers). The id is unique per call. The store takes a message's time from the
      id and falls back to the commit time for an id of another shape (`node-store` `created_at`), so the row sorts by when it
@@ -6106,6 +6133,59 @@ attributes added. Lib tests:
 | session        | 422    | 0       |
 
 The ignored test already existed. cli bin tests pass 565. `pnpm typecheck`, `pnpm lint` (0 errors) and `pnpm test-copy:check` pass.
+
+### 9.67 W9k: the remaining workflow divergences 922 to 928 and 930 to 932 under zcode-rs (as built, gate on)
+
+Node is the oracle. Each item was a red Rust test first unless noted. The divergences are edited in place in 9.65 and 9.66
+(each says closed or accepted). The tool-level failure codes (924, 930) are closed at the tool boundary, as 920 was: the
+executor pipeline reads no `error_code` today (`Validation::Invalid { message, .. }`), so the code is a fact of the
+returned value (`ToolError::FailedWithCode`), not of the model's text.
+
+| Item | Result                                                                                 | Test (red first unless noted)                                                                                                                                                                                                                                                                          |
+| ---- | -------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| 922  | accepted: test hosts only                                                              | pinned by `a_run_whose_launch_names_models_is_rebound_or_refused_before_the_predecessor_is_stopped`                                                                                                                                                                                                    |
+| 923  | accepted: the helper is a process Node does not have                                   | `a_checker_that_does_not_answer_refuses_the_settings_change_without_touching_the_run` (a pin, green when written)                                                                                                                                                                                      |
+| 924  | closed                                                                                 | `a_call_time_model_failure_carries_the_subagent_model_code` (red: `Failed`)                                                                                                                                                                                                                            |
+| 925  | closed for `--model`, the TUI picker, the request default and the new-session fallback | `a_selection_takes_the_configured_default_level_before_the_last`, `the_picker_falls_back_to_the_configured_default_level_before_the_last` (both red); `a_request_and_a_new_session_use_the_configured_default_level` (red on the new-session assertion: `none` instead of the default)                 |
+| 926  | closed, residue: a cut inside a surrogate pair drops the character                     | `the_description_cap_counts_utf16_units`, `the_script_cap_counts_utf16_units` (red)                                                                                                                                                                                                                    |
+| 927  | closed, residues: newest 32 rows, `time_updated` as the end, row times                 | `a_restarted_service_rebuilds_the_ended_works_from_the_journal` (red: empty list)                                                                                                                                                                                                                      |
+| 928  | accepted: test hosts only                                                              | pinned by `a_session_lists_its_own_runs_and_a_storeless_host_keeps_no_ended_work`                                                                                                                                                                                                                      |
+| 930  | closed                                                                                 | `the_ask_carries_the_adjustable_settings_next_to_the_resolved_settings`, `the_adjusted_settings_reach_the_amend_and_the_result_names_them`, `an_adjusted_model_that_does_not_resolve_fails_with_the_subagent_model_code` (red); `an_adjustment_equal_to_the_inherited_settings_is_not_applied` (a pin) |
+| 931  | closed                                                                                 | `a_hub_launch_record_publishes_running_then_completed_success` (red: only `completedSuccess` was published)                                                                                                                                                                                            |
+| 932  | closed                                                                                 | the Refine tests of both tools now assert the id decodes to the source's clock (red when the id was put back to `refine_…`); `the_wired_refine_follow_up_has_a_node_message_id_the_store_dates` (cli wiring, written after the change)                                                                 |
+
+**What changed.**
+
+- 924: `ToolError::FailedWithCode { message, code }` (kernel-api). Amend's `models.map_err` sites return code 23.
+- 925: `CatalogModel::default_level()` is `default_reasoning_level` else the last level. Used by `model_name::selection`, the
+  TUI's `effort_of`, `Template::patches(None)` and the workflow catalog. The new-session fallback in `default_selection` uses it
+  too (`model-selection-config.ts`).
+- 926: `LaunchTurn::workflow_launch_meta` uses `utf16_len` and `utf16_prefix`.
+- 927: `background_works_of` reads `runs_of_session(parent, 32)` and lists the settled rows the memory does not hold.
+- 930: AmendWorkflow has `ask_input` (the call's input with the resolved limit, the canonical subagent model, the script's
+  models and `adjustable_settings`) and `apply_input_adjustments`. This tool's input keeps three states, so a change back
+  to the default or to the session model is written as `null` and never removed (an absent key keeps the predecessor's).
+  A change is judged against what the decision resolved (the inherited limit from the run detail, the inherited model),
+  so "inherited 2, user picks 2" is no change. `Tool::apply_input_adjustments` now returns `ToolError`, so the failure
+  carries code 23 (the same code Node passes for both of its failures). The result uses `describe_run_settings`.
+- 931: `Projection::begin_launch_turn` sets `running` for a draft session that gets a launch record, and `Live::event`
+  publishes that summary before applying the record, whose rows end the turn. Cold open has no step to show.
+- 932: `CreateWorkflowTool::new`, `AmendWorkflowTool::new`, `workflow_tools` and `wired_workflow_tools` take an `Arc<dyn Ids>`
+  (required). `app_server.rs` passes `NodeIds` over the process clock.
+
+**Divergences.** None new. Residues are written into 926 and 927.
+
+**Box.** The full 26-spec list (`w9g-specs.txt`), run on head 87c4c72d3 in the Linux box. The Rust run (out-w9k-1)
+passed 25 of 26, and the Node run (out-w9k-4) passed 25 of 26. Each failure was a startup wait that never ended, and the
+spec then passed alone on the same head: Rust `gray-always-on-overflow` (the app never drew `task-settings-button`) passed in
+out-w9k-3, and Node `automations-workflows-hub` (the workspace path wait) passed in out-w9k-5. An overflow rerun with
+`SKIP_APP_BUILD=1` (out-w9k-2) failed only because the source sync had removed the build output; it is not a result. The
+hub spec passed on Rust in the full run, which exercises 931 and 932's launch record. No spec draws the Amend window's
+settings rows (930).
+
+**Gate.** `cargo fmt --all --check` clean. `cargo clippy --workspace --all-targets --locked -- -D warnings` clean, with no
+allow attributes added. Lib tests: kernel-api 464, workflow 469, runtime 408, protocol-zcode 1092, node-store 366 (1 ignored,
+existing), tools 758, agents 352, session 422, platform 205 (1 ignored, existing), tui 577. cli bin tests 566.
 
 ## 10. Open questions
 

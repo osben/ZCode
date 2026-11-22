@@ -31,6 +31,13 @@ impl WorkflowAnalyzer for NoAnalyzer {
     }
 }
 
+/// The id source of the Refine follow-up: the session's `NodeIds` over a fixed clock (9.67, divergence 932).
+fn ids() -> Arc<dyn rust_cli_kernel_api::clock::Ids> {
+    Arc::new(rust_cli_node_store::NodeIds::new(Arc::new(
+        rust_cli_kernel_api::testing::FixedClock(1_700_000_000_123),
+    )))
+}
+
 fn no_runs() -> Arc<dyn DynamicWorkflowRunSessions> {
     Arc::new(LateRunSessions::default())
 }
@@ -47,6 +54,7 @@ fn without_an_analyzer_the_run_tools_and_list_saved_are_wired() {
         no_runs(),
         None,
         Arc::default(),
+        ids(),
     );
     assert_eq!(
         names(&tools),
@@ -69,6 +77,7 @@ fn with_an_analyzer_create_amend_and_save_are_wired_before_the_run_tools_and_lis
         no_runs(),
         None,
         Arc::default(),
+        ids(),
     );
     assert_eq!(
         names(&tools),
@@ -124,6 +133,7 @@ fn the_gate_source_reads_the_shared_table_the_server_records_into() {
         no_runs(),
         None,
         Arc::default(),
+        ids(),
     );
     let open = DynamicWorkflowGate {
         enabled: true,
@@ -175,6 +185,7 @@ fn with_a_snippet_port_eval_is_wired_between_save_and_the_run_tools() {
         no_runs(),
         Some(snippets),
         Arc::default(),
+        ids(),
     );
     assert_eq!(
         names(&tools),
@@ -193,6 +204,47 @@ fn with_a_snippet_port_eval_is_wired_between_save_and_the_run_tools() {
     );
 }
 
+/// 9.67 (closes 932): the wired CreateWorkflow and AmendWorkflow mint the Refine follow-up's id from the composition's id
+/// source, so it is Node's `msg_<base36 ms>_<uuid>` and the store's reader decodes the clock's time from it. A tool built
+/// without the source would fall back to an id that dates the row 1970.
+#[test]
+fn the_wired_refine_follow_up_has_a_node_message_id_the_store_dates() {
+    let analyzer: Arc<dyn WorkflowAnalyzer> = Arc::new(NoAnalyzer);
+    let tools = wired_workflow_tools(
+        Some(analyzer),
+        &PathBuf::from("/home"),
+        no_runs(),
+        None,
+        Arc::default(),
+        ids(),
+    );
+    for name in ["CreateWorkflow", "AmendWorkflow"] {
+        let tool = tools
+            .iter()
+            .find(|tool| tool.name() == name)
+            .unwrap_or_else(|| panic!("{name} is wired"));
+        let refused = tool
+            .refined(
+                &rust_cli_kernel_api::ids::ToolUseId::new("tu-1"),
+                "revise it",
+            )
+            .unwrap_or_else(|| panic!("{name} takes Refine"));
+        let [rust_cli_kernel_api::message::Message::Attachment(steer)] =
+            refused.new_messages.as_slice()
+        else {
+            panic!("{name}: one follow-up message");
+        };
+        assert!(steer.id.as_str().starts_with("msg_"), "{:?}", steer.id);
+        assert_eq!(
+            // The reader node-store's `message_time` and `created_at` delegate to.
+            rust_cli_kernel_api::ids::message_created_ms(steer.id.as_str()),
+            Some(1_700_000_000_123),
+            "{name}: {:?}",
+            steer.id
+        );
+    }
+}
+
 #[test]
 fn the_gate_source_wires_eval_only_when_it_is_given_a_snippet_port() {
     let table = Arc::new(SessionGates::default());
@@ -204,6 +256,7 @@ fn the_gate_source_wires_eval_only_when_it_is_given_a_snippet_port() {
         no_runs(),
         Some(snippets),
         Arc::default(),
+        ids(),
     );
     assert!(names(&source.tools).contains(&"EvalWorkflowSnippet".to_owned()));
 }

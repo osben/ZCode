@@ -1442,3 +1442,92 @@ async fn a_settled_run_stays_listed_as_an_ended_background_work() {
         "a closed host lists no background run"
     );
 }
+
+/// 9.67 (closes 927): a service that never ran these runs (a restart, or a session opened cold) rebuilds the ended works
+/// from the journal: the session's own settled rows, with the tracker's status mapping, the row's creation as the start
+/// and its last update as the end, in start order. Another session's rows and the unsettled rows are not works, and a
+/// live run hides its own row.
+#[tokio::test]
+async fn a_restarted_service_rebuilds_the_ended_works_from_the_journal() {
+    use rust_cli_kernel_api::workflow_run::BackgroundRunStatus;
+    let fx = fixture(|conn| {
+        seed(
+            conn,
+            Some(PARENT),
+            "wf_a",
+            DwfStatus::Completed,
+            Some("first"),
+            "return 1",
+            10,
+        );
+        seed(
+            conn,
+            Some(PARENT),
+            "wf_b",
+            DwfStatus::Errored,
+            None,
+            "return 2",
+            20,
+        );
+        seed(
+            conn,
+            Some(PARENT),
+            "wf_c",
+            DwfStatus::Stopped,
+            None,
+            "return 3",
+            30,
+        );
+        seed(
+            conn,
+            Some(PARENT),
+            "wf_pending",
+            DwfStatus::Pending,
+            None,
+            "return 4",
+            40,
+        );
+        seed(
+            conn,
+            Some("ses_other"),
+            "wf_other",
+            DwfStatus::Completed,
+            None,
+            "return 5",
+            50,
+        );
+    });
+    let own = port(&fx.service, PARENT);
+    let listed = own.background_runs().await.expect("listed");
+    let seen: Vec<(&str, &str, BackgroundRunStatus, i64, Option<i64>)> = listed
+        .iter()
+        .map(|run| {
+            (
+                run.run_id.as_str(),
+                run.title.as_str(),
+                run.status,
+                run.started_at_ms,
+                run.ended_at_ms,
+            )
+        })
+        .collect();
+    assert_eq!(
+        seen,
+        [
+            (
+                "wf_a",
+                "first",
+                BackgroundRunStatus::ResultPending,
+                10,
+                Some(10)
+            ),
+            ("wf_b", "wf_b", BackgroundRunStatus::Failed, 20, Some(20)),
+            ("wf_c", "wf_c", BackgroundRunStatus::Cancelled, 30, Some(30)),
+        ]
+    );
+    fx.service.close().await;
+    assert!(
+        own.background_runs().await.expect("listed").is_empty(),
+        "a closed host lists no background run"
+    );
+}

@@ -13,6 +13,7 @@ use std::sync::{Arc, Mutex};
 
 use async_trait::async_trait;
 use rust_cli_fs::{create_new_text, ensure_dir, read_text};
+use rust_cli_kernel_api::clock::Ids;
 use rust_cli_kernel_api::ids::ToolUseId;
 use rust_cli_kernel_api::permission::{PermissionDecision, PermissionRule};
 use rust_cli_kernel_api::provider::LateModelDirectory;
@@ -168,15 +169,18 @@ pub struct CreateWorkflowTool {
     approvals: Mutex<Approvals>,
     /// Fork (9.63): the catalog `subagent_model` and the script's models resolve against; unset refuses both.
     models: Arc<LateModelDirectory>,
+    /// Fork (9.67, closes 932): the id source of the Refine follow-up message (Node `createMessageId`).
+    ids: Arc<dyn Ids>,
 }
 
 impl CreateWorkflowTool {
     /// The run service's sessions: each call submits through the port of its own session. Without sessions the tool
-    /// typechecks and says it did not run.
+    /// typechecks and says it did not run. `ids` mints the Refine follow-up's message id.
     pub fn new(
         analyzer: Arc<dyn WorkflowAnalyzer>,
         runs: Option<Arc<dyn DynamicWorkflowRunSessions>>,
         home: PathBuf,
+        ids: Arc<dyn Ids>,
     ) -> Self {
         Self {
             contract: contract(tool_names::CREATE_WORKFLOW),
@@ -185,6 +189,7 @@ impl CreateWorkflowTool {
             home,
             approvals: Mutex::new(Approvals::default()),
             models: Arc::default(),
+            ids,
         }
     }
 
@@ -940,7 +945,7 @@ impl Tool for CreateWorkflowTool {
         input: &Value,
         adjustments: &Map<String, Value>,
         context: &ToolUseContext,
-    ) -> Result<Option<Value>, String> {
+    ) -> Result<Option<Value>, ToolError> {
         let Some(adjustment) = workflow_settings::parse(adjustments) else {
             return Ok(None);
         };
@@ -955,12 +960,14 @@ impl Tool for CreateWorkflowTool {
             Some(None) => applied.subagent_model = next.remove("subagent_model").map(|_| None),
             Some(Some(requested)) => {
                 let Some(entries) = self.entries(context).await else {
-                    return Err(workflow_settings::model_failure(
+                    return Err(adjusted_failure(workflow_settings::model_failure(
                         workflow_settings::MODEL_WITHOUT_CATALOG,
-                    ));
+                    )));
                 };
                 let canonical = resolve_model(requested, &entries)
-                    .map_err(|refusal| workflow_settings::model_failure(&refusal.message))?
+                    .map_err(|refusal| {
+                        adjusted_failure(workflow_settings::model_failure(&refusal.message))
+                    })?
                     .canonical;
                 if next.get("subagent_model").and_then(Value::as_str) != Some(canonical.as_str()) {
                     applied.subagent_model = Some(Some(canonical.clone()));
@@ -985,7 +992,9 @@ impl Tool for CreateWorkflowTool {
         let still_valid = serde_json::from_value::<CreateInput>(Value::Object(next.clone()))
             .is_ok_and(|input| input.max_concurrency != Some(0));
         if !still_valid {
-            return Err(workflow_settings::INVALID_AFTER_ADJUSTMENT.to_owned());
+            return Err(failed(
+                workflow_settings::INVALID_AFTER_ADJUSTMENT.to_owned(),
+            ));
         }
         if let Some(prepared) = self.approvals().by_id.get_mut(tool_use) {
             // Only a model the window changed replaces the canonical one the ask resolved (ocr #624): the input's own
@@ -1003,8 +1012,8 @@ impl Tool for CreateWorkflowTool {
 
     /// Node `withWorkflowRefineDeniedFollowUp` (9.66, divergence 141): the refusal says the run was not approved, and the
     /// feedback follows it as a user message of the `workflow_refine_feedback` source, so the model revises and asks again.
-    fn refined(&self, tool_use: &ToolUseId, feedback: &str) -> Option<ToolCallOutput> {
-        crate::workflow_refine::follow_up(tool_use, feedback)
+    fn refined(&self, _tool_use: &ToolUseId, feedback: &str) -> Option<ToolCallOutput> {
+        crate::workflow_refine::follow_up(self.ids.as_ref(), feedback)
     }
 
     fn is_read_only(&self, _input: &Value) -> bool {
@@ -1350,6 +1359,14 @@ impl Tool for CreateWorkflowTool {
 /// The causality graph of the analyzer's window display, when it drew one.
 fn graph_of(display: Option<&Value>) -> Option<&Value> {
     display.and_then(|display| display.get("causalityGraph"))
+}
+
+/// Fork (9.67, ocr #625): Node's `applyWorkflowSettingsAdjustments` passes `CREATE_WORKFLOW_FAILURE_CODE` for both failures.
+fn adjusted_failure(message: String) -> ToolError {
+    ToolError::FailedWithCode {
+        message,
+        code: FAILURE_CODE,
+    }
 }
 
 fn invalid(code: Option<i32>, message: &str) -> Validation {

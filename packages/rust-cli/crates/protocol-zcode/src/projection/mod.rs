@@ -144,6 +144,9 @@ pub struct Projection {
     next_row: u64,
     revision: u64,
     phase: Phase,
+    /// Fork (9.67, divergence 931): the session is `running` only because a hub launch record's control-only turn is open
+    /// (`begin_launch_turn`); the record's rows end it. A real turn never sets it.
+    launch_running: bool,
     active: Option<ActiveWork>,
     error: Option<LastError>,
     executions: u64,
@@ -383,6 +386,7 @@ impl Projection {
             next_row: first_row,
             revision: view.revision,
             phase: Phase::Draft,
+            launch_running: false,
             active: None,
             error: None,
             executions: 0,
@@ -883,6 +887,28 @@ impl Projection {
         patch.insert("control".into(), self.control());
         patch.insert("availability".into(), self.availability());
         patch.insert("inputRouting".into(), self.input_routing());
+    }
+
+    /// Fork (9.67, divergence 931): Node's launch turn is `TurnStarted` then `TurnComplete`, so a draft session that gets a
+    /// hub launch record is `running` for the step between, and the sidebar's task-index syncer sees that summary (its
+    /// became-visible branch: the immediate mirror and the `task_created` broadcast). The caller publishes the summary
+    /// this returns the deltas of, then applies the record, whose rows end the turn. Nothing happens for any other event,
+    /// and for a session that is not a draft.
+    pub fn begin_launch_turn(&mut self, event: &KernelEvent) -> Vec<Value> {
+        let KernelEvent::MessageDone {
+            message: rust_cli_kernel_api::message::Message::User(user),
+        } = event
+        else {
+            return Vec::new();
+        };
+        if self.phase != Phase::Draft || rows::workflow_launch_of(user).is_none() {
+            return Vec::new();
+        }
+        self.phase = Phase::Running;
+        self.launch_running = true;
+        let mut patch = Map::new();
+        self.phase_patch(&mut patch);
+        vec![json!({"op": "state.updated", "patch": patch})]
     }
 
     /// 一个事件 → 增量（`row.*` 与 `state.updated`）。`now` 是行的时间。

@@ -131,7 +131,7 @@ pub(crate) fn pick(catalog: &ModelCatalog, flag: Option<&str>) -> Result<ModelSe
     match model_name::lookup(&catalog.models, flag) {
         Ok(entry) => {
             let mut selection = model_name::selection(entry);
-            // 默认选择正好是这一项时沿用它的档位，否则由平台层取最后一个档位。
+            // 默认选择正好是这一项时沿用它的档位，否则由平台层取模型配置的缺省档位，没有就取最后一个（9.67）。
             selection.reasoning = catalog
                 .default
                 .as_ref()

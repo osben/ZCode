@@ -72,9 +72,11 @@ impl Tool for Adjustable {
         input: &Value,
         adjustments: &Map<String, Value>,
         _context: &ToolUseContext,
-    ) -> Result<Option<Value>, String> {
+    ) -> Result<Option<Value>, rust_cli_kernel_api::tool::ToolError> {
         if adjustments.get("bound") == Some(&json!(-1)) {
-            return Err("the adjusted bound cannot be applied".to_owned());
+            return Err(rust_cli_kernel_api::tool::ToolError::Failed {
+                message: "the adjusted bound cannot be applied".to_owned(),
+            });
         }
         let mut next = input.as_object().cloned().unwrap_or_default();
         if let Some(bound) = adjustments.get("bound") {

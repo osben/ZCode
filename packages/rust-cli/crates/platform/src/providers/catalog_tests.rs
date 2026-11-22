@@ -311,6 +311,52 @@ fn the_configured_model_is_the_raw_default_model_selection() {
     assert!(fixture_snapshot().configured_model.is_some());
 }
 
+/// 9.67 (closes 925): a request with no level takes the configured default level, the last level only when the model
+/// names none. The new session's first-model fallback does the same (this repo's `model-selection-config.ts`:
+/// `reasoningSpec?.default ?? reasoningSpec?.values?.at(-1)`).
+#[test]
+fn a_request_and_a_new_session_use_the_configured_default_level() {
+    let snapshot = fixture_snapshot();
+    let mut template = snapshot
+        .templates
+        .iter()
+        .find(|template| {
+            template.levels.len() > 1
+                && !template.hidden
+                && template
+                    .patches(template.levels.first().map(String::as_str), None)
+                    .ok()
+                    != template
+                        .patches(template.levels.last().map(String::as_str), None)
+                        .ok()
+        })
+        .expect("a model whose levels write different patches")
+        .clone();
+    let first = template.levels[0].clone();
+    let last = template.levels.last().cloned().unwrap();
+    let patches_of =
+        |template: &Template, level: &str| template.patches(Some(level), None).unwrap();
+    template.default_level = None;
+    assert_eq!(
+        template.patches(None, None).unwrap(),
+        patches_of(&template, &last)
+    );
+    template.default_level = Some(first.clone());
+    assert_eq!(
+        template.patches(None, None).unwrap(),
+        patches_of(&template, &first)
+    );
+    let fallback = default_selection(std::slice::from_ref(&template), &Value::Null).unwrap();
+    assert_eq!(
+        fallback.reasoning.as_deref(),
+        Some(first.as_str()),
+        "a new session takes the configured default level"
+    );
+    template.default_level = None;
+    let fallback = default_selection(std::slice::from_ref(&template), &Value::Null).unwrap();
+    assert_eq!(fallback.reasoning.as_deref(), Some(last.as_str()));
+}
+
 /// 不带团队项目的选择（按 provider 与模型找模板）。
 fn sel(provider: &str, model: &str) -> rust_cli_kernel_api::model::ModelSelection {
     rust_cli_kernel_api::model::ModelSelection::new(provider.to_owned(), model.to_owned())

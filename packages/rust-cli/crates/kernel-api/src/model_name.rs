@@ -137,10 +137,11 @@ pub fn lookup<'a>(models: &'a [CatalogModel], name: &str) -> Result<&'a CatalogM
     Ok(first)
 }
 
-/// 目录项 → 模型选择：档位取最后一个（平台层的缺省），团队项带上团队项目。
+/// 目录项 → 模型选择：档位取配置的缺省档位，没有就取最后一个（Node `reasoning.default ?? values.at(-1)`，9.67），
+/// 团队项带上团队项目。
 pub fn selection(entry: &CatalogModel) -> ModelSelection {
     ModelSelection {
-        reasoning: entry.reasoning_levels.last().cloned(),
+        reasoning: entry.default_level(),
         connection: entry
             .connection
             .as_ref()

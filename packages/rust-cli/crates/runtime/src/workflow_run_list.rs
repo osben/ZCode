@@ -195,14 +195,67 @@ pub(crate) fn ended_status(inner: &Inner, run_id: &str) -> Option<BackgroundRunS
     })
 }
 
+/// How many settled runs of a session the journal read brings back as ended works (Node's roster keeps 32 settled
+/// entries, divergence 128).
+const JOURNAL_ENDED_LIMIT: usize = 32;
+
+/// The session's settled journal rows as ended background works: the row's creation is the start and its last update the
+/// end, and its status maps as the tracker maps it. A row that is not settled is not a work of the ended list (a live run is
+/// listed from the registry, and an orphan is settled by the sweep). A failed read logs and lists none, as Node's list
+/// does. Blocking: called on the blocking pool.
+fn journal_ended_works(service: &WorkflowRunService, parent: &str) -> Vec<BackgroundRunWork> {
+    let Some(store) = service.inner.store.get() else {
+        return Vec::new();
+    };
+    let rows = match store.runs_of_session(parent, JOURNAL_ENDED_LIMIT) {
+        Ok(rows) => rows,
+        Err(error) => {
+            tracing::warn!(
+                event = "workflow.run.background_journal_unread",
+                session = %parent,
+                error = %format!("{error:#}"),
+                "the session's settled workflow runs could not be read, so none is listed as an ended work"
+            );
+            return Vec::new();
+        }
+    };
+    rows.into_iter()
+        .filter_map(|row| {
+            let status = match row.run.status {
+                RunStatus::Completed => BackgroundRunStatus::ResultPending,
+                RunStatus::Stopped => BackgroundRunStatus::Cancelled,
+                RunStatus::Errored => BackgroundRunStatus::Failed,
+                RunStatus::Pending | RunStatus::Running => return None,
+            };
+            let (label, source) = run_label(
+                &row.run.run_id,
+                row.run.name.as_deref(),
+                row.run.script_text.as_deref(),
+            );
+            let title = if source == LABEL_SOURCE_NAME {
+                label
+            } else {
+                row.run.run_id.clone()
+            };
+            Some(BackgroundRunWork {
+                run_id: WorkflowRunId::new(row.run.run_id),
+                title,
+                started_at_ms: row.time_created,
+                status,
+                ended_at_ms: Some(row.time_updated),
+            })
+        })
+        .collect()
+}
+
 /// One session's runs as background works (9.52, 9.65): the live runs and the settled ones the list keeps, in start order,
 /// ties broken by the launch token, as `list_runs_of` breaks its ties (Node's stable sort over its submit-ordered
 /// registry). A live run hides an ended entry of the same id (a resumed run is one work).
 fn background_works_of(service: &WorkflowRunService, parent: &str) -> Vec<BackgroundRunWork> {
     let live = service.live_runs_of(parent);
-    let mut works: Vec<(u64, BackgroundRunWork)> = {
+    let (mut works, closed): (Vec<(u64, BackgroundRunWork)>, bool) = {
         let state = service.inner.state.lock_unpoisoned();
-        state
+        let works = state
             .ended
             .iter()
             .filter(|run| run.parent == parent)
@@ -219,8 +272,25 @@ fn background_works_of(service: &WorkflowRunService, parent: &str) -> Vec<Backgr
                     },
                 )
             })
-            .collect()
+            .collect();
+        (works, state.closed)
     };
+    // 9.67 (closes 927): the settled runs of this session that this service did not settle itself (a restart, or a
+    // session opened cold) come from the journal, as Node rebuilds its ended works from the session's recorded events.
+    // A closed host lists nothing.
+    if !closed {
+        let known: HashSet<String> = works
+            .iter()
+            .map(|(_, work)| work.run_id.as_str().to_owned())
+            .chain(live.iter().map(|run| run.run_id.clone()))
+            .collect();
+        works.extend(
+            journal_ended_works(service, parent)
+                .into_iter()
+                .filter(|work| !known.contains(work.run_id.as_str()))
+                .map(|work| (0, work)),
+        );
+    }
     works.extend(live.into_iter().map(|run| {
         (
             run.token,

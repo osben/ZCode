@@ -1254,6 +1254,21 @@ impl SessionSink for Live {
             return;
         }
         let now = self.context.now();
+        // Fork (9.67, divergence 931): a hub launch record opens its control-only turn as `running` and publishes that
+        // summary before the record's rows end it, as Node's `TurnStarted` and `TurnComplete` are two events. Applied
+        // together, the two phases would coalesce into one `completedSuccess` summary, and the task-index syncer would
+        // never see the `running` one that mirrors the row and broadcasts `task_created`.
+        let opened = {
+            let mut state = self.state();
+            let deltas = state.projection.begin_launch_turn(&event.event);
+            (!deltas.is_empty()).then(|| {
+                state.log.record(deltas);
+                self.collect(&mut state)
+            })
+        };
+        if let Some(outgoing) = opened {
+            self.write(outgoing).await;
+        }
         let mut state = self.state();
         // Fork: a Bash result (a command went to the background), a background notification (one ended) or a
         // turn end can change the background ledger.
@@ -1368,3 +1383,7 @@ fn snapshot_of(state: &State, seq: u64) -> Value {
     }
     snapshot
 }
+
+#[cfg(test)]
+#[path = "live_launch_tests.rs"]
+mod launch_tests;

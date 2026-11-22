@@ -9,6 +9,7 @@
 use std::sync::Arc;
 
 use async_trait::async_trait;
+use rust_cli_base::js::string::{utf16_len, utf16_prefix};
 use serde_json::{Map, Value};
 
 use crate::ids::{QuestionId, SessionId, WorkflowRunId};
@@ -639,7 +640,7 @@ const WORKFLOW_LAUNCH_ARGS_TRUNCATED_KEY: &str = "…";
 
 impl LaunchTurn {
     /// Node's `boundWorkflowLaunchMeta` of a hub launch: the `workflowLaunch` metadata its record carries. Lengths are
-    /// counted in chars where Node counts UTF-16 units (the same outside the astral planes).
+    /// counted in UTF-16 units, as Node counts them.
     pub fn workflow_launch_meta(&self) -> Value {
         let mut meta = Map::new();
         meta.insert("runId".into(), Value::from(self.run_id.as_str()));
@@ -661,23 +662,22 @@ impl LaunchTurn {
             };
             meta.insert("args".into(), Value::Object(bounded));
         }
-        let description =
-            if self.description.chars().count() > WORKFLOW_LAUNCH_DESCRIPTION_MAX_CHARS {
-                let mut cut: String = self
-                    .description
-                    .chars()
-                    .take(WORKFLOW_LAUNCH_DESCRIPTION_MAX_CHARS - 1)
-                    .collect();
-                cut.push('…');
-                cut
-            } else {
-                self.description.clone()
-            };
+        // 9.67 (closes 926): lengths count UTF-16 units, as Node's `.length` does. Node's `slice` can cut an astral
+        // character in half; a Rust string cannot hold the half, so the cut drops the whole character.
+        let description = if utf16_len(&self.description) > WORKFLOW_LAUNCH_DESCRIPTION_MAX_CHARS {
+            let mut cut =
+                utf16_prefix(&self.description, WORKFLOW_LAUNCH_DESCRIPTION_MAX_CHARS - 1)
+                    .to_owned();
+            cut.push('…');
+            cut
+        } else {
+            self.description.clone()
+        };
         meta.insert("description".into(), Value::from(description));
         if let Some(display) = &self.display {
             meta.insert("display".into(), display.clone());
         }
-        if self.script.chars().count() <= WORKFLOW_LAUNCH_SCRIPT_MAX_CHARS {
+        if utf16_len(&self.script) <= WORKFLOW_LAUNCH_SCRIPT_MAX_CHARS {
             meta.insert("script".into(), Value::from(self.script.as_str()));
         }
         Value::Object(meta)
@@ -832,3 +832,7 @@ pub trait WorkflowRunHost: Send + Sync {
         Box::pin(async {})
     }
 }
+
+#[cfg(test)]
+#[path = "workflow_run_tests.rs"]
+mod tests;

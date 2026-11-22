@@ -55,6 +55,7 @@ fn without_an_analyzer_only_list_saved_workflows_is_registered() {
         None,
         None,
         Arc::default(),
+        crate::test_more::NodeShapedIds::shared(),
     )
     .iter()
     .map(|tool| tool.name().to_owned())
@@ -72,6 +73,7 @@ fn with_an_analyzer_create_amend_and_save_workflow_are_registered_before_list_sa
         None,
         None,
         Arc::default(),
+        crate::test_more::NodeShapedIds::shared(),
     );
     let names: Vec<&str> = tools.iter().map(|tool| tool.name()).collect();
     assert_eq!(
@@ -106,6 +108,7 @@ fn with_a_snippet_port_eval_workflow_snippet_is_registered_after_save_and_before
         None,
         Some(snippets.clone()),
         Arc::default(),
+        crate::test_more::NodeShapedIds::shared(),
     );
     let names: Vec<&str> = tools.iter().map(|tool| tool.name()).collect();
     assert_eq!(
@@ -131,6 +134,7 @@ fn with_a_snippet_port_eval_workflow_snippet_is_registered_after_save_and_before
         None,
         Some(snippets),
         Arc::default(),
+        crate::test_more::NodeShapedIds::shared(),
     );
     let names: Vec<&str> = alone.iter().map(|tool| tool.name()).collect();
     assert_eq!(names, ["EvalWorkflowSnippet", "ListSavedWorkflows"]);

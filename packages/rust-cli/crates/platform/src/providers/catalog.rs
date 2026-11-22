@@ -5,7 +5,7 @@
 //! - 推理档位是 `optionSpecs.reasoningLevel.values`；没指定档位时用最后一个（Node `toModelOption`）；
 //! - 请求补丁 = reasoningLevel map(档位) + maxOutputTokens map(max)；
 //! - 默认选择：Node `resolveInitialModelSelection`——个人配置的 `defaultModelSelection` 可选（档位有效）时用它，
-//!   否则目录第一项、最后一个档位；
+//!   否则目录第一项、缺省档位或最后一个档位；
 //! - Team Plan（工作线 F49，platform.md §9.3）：团队 provider 的模型按可用的团队项目展开，每个项目一组，目录项与
 //!   选择带团队项目；按选择找端点时团队项目也要相同（选择没带时取这个模型的第一个团队项目）。
 
@@ -61,6 +61,14 @@ pub(crate) struct Template {
 }
 
 impl Template {
+    /// Fork (9.67, 925): Node `reasoningSpec?.default ?? reasoningSpec?.values?.at(-1)`, the level a request with no
+    /// level and a new session take. `CatalogModel::default_level` (kernel-api) applies the same rule to the catalog card.
+    fn initial_level(&self) -> Option<&str> {
+        self.default_level
+            .as_deref()
+            .or_else(|| self.levels.last().map(String::as_str))
+    }
+
     /// 选择的档位（没指定时用最后一个）对应的请求补丁。`max_output` 是入口读到的 `ZCODE_MAX_OUTPUT_TOKENS`
     /// （cli-args.md §9.1，修复线 F42）与请求交来的上限（`RequestOptions.provider_max_output_tokens`，工作线 F95）的
     /// 较小值：`maxOutputTokens.map` 用它与配置的 max 的较小值（模型目录的上限是模型能力的上限，两者取小）；都没有时用
@@ -80,7 +88,8 @@ impl Template {
                     ),
                 });
             }
-            None => self.levels.last().map(String::as_str).unwrap_or_default(),
+            // Fork (9.67, 925): Node's `reasoning.default ?? values.at(-1)`.
+            None => self.initial_level().unwrap_or_default(),
         };
         let invalid = |error: anyhow::Error| ModelError::InvalidRequest {
             message: format!("provider option map failed: {error:#}"),
@@ -355,7 +364,7 @@ pub(crate) fn configured_model(configured: &Value) -> Option<String> {
 
 /// Node `resolveInitialModelSelection`（docs/specs/rust-cli/workspace-trust.md §3.1）：配置的缺省“可选”时原样用它
 /// ——provider 不隐藏、模型在目录里、`options.reasoningLevel` 有值且在模型的档位里；否则目录第一项（第一个非隐藏
-/// provider 的第一个有档位的模型）、最后一个档位（Node `completeNewModelSelection`）。
+/// provider 的第一个有档位的模型）、模型配置的缺省档位，没有就取最后一个档位（Node `completeNewModelSelection`，9.67）。
 ///
 /// L31 修正：之前缺省没有档位或档位无效时仍用这个模型（取最后一个档位），与 Node 不同——Node 判它不可选、回到
 /// 目录第一项（登录写的 `{providerId, modelId}` 也是这样），Node CLI 与本工程的新会话会选到不同的模型。
@@ -370,7 +379,10 @@ fn default_selection(templates: &[Template], configured: &Value) -> Option<Model
     });
     let (template, reasoning) = match selectable {
         Some(found) => found,
-        None => visible().find_map(|template| Some((template, template.levels.last()?.clone())))?,
+        // Node `model-selection-config.ts`: `reasoningSpec?.default ?? reasoningSpec?.values?.at(-1)` (9.67, 925).
+        None => {
+            visible().find_map(|template| Some((template, template.initial_level()?.to_owned())))?
+        }
     };
     Some(ModelSelection {
         reasoning: Some(reasoning),

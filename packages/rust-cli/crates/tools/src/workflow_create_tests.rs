@@ -200,7 +200,12 @@ async fn a_create_workflow_call_submits_through_the_port_of_its_own_session() {
     let guard = tempfile::TempDir::new().expect("tempdir");
     let root = guard.path().to_path_buf();
     let cwd = root.join("project");
-    let tool = CreateWorkflowTool::new(Arc::new(Checker), Some(sessions), root.join("home"));
+    let tool = CreateWorkflowTool::new(
+        Arc::new(Checker),
+        Some(sessions),
+        root.join("home"),
+        crate::test_more::NodeShapedIds::shared(),
+    );
     let mut ctx = Ctx::with_ops(Arc::new(History(loaded_skill()))).build();
     ctx.workspace.root = rust_cli_kernel_api::env::EnvPath::new(cwd.display().to_string());
     ctx.session = SessionId::new("ses_second");
@@ -265,7 +270,12 @@ impl Harness {
             Arc::new(OneSession(port as Arc<dyn DynamicWorkflowRunPort>))
                 as Arc<dyn DynamicWorkflowRunSessions>
         });
-        let tool = CreateWorkflowTool::new(Arc::new(Checker), runs, home.clone());
+        let tool = CreateWorkflowTool::new(
+            Arc::new(Checker),
+            runs,
+            home.clone(),
+            crate::test_more::NodeShapedIds::shared(),
+        );
         Self {
             _guard: guard,
             cwd,
@@ -1354,8 +1364,13 @@ fn with_catalog(port: Option<Arc<FakeRun>>) -> Harness {
         Arc::new(OneSession(port as Arc<dyn DynamicWorkflowRunPort>))
             as Arc<dyn DynamicWorkflowRunSessions>
     });
-    harness.tool =
-        CreateWorkflowTool::new(Arc::new(Checker), runs, harness.home.clone()).with_models(models);
+    harness.tool = CreateWorkflowTool::new(
+        Arc::new(Checker),
+        runs,
+        harness.home.clone(),
+        crate::test_more::NodeShapedIds::shared(),
+    )
+    .with_models(models);
     harness
 }
 
@@ -1516,7 +1531,12 @@ async fn one_ask_runs_the_script_analysis_once_and_still_draws_the_window() {
         Arc::new(OneSession(port as Arc<dyn DynamicWorkflowRunPort>))
             as Arc<dyn DynamicWorkflowRunSessions>
     });
-    harness.tool = CreateWorkflowTool::new(counted.clone(), runs, harness.home.clone());
+    harness.tool = CreateWorkflowTool::new(
+        counted.clone(),
+        runs,
+        harness.home.clone(),
+        crate::test_more::NodeShapedIds::shared(),
+    );
     let ctx = harness.with_skill();
     assert!(matches!(
         harness.tool.check_permissions(&inline(CLEAN), &ctx).await,
@@ -1739,6 +1759,12 @@ async fn an_unusable_adjustment_fails_the_call_and_an_empty_one_changes_nothing(
         )
         .await
         .expect_err("a model that does not resolve fails");
+    // 9.67 (ocr #625): Node passes `CREATE_WORKFLOW_FAILURE_CODE` (400).
+    assert!(
+        matches!(&message, ToolError::FailedWithCode { code: 400, .. }),
+        "{message:?}"
+    );
+    let message = message.to_string();
     assert!(
         message.starts_with("workflow_subagent_model_unresolved: the subagent model the user chose in the confirmation window cannot be used now. No configured model matches `gpt-9`."),
         "{message}"
@@ -1760,7 +1786,8 @@ async fn an_unusable_adjustment_fails_the_call_and_an_empty_one_changes_nothing(
             &ctx,
         )
         .await
-        .expect_err("a host with no catalog cannot choose");
+        .expect_err("a host with no catalog cannot choose")
+        .to_string();
     assert!(
         message.contains("This host cannot choose a subagent model."),
         "{message}"
@@ -1820,6 +1847,20 @@ async fn refine_refuses_the_call_and_the_feedback_follows_as_a_user_message() {
         rust_cli_kernel_api::hooks::queued_command::sourced(steer),
         Some(("workflow_refine_feedback", "split it into two phases"))
     );
-    // ocr #624: the id carries no creation time, so the store stamps the row with its commit time, not 1970.
-    assert_eq!(steer.id.created_ms(), None, "{:?}", steer.id);
+    // 9.67 (closes 932): Node's `msg_<base36 ms>_<uuid>` from the id source, so the store dates the row by its id as it
+    // dates any message (it decodes to the source's clock), and each follow-up has an id of its own.
+    assert_eq!(
+        steer.id.created_ms(),
+        Some(1_700_000_000_123),
+        "{:?}",
+        steer.id
+    );
+    let again = harness
+        .tool
+        .refined(&ctx.tool_use, "split it")
+        .expect("the tool takes Refine");
+    let [Message::Attachment(second)] = again.new_messages.as_slice() else {
+        panic!("one follow-up message");
+    };
+    assert_ne!(steer.id, second.id);
 }

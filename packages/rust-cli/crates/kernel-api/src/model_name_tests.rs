@@ -130,6 +130,19 @@ fn a_shared_team_name_asks_for_the_project() {
     );
 }
 
+/// 9.67 (closes 925): the picked level is the configured default when the entry has one, else the last level (Node
+/// `reasoning.default ?? values.at(-1)`).
+#[test]
+fn a_selection_takes_the_configured_default_level_before_the_last() {
+    let mut with_default = entry("custom", "m", None);
+    with_default.default_reasoning_level = Some("low".to_owned());
+    assert_eq!(selection(&with_default).reasoning.as_deref(), Some("low"));
+    let plain = entry("custom", "m", None);
+    assert_eq!(selection(&plain).reasoning.as_deref(), Some("high"));
+    assert_eq!(with_default.default_level().as_deref(), Some("low"));
+    assert_eq!(plain.default_level().as_deref(), Some("high"));
+}
+
 #[test]
 fn model_ids_with_brackets_are_found_whole() {
     let models = [entry("custom", "weird[1]", None)];

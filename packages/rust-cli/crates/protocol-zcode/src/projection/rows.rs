@@ -750,8 +750,9 @@ impl Projection {
         // Fork (9.66, divergence 929): Node's launch turn is a real turn boundary (`emitControlOnlyUserTurn` emits `TurnStarted`
         // and `TurnComplete`), so a draft session that gets a launch record is a completed one. The sidebar's task-index
         // syncer skips every `draft` summary, so the hub-started run's row took no `workflowActivity` (no run line) until a
-        // real turn followed. A running turn keeps its phase.
-        if self.phase == state::Phase::Draft {
+        // real turn followed. A running turn keeps its phase. Live, the record's turn was opened as `running` first
+        // (`begin_launch_turn`, 9.67, divergence 931) and this ends it; cold, there is no step to show.
+        if self.phase == state::Phase::Draft || std::mem::take(&mut self.launch_running) {
             self.phase = state::Phase::CompletedSuccess;
         }
     }

@@ -16,6 +16,7 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
 use async_trait::async_trait;
+use rust_cli_kernel_api::clock::Ids;
 use rust_cli_kernel_api::ids::ToolUseId;
 use rust_cli_kernel_api::permission::{PermissionDecision, PermissionRule};
 use rust_cli_kernel_api::provider::LateModelDirectory;
@@ -34,8 +35,9 @@ use serde_json::{Map, Value, json};
 
 use crate::model_reference::{
     CatalogEntry, choose, describe_script_bindings, describe_subagent_model, introduced_providers,
-    script_bindings, session_entries, unbound_diagnostics,
+    resolve as resolve_model, script_bindings, session_entries, unbound_diagnostics,
 };
+use crate::workflow_settings::{self, Settings};
 use tokio::sync::mpsc;
 
 use rust_cli_fs::read_text;
@@ -143,6 +145,21 @@ struct RevisionModels {
     entries: Option<Vec<CatalogEntry>>,
     /// Node `predecessor.introduces_providers` is non-empty: the owner exemption does not apply.
     introduces_providers: bool,
+    /// Fork (9.67): the predecessor's limit when it differs from the default (the detail's `maxConcurrency`, Node's
+    /// snapshot field), which an omitted `max_concurrency` keeps.
+    predecessor_limit: Option<u64>,
+}
+
+impl RevisionModels {
+    /// Node `resolveAmendMaxConcurrency`: the limit the revision runs under, `None` for the default. A number is the call's,
+    /// `null` is the default, and an omitted limit keeps the predecessor's.
+    fn effective_limit(&self, input: &AmendInput) -> Option<u64> {
+        match input.limit() {
+            Ok(Some(Some(number))) => Some(number),
+            Ok(Some(None)) => None,
+            _ => self.predecessor_limit,
+        }
+    }
 }
 
 /// A revision the permission decision read and checked, kept for its call.
@@ -154,6 +171,12 @@ struct Pending {
     /// Fork (9.63): the revision's models, resolved once with the decision, so the owner exemption and the amend share
     /// one catalog and detail read. `Err` is the call's failure text.
     models: Result<RevisionModels, String>,
+    /// Fork (9.67, closes 930): the input the ask shows, with the settings block and the resolved settings (Node's resolved
+    /// input after `withWorkflowAdjustableSettings`).
+    shown: Option<Value>,
+    /// Fork (9.67): the settings the user changed in the window that the call applied (Node `context.inputAdjustments`);
+    /// empty until `apply_input_adjustments` ran.
+    applied: Settings,
 }
 
 #[derive(Default)]
@@ -170,12 +193,15 @@ pub struct AmendWorkflowTool {
     approvals: Mutex<Approvals>,
     /// Fork (9.63): the catalog model names resolve against; unset refuses a named model.
     models: Arc<LateModelDirectory>,
+    /// Fork (9.67, closes 932): the id source of the Refine follow-up message (Node `createMessageId`).
+    ids: Arc<dyn Ids>,
 }
 
 impl AmendWorkflowTool {
     pub fn new(
         analyzer: Arc<dyn WorkflowAnalyzer>,
         runs: Option<Arc<dyn DynamicWorkflowRunSessions>>,
+        ids: Arc<dyn Ids>,
     ) -> Self {
         Self {
             contract: contract(tool_names::AMEND_WORKFLOW),
@@ -183,6 +209,7 @@ impl AmendWorkflowTool {
             runs,
             approvals: Mutex::new(Approvals::default()),
             models: Arc::default(),
+            ids,
         }
     }
 
@@ -246,13 +273,59 @@ impl AmendWorkflowTool {
             predecessor_bindings.as_ref(),
             entries.as_deref(),
         );
+        let predecessor_limit = detail
+            .as_ref()
+            .and_then(|detail| detail.get("maxConcurrency"))
+            .and_then(Value::as_f64)
+            // Node `normalizeWorkflowMaxConcurrency`: a whole number of at least 1.
+            .map(|limit| limit.floor().max(1.0) as u64);
         Ok(RevisionModels {
             subagent_model,
             bindings,
             predecessor_bindings,
             entries,
             introduces_providers: !introduced.is_empty(),
+            predecessor_limit,
         })
+    }
+
+    /// Node's resolved input with `withWorkflowAdjustableSettings` (9.67, closes 930): the call's input where the limit is
+    /// the one the revision runs under (inherited when omitted, absent for the default) and the subagent model is the
+    /// canonical one (absent for the session model), the script's models, and the block. A host with no run port has no run
+    /// for a change to affect, so it leaves the block out.
+    fn shown_input(
+        &self,
+        raw: &Value,
+        input: &AmendInput,
+        models: &RevisionModels,
+        context: &ToolUseContext,
+    ) -> Value {
+        let mut shown = raw.as_object().cloned().unwrap_or_default();
+        shown.remove("adjustable_settings");
+        match models.effective_limit(input) {
+            Some(limit) => shown.insert("max_concurrency".to_owned(), Value::from(limit)),
+            None => shown.remove("max_concurrency"),
+        };
+        match &models.subagent_model {
+            Some(model) => shown.insert("subagent_model".to_owned(), Value::from(model.as_str())),
+            None => shown.remove("subagent_model"),
+        };
+        if !models.bindings.is_empty() {
+            shown.insert(
+                "model_bindings".to_owned(),
+                Value::Object(models.bindings.clone()),
+            );
+        }
+        if let Some(port) = self.port(context) {
+            shown.insert(
+                "adjustable_settings".to_owned(),
+                workflow_settings::adjustable_settings(
+                    self.models.get().is_some(),
+                    port.default_concurrency(),
+                ),
+            );
+        }
+        Value::Object(shown)
     }
 
     fn approvals(&self) -> std::sync::MutexGuard<'_, Approvals> {
@@ -421,6 +494,23 @@ fn confirmation_message(name: Option<&str>) -> String {
     }
 }
 
+/// Fork (9.67, closes 930): a setting changed in the window that cannot be applied fails the call with the subagent
+/// model code (Node passes `AMEND_WORKFLOW_ERROR_CODE.SUBAGENT_MODEL` for both of its failures).
+fn adjusted_failure(message: String) -> ToolError {
+    ToolError::FailedWithCode {
+        message,
+        code: SUBAGENT_MODEL_CODE,
+    }
+}
+
+/// Fork (9.67, closes 924): a model failure that reaches the call carries `SUBAGENT_MODEL_CODE`, as the validation does.
+fn model_failure(message: String) -> ToolError {
+    ToolError::FailedWithCode {
+        message,
+        code: SUBAGENT_MODEL_CODE,
+    }
+}
+
 fn invalid(code: Option<i32>, message: &str) -> Validation {
     Validation::Invalid {
         message: message.to_owned(),
@@ -455,10 +545,132 @@ impl Tool for AmendWorkflowTool {
         true
     }
 
+    /// Node's resolved input as the window reads it (9.67, closes 930): the call's input with the settings the revision
+    /// resolved (the limit the predecessor's kept, the canonical subagent model) and the `adjustable_settings` block.
+    fn ask_input(&self, tool_use: &ToolUseId) -> Option<Value> {
+        self.approvals()
+            .by_id
+            .get(tool_use)
+            .and_then(|pending| pending.shown.clone())
+    }
+
+    /// Node `applyWorkflowSettingsAdjustments` for AmendWorkflow (9.67, closes 930): the settings the user changed in the
+    /// window, applied to the approved input. This tool's input keeps three states (an absent `max_concurrency` or
+    /// `subagent_model` keeps the predecessor's), so a setting taken back to its default or to the session model is written
+    /// as `null`, never removed. A change is told only when it differs from what the decision resolved (the inherited limit
+    /// and model included). A failure carries `AMEND_WORKFLOW_ERROR_CODE.SUBAGENT_MODEL`, and nothing starts.
+    async fn apply_input_adjustments(
+        &self,
+        tool_use: &ToolUseId,
+        input: &Value,
+        adjustments: &Map<String, Value>,
+        context: &ToolUseContext,
+    ) -> Result<Option<Value>, ToolError> {
+        let Some(adjustment) = workflow_settings::parse(adjustments) else {
+            return Ok(None);
+        };
+        let (Some(object), Ok(parsed)) = (
+            input.as_object(),
+            serde_json::from_value::<AmendInput>(input.clone()),
+        ) else {
+            return Ok(None);
+        };
+        // What the revision runs with before the changes: the decision's resolved settings, else the call's own.
+        let (current_model, current_limit) = match self.approvals().by_id.get(tool_use) {
+            Some(Pending {
+                models: Ok(models), ..
+            }) => (
+                models.subagent_model.clone(),
+                models.effective_limit(&parsed),
+            ),
+            _ => (
+                parsed
+                    .subagent_model
+                    .as_ref()
+                    .and_then(Value::as_str)
+                    .map(str::to_owned),
+                match parsed.limit() {
+                    Ok(Some(Some(number))) => Some(number),
+                    _ => None,
+                },
+            ),
+        };
+        let mut next = object.clone();
+        let mut applied = Settings::default();
+        let mut model_change: Option<Option<String>> = None;
+        match &adjustment.subagent_model {
+            None => {}
+            // Back to the session model: written as `null`, said only when the revision had a model.
+            Some(None) if current_model.is_some() => {
+                applied.subagent_model = Some(None);
+                next.insert("subagent_model".to_owned(), Value::Null);
+                model_change = Some(None);
+            }
+            Some(None) => {}
+            Some(Some(requested)) => {
+                let Some(entries) = session_entries(&self.models, context).await else {
+                    return Err(adjusted_failure(workflow_settings::model_failure(
+                        workflow_settings::MODEL_WITHOUT_CATALOG,
+                    )));
+                };
+                let canonical = resolve_model(requested, &entries)
+                    .map_err(|refusal| {
+                        adjusted_failure(workflow_settings::model_failure(&refusal.message))
+                    })?
+                    .canonical;
+                if current_model.as_deref() != Some(canonical.as_str()) {
+                    applied.subagent_model = Some(Some(canonical.clone()));
+                    next.insert(
+                        "subagent_model".to_owned(),
+                        Value::String(canonical.clone()),
+                    );
+                    model_change = Some(Some(canonical));
+                }
+            }
+        }
+        match &adjustment.max_concurrency {
+            None => {}
+            // Back to the default: written as `null`, said only when the revision had a limit.
+            Some(None) if current_limit.is_some() => {
+                applied.max_concurrency = Some(None);
+                next.insert("max_concurrency".to_owned(), Value::Null);
+            }
+            Some(None) => {}
+            Some(Some(requested)) => {
+                // Node `normalizeWorkflowMaxConcurrency`: a whole number of at least 1.
+                let bound = (*requested).max(1);
+                if current_limit != Some(bound) {
+                    applied.max_concurrency = Some(Some(bound));
+                    next.insert("max_concurrency".to_owned(), Value::from(bound));
+                }
+            }
+        }
+        if applied.is_empty() {
+            return Ok(None);
+        }
+        // The final input must still be a call the tool accepts: its handler has no second path for adjustments. One that
+        // leaves only `max_concurrency` would take the retune route before the call takes its approval (ocr #625).
+        let still_valid = serde_json::from_value::<AmendInput>(Value::Object(next.clone()))
+            .is_ok_and(|input| input.limit().is_ok() && !input.is_concurrency_only());
+        if !still_valid {
+            return Err(adjusted_failure(
+                workflow_settings::INVALID_AFTER_ADJUSTMENT.to_owned(),
+            ));
+        }
+        if let Some(pending) = self.approvals().by_id.get_mut(tool_use) {
+            // Only a model the window changed replaces the canonical one the decision resolved.
+            if let (Some(change), Ok(models)) = (model_change, pending.models.as_mut()) {
+                models.subagent_model = change;
+            }
+            pending.applied = applied;
+        }
+        Ok(Some(Value::Object(next)))
+    }
+
     /// Node `withWorkflowRefineDeniedFollowUp` (9.66, divergence 141): the window offers Refine for this tool too, and the
     /// feedback follows the refusal as a user message.
-    fn refined(&self, tool_use: &ToolUseId, feedback: &str) -> Option<ToolCallOutput> {
-        crate::workflow_refine::follow_up(tool_use, feedback)
+    fn refined(&self, _tool_use: &ToolUseId, feedback: &str) -> Option<ToolCallOutput> {
+        crate::workflow_refine::follow_up(self.ids.as_ref(), feedback)
     }
 
     fn is_read_only(&self, _input: &Value) -> bool {
@@ -548,6 +760,7 @@ impl Tool for AmendWorkflowTool {
         input: &Value,
         context: &ToolUseContext,
     ) -> PermissionDecision {
+        let raw = input;
         let Ok(input) = serde_json::from_value::<AmendInput>(input.clone()) else {
             return PermissionDecision::Passthrough;
         };
@@ -585,6 +798,10 @@ impl Tool for AmendWorkflowTool {
             .as_ref()
             .is_ok_and(|models| models.introduces_providers);
         let name = resolved.name.clone();
+        let shown = models
+            .as_ref()
+            .ok()
+            .map(|models| self.shown_input(raw, &input, models, context));
         self.remember(
             context.tool_use.clone(),
             Pending {
@@ -592,6 +809,8 @@ impl Tool for AmendWorkflowTool {
                 analysis,
                 inherited,
                 models,
+                shown,
+                applied: Settings::default(),
             },
         );
         if !checks {
@@ -656,7 +875,7 @@ impl Tool for AmendWorkflowTool {
                         &analysis.model_references,
                         &models.bindings,
                     ),
-                    Err(message) => return Err(failed(message.clone())),
+                    Err(message) => return Err(model_failure(message.clone())),
                 };
                 if analysis.ok && bound {
                     return Err(failed(
@@ -668,6 +887,8 @@ impl Tool for AmendWorkflowTool {
                     analysis,
                     inherited,
                     models,
+                    shown: None,
+                    applied: Settings::default(),
                 }
             }
         };
@@ -843,6 +1064,8 @@ impl AmendWorkflowTool {
                 analysis,
                 inherited,
                 models,
+                shown: None,
+                applied: Settings::default(),
             },
         )
         .await
@@ -863,10 +1086,12 @@ impl AmendWorkflowTool {
             mut analysis,
             inherited,
             models,
+            shown: _,
+            applied,
         } = pending;
         // Fork (9.63): the revision's models as the decision resolved them; a script model that does not bind is a 9011
         // diagnostic (Node).
-        let models = models.map_err(failed)?;
+        let models = models.map_err(model_failure)?;
         if analysis.ok
             && !crate::model_reference::all_bound(&analysis.model_references, &models.bindings)
         {
@@ -987,12 +1212,16 @@ impl AmendWorkflowTool {
         } else {
             format!("The revised script started in the background as run {run_id}.")
         };
-        // Node `describeWorkflowRunSettings`: the limit, the subagent model, then the script's models.
-        let settings = format!(
-            "{}{}{}",
-            concurrency_sentence(limit, port.default_concurrency()),
-            describe_subagent_model(models.subagent_model.as_deref()),
-            describe_script_bindings(&models.bindings)
+        // Node `describeWorkflowRunSettings`: what the user changed in the window first (9.67), then the limit and the
+        // subagent model when they were not changed, then the script's models.
+        let default_concurrency = port.default_concurrency();
+        let settings = workflow_settings::describe_run_settings(
+            &applied,
+            default_concurrency,
+            // Node describes the resolved input: the predecessor's limit when the call omitted it (9.67, ocr #625).
+            || concurrency_sentence(models.effective_limit(input), default_concurrency),
+            || describe_subagent_model(models.subagent_model.as_deref()),
+            || describe_script_bindings(&models.bindings),
         );
         let where_ = match &location {
             None => String::new(),

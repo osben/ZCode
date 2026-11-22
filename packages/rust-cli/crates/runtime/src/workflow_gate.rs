@@ -113,6 +113,7 @@ pub fn wired_workflow_tools(
     runs: Arc<dyn rust_cli_kernel_api::workflow_run::DynamicWorkflowRunSessions>,
     snippets: Option<Arc<dyn rust_cli_kernel_api::workflow_snippet::WorkflowSnippetPort>>,
     models: Arc<rust_cli_kernel_api::provider::LateModelDirectory>,
+    ids: Arc<dyn rust_cli_kernel_api::clock::Ids>,
 ) -> Vec<Arc<dyn Tool>> {
     let mut tools: Vec<Arc<dyn Tool>> = rust_cli_tools::workflow_tools(
         analyzer,
@@ -120,6 +121,7 @@ pub fn wired_workflow_tools(
         Some(runs.clone()),
         snippets,
         models,
+        ids,
     );
     let list_saved = tools
         .iter()
