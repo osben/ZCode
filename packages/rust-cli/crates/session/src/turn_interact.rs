@@ -66,6 +66,15 @@ impl Actor {
         };
         // Fork (F3b a): "Always allow in this session" grants the tool to this actor only, and the waiter gets a plain
         // allow. An ask that did not offer it is a deny (Node: the option is not in the list, so the answer is refused).
+        // Fork (9.66, divergence 141): the settings changed in a workflow window travel with an approval; the grant below
+        // reads the approval itself, and the adjustments rejoin an approval that stays one.
+        let (adjustments, answer) = match answer {
+            Answer::Permission(PermissionAnswer::Adjusted {
+                adjustments,
+                answer: approval,
+            }) => (Some(adjustments), Answer::Permission(*approval)),
+            other => (None, other),
+        };
         let answer = match (&self.pending[position].request, answer) {
             (
                 InteractionRequest::Permission {
@@ -86,6 +95,15 @@ impl Actor {
                 InteractionRequest::Permission { .. },
                 Answer::Permission(PermissionAnswer::AllowSession),
             ) => Answer::Permission(PermissionAnswer::Deny { feedback: None }),
+            (_, answer) => answer,
+        };
+        let answer = match (adjustments, answer) {
+            (Some(adjustments), Answer::Permission(approval @ PermissionAnswer::Allow { .. })) => {
+                Answer::Permission(PermissionAnswer::Adjusted {
+                    adjustments,
+                    answer: Box::new(approval),
+                })
+            }
             (_, answer) => answer,
         };
         // “总是允许”的规则先落库，成功了才算回答（shell-permissions.md §5）；没有要记住的规则时不写库。
@@ -115,6 +133,7 @@ impl Actor {
             answer,
             Answer::Permission(
                 PermissionAnswer::Deny { .. }
+                    | PermissionAnswer::Refine { .. }
                     | PermissionAnswer::Unavailable
                     | PermissionAnswer::NoPrompts
             )

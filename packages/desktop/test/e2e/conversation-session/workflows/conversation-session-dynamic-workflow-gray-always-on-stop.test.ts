@@ -129,6 +129,13 @@ describe("动态工作流 · 停止在跑的 run", () => {
         attributeFilter: ["disabled", "aria-label"],
       });
     });
+    // W9j: open-details above has just opened the run pane, which relays the card header out. A click that starts while the
+    // button still moves ends on its neighbour (pointerdown on Stop, pointerup on the details button 26px away), so the
+    // browser dispatches no click on Stop at all and the run is never stopped. Click only once the button has stopped, and
+    // read it again afterwards: the card can remount during the relayout.
+    await waitForSettledPosition(
+      `${RUN_DIGEST}[data-workflow-run-id="${runId}"] [data-testid="workflow-digest-cancel"]`,
+    );
     const cardCancel = await digest.$('[data-testid="workflow-digest-cancel"]');
     await expect(cardCancel).toHaveAttribute("aria-label", "停止运行");
     await cardCancel.click();
@@ -224,6 +231,27 @@ describe("动态工作流 · 停止在跑的 run", () => {
     );
   });
 });
+
+/**
+ * Wait until the element `selector` names keeps one position and size for several polls in a row. The side pane opening
+ * resizes the transcript, and a header control keeps moving until that layout has settled.
+ */
+async function waitForSettledPosition(selector: string): Promise<void> {
+  let previous = "";
+  let stable = 0;
+  await browser.waitUntil(
+    async () => {
+      const rect = await browser.execute((query: string) => {
+        const box = document.querySelector(query)?.getBoundingClientRect();
+        return box === undefined ? "absent" : `${box.left},${box.top},${box.width},${box.height}`;
+      }, selector);
+      stable = rect === previous && rect !== "absent" ? stable + 1 : 0;
+      previous = rect;
+      return stable >= 3;
+    },
+    { interval: 100, timeout: 10000, timeoutMsg: "停止按钮的位置一直在变" },
+  );
+}
 
 interface DigestSnapshot {
   runId: string | null;

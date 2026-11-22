@@ -1132,21 +1132,22 @@ fn allow_always_denies_an_ask_that_does_not_offer_it() {
         suggestions: vec![rule.clone()],
         always,
         session: false,
+        workflow: false,
     };
     assert_eq!(
-        permission_answer(Some("allowAlways"), offered(true), None),
+        permission_answer(Some("allowAlways"), offered(true), None, None),
         PermissionAnswer::Allow {
             remember: vec![rule.clone()]
         }
     );
     assert_eq!(
-        permission_answer(Some("allowAlways"), offered(false), Some(" no ")),
+        permission_answer(Some("allowAlways"), offered(false), Some(" no "), None),
         PermissionAnswer::Deny {
             feedback: Some("no".to_owned())
         }
     );
     assert_eq!(
-        permission_answer(Some("allowOnce"), offered(false), None),
+        permission_answer(Some("allowOnce"), offered(false), None, None),
         PermissionAnswer::Allow {
             remember: Vec::new()
         }
@@ -1228,7 +1229,7 @@ fn allow_always_without_suggestions_remembers_nodes_default_rule() {
     };
     let remembered = |request: InteractionRequest| {
         let (offered, _) = Offered::of(&request).unwrap();
-        match permission_answer(Some("allowAlways"), offered, None) {
+        match permission_answer(Some("allowAlways"), offered, None, None) {
             PermissionAnswer::Allow { remember } => remember,
             other => panic!("{other:?}"),
         }
@@ -1315,17 +1316,17 @@ fn a_session_ask_offers_the_session_allow_in_place_of_the_project_option() {
     assert!(!offered(&session).always);
     assert!(offered(&session).session);
     assert!(matches!(
-        permission_answer(Some("allowSession"), offered(&session), None),
+        permission_answer(Some("allowSession"), offered(&session), None, None),
         PermissionAnswer::AllowSession
     ));
     assert!(matches!(
-        permission_answer(Some("allowAlways"), offered(&session), None),
+        permission_answer(Some("allowAlways"), offered(&session), None, None),
         PermissionAnswer::Deny { .. }
     ));
     let plain = ask(false);
     assert!(!offered(&plain).session);
     assert!(matches!(
-        permission_answer(Some("allowSession"), offered(&plain), None),
+        permission_answer(Some("allowSession"), offered(&plain), None, None),
         PermissionAnswer::Deny { .. }
     ));
 }
@@ -1533,5 +1534,127 @@ async fn an_off_peak_execution_id_is_trimmed_and_a_blank_one_is_refused() {
     assert_eq!(
         server.context.off_peak.open_session("exe_1").as_deref(),
         Some("s1")
+    );
+}
+
+/// Fork (9.66, divergence 141): the answers of a workflow confirmation window (Node `v4AnswerToPermissionResponse` and
+/// `withWorkflowSettingsAdjustment`). Refine with feedback is a Refine, an empty one or another tool's is the ordinary
+/// denial, and the settings changed in the window travel with an approval of CreateWorkflow or AmendWorkflow only.
+#[test]
+fn a_workflow_window_answers_refine_and_carries_the_settings_with_an_approval() {
+    use rust_cli_kernel_api::ids::ToolUseId;
+    use rust_cli_kernel_api::orchestration::{InteractionRequest, PermissionAnswer};
+    let ask = |tool: &str| InteractionRequest::Permission {
+        origin: None,
+        tool_use: ToolUseId::new("toolu_1"),
+        tool: tool.to_owned(),
+        input: json!({}),
+        message: "ask".into(),
+        suggestions: Vec::new(),
+        rule_seed: None,
+        asked_by: None,
+        machine: Default::default(),
+        once: false,
+        independent: false,
+        session_allow: true,
+        display: None,
+    };
+    let offered = |tool: &str| Offered::of(&ask(tool)).unwrap().0;
+    let content = |value: Value| value.as_object().cloned();
+
+    // Refine: the feedback trimmed, only for the two workflow tools, only when there is some.
+    for tool in ["CreateWorkflow", "AmendWorkflow"] {
+        assert_eq!(
+            permission_answer(
+                Some("workflowRefine"),
+                offered(tool),
+                Some("  split it  "),
+                None
+            ),
+            PermissionAnswer::Refine {
+                feedback: "split it".to_owned()
+            },
+            "{tool}"
+        );
+        assert_eq!(
+            permission_answer(Some("workflowRefine"), offered(tool), Some("   "), None),
+            PermissionAnswer::Deny { feedback: None },
+            "{tool}: empty feedback"
+        );
+        assert_eq!(
+            permission_answer(Some("workflowRefine"), offered(tool), None, None),
+            PermissionAnswer::Deny { feedback: None },
+            "{tool}: no feedback"
+        );
+    }
+    assert_eq!(
+        permission_answer(
+            Some("workflowRefine"),
+            offered("Bash"),
+            Some("split it"),
+            None
+        ),
+        PermissionAnswer::Deny {
+            feedback: Some("split it".to_owned())
+        },
+        "a forged Refine on another tool is a denial"
+    );
+
+    // Settings: both approvals carry them, as the two known keys; a refusal and another tool never do.
+    let changed = content(json!({"max_concurrency": 6, "subagent_model": null, "other": 1}));
+    let carried = json!({"max_concurrency": 6, "subagent_model": null});
+    assert_eq!(
+        permission_answer(
+            Some("allowOnce"),
+            offered("CreateWorkflow"),
+            None,
+            changed.as_ref()
+        ),
+        PermissionAnswer::Adjusted {
+            adjustments: carried.as_object().cloned().unwrap(),
+            answer: Box::new(PermissionAnswer::Allow {
+                remember: Vec::new()
+            }),
+        }
+    );
+    assert_eq!(
+        permission_answer(
+            Some("allowSession"),
+            offered("AmendWorkflow"),
+            None,
+            changed.as_ref()
+        ),
+        PermissionAnswer::Adjusted {
+            adjustments: carried.as_object().cloned().unwrap(),
+            answer: Box::new(PermissionAnswer::AllowSession),
+        }
+    );
+    assert_eq!(
+        permission_answer(
+            Some("deny"),
+            offered("CreateWorkflow"),
+            None,
+            changed.as_ref()
+        ),
+        PermissionAnswer::Deny { feedback: None }
+    );
+    assert_eq!(
+        permission_answer(Some("allowOnce"), offered("Bash"), None, changed.as_ref()),
+        PermissionAnswer::Allow {
+            remember: Vec::new()
+        }
+    );
+    let unknown = content(json!({"other": 1}));
+    assert_eq!(
+        permission_answer(
+            Some("allowOnce"),
+            offered("CreateWorkflow"),
+            None,
+            unknown.as_ref()
+        ),
+        PermissionAnswer::Allow {
+            remember: Vec::new()
+        },
+        "a reply with no known key is no adjustment"
     );
 }

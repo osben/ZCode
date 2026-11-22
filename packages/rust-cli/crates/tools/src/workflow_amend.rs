@@ -20,7 +20,8 @@ use rust_cli_kernel_api::ids::ToolUseId;
 use rust_cli_kernel_api::permission::{PermissionDecision, PermissionRule};
 use rust_cli_kernel_api::provider::LateModelDirectory;
 use rust_cli_kernel_api::tool::{
-    PromptContext, Tool, ToolError, ToolOutput, ToolProgress, ToolUseContext, Validation, failed,
+    PromptContext, Tool, ToolCallOutput, ToolError, ToolOutput, ToolProgress, ToolUseContext,
+    Validation, failed,
 };
 use rust_cli_kernel_api::tool_names;
 use rust_cli_kernel_api::workflow_analysis::{WorkflowAnalysis, WorkflowAnalyzer};
@@ -452,6 +453,12 @@ impl Tool for AmendWorkflowTool {
     /// Node `askOptions.allowAlways: "session"`: the ask offers "always allow in this session".
     fn allow_session(&self) -> bool {
         true
+    }
+
+    /// Node `withWorkflowRefineDeniedFollowUp` (9.66, divergence 141): the window offers Refine for this tool too, and the
+    /// feedback follows the refusal as a user message.
+    fn refined(&self, tool_use: &ToolUseId, feedback: &str) -> Option<ToolCallOutput> {
+        crate::workflow_refine::follow_up(tool_use, feedback)
     }
 
     fn is_read_only(&self, _input: &Value) -> bool {

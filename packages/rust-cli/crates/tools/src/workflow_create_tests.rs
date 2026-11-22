@@ -1148,6 +1148,7 @@ fn prepared(script: &str) -> Prepared {
         shown: None,
         subagent_model: None,
         model_bindings: serde_json::Map::new(),
+        applied: Settings::default(),
     }
 }
 
@@ -1292,7 +1293,13 @@ async fn the_ask_of_a_saved_run_shows_its_file_scope_and_defaulted_arguments() {
         .tool
         .check_permissions(&inline("return 1;"), &inline_ctx)
         .await;
-    assert_eq!(harness.tool.ask_input(&inline_ctx.tool_use), None);
+    // An inline script shows the call's own input; the port makes the settings adjustable (9.66, divergence 141).
+    assert_eq!(
+        harness.tool.ask_input(&inline_ctx.tool_use),
+        Some(
+            json!({"name": "pr-review", "script": "return 1;", "adjustable_settings": {"subagent_model": false}})
+        )
+    );
 }
 
 /// 9.63: a line `// model: NAME` stands for a persona that names the model NAME (Node `modelReferences`).
@@ -1525,4 +1532,262 @@ async fn one_ask_runs_the_script_analysis_once_and_still_draws_the_window() {
         .ask_display(&ctx.tool_use)
         .expect("the window has the analysis's display");
     assert_eq!(window["causalityGraph"]["steps"][0]["id"], "ask-1");
+}
+
+fn adjustments(value: Value) -> serde_json::Map<String, Value> {
+    value.as_object().cloned().expect("an object")
+}
+
+/// 9.66 (divergence 141, Node `workflowAdjustableSettings`): the ask names the two settings the window may adjust, as
+/// facts of the host. The model field needs a catalog, the bound's hint needs the run port's default concurrency, and a
+/// host with no run port has nothing to adjust.
+#[tokio::test]
+async fn the_ask_names_the_settings_the_window_may_adjust() {
+    let shown_with = |harness: Harness| async move {
+        let ctx = harness.with_skill();
+        let _ = harness
+            .tool
+            .check_permissions(&json!({"script": CLEAN}), &ctx)
+            .await;
+        harness.tool.ask_input(&ctx.tool_use)
+    };
+    let both = shown_with(with_catalog(Some(FakeRun::new(Some(4), false))))
+        .await
+        .expect("the ask shows the resolved input");
+    assert_eq!(
+        both["adjustable_settings"],
+        json!({"subagent_model": true, "concurrency_ceiling": 4}),
+        "{both}"
+    );
+    assert_eq!(both["script"], CLEAN, "the call's own fields stay: {both}");
+
+    let no_catalog = shown_with(Harness::new(Some(FakeRun::new(Some(4), false))))
+        .await
+        .expect("shown");
+    assert_eq!(
+        no_catalog["adjustable_settings"],
+        json!({"subagent_model": false, "concurrency_ceiling": 4})
+    );
+    let no_default = shown_with(with_catalog(Some(FakeRun::new(None, false))))
+        .await
+        .expect("shown");
+    assert_eq!(
+        no_default["adjustable_settings"],
+        json!({"subagent_model": true})
+    );
+    let no_port = shown_with(with_catalog(None)).await;
+    assert!(
+        no_port.is_none_or(|shown| shown.get("adjustable_settings").is_none()),
+        "a host with no run port has nothing to adjust"
+    );
+}
+
+/// 9.66 (divergence 141): a concurrency bound set in the window runs the call with that bound, and the result tells the
+/// model what the user changed, ahead of the usual sentences (Node `describeWorkflowRunSettings`).
+#[tokio::test]
+async fn a_bound_adjusted_in_the_window_runs_and_is_told_to_the_model() {
+    let harness = with_catalog(Some(FakeRun::new(Some(4), false)));
+    let input = json!({"script": CLEAN});
+    let ctx = harness.with_skill();
+    let _ = harness.tool.check_permissions(&input, &ctx).await;
+    let adjusted = harness
+        .tool
+        .apply_input_adjustments(
+            &ctx.tool_use,
+            &input,
+            &adjustments(json!({"max_concurrency": 6})),
+            &ctx,
+        )
+        .await
+        .expect("the adjustment applies")
+        .expect("the input changes");
+    assert_eq!(adjusted["max_concurrency"], 6, "{adjusted}");
+    let (tx, _rx) = mpsc::channel(4);
+    let output = harness
+        .tool
+        .call(adjusted, ctx, tx)
+        .await
+        .expect("the call runs");
+    let text = output_text(&output);
+    assert_eq!(submits_of(&harness)[0].max_concurrency, Some(6));
+    assert!(
+        text.contains(" Before approving, the user adjusted the settings in the confirmation window: at most 6 subagents run at once (the default is 4)."),
+        "{text}"
+    );
+    assert!(
+        !text.contains("At most 6 subagents run at once"),
+        "the usual limit sentence is not said twice: {text}"
+    );
+    assert!(!text.contains("back on the session model"), "{text}");
+}
+
+/// 9.66 (divergence 141): a subagent model chosen in the window resolves through the catalog to its canonical form,
+/// reaches the submit, and is told as the adjustment; `null` puts the run back on the session model.
+#[tokio::test]
+async fn a_model_adjusted_in_the_window_resolves_runs_and_is_told_to_the_model() {
+    let harness = with_catalog(Some(FakeRun::new(Some(4), false)));
+    let input = json!({"script": CLEAN});
+    let ctx = harness.with_skill();
+    let _ = harness.tool.check_permissions(&input, &ctx).await;
+    let adjusted = harness
+        .tool
+        .apply_input_adjustments(
+            &ctx.tool_use,
+            &input,
+            &adjustments(json!({"subagent_model": "deepseek-v4-pro"})),
+            &ctx,
+        )
+        .await
+        .expect("applies")
+        .expect("changes");
+    assert_eq!(adjusted["subagent_model"], "deepseek/deepseek-v4-pro");
+    let (tx, _rx) = mpsc::channel(4);
+    let output = harness
+        .tool
+        .call(adjusted, ctx, tx)
+        .await
+        .expect("the call runs");
+    let text = output_text(&output);
+    assert_eq!(
+        submits_of(&harness)[0].subagent_model.as_deref(),
+        Some("deepseek/deepseek-v4-pro")
+    );
+    assert!(
+        text.contains(" Before approving, the user adjusted the settings in the confirmation window: subagents run on deepseek/deepseek-v4-pro (the main agent stays on the session model)."),
+        "{text}"
+    );
+    assert!(
+        !text.contains("Subagents run on deepseek/deepseek-v4-pro (the main"),
+        "the usual model sentence is not said twice: {text}"
+    );
+
+    // `null` takes a model the call named back to the session model, and says so.
+    let named = json!({"script": CLEAN, "subagent_model": "deepseek-v4-flash"});
+    let ctx = harness.with_skill();
+    let _ = harness.tool.check_permissions(&named, &ctx).await;
+    let adjusted = harness
+        .tool
+        .apply_input_adjustments(
+            &ctx.tool_use,
+            &named,
+            &adjustments(json!({"subagent_model": null})),
+            &ctx,
+        )
+        .await
+        .expect("applies")
+        .expect("changes");
+    assert!(adjusted.get("subagent_model").is_none(), "{adjusted}");
+    let (tx, _rx) = mpsc::channel(4);
+    let output = harness
+        .tool
+        .call(adjusted, ctx, tx)
+        .await
+        .expect("the call runs");
+    assert_eq!(submits_of(&harness)[1].subagent_model, None);
+    assert!(
+        output_text(&output).contains("the user adjusted the settings in the confirmation window: subagents are back on the session model."),
+        "{}",
+        output_text(&output)
+    );
+}
+
+/// 9.66 (divergence 141): a model that cannot be used now, or a host with no catalog, fails the call with Node's text
+/// and starts nothing; an adjustment that changes nothing, or a reply that is no adjustment, leaves the input alone.
+#[tokio::test]
+async fn an_unusable_adjustment_fails_the_call_and_an_empty_one_changes_nothing() {
+    let harness = with_catalog(Some(FakeRun::new(Some(4), false)));
+    let input = json!({"script": CLEAN, "max_concurrency": 4});
+    let ctx = harness.with_skill();
+    let _ = harness.tool.check_permissions(&input, &ctx).await;
+    let message = harness
+        .tool
+        .apply_input_adjustments(
+            &ctx.tool_use,
+            &input,
+            &adjustments(json!({"subagent_model": "gpt-9"})),
+            &ctx,
+        )
+        .await
+        .expect_err("a model that does not resolve fails");
+    assert!(
+        message.starts_with("workflow_subagent_model_unresolved: the subagent model the user chose in the confirmation window cannot be used now. No configured model matches `gpt-9`."),
+        "{message}"
+    );
+    assert!(
+        message.ends_with(" Nothing was started; ask the user which model to use."),
+        "{message}"
+    );
+
+    let bare = Harness::new(Some(FakeRun::new(Some(4), false)));
+    let ctx = bare.with_skill();
+    let _ = bare.tool.check_permissions(&input, &ctx).await;
+    let message = bare
+        .tool
+        .apply_input_adjustments(
+            &ctx.tool_use,
+            &input,
+            &adjustments(json!({"subagent_model": "deepseek-v4-pro"})),
+            &ctx,
+        )
+        .await
+        .expect_err("a host with no catalog cannot choose");
+    assert!(
+        message.contains("This host cannot choose a subagent model."),
+        "{message}"
+    );
+
+    // The bound the call already has, a reply with no known key and a bad shape: the input stays as it is and no
+    // adjustment is told.
+    for reply in [
+        json!({"max_concurrency": 4}),
+        json!({"other": 1}),
+        json!({"max_concurrency": 0}),
+        json!({"max_concurrency": "many"}),
+    ] {
+        let ctx = harness.with_skill();
+        let _ = harness.tool.check_permissions(&input, &ctx).await;
+        let adjusted = harness
+            .tool
+            .apply_input_adjustments(&ctx.tool_use, &input, &adjustments(reply.clone()), &ctx)
+            .await
+            .expect("no failure");
+        let run_input = adjusted.unwrap_or_else(|| input.clone());
+        assert_eq!(run_input, input, "{reply}");
+        let (tx, _rx) = mpsc::channel(4);
+        let output = harness
+            .tool
+            .call(run_input, ctx, tx)
+            .await
+            .expect("the call runs");
+        assert!(
+            !output_text(&output).contains("the user adjusted"),
+            "{reply}: {}",
+            output_text(&output)
+        );
+    }
+}
+
+/// 9.66 (divergence 141, Node `withWorkflowRefineDeniedFollowUp`): Refine refuses the call with the standard text and
+/// the feedback follows as a user message from the `workflow_refine_feedback` source.
+#[tokio::test]
+async fn refine_refuses_the_call_and_the_feedback_follows_as_a_user_message() {
+    let harness = Harness::new(Some(FakeRun::new(None, false)));
+    let ctx = harness.with_skill();
+    let refused = harness
+        .tool
+        .refined(&ctx.tool_use, "  split it into two phases  ")
+        .expect("the tool takes Refine");
+    assert!(refused.output.is_error);
+    assert_eq!(
+        output_text(&refused.output),
+        "The workflow run was not approved by the user."
+    );
+    assert!(!refused.stop_turn);
+    let [Message::Attachment(steer)] = refused.new_messages.as_slice() else {
+        panic!("one follow-up message: {:?}", refused.new_messages);
+    };
+    assert_eq!(
+        rust_cli_kernel_api::hooks::queued_command::sourced(steer),
+        Some(("workflow_refine_feedback", "split it into two phases"))
+    );
 }

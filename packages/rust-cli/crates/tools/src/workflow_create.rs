@@ -17,8 +17,8 @@ use rust_cli_kernel_api::ids::ToolUseId;
 use rust_cli_kernel_api::permission::{PermissionDecision, PermissionRule};
 use rust_cli_kernel_api::provider::LateModelDirectory;
 use rust_cli_kernel_api::tool::{
-    PromptContext, Tool, ToolError, ToolOutput, ToolProgress, ToolUseContext, Validation, failed,
-    text,
+    PromptContext, Tool, ToolCallOutput, ToolError, ToolOutput, ToolProgress, ToolUseContext,
+    Validation, failed, text,
 };
 use rust_cli_kernel_api::tool_names;
 use rust_cli_kernel_api::workflow_analysis::{
@@ -39,6 +39,7 @@ use crate::saved_workflow::{
     ArgDecl, ArgType, FILE_EXTENSION, ResolveRefusal, Scope, Store, invalid_name_text,
     not_found_headline, parse as parse_saved, starts_with_sentinel, unreadable_text,
 };
+use crate::workflow_settings::{self, Settings};
 use crate::workflow_tools::{
     Contract, DYNAMIC_WORKFLOW_SKILL, contract, skill_loaded, workspace_dir,
 };
@@ -146,6 +147,9 @@ pub(crate) struct Prepared {
     pub(crate) subagent_model: Option<String>,
     /// Fork (9.63): the script's models that resolved, name to canonical (Node `model_bindings`).
     pub(crate) model_bindings: Map<String, Value>,
+    /// Fork (9.66, divergence 141): the settings the user changed in the window that the call applied (Node
+    /// `context.inputAdjustments`); empty until `apply_input_adjustments` ran.
+    pub(crate) applied: Settings,
 }
 
 /// The kept decisions. A full table evicts its oldest entry (never the others), and a taken entry leaves at once.
@@ -226,6 +230,17 @@ impl CreateWorkflowTool {
         let entries = self.entries(context).await;
         let bindings = script_bindings(&analysis.model_references, entries.as_deref(), None);
         (bindings, entries)
+    }
+
+    /// Node `workflowAdjustableSettings`: the block the ask carries, or `None` for a host with no run port (no run for a change
+    /// to affect). The model field needs the catalog; the stepper's hint is the port's default concurrency.
+    fn adjustable_block(&self, context: &ToolUseContext) -> Option<Value> {
+        let runs = self.runs.as_ref()?;
+        let default = runs.for_session(&context.session).default_concurrency();
+        Some(workflow_settings::adjustable_settings(
+            self.models.get().is_some(),
+            default,
+        ))
     }
 
     fn approvals(&self) -> std::sync::MutexGuard<'_, Approvals> {
@@ -915,6 +930,79 @@ impl Tool for CreateWorkflowTool {
         true
     }
 
+    /// Node `applyWorkflowSettingsAdjustments` (9.66, divergence 141): the settings the user changed in the window, applied
+    /// to the approved input. A model resolves through the catalog to its canonical form (a failure is the call's, and
+    /// nothing starts), `null` takes a setting back to its default, and a bound is a whole number of at least 1. What changed
+    /// is kept for the call, which tells the model; the run's model is the one the call keeps in its decision.
+    async fn apply_input_adjustments(
+        &self,
+        tool_use: &ToolUseId,
+        input: &Value,
+        adjustments: &Map<String, Value>,
+        context: &ToolUseContext,
+    ) -> Result<Option<Value>, String> {
+        let Some(adjustment) = workflow_settings::parse(adjustments) else {
+            return Ok(None);
+        };
+        let Some(object) = input.as_object() else {
+            return Ok(None);
+        };
+        let mut next = object.clone();
+        let mut applied = Settings::default();
+        match &adjustment.subagent_model {
+            None => {}
+            // Back to the session model; said only when the call had named one.
+            Some(None) => applied.subagent_model = next.remove("subagent_model").map(|_| None),
+            Some(Some(requested)) => {
+                let Some(entries) = self.entries(context).await else {
+                    return Err(workflow_settings::model_failure(
+                        workflow_settings::MODEL_WITHOUT_CATALOG,
+                    ));
+                };
+                let canonical = resolve_model(requested, &entries)
+                    .map_err(|refusal| workflow_settings::model_failure(&refusal.message))?
+                    .canonical;
+                if next.get("subagent_model").and_then(Value::as_str) != Some(canonical.as_str()) {
+                    applied.subagent_model = Some(Some(canonical.clone()));
+                }
+                next.insert("subagent_model".to_owned(), Value::String(canonical));
+            }
+        }
+        match &adjustment.max_concurrency {
+            None => {}
+            // Back to the default bound; said only when the call had set one.
+            Some(None) => applied.max_concurrency = next.remove("max_concurrency").map(|_| None),
+            Some(Some(requested)) => {
+                // Node `normalizeWorkflowMaxConcurrency`: a whole number of at least 1.
+                let bound = (*requested).max(1);
+                if next.get("max_concurrency").and_then(Value::as_u64) != Some(bound) {
+                    applied.max_concurrency = Some(Some(bound));
+                }
+                next.insert("max_concurrency".to_owned(), Value::from(bound));
+            }
+        }
+        // The final input must still be a call the tool accepts: its handler has no second path for adjustments.
+        let still_valid = serde_json::from_value::<CreateInput>(Value::Object(next.clone()))
+            .is_ok_and(|input| input.max_concurrency != Some(0));
+        if !still_valid {
+            return Err(workflow_settings::INVALID_AFTER_ADJUSTMENT.to_owned());
+        }
+        if let Some(prepared) = self.approvals().by_id.get_mut(tool_use) {
+            prepared.subagent_model = next
+                .get("subagent_model")
+                .and_then(Value::as_str)
+                .map(str::to_owned);
+            prepared.applied = applied;
+        }
+        Ok(Some(Value::Object(next)))
+    }
+
+    /// Node `withWorkflowRefineDeniedFollowUp` (9.66, divergence 141): the refusal says the run was not approved, and the
+    /// feedback follows it as a user message of the `workflow_refine_feedback` source, so the model revises and asks again.
+    fn refined(&self, tool_use: &ToolUseId, feedback: &str) -> Option<ToolCallOutput> {
+        crate::workflow_refine::follow_up(tool_use, feedback)
+    }
+
     fn is_read_only(&self, _input: &Value) -> bool {
         self.contract.read_only
     }
@@ -1072,6 +1160,11 @@ impl Tool for CreateWorkflowTool {
             subagent_model.as_deref(),
             &model_bindings,
         );
+        // Fork (9.66, divergence 141): the window learns which settings this agent applies (Node `withWorkflowAdjustableSettings`).
+        let shown = match self.adjustable_block(context) {
+            Some(block) => Some(workflow_settings::with_block(shown, raw, block)),
+            None => shown,
+        };
         self.remember(
             context.tool_use.clone(),
             Prepared {
@@ -1081,6 +1174,7 @@ impl Tool for CreateWorkflowTool {
                 shown,
                 subagent_model,
                 model_bindings,
+                applied: Settings::default(),
             },
         );
         if !checks {
@@ -1136,6 +1230,7 @@ impl Tool for CreateWorkflowTool {
                     shown: None,
                     subagent_model: None,
                     model_bindings,
+                    applied: Settings::default(),
                 }
             }
         };
@@ -1145,6 +1240,7 @@ impl Tool for CreateWorkflowTool {
             display,
             subagent_model,
             model_bindings,
+            applied,
             ..
         } = prepared;
         // Fork (9.63): a model the script names that is unbound is a 9011 diagnostic (Node, through the compile path).
@@ -1213,12 +1309,15 @@ impl Tool for CreateWorkflowTool {
             .submit(request)
             .await
             .map_err(|error| failed(error.message))?;
-        // Node `describeWorkflowRunSettings`: the limit, the subagent model, then the script's models.
-        let settings = format!(
-            "{}{}{}",
-            concurrency_sentence(input.max_concurrency, port.default_concurrency()),
-            describe_subagent_model(subagent_model.as_deref()),
-            describe_script_bindings(&model_bindings)
+        // Node `describeWorkflowRunSettings`: what the user changed in the window first (9.66), then the limit and the subagent
+        // model when they were not changed, then the script's models.
+        let default_concurrency = port.default_concurrency();
+        let settings = workflow_settings::describe_run_settings(
+            &applied,
+            default_concurrency,
+            || concurrency_sentence(input.max_concurrency, default_concurrency),
+            || describe_subagent_model(subagent_model.as_deref()),
+            || describe_script_bindings(&model_bindings),
         );
         let where_ = match &location {
             None => String::new(),

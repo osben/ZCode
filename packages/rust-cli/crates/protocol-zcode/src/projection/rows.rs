@@ -615,6 +615,14 @@ impl Projection {
                         state::permission_options()
                     },
                 });
+                // Fork (9.66, divergence 141): the window of CreateWorkflow and AmendWorkflow offers Refine after the standard
+                // options (Node `product-projection.ts`: a custom option whose static response is a plain denial, so a
+                // consumer that does not know it refuses; the feedback promotion lives in the answer mapping).
+                if matches!(tool.as_str(), "CreateWorkflow" | "AmendWorkflow")
+                    && let Some(options) = payload["options"].as_array_mut()
+                {
+                    options.push(state::workflow_refine_option());
+                }
                 // Fork (B3, Node `product-projection.ts`): only the session's own ask that is no independent
                 // confirmation offers a permission mode switch. A once-ask (guarded already) can only switch to full
                 // access; any other offers guarded or full access, with the full access option for older clients.
@@ -622,7 +630,10 @@ impl Projection {
                 if let Some(display) = display {
                     payload["display"] = display.clone();
                 }
-                if origin.is_none() && !*independent {
+                // Fork (9.66): an ask that offers the session allow carries Node's `optionsPolicy: "session-always-allow"`,
+                // and an ask with an options policy offers no switch (`!payload.optionsPolicy`), so a workflow window lists
+                // no full access row.
+                if origin.is_none() && !*independent && !*session_allow {
                     if *once {
                         payload["modeSwitch"] = json!("fullAccessOnly");
                     } else {
@@ -735,5 +746,12 @@ impl Projection {
         row.insert("origin".into(), json!("workflowLaunch"));
         row.insert("workflowLaunch".into(), launch);
         self.append(format!("user:{}", user.id.as_str()), row, out);
+        // Fork (9.66, divergence 929): Node's launch turn is a real turn boundary (`emitControlOnlyUserTurn` emits `TurnStarted`
+        // and `TurnComplete`), so a draft session that gets a launch record is a completed one. The sidebar's task-index
+        // syncer skips every `draft` summary, so the hub-started run's row took no `workflowActivity` (no run line) until a
+        // real turn followed. A running turn keeps its phase.
+        if self.phase == state::Phase::Draft {
+            self.phase = state::Phase::CompletedSuccess;
+        }
     }
 }

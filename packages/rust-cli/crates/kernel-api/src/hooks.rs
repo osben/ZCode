@@ -478,6 +478,8 @@ pub mod queued_command {
     pub const STEER_SOURCE_KEY: &str = "steerSource";
     /// Fork: the steer source of ExitPlanMode feedback (Node `plan_approval_feedback`).
     pub const PLAN_APPROVAL_FEEDBACK: &str = "plan_approval_feedback";
+    /// Fork (9.66): the steer source of a workflow confirmation window's Refine feedback (Node `workflow_refine_feedback`).
+    pub const WORKFLOW_REFINE_FEEDBACK: &str = "workflow_refine_feedback";
     /// Fork: the `data` key of a typed steer's App input intent (its row's typed text and quotes).
     pub const INTENT_KEY: &str = "inputIntent";
 

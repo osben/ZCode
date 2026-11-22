@@ -235,6 +235,9 @@ async fn asks_without_a_mode_switch_refuse_the_grant() {
     for permission in [
         Some(serde_json::json!({"subagent": true})),
         Some(serde_json::json!({"once": true, "independent": true})),
+        // Fork (9.66): an ask that offers the session allow carries Node's `optionsPolicy: "session-always-allow"`, so it
+        // registers no grant hook (a workflow confirmation window is one).
+        Some(serde_json::json!({"session_allow": true})),
         None,
     ] {
         let scope = TaskScope::root("test", |_| {});

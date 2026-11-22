@@ -146,3 +146,44 @@ fn a_hub_launch_record_draws_the_launch_turn_live_and_cold() {
     let cold = Projection::from_view(&view(vec![record]), Followup::Queue, Vec::new());
     assert_launch_turn(&cold);
 }
+
+/// 9.66 (divergence 929): Node's launch turn is a real turn boundary (`emitControlOnlyUserTurn` emits `TurnStarted` and
+/// `TurnComplete`), so a session whose first record is a hub launch is no longer a draft: its phase is `completedSuccess`,
+/// live and cold. The sidebar's task-index syncer skips every summary in the `draft` phase, so a hub-started run's session
+/// row never took its `workflowActivity` (no run line) until a real turn followed.
+#[test]
+fn a_hub_launch_record_takes_a_draft_session_out_of_the_draft_phase() {
+    use super::Phase;
+    let mut record = settings_record("msg_launch");
+    if let Message::User(user) = &mut record {
+        user.origin = UserOrigin::Meta {
+            source: "workflow_launch".into(),
+        };
+    }
+    let mut feed = Feed::new();
+    assert_eq!(feed.projection.phase(), Phase::Draft);
+    let deltas = feed.apply(KernelEvent::MessageDone {
+        message: record.clone(),
+    });
+    assert_eq!(feed.projection.phase(), Phase::CompletedSuccess);
+    // The phase's own facts change with it, so a started subscription redraws the composer.
+    assert!(
+        deltas
+            .iter()
+            .any(|delta| delta["patch"].get("control").is_some()),
+        "{deltas:?}"
+    );
+    let cold = Projection::from_view(&view(vec![record]), Followup::Queue, Vec::new());
+    assert_eq!(cold.phase(), Phase::CompletedSuccess);
+
+    // A running turn keeps its phase: the record never ends it.
+    let mut running = Feed::new();
+    running.apply(KernelEvent::TurnStarted {
+        turn: TurnId::new("turn_1"),
+        command: None,
+    });
+    running.apply(KernelEvent::MessageDone {
+        message: settings_record("msg_set"),
+    });
+    assert_eq!(running.projection.phase(), Phase::Running);
+}
