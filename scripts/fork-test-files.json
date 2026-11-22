@@ -226,6 +226,7 @@
   "packages/ui/test/branchMergedBadge.test.ts",
   "packages/ui/test/branchSwitchGuardI18n.test.ts",
   "packages/ui/test/branchSwitchGuardPagination.test.tsx",
+  "packages/ui/test/catalogFlightSettlement.test.ts",
   "packages/ui/test/changeSummaryTree.test.ts",
   "packages/ui/test/chatContextUsageBudgetRendering.test.ts",
   "packages/ui/test/chatGptPlanDetail.test.ts",

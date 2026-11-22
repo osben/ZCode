@@ -50,6 +50,24 @@ import {
 /** 目录水合单飞（per workspaceKey）：draft、已有 session 和严格模式双挂载共享一次 RPC。 */
 const workspaceCatalogHydrationFlights = new Map<string, Promise<void>>();
 
+/**
+ * Fork (W9h, ocr #623): how a catalog hydration read settles. A read that started before a slash
+ * catalog invalidation (`stale`) leaves the status to a newer read of the same workspace; with no
+ * newer read and the status still "loading" it reports its failure, and a success releases that
+ * stranded "loading" without writing its pre-invalidation catalog.
+ */
+export function catalogFlightSettlement(params: {
+  outcome: "success" | "failure";
+  stale: boolean;
+  newerFlightInProgress: boolean;
+  status: string;
+}): "write" | "drop" | "settle-ready" {
+  if (!params.stale) return "write";
+  // A newer read still running, or one that already settled the status, owns it.
+  if (params.newerFlightInProgress || params.status !== "loading") return "drop";
+  return params.outcome === "failure" ? "write" : "settle-ready";
+}
+
 // Compare the identity and reasoning level only; object key order is not selection identity.
 function isSameModelSelection(left: ModelSelection, right: ModelSelection): boolean {
   return (
@@ -1053,6 +1071,18 @@ export function useDraftConfigControl(params: {
     }
 
     store.setConfigOptionsStatus(workspacePath, "loading", workspaceIdentity);
+    const settleCatalogFlight = (outcome: "success" | "failure") => {
+      const currentRevision = readSlashCatalogRevision();
+      return catalogFlightSettlement({
+        outcome,
+        stale: currentRevision !== slashCatalogRevision,
+        newerFlightInProgress: workspaceCatalogHydrationFlights.has(
+          `${workspaceKey}#${currentRevision}`,
+        ),
+        status: useZCodeSessionStore.getState().getWorkspaceState(workspacePath, workspaceIdentity)
+          .configOptionsStatus,
+      });
+    };
     const flight = prepareWorkspaceWithZCodeSessionService({
       workspacePath,
       workspaceIdentity,
@@ -1071,8 +1101,13 @@ export function useDraftConfigControl(params: {
           ),
           workspaceKey,
         });
-        if (readSlashCatalogRevision() !== slashCatalogRevision) {
-          // The catalog was invalidated while this read was in flight; the newer flight writes it.
+        const settlement = settleCatalogFlight("success");
+        if (settlement === "settle-ready") {
+          useZCodeSessionStore
+            .getState()
+            .setConfigOptionsStatus(workspacePath, "ready", workspaceIdentity);
+        }
+        if (settlement !== "write") {
           return;
         }
         const latest = useZCodeSessionStore.getState();
@@ -1085,8 +1120,11 @@ export function useDraftConfigControl(params: {
         );
       })
       .catch((error) => {
-        if (readSlashCatalogRevision() !== slashCatalogRevision) {
-          // A newer flight owns the status; a late failure of this stale read must not mark a fresh catalog as failed.
+        if (settleCatalogFlight("failure") === "drop") {
+          logger.debug("[v4-workspace-catalog] stale hydration failure dropped", {
+            error: String(error),
+            workspaceKey,
+          });
           return;
         }
         useZCodeSessionStore
