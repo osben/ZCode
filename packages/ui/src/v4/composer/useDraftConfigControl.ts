@@ -46,6 +46,7 @@ import {
   useSlashCatalogRevisionStore,
   useZCodeSessionStore,
 } from "@/store/zcodeSessionStore.js";
+import type { ConfigOptionsStatus } from "@/store/zcodeSessionStoreTypes.js";
 
 /** 目录水合单飞（per workspaceKey）：draft、已有 session 和严格模式双挂载共享一次 RPC。 */
 const workspaceCatalogHydrationFlights = new Map<string, Promise<void>>();
@@ -56,12 +57,34 @@ const workspaceCatalogHydrationFlights = new Map<string, Promise<void>>();
  * newer read and the status still "loading" it reports its failure, and a success releases that
  * stranded "loading" without writing its pre-invalidation catalog.
  */
+export type CatalogFlightSettlement = "write" | "drop" | "settle-ready";
+
+/** The single-flight key of one workspace's catalog read at one catalog revision. */
+export function catalogFlightKey(workspaceKey: string, revision: number): string {
+  return `${workspaceKey}#${revision}`;
+}
+
+/** Whether a read of this workspace keyed at a revision later than `revision` is still in flight. */
+export function hasNewerCatalogFlight(
+  flightKeys: Iterable<string>,
+  workspaceKey: string,
+  revision: number,
+): boolean {
+  const prefix = `${workspaceKey}#`;
+  for (const key of flightKeys) {
+    if (!key.startsWith(prefix)) continue;
+    const suffix = key.slice(prefix.length);
+    if (/^\d+$/.test(suffix) && Number(suffix) > revision) return true;
+  }
+  return false;
+}
+
 export function catalogFlightSettlement(params: {
   outcome: "success" | "failure";
   stale: boolean;
   newerFlightInProgress: boolean;
-  status: string;
-}): "write" | "drop" | "settle-ready" {
+  status: ConfigOptionsStatus;
+}): CatalogFlightSettlement {
   if (!params.stale) return "write";
   // A newer read still running, or one that already settled the status, owns it.
   if (params.newerFlightInProgress || params.status !== "loading") return "drop";
@@ -1048,7 +1071,7 @@ export function useDraftConfigControl(params: {
     const hasSlashCommandCatalog = workspaceState.slashCommands.length > 0;
     // One flight per workspace and catalog revision: a read that started before an invalidation
     // must not hold off the fresh read, and its result is dropped below.
-    const flightKey = `${workspaceKey}#${slashCatalogRevision}`;
+    const flightKey = catalogFlightKey(workspaceKey, slashCatalogRevision);
     const shouldHydrateCatalog = shouldHydrateWorkspaceCatalog({
       configOptions,
       sessionId,
@@ -1072,12 +1095,13 @@ export function useDraftConfigControl(params: {
 
     store.setConfigOptionsStatus(workspacePath, "loading", workspaceIdentity);
     const settleCatalogFlight = (outcome: "success" | "failure") => {
-      const currentRevision = readSlashCatalogRevision();
       return catalogFlightSettlement({
         outcome,
-        stale: currentRevision !== slashCatalogRevision,
-        newerFlightInProgress: workspaceCatalogHydrationFlights.has(
-          `${workspaceKey}#${currentRevision}`,
+        stale: readSlashCatalogRevision() !== slashCatalogRevision,
+        newerFlightInProgress: hasNewerCatalogFlight(
+          workspaceCatalogHydrationFlights.keys(),
+          workspaceKey,
+          slashCatalogRevision,
         ),
         status: useZCodeSessionStore.getState().getWorkspaceState(workspacePath, workspaceIdentity)
           .configOptionsStatus,
