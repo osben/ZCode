@@ -13,7 +13,7 @@ pub(crate) mod slash_builtins;
 /// Fork (W9a, 9.53): the v4 run controls `startSavedWorkflow` and `amendWorkflowRunSettings`.
 pub(crate) mod workflow_run_commands;
 // Fork: specs/fork-rust-node-helper.md F3, "Helper → Rust requests".
-mod helper_answers;
+pub(crate) mod helper_answers;
 mod helper_elicitation;
 mod helper_sampling;
 mod helper_session_admit;

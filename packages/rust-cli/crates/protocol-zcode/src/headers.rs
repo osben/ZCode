@@ -8,6 +8,7 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use async_trait::async_trait;
+use futures_util::future::BoxFuture;
 use rust_cli_base::hash;
 use rust_cli_base::secret::RedactedString;
 use rust_cli_base::sync::LockUnpoisoned;
@@ -28,10 +29,14 @@ const SCOPES_KEPT: usize = 32;
 /// Fork: Node `siwc_account_scope_invalidated` (the account behind the token changed, or no scope to check).
 const SCOPE_INVALIDATED: &str = "siwc_account_scope_invalidated";
 
+/// Fork: finds the open session a subagent session runs under (its root), when the requester itself is not open.
+type RootLookup = Arc<dyn Fn(String) -> BoxFuture<'static, Option<String>> + Send + Sync>;
+
 /// 经 Host 取账号凭据。
 pub struct HostHeaders {
     context: Arc<Context>,
     limit: Duration,
+    roots: RootLookup,
     /// Fork (specs/fork-rust-chatgpt-plan.md rules 8-9): `sha256(apiKey)` → the Host's `accountScope` for ChatGPT
     /// Plan tokens, so a renewal after a 401 can send the scope the rejected token belonged to.
     scopes: Mutex<VecDeque<(String, String)>>,
@@ -39,9 +44,28 @@ pub struct HostHeaders {
 
 impl HostHeaders {
     pub fn new(context: Arc<Context>) -> Self {
+        let lookup = context.clone();
+        let roots: RootLookup = Arc::new(move |session: String| {
+            let context = lookup.clone();
+            Box::pin(async move {
+                let kernel = context.live_bridge()?.kernel().clone();
+                crate::fork::helper_answers::root_by(&session, |id| {
+                    let kernel = kernel.clone();
+                    async move {
+                        kernel
+                            .session_snapshot(&rust_cli_kernel_api::ids::SessionId::new(id))
+                            .await
+                            .ok()
+                            .map(|view| view.meta)
+                    }
+                })
+                .await
+            })
+        });
         Self {
             context,
             limit: LIMIT,
+            roots,
             scopes: Mutex::new(VecDeque::new()),
         }
     }
@@ -53,6 +77,27 @@ impl HostHeaders {
             limit,
             ..Self::new(context)
         }
+    }
+
+    /// Tests: a fixed root lookup instead of the open sessions' kernel.
+    #[cfg(test)]
+    pub(crate) fn with_roots(context: Arc<Context>, roots: RootLookup) -> Self {
+        Self {
+            roots,
+            ..Self::new(context)
+        }
+    }
+
+    /// Fork: the open session that asks the Host for this request's credentials. A subagent session (an Agent tool
+    /// child or a workflow actor) is not open in this agent: the Host knows only its root, which is also the session
+    /// whose window shows an interactive verification. Node's subagent runs ask under the same root.
+    async fn requester(&self, session: &str) -> Option<(String, Value)> {
+        if let Some(workspace) = self.context.workspace_ref(session) {
+            return Some((session.to_owned(), workspace));
+        }
+        let root = (self.roots)(session.to_owned()).await?;
+        let workspace = self.context.workspace_ref(&root)?;
+        Some((root, workspace))
     }
 
     fn scope_of(&self, fingerprint: &str) -> Option<String> {
@@ -100,13 +145,13 @@ impl HeaderSource for HostHeaders {
             .session
             .as_ref()
             .ok_or_else(|| failed("account credentials need the requesting session"))?;
-        let workspace = self
-            .context
-            .workspace_ref(session.as_str())
+        let (session, workspace) = self
+            .requester(session.as_str())
+            .await
             .ok_or_else(|| failed("the requesting session is not open in this agent"))?;
         let request_id = format!(
             "{}:provider-runtime-headers:{}",
-            session.as_str(),
+            session,
             self.context.fresh("auth")
         );
         // Fork: ChatGPT Plan is routed by provider id and carries no zhipu-shaped access (rule 7). After a 401 it
@@ -121,7 +166,7 @@ impl HeaderSource for HostHeaders {
         };
         let mut params = json!({
             "requestId": request_id,
-            "sessionId": session.as_str(),
+            "sessionId": session,
             "workspace": workspace,
             "modelSelection": {"providerId": request.selection.provider, "modelId": request.selection.model},
             "providerId": request.selection.provider,
@@ -139,10 +184,8 @@ impl HeaderSource for HostHeaders {
         }
         let mut pending = Pending {
             context: self.context.clone(),
-            params: Some(
-                json!({"requestId": request_id, "sessionId": session.as_str(),
-                "workspace": workspace}),
-            ),
+            params: Some(json!({"requestId": request_id, "sessionId": session,
+                "workspace": workspace})),
         };
         // Fork: held until the Host's attach acknowledgement, inside the same bound (F1). `sent` records, inside
         // the bound, that the request was handed to `peer.request`: an acknowledgement that lands just after the timeout

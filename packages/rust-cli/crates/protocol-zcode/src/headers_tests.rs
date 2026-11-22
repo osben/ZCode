@@ -91,6 +91,77 @@ async fn account_credentials_come_from_the_host_through_a_reverse_request() {
     assert_eq!(auth.headers[0].0, "x-sign");
 }
 
+/// Fork: a subagent session (an Agent tool child or a workflow actor) is not open in this agent. It asks the Host under
+/// its root session, the one the Host opened; a session with no open root is still refused without asking.
+#[tokio::test]
+async fn a_subagent_session_asks_for_account_credentials_under_its_root() {
+    let scope = TaskScope::root("test", |_| {});
+    let (mut host_out, agent_in) = duplex(1 << 16);
+    let (agent_out, host_in) = duplex(1 << 16);
+    let (peer, _writer) = connection::start(agent_out, &scope.spawner(), Options::default());
+    drop(scope.spawner().spawn(
+        "serve",
+        connection::serve(
+            BufReader::new(agent_in),
+            peer.clone(),
+            Arc::new(Nothing),
+            scope.spawner(),
+            Options::default(),
+        ),
+    ));
+    let context = Arc::new(Context::new(peer, Arc::new(FixedClock(1))));
+    let source = HostHeaders::with_roots(
+        context.clone(),
+        Arc::new(|session: String| {
+            Box::pin(async move {
+                match session.as_str() {
+                    "sess_subagent_1" => Some("session_root".to_owned()),
+                    "sess_orphan" => Some("session_closed".to_owned()),
+                    _ => None,
+                }
+            })
+        }),
+    );
+    context.register("session_root", "/w");
+    // The root it names is not open here either: refused without a request.
+    assert!(
+        source
+            .request_auth(request(Some("sess_orphan")))
+            .await
+            .is_err()
+    );
+    let asking =
+        tokio::spawn(async move { source.request_auth(request(Some("sess_subagent_1"))).await });
+    let mut lines = BufReader::new(host_in).lines();
+    let line = tokio::time::timeout(Duration::from_secs(5), lines.next_line())
+        .await
+        .unwrap()
+        .unwrap()
+        .unwrap();
+    let asked: Value = serde_json::from_str(&line).unwrap();
+    assert_eq!(asked["method"], REQUEST);
+    let params = &asked["params"];
+    assert_eq!(params["sessionId"], "session_root");
+    assert!(
+        params["requestId"]
+            .as_str()
+            .unwrap()
+            .starts_with("session_root:provider-runtime-headers:")
+    );
+    assert_eq!(
+        params["workspace"],
+        json!({"workspacePath": "/w", "workspaceKey": "/w"})
+    );
+    let reply = json!({"id": asked["id"], "result": {"headersApplied": true,
+        "requestAuth": {"apiKey": "sk-host", "headers": {}}}});
+    host_out
+        .write_all(format!("{reply}\n").as_bytes())
+        .await
+        .unwrap();
+    let auth = asking.await.unwrap().unwrap();
+    assert_eq!(auth.api_key.unwrap().expose(), "sk-host");
+}
+
 /// F1: the bound ends while the Host's attach acknowledgement is still awaited. No request went out, so no
 /// cancellation either, and the error names the missing acknowledgement.
 #[tokio::test]
