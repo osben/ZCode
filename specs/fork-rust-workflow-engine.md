@@ -6175,9 +6175,17 @@ returned value (`ToolError::FailedWithCode`), not of the model's text.
 
 **Divergences.** None new. Residues are written into 926 and 927.
 
-**Box.** BOX_RESULTS
+**Box.** The full 26-spec list (`w9g-specs.txt`), run on head 87c4c72d3 in the Linux box. The Rust run (out-w9k-1)
+passed 25 of 26, and the Node run (out-w9k-4) passed 25 of 26. Each failure was a startup wait that never ended, and the
+spec then passed alone on the same head: Rust `gray-always-on-overflow` (the app never drew `task-settings-button`) passed in
+out-w9k-3, and Node `automations-workflows-hub` (the workspace path wait) passed in out-w9k-5. An overflow rerun with
+`SKIP_APP_BUILD=1` (out-w9k-2) failed only because the source sync had removed the build output; it is not a result. The
+hub spec passed on Rust in the full run, which exercises 931 and 932's launch record. No spec draws the Amend window's
+settings rows (930).
 
-**Gate.** GATE_RESULTS
+**Gate.** `cargo fmt --all --check` clean. `cargo clippy --workspace --all-targets --locked -- -D warnings` clean, with no
+allow attributes added. Lib tests: kernel-api 464, workflow 469, runtime 408, protocol-zcode 1092, node-store 366 (1 ignored,
+existing), tools 758, agents 352, session 422, platform 205 (1 ignored, existing), tui 577. cli bin tests 566.
 
 ## 10. Open questions
 
