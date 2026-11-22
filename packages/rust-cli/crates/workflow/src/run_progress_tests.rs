@@ -114,6 +114,37 @@ fn started(sequence: u64, run: &str) -> StoredEvent {
     }
 }
 
+/// W9h (9.64): which port method each call took.
+#[derive(Default)]
+struct RoutePort(Mutex<Vec<&'static str>>);
+
+impl WorkflowRunProgressPort for RoutePort {
+    fn record(&self, _: &str, _: &Value, _: &[Value]) -> Result<(), String> {
+        self.0.lock().unwrap().push("live");
+        Ok(())
+    }
+    fn record_backlog(&self, _: &str, _: &Value, _: &[Value]) -> Result<(), String> {
+        self.0.lock().unwrap().push("backlog");
+        Ok(())
+    }
+}
+
+/// W9h (9.64): a backlog row reaches the port as backlog (no model notice), a live row as live.
+#[test]
+fn a_backlog_row_reaches_the_port_as_backlog() {
+    let port = Arc::new(RoutePort::default());
+    let mut sink = ProgressSink::new(
+        SESSION.to_owned(),
+        None,
+        fields(RUN),
+        fresh_projection(),
+        port.clone(),
+    );
+    sink.backlog(&started(1, RUN));
+    sink.progress(&started(2, RUN));
+    assert_eq!(*port.0.lock().unwrap(), vec!["backlog", "live"]);
+}
+
 #[test]
 fn appends_the_payload_to_this_apps_runtime() {
     let port = RecordingPort::scripted(&[]);

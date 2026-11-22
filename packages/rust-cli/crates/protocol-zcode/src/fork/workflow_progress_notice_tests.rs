@@ -251,6 +251,22 @@ fn a_hole_reached_posts_one_hole_notice_to_the_parent() {
     );
 }
 
+/// W9h (9.64): a resumed run's attach replays its journal, an earlier lifetime's `hole-reached` among it. That hole was
+/// told to the model when it was reached; the re-reach of the resumed lifetime is the one notice (Node's port sees live
+/// events only), so the backlog posts nothing.
+#[test]
+fn a_backlog_hole_reached_posts_no_notice() {
+    let posted = Arc::new(Posted::default());
+    host(&posted)
+        .record_backlog(
+            "ses_parent",
+            &reached("Draft the plan"),
+            &[json!({"op": "x"})],
+        )
+        .expect("recorded");
+    assert!(posted.0.lock().expect("posted").is_empty());
+}
+
 #[test]
 fn a_hole_filled_and_a_hole_with_no_instance_post_nothing() {
     let posted = Arc::new(Posted::default());

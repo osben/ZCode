@@ -901,8 +901,9 @@ impl<J: JournalPort, S: ActorSessions> ActorDriverOwner<J, S> {
         }
         match self.events() {
             Ok(backlog) => {
+                // W9h (9.64): as backlog, so a resumed run's earlier `hole-reached` posts no second notice.
                 for stored in &backlog {
-                    progress.progress(stored);
+                    progress.backlog(stored);
                 }
             }
             Err(error) => tracing::warn!(
