@@ -48,7 +48,7 @@ import {
   waitForUserMessageContaining,
 } from "#e2e/helpers/conversation-session";
 import { getV4ComposerBackgroundWorkCounts } from "#e2e/helpers/v4-conversation";
-import { startDraftFromProject } from "#e2e/helpers/project-sidebar";
+import { ensureLocalProjectRow, startDraftFromProject } from "#e2e/helpers/project-sidebar";
 
 const WORKFLOW_NAME = "release-check";
 const WORKFLOWS_DIR = join(DEFAULT_WORKSPACE, ".zcode", "workflows");
@@ -100,9 +100,13 @@ beforeEach(async () => {
 /**
  * Per-case setup: only workspace readiness is needed, no account or model provider.
  * The locale is pinned once per describe by ensureEnUsLocale, so each case does not re-pin it.
+ * The hub lists the groups of the project directory. The fork seeds no project from settings
+ * (`taskIndexRepo` passes no migration settings since a6cfcca1c), so a fresh home has no project
+ * until one is added or a task is created; add the default workspace through the sidebar first.
  */
 async function prepareHubCase(): Promise<void> {
   await prepareConversationE2E({ skipProvider: true });
+  await ensureLocalProjectRow(DEFAULT_WORKSPACE);
 }
 
 async function fileExists(path: string): Promise<boolean> {
@@ -174,7 +178,7 @@ describe("已保存工作流中枢 E2E", () => {
     this.timeout(150000);
 
     // Only login + workspace readiness are needed to enter the automations page; no model provider needs to be configured.
-    await prepareConversationE2E({ skipProvider: true });
+    await prepareHubCase();
 
     // 1) Open the automations page; the page title switches to "Workflows".
     await clickTestIdByDom(TID_AUTOMATIONS_OPEN, {
@@ -695,7 +699,7 @@ describe("直接启动 E2E", () => {
     this.timeout(180000);
 
     // Only login + workspace readiness are needed; the constant workflow never touches the provider (see the group comment).
-    await prepareConversationE2E({ skipProvider: true });
+    await prepareHubCase();
 
     // 1) Automations page → "Workflows" tab → the constant workflow's card.
     await clickTestIdByDom(TID_AUTOMATIONS_OPEN, { timeoutMsg: "侧栏没有出现自动化入口" });
