@@ -5801,7 +5801,7 @@ allow attributes added. Lib tests:
 | runtime        | 402    | 0       |
 | workflow       | 468    | 0       |
 | kernel-api     | 461    | 0       |
-| protocol-zcode | 1081   | 0       |
+| protocol-zcode | 1079   | 0       |
 | node-store     | 366    | 1       |
 | tools          | 732    | 0       |
 | platform       | 204    | 1       |
@@ -5811,7 +5811,12 @@ allow attributes added. Lib tests:
 | tui            | 576    | 0       |
 
 The ignored tests already existed. tui's integration suites pass 277 with 5 ignored. cli bin tests pass 565. The helper
-vitest `workflow-compile.test.ts` passes 26/26.
+vitest `workflow-compile.test.ts` passes 23/23.
+
+**Review (ocr of #622, fixed in 61165659d).** The `/tasks` fake now keeps a settled run with a terminal status, so the
+`Running` filter is exercised (red with the filter removed). The retired `display` route is gone on both sides (the Rust
+`display()`/`display_params()`/`parse_display()` with their 2 tests, the helper `kind: "display"` branch and schema variant with
+its 3 vitest cases). The `catalog_entries` doc states the 917 rule.
 
 ## 10. Open questions
 
