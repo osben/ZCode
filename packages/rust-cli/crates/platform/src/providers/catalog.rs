@@ -61,6 +61,14 @@ pub(crate) struct Template {
 }
 
 impl Template {
+    /// Fork (9.67, 925): Node `reasoningSpec?.default ?? reasoningSpec?.values?.at(-1)`, the level a request with no
+    /// level and a new session take. `CatalogModel::default_level` (kernel-api) applies the same rule to the catalog card.
+    fn initial_level(&self) -> Option<&str> {
+        self.default_level
+            .as_deref()
+            .or_else(|| self.levels.last().map(String::as_str))
+    }
+
     /// 选择的档位（没指定时用最后一个）对应的请求补丁。`max_output` 是入口读到的 `ZCODE_MAX_OUTPUT_TOKENS`
     /// （cli-args.md §9.1，修复线 F42）与请求交来的上限（`RequestOptions.provider_max_output_tokens`，工作线 F95）的
     /// 较小值：`maxOutputTokens.map` 用它与配置的 max 的较小值（模型目录的上限是模型能力的上限，两者取小）；都没有时用
@@ -81,11 +89,7 @@ impl Template {
                 });
             }
             // Fork (9.67, 925): Node's `reasoning.default ?? values.at(-1)`.
-            None => self
-                .default_level
-                .as_deref()
-                .or_else(|| self.levels.last().map(String::as_str))
-                .unwrap_or_default(),
+            None => self.initial_level().unwrap_or_default(),
         };
         let invalid = |error: anyhow::Error| ModelError::InvalidRequest {
             message: format!("provider option map failed: {error:#}"),
@@ -376,13 +380,9 @@ fn default_selection(templates: &[Template], configured: &Value) -> Option<Model
     let (template, reasoning) = match selectable {
         Some(found) => found,
         // Node `model-selection-config.ts`: `reasoningSpec?.default ?? reasoningSpec?.values?.at(-1)` (9.67, 925).
-        None => visible().find_map(|template| {
-            let level = template
-                .default_level
-                .clone()
-                .or_else(|| template.levels.last().cloned())?;
-            Some((template, level))
-        })?,
+        None => {
+            visible().find_map(|template| Some((template, template.initial_level()?.to_owned())))?
+        }
     };
     Some(ModelSelection {
         reasoning: Some(reasoning),
