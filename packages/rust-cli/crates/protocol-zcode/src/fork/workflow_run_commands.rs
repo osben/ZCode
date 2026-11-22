@@ -171,7 +171,7 @@ impl WorkflowTurnSink for ParentTurns {
         self.push(WorkflowRecordSource::Settings, turn.text, Some(meta));
     }
 
-    /// Fork (W9h, 9.64; closes 916): a hub launch's record carries Node's launch metadata, so its rows draw the launch card.
+    /// A hub launch's record carries Node's `workflowLaunch` metadata (9.65, closes 916).
     fn launch_turn(&self, turn: LaunchTurn) {
         let meta = turn.workflow_launch_meta();
         self.push(WorkflowRecordSource::Launch, turn.text, Some(meta));
@@ -395,29 +395,26 @@ pub(crate) fn settings_request(payload: &Value) -> Option<SettingsRequest> {
     })
 }
 
-/// Node's `workflowRunSettingsRejected` reason and message for a refused change (9.50, divergence 674).
-pub(crate) fn settings_refusal_code(refusal: &SettingsRefusal) -> (&'static str, String) {
+/// Node's `workflowRunSettingsRejected` reason and message for a refused change (9.50, divergence 674). Fork (9.65,
+/// closes 921): Node's shape, so only `compile_failed`, `start_failed` and `model_unavailable` with a catalog carry a
+/// message; the others carry none, as Node's `amendWorkflowRunSettings` returns them.
+pub(crate) fn settings_refusal_code(refusal: &SettingsRefusal) -> (&'static str, Option<String>) {
     match refusal {
-        SettingsRefusal::NotFound => ("not_found", "the workflow run was not found".to_owned()),
-        SettingsRefusal::NotConfigurable => (
-            "not_configurable",
-            "the workflow run cannot be configured in its current state".to_owned(),
-        ),
-        SettingsRefusal::Unchanged => (
-            "unchanged",
-            "the workflow run already has these settings".to_owned(),
-        ),
-        SettingsRefusal::ScriptMissing => (
-            "script_missing",
-            "the workflow run has no script to start again".to_owned(),
-        ),
+        SettingsRefusal::NotFound => ("not_found", None),
+        SettingsRefusal::NotConfigurable => ("not_configurable", None),
+        SettingsRefusal::Unchanged => ("unchanged", None),
+        SettingsRefusal::ScriptMissing => ("script_missing", None),
+        SettingsRefusal::CompileFailed { message } => ("compile_failed", Some(message.clone())),
         SettingsRefusal::ModelUnavailable { message } => ("model_unavailable", message.clone()),
-        SettingsRefusal::MissingBoundaries => (
-            "missing_boundaries",
-            "the workflow run cannot be started again: its completed work is incomplete".to_owned(),
-        ),
-        SettingsRefusal::StartFailed { message } => ("start_failed", message.clone()),
+        SettingsRefusal::MissingBoundaries => ("missing_boundaries", None),
+        SettingsRefusal::StartFailed { message } => ("start_failed", Some(message.clone())),
     }
+}
+
+/// The ack's message (Node `V4WorkflowRunSettingsRejectedError`): the refusal's own, else
+/// `workflow run settings rejected: <reason>`.
+pub(crate) fn settings_ack_message(reason: &str, message: Option<String>) -> String {
+    message.unwrap_or_else(|| format!("workflow run settings rejected: {reason}"))
 }
 
 /// Node `amendWorkflowRunSettings` (`interaction-background.ts`): the GUI "Configure". Success returns `{type, runId,
@@ -483,7 +480,12 @@ pub(crate) async fn amend_settings(
         }
         Ok(SettingsOutcome::Refused(refusal)) => {
             let (reason, message) = settings_refusal_code(&refusal);
-            refused_settings(envelope, revision, reason, &message)
+            refused_settings(
+                envelope,
+                revision,
+                reason,
+                &settings_ack_message(reason, message),
+            )
         }
         Err(error) if error.is_unsupported() => unsupported(
             envelope,

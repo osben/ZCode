@@ -65,6 +65,63 @@ fn executable_models_match_the_node_registry() {
     assert_eq!(ours, node);
 }
 
+/// 9.65 (closes 917): a model whose configuration names `optionSpecs.reasoningLevel.default` carries it into the
+/// catalog, as the bundled gpt-5.6 / gpt-6 rules do (`high`, not their last level `max`); a default outside the values
+/// and a model with none carry none.
+#[test]
+fn the_configured_default_level_reaches_the_catalog_entry() {
+    let plain = fixture_snapshot();
+    let target = plain
+        .templates
+        .iter()
+        .find(|template| template.levels.len() > 1)
+        .expect("a leveled model")
+        .clone();
+    assert_eq!(target.default_level, None);
+    assert_eq!(target.catalog_entry().default_reasoning_level, None);
+    let first = target.levels[0].clone();
+    let with_default = |level: &str| {
+        let mut builtin: Value = serde_json::from_str(BUNDLED_BUILTIN).unwrap();
+        builtin["config"]["modelConfigRules"]["modelRules"]
+            .as_array_mut()
+            .unwrap()
+            .push(json!({
+                "modelMatch": format!("^{}$", regex_escape(&target.model)),
+                "config": {"optionSpecs": {"reasoningLevel": {"default": level}}},
+            }));
+        let personal: Value = serde_json::from_str(PERSONAL).unwrap();
+        let account = layer(&builtin, ENTITLED);
+        let snapshot = snapshot(
+            &resolve(&builtin["config"], &personal["config"], Some(&account)),
+            &Default::default(),
+        );
+        snapshot
+            .templates
+            .iter()
+            .find(|template| template.provider == target.provider && template.model == target.model)
+            .expect("the model is still listed")
+            .catalog_entry()
+    };
+    let entry = with_default(&first);
+    assert_eq!(
+        entry.default_reasoning_level.as_deref(),
+        Some(first.as_str())
+    );
+    assert_eq!(with_default("no-such-level").default_reasoning_level, None);
+}
+
+fn regex_escape(text: &str) -> String {
+    text.chars()
+        .flat_map(|c| {
+            if c.is_ascii_alphanumeric() || c == '-' || c == '_' {
+                vec![c]
+            } else {
+                vec!['\\', c]
+            }
+        })
+        .collect()
+}
+
 #[test]
 fn the_bundled_builtin_is_the_repository_copy() {
     // 仓库的内置配置更新后，随包的副本要一起更新（platform.md §3.1）。仓库的那份不在 `packages/rust-cli` 下，

@@ -191,6 +191,10 @@ pub struct CatalogModel {
     pub protocol: WireProtocol,
     /// 可选的推理档位（Provider 配置的 `optionSpecs.reasoningLevel.values`），按配置顺序。
     pub reasoning_levels: Vec<String>,
+    /// Fork (9.65, closes 917): the configured default level (`optionSpecs.reasoningLevel.default`, one of
+    /// `reasoning_levels`), `None` when the configuration names none. Node's default is this, else the last level.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub default_reasoning_level: Option<String>,
     pub context_window: u64,
     pub max_output_tokens: u64,
     /// 生效配置的能力（修复线 F23）；`context_window` 与上面的同名字段相同。

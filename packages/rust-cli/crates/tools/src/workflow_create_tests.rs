@@ -64,6 +64,7 @@ impl WorkflowAnalyzer for Checker {
         if script.contains("BROKEN") {
             return Ok(WorkflowAnalysis {
                 model_references: Vec::new(),
+                display: None,
                 ok: false,
                 diagnostics: vec![WorkflowDiagnostic {
                     code: 2322,
@@ -73,40 +74,26 @@ impl WorkflowAnalyzer for Checker {
                 }],
             });
         }
+        // The display of the same analysis (ocr #618). It does not gate: the tool opens no window for a script whose
+        // models are not all bound (Node's prepareApproval, 9.63, 906).
         Ok(WorkflowAnalysis {
             model_references: script_models(script),
+            display: Some(json!({
+                "kind": "create_workflow",
+                "ok": true,
+                "errorCount": 0,
+                "diagnostics": [],
+                "causalityGraph": {
+                    "steps": [{"id": "ask-1", "kind": "ask"}],
+                    "phases": [
+                        {"id": "p-research", "name": "Research"},
+                        {"id": "p-summary", "name": "Summarize", "alongside": ["p-research"]},
+                    ],
+                },
+            })),
             ok: true,
             diagnostics: Vec::new(),
         })
-    }
-
-    async fn display(
-        &self,
-        script: &str,
-        model_bindings: Option<&serde_json::Map<String, serde_json::Value>>,
-    ) -> Result<Option<serde_json::Value>, WorkflowAnalysisError> {
-        if script.contains("BROKEN") || script.contains("FAIL") {
-            return Ok(None);
-        }
-        // Node's prepareApproval opens no window for a script whose models are not all bound (9.63, 906).
-        if script_models(script).iter().any(|reference| {
-            model_bindings.is_none_or(|table| !table.contains_key(&reference.name))
-        }) {
-            return Ok(None);
-        }
-        Ok(Some(json!({
-            "kind": "create_workflow",
-            "ok": true,
-            "errorCount": 0,
-            "diagnostics": [],
-            "causalityGraph": {
-                "steps": [{"id": "ask-1", "kind": "ask"}],
-                "phases": [
-                    {"id": "p-research", "name": "Research"},
-                    {"id": "p-summary", "name": "Summarize", "alongside": ["p-research"]},
-                ],
-            },
-        })))
     }
 }
 
@@ -1153,6 +1140,7 @@ fn prepared(script: &str) -> Prepared {
         },
         analysis: WorkflowAnalysis {
             model_references: Vec::new(),
+            display: None,
             ok: true,
             diagnostics: Vec::new(),
         },
@@ -1336,6 +1324,7 @@ impl rust_cli_kernel_api::provider::ModelDirectory for Catalog {
             model: name.to_owned(),
             protocol: rust_cli_kernel_api::provider::WireProtocol::AnthropicMessages,
             reasoning_levels: Vec::new(),
+            default_reasoning_level: None,
             context_window: 1,
             max_output_tokens: 1,
             capabilities: Default::default(),
@@ -1493,4 +1482,47 @@ async fn a_model_that_stops_resolving_after_validation_starts_nothing() {
         "{error:?}"
     );
     assert!(submits_of(&harness).is_empty(), "nothing is submitted");
+}
+
+/// Counts the helper round trips of the checker it wraps: each `analyze` is one script analysis on the helper, and so
+/// was each `display` before ocr #618.
+#[derive(Default)]
+struct Counted {
+    calls: std::sync::atomic::AtomicUsize,
+}
+
+#[async_trait]
+impl WorkflowAnalyzer for Counted {
+    async fn analyze(&self, script: &str) -> Result<WorkflowAnalysis, WorkflowAnalysisError> {
+        self.calls.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        Checker.analyze(script).await
+    }
+}
+
+/// Fork (9.65, ocr #618): one confirmation ask costs one script analysis. Node's `prepareApproval` builds the window
+/// from its one `AnalyzeResult` (`displayOfAnalysis`), so the window comes from the analysis reply, not a second call.
+#[tokio::test]
+async fn one_ask_runs_the_script_analysis_once_and_still_draws_the_window() {
+    let counted = Arc::new(Counted::default());
+    let mut harness = Harness::new(Some(FakeRun::new(None, false)));
+    let runs = harness.port.clone().map(|port| {
+        Arc::new(OneSession(port as Arc<dyn DynamicWorkflowRunPort>))
+            as Arc<dyn DynamicWorkflowRunSessions>
+    });
+    harness.tool = CreateWorkflowTool::new(counted.clone(), runs, harness.home.clone());
+    let ctx = harness.with_skill();
+    assert!(matches!(
+        harness.tool.check_permissions(&inline(CLEAN), &ctx).await,
+        PermissionDecision::Ask { .. }
+    ));
+    assert_eq!(
+        counted.calls.load(std::sync::atomic::Ordering::SeqCst),
+        1,
+        "the ask analyzes the script once"
+    );
+    let window = harness
+        .tool
+        .ask_display(&ctx.tool_use)
+        .expect("the window has the analysis's display");
+    assert_eq!(window["causalityGraph"]["steps"][0]["id"], "ask-1");
 }

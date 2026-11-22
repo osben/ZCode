@@ -31,6 +31,12 @@ pub struct WorkflowAnalysis {
     /// Fork (9.63): the model names the personas name, in discovery order (Node `modelReferences`).
     #[serde(default, rename = "modelReferences")]
     pub model_references: Vec<ModelReference>,
+    /// Fork (9.65, ocr #618): the `create_workflow` display of this analysis (Node `displayOfAnalysis`: the causality
+    /// graph the confirmation window and the result card draw), built from the same analysis so one ask costs one
+    /// analysis. `None` when the checker has no display for it. It does not gate: the caller decides whether a window
+    /// opens (Node `prepareApproval` asks only for a script that checks and whose models are all bound).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub display: Option<serde_json::Value>,
 }
 
 /// The checker could not answer (the helper is not running or its reply does not match its contract). Nothing is
@@ -44,18 +50,6 @@ pub struct WorkflowAnalysisError {
 /// Analyzes one workflow script. Implemented over the helper link by `protocol-zcode`.
 #[async_trait]
 pub trait WorkflowAnalyzer: Send + Sync {
+    /// The verdict carries the script's display (ocr #618): one analysis per ask, as Node's `prepareApproval`.
     async fn analyze(&self, script: &str) -> Result<WorkflowAnalysis, WorkflowAnalysisError>;
-
-    /// The `create_workflow` display of a script that checks (Node `displayOfAnalysis`: the causality graph the
-    /// confirmation window and the result card draw). `None` when the checker has no display for it.
-    ///
-    /// Fork (9.63, closes 906): `model_bindings` is the script's model table; Node opens a window for a script that
-    /// names models only with every name bound.
-    async fn display(
-        &self,
-        _script: &str,
-        _model_bindings: Option<&serde_json::Map<String, serde_json::Value>>,
-    ) -> Result<Option<serde_json::Value>, WorkflowAnalysisError> {
-        Ok(None)
-    }
 }

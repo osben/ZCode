@@ -217,13 +217,39 @@ pub enum RetuneRefusal {
     Unchanged { current: f64 },
 }
 
-/// A live run of one session, as the background list shows it (Node's background tracker entry for a dynamic workflow run,
-/// 9.52, divergence 609). `title` is the run's name, else its id.
+/// A run of one session, as the background list shows it (Node's background tracker entry for a dynamic workflow run,
+/// 9.52, divergence 609). `title` is the run's name, else its id. A settled run stays listed with its end (9.65, closes
+/// 911), as Node's tracker keeps ended entries.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct BackgroundRunWork {
     pub run_id: WorkflowRunId,
     pub title: String,
     pub started_at_ms: i64,
+    pub status: BackgroundRunStatus,
+    /// When the run settled (epoch milliseconds); `None` while it runs.
+    pub ended_at_ms: Option<i64>,
+}
+
+/// Node's background work summary status for a run: its journal status mapped as the tracker maps a task's (completed is
+/// `resultPending`, stopped is `cancelled`, any other end is `failed`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BackgroundRunStatus {
+    Running,
+    ResultPending,
+    Failed,
+    Cancelled,
+}
+
+impl BackgroundRunStatus {
+    /// The wire value of `backgroundWorks[].status`.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Running => "running",
+            Self::ResultPending => "resultPending",
+            Self::Failed => "failed",
+            Self::Cancelled => "cancelled",
+        }
+    }
 }
 
 /// Node `DynamicWorkflowRunListQuery`: `cwd` and `limit` are required, the tool clamps `limit` to [1, 50].
@@ -579,91 +605,83 @@ impl SettingsTurn {
 }
 
 /// Fork (W9a, 9.53): a launch turn of the hub start (Node `emitControlOnlyUserTurn` with origin `workflowLaunch`).
+///
+/// Fork (9.65, closes 916): it carries what Node's `startSavedWorkflowRun` puts in its `workflowLaunch` metadata, so the
+/// launch record draws its card (the graph from `display`, the script from `script`).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct LaunchTurn {
     pub text: String,
     pub run_id: WorkflowRunId,
     pub tool_call_id: String,
     pub name: String,
-    /// Fork (W9h, 9.64): the rest of Node's launch metadata (`startSavedWorkflowRun`): `project` or `global`.
+    /// `project` or `global` (Node `found.scope`).
     pub scope: String,
-    /// The saved file the run started from (Node `found.path`).
-    pub path: Option<String>,
-    /// The validated arguments; empty when the workflow declares none (Node sends no `args` then).
-    pub args: Map<String, Value>,
-    /// The definition's description line (Node `found.meta.description`).
-    pub description: Option<String>,
-    /// The `create_workflow` display of the compiled script (Node `displayOfAnalysis`), when the checker gave one.
+    /// The saved definition's file (Node `found.path`).
+    pub path: String,
+    /// The validated arguments, when the run has any.
+    pub args: Option<Map<String, Value>>,
+    /// The definition's description (Node `found.meta.description`).
+    pub description: String,
+    /// The script's `create_workflow` display (Node `displayOfAnalysis`), when the checker gave one.
     pub display: Option<Value>,
-    /// The script body that runs (Node `found.script`).
+    /// The script that runs.
     pub script: String,
 }
 
-/// Node `WORKFLOW_LAUNCH_ARGS_MAX_BYTES`, `WORKFLOW_LAUNCH_DESCRIPTION_MAX_CHARS` and `WORKFLOW_LAUNCH_SCRIPT_MAX_CHARS`
-/// (contracts `events/session.events.ts`); the two character bounds count UTF-16 units, as JavaScript strings do.
-const LAUNCH_ARGS_MAX_BYTES: usize = 4_096;
-const LAUNCH_DESCRIPTION_MAX_UNITS: usize = 500;
-const LAUNCH_SCRIPT_MAX_UNITS: usize = 256_000;
+/// Node `WORKFLOW_LAUNCH_ARGS_MAX_BYTES`: launch arguments longer than this as JSON are replaced by a note.
+pub const WORKFLOW_LAUNCH_ARGS_MAX_BYTES: usize = 4_096;
+/// Node `WORKFLOW_LAUNCH_DESCRIPTION_MAX_CHARS`.
+pub const WORKFLOW_LAUNCH_DESCRIPTION_MAX_CHARS: usize = 500;
+/// Node `WORKFLOW_LAUNCH_SCRIPT_MAX_CHARS`: a longer script is left out of the metadata.
+pub const WORKFLOW_LAUNCH_SCRIPT_MAX_CHARS: usize = 256_000;
+/// Node `WORKFLOW_LAUNCH_ARGS_TRUNCATED_KEY`.
+const WORKFLOW_LAUNCH_ARGS_TRUNCATED_KEY: &str = "…";
 
 impl LaunchTurn {
-    /// Fork (W9h, 9.64; closes 916): Node's `boundWorkflowLaunchMeta` of a hub launch, the `workflowLaunch` metadata its
-    /// rows carry. Arguments over the byte bound become one `…` marker, a long description is cut with an ellipsis, and a
-    /// script over its bound is left out.
+    /// Node's `boundWorkflowLaunchMeta` of a hub launch: the `workflowLaunch` metadata its record carries. Lengths are
+    /// counted in chars where Node counts UTF-16 units (the same outside the astral planes).
     pub fn workflow_launch_meta(&self) -> Value {
         let mut meta = Map::new();
         meta.insert("runId".into(), Value::from(self.run_id.as_str()));
         meta.insert("toolCallId".into(), Value::from(self.tool_call_id.as_str()));
         meta.insert("name".into(), Value::from(self.name.as_str()));
         meta.insert("scope".into(), Value::from(self.scope.as_str()));
-        if let Some(path) = &self.path {
-            meta.insert("path".into(), Value::from(path.as_str()));
-        }
-        if !self.args.is_empty() {
-            let bytes = Value::Object(self.args.clone()).to_string().len();
-            let args = if bytes > LAUNCH_ARGS_MAX_BYTES {
-                let mut marker = Map::new();
-                marker.insert(
-                    "…".into(),
+        meta.insert("path".into(), Value::from(self.path.as_str()));
+        if let Some(args) = &self.args {
+            let bytes = serde_json::to_string(args).map_or(0, |text| text.len());
+            let bounded = if bytes > WORKFLOW_LAUNCH_ARGS_MAX_BYTES {
+                let mut note = Map::new();
+                note.insert(
+                    WORKFLOW_LAUNCH_ARGS_TRUNCATED_KEY.into(),
                     Value::from(format!("arguments omitted ({bytes} bytes)")),
                 );
-                marker
+                note
             } else {
-                self.args.clone()
+                args.clone()
             };
-            meta.insert("args".into(), Value::Object(args));
+            meta.insert("args".into(), Value::Object(bounded));
         }
-        if let Some(description) = &self.description {
-            meta.insert(
-                "description".into(),
-                Value::from(bound_units(description, LAUNCH_DESCRIPTION_MAX_UNITS)),
-            );
-        }
+        let description =
+            if self.description.chars().count() > WORKFLOW_LAUNCH_DESCRIPTION_MAX_CHARS {
+                let mut cut: String = self
+                    .description
+                    .chars()
+                    .take(WORKFLOW_LAUNCH_DESCRIPTION_MAX_CHARS - 1)
+                    .collect();
+                cut.push('…');
+                cut
+            } else {
+                self.description.clone()
+            };
+        meta.insert("description".into(), Value::from(description));
         if let Some(display) = &self.display {
             meta.insert("display".into(), display.clone());
         }
-        if self.script.encode_utf16().count() <= LAUNCH_SCRIPT_MAX_UNITS {
+        if self.script.chars().count() <= WORKFLOW_LAUNCH_SCRIPT_MAX_CHARS {
             meta.insert("script".into(), Value::from(self.script.as_str()));
         }
         Value::Object(meta)
     }
-}
-
-/// Node's `slice(0, max - 1) + "…"` for a text over `max` UTF-16 units; the cut never splits a character.
-fn bound_units(text: &str, max: usize) -> String {
-    if text.encode_utf16().count() <= max {
-        return text.to_owned();
-    }
-    let mut units = 0;
-    let mut out = String::new();
-    for character in text.chars() {
-        units += character.len_utf16();
-        if units > max - 1 {
-            break;
-        }
-        out.push(character);
-    }
-    out.push('…');
-    out
 }
 
 /// The origin a workflow control record carries on the parent's transcript: a closed set, so a producer names one of these
@@ -737,20 +755,28 @@ pub enum SettingsOutcome {
     Refused(SettingsRefusal),
 }
 
-/// Why a settings change is refused, in Node's vocabulary minus `compile_failed` (divergence 674). Node's shared schema
-/// also lists `compile_failed`: it answers a stored script that no longer compiles at the step-8 pre-compile. This host
-/// has no such pre-compile; a script that fails inside the amend's probe is `start_failed` (divergence 675).
-/// Serialized reasons: `not_found`, `not_configurable`, `unchanged`, `script_missing`, `model_unavailable`,
-/// `missing_boundaries`, `start_failed`.
+/// Why a settings change is refused, in Node's vocabulary. Serialized reasons: `not_found`, `not_configurable`,
+/// `unchanged`, `script_missing`, `compile_failed`, `model_unavailable`, `missing_boundaries`, `start_failed`.
+///
+/// Fork (9.65, closes 918; adds `compile_failed` to 674's vocabulary): `compile_failed` answers a stored script that no longer compiles at Node's
+/// step-8 pre-compile, with Node's bounded diagnostics.
 #[derive(Debug, Clone, PartialEq)]
 pub enum SettingsRefusal {
     NotFound,
     NotConfigurable,
     Unchanged,
     ScriptMissing,
-    ModelUnavailable { message: String },
+    CompileFailed {
+        message: String,
+    },
+    /// Fork (9.65, closes 921): `None` as Node's shape, when the subagent model is refused with no catalog.
+    ModelUnavailable {
+        message: Option<String>,
+    },
     MissingBoundaries,
-    StartFailed { message: String },
+    StartFailed {
+        message: String,
+    },
 }
 
 /// Fork (W9a, 9.53): the hub's direct start (Node `startSavedWorkflowRun`'s input). `scope` is `project` or `global` when

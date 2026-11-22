@@ -71,29 +71,6 @@ pub async fn analysis(helper: &NodeHelper, script_text: &str) -> Result<Value, R
     parse_analysis(&reply)
 }
 
-/// The CreateWorkflow confirmation window of `script_text`, as Node builds it (`null` when Node opens no window).
-/// `model_bindings` is the script's model table as `resolveInput` writes it; a script that names a model opens its window
-/// only with the bindings.
-pub async fn display(
-    helper: &NodeHelper,
-    script_text: &str,
-    model_bindings: Option<&Map<String, Value>>,
-) -> Result<Option<Value>, RpcError> {
-    let reply = forward(helper, FORMAT, &display_params(script_text, model_bindings)).await?;
-    parse_display(&reply)
-}
-
-pub(crate) fn display_params(
-    script_text: &str,
-    model_bindings: Option<&Map<String, Value>>,
-) -> Value {
-    let mut params = json!({"kind": "display", "scriptText": script_text});
-    if let Some(bindings) = model_bindings {
-        params["modelBindings"] = Value::Object(bindings.clone());
-    }
-    params
-}
-
 /// The ListWorkflowRuns text for `input`, from the run port's `listed` result for that query. `working_directory` is the
 /// session's cwd, which Node's handler reads.
 pub async fn run_list_text(
@@ -152,14 +129,6 @@ pub(crate) fn run_detail_params(
         "detail": detail.cloned().unwrap_or(Value::Null),
         "workingDirectory": working_directory,
     })
-}
-
-pub(crate) fn parse_display(reply: &Value) -> Result<Option<Value>, RpcError> {
-    match reply.get("display") {
-        Some(Value::Null) => Ok(None),
-        Some(value) if value.is_object() => Ok(Some(value.clone())),
-        _ => Err(malformed()),
-    }
 }
 
 pub(crate) fn parse_text(reply: &Value) -> Result<String, RpcError> {
@@ -266,12 +235,20 @@ fn parse_diagnostic(value: &Value) -> Result<Diagnostic, RpcError> {
     })
 }
 
+/// The analysis object of an `analysis` reply. Fork (9.65, ocr #618): the reply also carries the script's display (Node
+/// `displayOfAnalysis` of the same analysis), folded into the object as `display`, so one ask costs one analysis.
 pub(crate) fn parse_analysis(reply: &Value) -> Result<Value, RpcError> {
-    reply
+    let mut analysis = reply
         .get("analysis")
         .filter(|value| value.is_object())
         .cloned()
-        .ok_or_else(malformed)
+        .ok_or_else(malformed)?;
+    match reply.get("display") {
+        None | Some(Value::Null) => {}
+        Some(display) if display.is_object() => analysis["display"] = display.clone(),
+        Some(_) => return Err(malformed()),
+    }
+    Ok(analysis)
 }
 
 /// `helper/workflow/evalSnippet` (W7-8c): the snippet compile under the snippet facade.
@@ -458,18 +435,6 @@ impl HelperWorkflowAnalyzer {
 impl WorkflowAnalyzer for HelperWorkflowAnalyzer {
     async fn analyze(&self, script: &str) -> Result<WorkflowAnalysis, WorkflowAnalysisError> {
         analysis_verdict(analysis(&self.helper, script).await)
-    }
-
-    async fn display(
-        &self,
-        script: &str,
-        model_bindings: Option<&Map<String, Value>>,
-    ) -> Result<Option<serde_json::Value>, WorkflowAnalysisError> {
-        display(&self.helper, script, model_bindings)
-            .await
-            .map_err(|error| WorkflowAnalysisError {
-                message: error.message,
-            })
     }
 }
 

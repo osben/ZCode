@@ -1699,10 +1699,11 @@ async fn a_cancel_stops_a_live_run_of_its_own_session_only() {
     assert_eq!(h.residency.live_runs("ses_p"), 0, "the guard is released");
 }
 
-/// Fork (9.52, divergence 609): a session's background works are its live runs only. Another session sees none, a run
-/// without a name is titled by its id, and a run that settles leaves the list.
+/// Fork (9.52, divergence 609): a session's background works are its own runs. Another session sees none, and a run
+/// without a name is titled by its id. This host has no run store, so a settled run keeps no ended entry (9.65,
+/// divergence 928); the ended works over a store are `a_settled_run_stays_listed_as_an_ended_background_work`.
 #[tokio::test]
-async fn a_session_lists_its_live_runs_as_background_works_only() {
+async fn a_session_lists_its_own_runs_and_a_storeless_host_keeps_no_ended_work() {
     use rust_cli_kernel_api::ids::{SessionId, WorkflowRunId};
     use rust_cli_kernel_api::workflow_run::{CancelInitiator, DynamicWorkflowRunSessions};
     let h = harness();
@@ -1729,7 +1730,7 @@ async fn a_session_lists_its_live_runs_as_background_works_only() {
     wait_until("the stopped run to settle", || h.service.run_count() == 0).await;
     assert!(
         own.background_runs().await.expect("listed").is_empty(),
-        "a settled run is no longer a work"
+        "without a store, a settled run keeps no ended work"
     );
 }
 

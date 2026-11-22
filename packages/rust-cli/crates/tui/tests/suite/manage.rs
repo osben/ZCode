@@ -180,6 +180,7 @@ impl rust_cli_kernel_api::provider::ModelDirectory for LeveledDirectory {
                 model: "scripted".into(),
                 protocol: rust_cli_kernel_api::provider::WireProtocol::AnthropicMessages,
                 reasoning_levels: vec!["low".into(), "high".into()],
+                default_reasoning_level: None,
                 context_window: 200_000,
                 max_output_tokens: 32_000,
                 connection: None,

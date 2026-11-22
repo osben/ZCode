@@ -41,6 +41,7 @@ fn entry(provider: &str, model: &str) -> CatalogModel {
         model: model.to_owned(),
         protocol: WireProtocol::OpenAiChatCompletions,
         reasoning_levels: vec!["low".to_owned(), "high".to_owned()],
+        default_reasoning_level: None,
         context_window: 1,
         max_output_tokens: 1,
         connection: None,

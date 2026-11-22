@@ -32,9 +32,9 @@ pub struct ResolvedStart {
     pub source: String,
     /// The validated arguments: the declared ones, with defaults filled in. Empty when the workflow declares none.
     pub args: Map<String, Value>,
-    /// Fork (W9h, 9.64): the saved file (Node `found.path`) and its description line (Node `found.meta.description`),
-    /// which the launch card's metadata carries.
-    pub path: PathBuf,
+    /// Fork (9.65, 916): the definition's file (Node `found.path`), for the launch metadata.
+    pub path: String,
+    /// Fork (9.65, 916): the definition's description (Node `found.meta.description`), for the launch metadata.
     pub description: String,
 }
 
@@ -91,7 +91,7 @@ pub fn resolve_saved_start(
         script: found.script,
         source: found.source,
         args,
-        path: found.path,
+        path: found.path.display().to_string(),
         description: found.meta.description,
     })
 }

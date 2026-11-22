@@ -925,6 +925,7 @@ impl rust_cli_kernel_api::provider::ModelDirectory for OneModel {
                 model: "old-model".to_owned(),
                 protocol: rust_cli_kernel_api::provider::WireProtocol::OpenAiChatCompletions,
                 reasoning_levels: vec!["low".to_owned()],
+                default_reasoning_level: None,
                 context_window: 200_000,
                 max_output_tokens: 32_000,
                 capabilities: Default::default(),

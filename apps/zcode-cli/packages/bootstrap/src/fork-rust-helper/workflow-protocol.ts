@@ -50,8 +50,8 @@ export const workflowCompileParamsSchema = z
 /**
  * `helper/workflow/format` (specs/fork-rust-workflow-engine.md, 4.1 and 9.17). Each kind runs Node's own tool entry
  * from `builtInTools`, so the text and the display are Node's, not a second implementation:
- * - `analysis` (W4): the JSON of `analyzeWorkflowScript`.
- * - `display` (W7-2): the CreateWorkflow confirmation window of the script, or `null` when Node opens no window.
+ * - `analysis` (W4): the JSON of `analyzeWorkflowScript`, with the CreateWorkflow confirmation display built from that one
+ *   analysis (ocr #618; the separate `display` kind is retired, so one ask costs one analysis).
  * - `runList` (W7-2): the ListWorkflowRuns text. `listed` is the run port's list result for `input`'s query.
  * - `runDetail` (W7-2): the GetWorkflowRun text. `detail` is the run port's detail; the summary is built by Node's handler.
  * Any other kind is refused with -32602.
@@ -87,15 +87,6 @@ const detailSchema = z.looseObject({
 
 export const workflowFormatParamsSchema = z.discriminatedUnion("kind", [
   z.object({ kind: z.literal("analysis"), scriptText: z.string() }).strict(),
-  z
-    .object({
-      kind: z.literal("display"),
-      scriptText: z.string(),
-      // Node's resolveInput writes `model_bindings` before the window is decided; a script that names a model opens its
-      // window only when the bindings are given.
-      modelBindings: z.record(z.string(), z.string()).optional(),
-    })
-    .strict(),
   z
     .object({
       kind: z.literal("runList"),

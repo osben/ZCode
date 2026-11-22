@@ -44,6 +44,8 @@ pub(crate) struct Template {
     pub headers: Vec<(String, RedactedString)>,
     pub access: Access,
     pub levels: Vec<String>,
+    /// Fork (9.65, 917): `optionSpecs.reasoningLevel.default` when it is one of `levels`.
+    pub default_level: Option<String>,
     pub reasoning_map: String,
     pub max_map: String,
     pub max_output_tokens: u64,
@@ -113,6 +115,7 @@ impl Template {
             model: self.model.clone(),
             protocol: self.protocol,
             reasoning_levels: self.levels.clone(),
+            default_reasoning_level: self.default_level.clone(),
             context_window: self.capabilities.context_window,
             max_output_tokens: self.max_output_tokens,
             capabilities: self.capabilities,
@@ -290,6 +293,12 @@ pub(crate) fn snapshot(
             let effective = &model.effective_config;
             let specs = &effective["optionSpecs"];
             let base_url = text(&config["api"], "baseUrl");
+            let levels = ids(&specs["reasoningLevel"]["values"]);
+            // The shared schema requires the default to be one of the values; a config that breaks it names none.
+            let default_level = specs["reasoningLevel"]["default"]
+                .as_str()
+                .filter(|level| levels.iter().any(|known| known == level))
+                .map(str::to_owned);
             models.push(Template {
                 provider: provider.provider_id.clone(),
                 model: model.model_id.clone(),
@@ -297,7 +306,8 @@ pub(crate) fn snapshot(
                 base_url: base_url.to_owned(),
                 headers: headers.clone(),
                 access: access.clone(),
-                levels: ids(&specs["reasoningLevel"]["values"]),
+                levels,
+                default_level,
                 reasoning_map: text(&specs["reasoningLevel"], "map").to_owned(),
                 max_map: text(&specs["maxOutputTokens"], "map").to_owned(),
                 max_output_tokens: specs["maxOutputTokens"]["max"].as_u64().unwrap_or(0),

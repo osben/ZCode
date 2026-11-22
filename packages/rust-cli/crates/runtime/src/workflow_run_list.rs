@@ -20,11 +20,11 @@ use rust_cli_kernel_api::ids::QuestionId;
 use rust_cli_kernel_api::ids::{SessionId, WorkflowRunId};
 use rust_cli_kernel_api::workflow_child::LaunchInput;
 use rust_cli_kernel_api::workflow_run::{
-    AmendRequest, AmendResult, BackgroundRunWork, CancelInitiator, DynamicWorkflowRunError,
-    DynamicWorkflowRunPort, DynamicWorkflowRunSessions, FillHoleOutcome, FillHoleRequest,
-    LifecycleStatus, ListQuery, ResolveQuestionRefusalReason, ResolveQuestionResult, RetuneOutcome,
-    RetuneRequest, SettingsOutcome, SettingsRequest, StartSavedOutcome, StartSavedRequest,
-    SubmitRequest, WorkflowTurnSink,
+    AmendRequest, AmendResult, BackgroundRunStatus, BackgroundRunWork, CancelInitiator,
+    DynamicWorkflowRunError, DynamicWorkflowRunPort, DynamicWorkflowRunSessions, FillHoleOutcome,
+    FillHoleRequest, LifecycleStatus, ListQuery, ResolveQuestionRefusalReason,
+    ResolveQuestionResult, RetuneOutcome, RetuneRequest, SettingsOutcome, SettingsRequest,
+    StartSavedOutcome, StartSavedRequest, SubmitRequest, WorkflowTurnSink,
 };
 use rust_cli_workflow::actor_mailbox::{ActorHandle, MailboxError};
 use rust_cli_workflow::engine::EngineConfig;
@@ -32,7 +32,7 @@ use rust_cli_workflow::model::{RunRow, RunStatus, StopReason, js_number};
 use rust_cli_workflow::run_store::{RunListQuery, RunListRow};
 use serde_json::{Map, Value, json};
 
-use super::WorkflowRunService;
+use super::{Inner, WorkflowRunService};
 
 /// Node `MAX_LIST_RUNS_LIMIT`: the session list clamps to it (the default, 16, is the protocol's).
 pub const MAX_LIST_RUNS_LIMIT: usize = 64;
@@ -134,28 +134,111 @@ fn run_not_in_flight_message(qid: &str) -> String {
 /// The label source of a user-given name. Shared by `run_label` and the background title, so the two cannot drift.
 pub(crate) const LABEL_SOURCE_NAME: &str = "name";
 
-/// The live runs of one session as background works (9.52): start order, ties broken by the launch token, as `list_runs_of`
-/// breaks its ties (Node's stable sort over its submit-ordered registry). A run is titled by its name when it has one,
-/// else by its id.
+/// A settled run the background list keeps (9.65, closes 911; Node's tracker keeps an ended entry with its end).
+pub(crate) struct EndedRun {
+    pub run_id: String,
+    pub parent: String,
+    pub token: u64,
+    pub title: String,
+    pub started_at_ms: i64,
+    pub status: BackgroundRunStatus,
+    pub ended_at_ms: i64,
+}
+
+/// A run's background title: its name when it has one, else its id.
+pub(crate) fn background_title(run_id: &str, meta: &RunMeta) -> String {
+    if meta.label_source == LABEL_SOURCE_NAME {
+        meta.label.clone()
+    } else {
+        run_id.to_owned()
+    }
+}
+
+/// The service clock's time, zero without a clock (the launch's start time reads the same way).
+pub(crate) fn clock_ms(inner: &Inner) -> i64 {
+    inner
+        .clock
+        .get()
+        .map_or(0, |clock| i64::try_from(clock.now_ms()).unwrap_or(i64::MAX))
+}
+
+/// The background status of a settled run, from its journal row (Node's tracker status of the run's end: completed is
+/// `resultPending`, stopped is `cancelled`, errored is `failed`). A row that cannot be read or is not terminal reads as
+/// `failed`, as Node maps any other end. `None` without a store: nothing is journaled, so nothing is kept (a test host).
+/// Blocking: called on the owner's thread.
+pub(crate) fn ended_status(inner: &Inner, run_id: &str) -> Option<BackgroundRunStatus> {
+    let store = inner.store.get()?;
+    Some(match store.get_run(run_id) {
+        Ok(Some(row)) => match row.status {
+            RunStatus::Completed => BackgroundRunStatus::ResultPending,
+            RunStatus::Stopped => BackgroundRunStatus::Cancelled,
+            RunStatus::Errored => BackgroundRunStatus::Failed,
+            RunStatus::Pending | RunStatus::Running => {
+                tracing::warn!(
+                    event = "workflow.run.background_status_not_terminal",
+                    run = %run_id,
+                    "a settled workflow run's row is not terminal, so its background work reads as failed"
+                );
+                BackgroundRunStatus::Failed
+            }
+        },
+        Ok(None) => BackgroundRunStatus::Failed,
+        Err(error) => {
+            tracing::warn!(
+                event = "workflow.run.background_status_unread",
+                run = %run_id,
+                error = %format!("{error:#}"),
+                "a settled workflow run's status could not be read, so its background work reads as failed"
+            );
+            BackgroundRunStatus::Failed
+        }
+    })
+}
+
+/// One session's runs as background works (9.52, 9.65): the live runs and the settled ones the list keeps, in start order,
+/// ties broken by the launch token, as `list_runs_of` breaks its ties (Node's stable sort over its submit-ordered
+/// registry). A live run hides an ended entry of the same id (a resumed run is one work).
 fn background_works_of(service: &WorkflowRunService, parent: &str) -> Vec<BackgroundRunWork> {
-    let mut live = service.live_runs_of(parent);
-    live.sort_by(|a, b| {
-        a.meta
-            .started_at_ms
-            .cmp(&b.meta.started_at_ms)
-            .then(a.token.cmp(&b.token))
-    });
-    live.into_iter()
-        .map(|run| BackgroundRunWork {
-            title: if run.meta.label_source == LABEL_SOURCE_NAME {
-                run.meta.label.clone()
-            } else {
-                run.run_id.clone()
+    let live = service.live_runs_of(parent);
+    let mut works: Vec<(u64, BackgroundRunWork)> = {
+        let state = service.inner.state.lock_unpoisoned();
+        state
+            .ended
+            .iter()
+            .filter(|run| run.parent == parent)
+            .filter(|run| !live.iter().any(|live| live.run_id == run.run_id))
+            .map(|run| {
+                (
+                    run.token,
+                    BackgroundRunWork {
+                        run_id: WorkflowRunId::new(run.run_id.clone()),
+                        title: run.title.clone(),
+                        started_at_ms: run.started_at_ms,
+                        status: run.status,
+                        ended_at_ms: Some(run.ended_at_ms),
+                    },
+                )
+            })
+            .collect()
+    };
+    works.extend(live.into_iter().map(|run| {
+        (
+            run.token,
+            BackgroundRunWork {
+                title: background_title(&run.run_id, &run.meta),
+                run_id: WorkflowRunId::new(run.run_id),
+                started_at_ms: run.meta.started_at_ms,
+                status: BackgroundRunStatus::Running,
+                ended_at_ms: None,
             },
-            run_id: WorkflowRunId::new(run.run_id),
-            started_at_ms: run.meta.started_at_ms,
-        })
-        .collect()
+        )
+    }));
+    works.sort_by(|(a_token, a), (b_token, b)| {
+        a.started_at_ms
+            .cmp(&b.started_at_ms)
+            .then(a_token.cmp(b_token))
+    });
+    works.into_iter().map(|(_, work)| work).collect()
 }
 
 /// Node `resolveDynamicWorkflowRunLabel`: the name when it is not blank, else the first non-blank script line,

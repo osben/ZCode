@@ -94,6 +94,7 @@ fn entry(provider: &str, model: &str, levels: &[&str], max_output: u64) -> Catal
         model: model.to_owned(),
         protocol: WireProtocol::OpenAiChatCompletions,
         reasoning_levels: levels.iter().map(|level| (*level).to_owned()).collect(),
+        default_reasoning_level: None,
         context_window: 200_000,
         max_output_tokens: max_output,
         capabilities: ModelCapabilities::default(),

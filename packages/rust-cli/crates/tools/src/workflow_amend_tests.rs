@@ -40,6 +40,7 @@ impl WorkflowAnalyzer for Checker {
         if script.contains("BROKEN") {
             return Ok(WorkflowAnalysis {
                 model_references: Vec::new(),
+                display: None,
                 ok: false,
                 diagnostics: vec![WorkflowDiagnostic {
                     code: 2322,
@@ -51,6 +52,7 @@ impl WorkflowAnalyzer for Checker {
         }
         Ok(WorkflowAnalysis {
             model_references: script_models(script),
+            display: None,
             ok: true,
             diagnostics: Vec::new(),
         })
@@ -86,6 +88,7 @@ impl rust_cli_kernel_api::provider::ModelDirectory for Catalog {
             model: name.to_owned(),
             protocol: rust_cli_kernel_api::provider::WireProtocol::AnthropicMessages,
             reasoning_levels: Vec::new(),
+            default_reasoning_level: None,
             context_window: 1,
             max_output_tokens: 1,
             capabilities: Default::default(),
@@ -1058,9 +1061,15 @@ async fn a_revision_of_another_sessions_live_run_is_refused_before_any_window() 
     );
     let (tool, ctx, _guard) = harness(port.clone());
     let input = json!({"run_id": "run-1", "script": REVISED});
-    let Validation::Invalid { message, .. } = tool.validate_input(&input, &ctx).await else {
+    let Validation::Invalid {
+        message,
+        error_code,
+    } = tool.validate_input(&input, &ctx).await
+    else {
         panic!("another session's live run is refused");
     };
+    // 9.65 (920): Node's `AMEND_WORKFLOW_ERROR_CODE.HELD_ELSEWHERE`.
+    assert_eq!(error_code, Some(30));
     assert!(
         message.starts_with(
             "workflow_run_held_elsewhere: run run-1 is running in another session's process"
@@ -1142,9 +1151,15 @@ async fn an_inherited_subagent_model_that_is_gone_is_refused_as_inherited() {
         json!({"runId": "run-1", "status": "running", "subagentModel": "deepseek/gone"}),
     );
     let input = json!({"run_id": "run-1", "script": REVISED});
-    let Validation::Invalid { message, .. } = tool.validate_input(&input, &ctx).await else {
+    let Validation::Invalid {
+        message,
+        error_code,
+    } = tool.validate_input(&input, &ctx).await
+    else {
         panic!("the inherited model is refused");
     };
+    // 9.65 (closes 920): Node's `AMEND_WORKFLOW_ERROR_CODE.SUBAGENT_MODEL`.
+    assert_eq!(error_code, Some(23));
     assert!(
         message.starts_with("workflow_subagent_model_unresolved: This amend inherited the predecessor run's subagent model (`deepseek/gone`), which is no longer usable. "),
         "{message}"

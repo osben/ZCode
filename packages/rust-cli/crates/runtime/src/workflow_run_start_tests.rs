@@ -93,19 +93,12 @@ impl WorkflowAnalyzer for Verdict {
     async fn analyze(&self, _script: &str) -> Result<WorkflowAnalysis, WorkflowAnalysisError> {
         Ok(self.0.clone())
     }
-
-    async fn display(
-        &self,
-        script: &str,
-        _model_bindings: Option<&Map<String, Value>>,
-    ) -> Result<Option<Value>, WorkflowAnalysisError> {
-        Ok(Some(json!({"kind": "create_workflow", "script": script})))
-    }
 }
 
 fn clean() -> Arc<dyn WorkflowAnalyzer> {
     Arc::new(Verdict(WorkflowAnalysis {
         model_references: Vec::new(),
+        display: None,
         ok: true,
         diagnostics: Vec::new(),
     }))
@@ -261,6 +254,7 @@ async fn an_unknown_name_is_refused_and_the_parent_is_not_touched() {
 async fn a_script_with_diagnostics_is_refused_before_anything_starts() {
     let analyzer = Arc::new(Verdict(WorkflowAnalysis {
         model_references: Vec::new(),
+        display: None,
         ok: false,
         diagnostics: vec![WorkflowDiagnostic {
             code: 1,
@@ -329,17 +323,6 @@ async fn a_clean_start_activates_the_parent_submits_and_records_the_launch_turn(
     assert_eq!(launches[0].run_id, run_id);
     assert_eq!(launches[0].tool_call_id, tool_call_id);
     assert_eq!(launches[0].name, "digest");
-    // Fork (W9h, 9.64; closes 916): the launch card's metadata, as Node's `startSavedWorkflowRun` fills it.
-    assert_eq!(launches[0].scope, "global");
-    let path = launches[0].path.as_deref().expect("the saved file's path");
-    assert!(path.ends_with("digest.dwf.ts"), "{path}");
-    assert_eq!(launches[0].description.as_deref(), Some("test"));
-    assert_eq!(launches[0].script, "return 2\n");
-    assert!(launches[0].args.is_empty());
-    assert_eq!(
-        launches[0].display,
-        Some(json!({"kind": "create_workflow", "script": "return 2\n"}))
-    );
     assert_eq!(
         launches[0].text,
         format!(
@@ -348,6 +331,41 @@ async fn a_clean_start_activates_the_parent_submits_and_records_the_launch_turn(
         )
     );
     assert_eq!(fx.fake.launches().len(), 1, "the run is submitted once");
+}
+
+/// 9.65 (closes 916): the launch turn carries Node's `workflowLaunch` facts: the definition's scope, path and
+/// description, its script, and the analysis display only when it is a create window (Node
+/// `display?.kind === "create_workflow"`).
+#[tokio::test]
+async fn the_launch_turn_carries_the_definition_and_its_create_window() {
+    let window = json!({"kind": "create_workflow", "causalityGraph": {"steps": []}});
+    for (display, carried) in [
+        (Some(window.clone()), Some(window.clone())),
+        (Some(json!({"kind": "other"})), None),
+        (None, None),
+    ] {
+        let analyzer: Arc<dyn WorkflowAnalyzer> = Arc::new(Verdict(WorkflowAnalysis {
+            model_references: Vec::new(),
+            display,
+            ok: true,
+            diagnostics: Vec::new(),
+        }));
+        let fx = fixture(Some(analyzer));
+        save_global(&fx, "digest", SAVED);
+        let sink = Recorder::default();
+        fx.service
+            .start_saved(PARENT, request(&fx.cwd, "digest"), &sink)
+            .await
+            .expect("the start answers");
+        let launches = sink.launches.lock().expect("sink");
+        let turn = &launches[0];
+        assert_eq!(turn.scope, "global");
+        assert!(turn.path.ends_with("digest.dwf.ts"), "{}", turn.path);
+        assert_eq!(turn.description, "test");
+        assert!(turn.script.contains("return 2"), "{}", turn.script);
+        assert_eq!(turn.args, None, "a workflow without arguments sends none");
+        assert_eq!(turn.display, carried);
+    }
 }
 
 #[test]
@@ -360,7 +378,7 @@ fn the_launch_text_carries_the_arguments_as_a_json_block_when_there_are_some() {
         script: "return 1".to_owned(),
         source: String::new(),
         args,
-        path: std::path::PathBuf::from("/p/.zcode/workflows/digest.dwf.ts"),
+        path: "digest.ts".to_owned(),
         description: String::new(),
     };
     let text = launch_text(&resolved, "dwfrun-1");
@@ -439,4 +457,44 @@ async fn a_hub_started_run_is_listed_as_a_background_work_of_its_session() {
         .find(|work| work.run_id == run_id)
         .unwrap_or_else(|| panic!("the hub run is a work of its session: {listed:?}"));
     assert_eq!(work.title, "digest");
+}
+
+/// 9.65 (closes 911), over the production owner and journal: the settled row is written before the settlement reads it,
+/// so a completed run stays listed as `resultPending` with its end, not as `failed`.
+#[tokio::test]
+async fn a_completed_hub_run_stays_listed_as_result_pending_over_the_real_journal() {
+    use rust_cli_kernel_api::ids::SessionId;
+    use rust_cli_kernel_api::workflow_child::{Completion, Outcome};
+    use rust_cli_kernel_api::workflow_run::{BackgroundRunStatus, DynamicWorkflowRunSessions};
+    let fx = fixture(Some(clean()));
+    save_global(&fx, "digest", SAVED);
+    fx.service
+        .start_saved(PARENT, request(&fx.cwd, "digest"), &Recorder::default())
+        .await
+        .expect("the start answers");
+    fx.fake.finish(
+        0,
+        Outcome::Completed(Completion {
+            ok: true,
+            value: Some(json!(2)),
+            error: None,
+        }),
+    );
+    let deadline = std::time::Instant::now() + Duration::from_secs(5);
+    while fx.service.run_count() > 0 {
+        assert!(
+            std::time::Instant::now() < deadline,
+            "the completed run settles"
+        );
+        tokio::time::sleep(Duration::from_millis(5)).await;
+    }
+    let listed = fx
+        .service
+        .for_session(&SessionId::new(PARENT))
+        .background_runs()
+        .await
+        .expect("the works are listed");
+    assert_eq!(listed.len(), 1, "{listed:?}");
+    assert_eq!(listed[0].status, BackgroundRunStatus::ResultPending);
+    assert!(listed[0].ended_at_ms.is_some());
 }

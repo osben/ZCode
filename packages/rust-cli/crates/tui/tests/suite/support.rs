@@ -139,6 +139,7 @@ impl ModelDirectory for Directory {
             model: name.into(),
             protocol: WireProtocol::AnthropicMessages,
             reasoning_levels: Vec::new(),
+            default_reasoning_level: None,
             context_window: 200_000,
             max_output_tokens: 32_000,
             connection: None,

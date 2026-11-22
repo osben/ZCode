@@ -1058,16 +1058,11 @@ impl Tool for CreateWorkflowTool {
         let (model_bindings, _) = self.script_models(&analysis, context).await;
         let checks = analysis.ok && all_bound(&analysis.model_references, &model_bindings);
         let name = resolved.name.clone();
-        // A display the helper cannot give leaves the window without a graph; it never blocks the ask.
+        // Fork (9.65, ocr #618): the window is the display of the one analysis above (Node `prepareApproval` builds it
+        // with `displayOfAnalysis` from its one `AnalyzeResult`). An analysis with no display leaves the window
+        // without a graph; it never blocks the ask.
         let display = if checks {
-            let table = (!model_bindings.is_empty()).then_some(&model_bindings);
-            match self.analyzer.display(&resolved.script, table).await {
-                Ok(display) => display,
-                Err(error) => {
-                    tracing::debug!(%error, "create_workflow display reply dropped; the window shows no graph");
-                    None
-                }
-            }
+            analysis.display.clone()
         } else {
             None
         };
