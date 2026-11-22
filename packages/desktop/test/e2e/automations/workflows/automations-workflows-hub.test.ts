@@ -127,6 +127,23 @@ async function readTestIdText(currentTestId: string): Promise<string | null> {
   }, currentTestId);
 }
 
+async function readTestIdValue(currentTestId: string): Promise<string | null> {
+  return browser.execute((tid) => {
+    const element = document.querySelector<HTMLInputElement>(`[data-testid="${tid}"]`);
+    return element?.value ?? null;
+  }, currentTestId);
+}
+
+// The hub keeps an earlier detail page mounted while it hides it, so read the one that is shown.
+async function readVisibleTestIdText(currentTestId: string): Promise<string | null> {
+  return browser.execute((tid) => {
+    const shown = Array.from(document.querySelectorAll<HTMLElement>(`[data-testid="${tid}"]`)).find(
+      (item) => item.getClientRects().length > 0,
+    );
+    return shown?.textContent?.trim() ?? null;
+  }, currentTestId);
+}
+
 // Pin the locale through the real settings file so copy assertions do not depend on the runner.
 async function ensureEnUsLocale() {
   await seedSettings({ locale: "en-US", localePreference: "en-US" });
@@ -1202,11 +1219,11 @@ describe("直接启动 E2E", () => {
       timeoutMsg: "点 Configure 后没有设置弹层",
     });
     // The stepper sits at the default concurrency D = max(4, min(16, cores − 2)), so minus one always has room to go lower.
-    // The value fills a tick after the popover mounts (W9h: read at once it was "", so the bound became 0).
+    // The stepper's value is an input's value, not its text (W9h: the text read "", so the bound became 0).
     let defaultBound = 0;
     await browser.waitUntil(
       async () => {
-        defaultBound = Number(await readTestIdText("workflow-run-settings-bound-value"));
+        defaultBound = Number(await readTestIdValue("workflow-run-settings-bound-value"));
         return defaultBound > 0;
       },
       { timeout: 10000, timeoutMsg: "设置弹层的并发数步进器没有读数" },
@@ -1292,7 +1309,8 @@ describe("直接启动 E2E", () => {
     // The hub may still show the detail it showed last until the chip's navigation lands (W9h: the box read the
     // previous case's workflow), so wait for this workflow's detail.
     await browser.waitUntil(
-      async () => ((await readTestIdText(TID_WORKFLOW_DETAIL)) ?? "").includes(LAUNCH_SAVE_NAME),
+      async () =>
+        ((await readVisibleTestIdText(TID_WORKFLOW_DETAIL)) ?? "").includes(LAUNCH_SAVE_NAME),
       { timeout: 20000, timeoutMsg: "点芯片后详情页不是保存用例的工作流" },
     );
 
