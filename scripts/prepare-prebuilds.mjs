@@ -302,14 +302,10 @@ const remoteOfficialPluginRequiredPaths = [
   "packages/plugin-creator-plugin/.zcode-plugin/plugin.json",
   "packages/plugin-creator-plugin/skills/plugin-creator/SKILL.md",
   "packages/zcode-guide-plugin/.zcode-plugin/plugin.json",
-  // Fix rationale: document skill content and visual-judge are required seed assets; validating only the manifest is insufficient.
-  "packages/documents-plugin/agents/visual-judge.md",
+  // Fix rationale: document skill content is a required seed asset; validating only the manifest is insufficient.
   "packages/documents-plugin/skills/docx/SKILL.md",
-  "packages/pdf-plugin/agents/visual-judge.md",
   "packages/pdf-plugin/skills/pdf/SKILL.md",
-  "packages/presentations-plugin/agents/visual-judge.md",
   "packages/presentations-plugin/skills/pptx/SKILL.md",
-  "packages/spreadsheets-plugin/agents/visual-judge.md",
   "packages/spreadsheets-plugin/skills/xlsx/SKILL.md",
   "packages/visualize-plugin/.zcode-plugin/plugin.json",
   "packages/visualize-plugin/skills/visualize/SKILL.md",

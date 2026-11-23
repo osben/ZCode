@@ -83,13 +83,12 @@ export const officialSeaPlugins = [
     requiresRuntime: true,
     requiredRuntimePaths: officeViewerRuntimePaths,
     requiredSeedPaths: [
-      "agents/visual-judge.md",
       "skills/docx/SKILL.md",
       "skills/docx-viewer/SKILL.md",
     ],
     rootPath: join("packages", "documents-plugin"),
     // 修复原因：SEA manifest 必须与 package、plugin manifest 和官方 definition 同步，避免发布产物嵌入旧版本。
-    version: "0.2.9",
+    version: "0.2.10",
   },
   {
     marketplace: "zcode-plugins-official",
@@ -109,13 +108,12 @@ export const officialSeaPlugins = [
     requiresRuntime: true,
     requiredRuntimePaths: officeViewerRuntimePaths,
     requiredSeedPaths: [
-      "agents/visual-judge.md",
       "skills/pdf/SKILL.md",
       "skills/pdf-viewer/SKILL.md",
     ],
     rootPath: join("packages", "pdf-plugin"),
     // 修复原因：SEA manifest 必须与 package、plugin manifest 和官方 definition 同步，避免发布产物嵌入旧版本。
-    version: "0.2.10",
+    version: "0.2.11",
   },
   {
     marketplace: "zcode-plugins-official",
@@ -125,13 +123,12 @@ export const officialSeaPlugins = [
     requiresRuntime: true,
     requiredRuntimePaths: officeViewerRuntimePaths,
     requiredSeedPaths: [
-      "agents/visual-judge.md",
       "skills/pptx/SKILL.md",
       "skills/pptx-viewer/SKILL.md",
     ],
     rootPath: join("packages", "presentations-plugin"),
     // 修复原因：SEA manifest 必须与 package、plugin manifest 和官方 definition 同步，避免发布产物嵌入旧版本。
-    version: "0.2.9",
+    version: "0.2.10",
   },
   {
     marketplace: "zcode-plugins-official",
@@ -141,13 +138,12 @@ export const officialSeaPlugins = [
     requiresRuntime: true,
     requiredRuntimePaths: officeViewerRuntimePaths,
     requiredSeedPaths: [
-      "agents/visual-judge.md",
       "skills/xlsx/SKILL.md",
       "skills/xlsx-viewer/SKILL.md",
     ],
     rootPath: join("packages", "spreadsheets-plugin"),
     // 修复原因：SEA manifest 必须与 package、plugin manifest 和官方 definition 同步，避免发布产物嵌入旧版本。
-    version: "0.2.9",
+    version: "0.2.10",
   },
   {
     // browser-use 使用真实 node_repl MCP runtime，SEA 必须校验并嵌入 server.js。

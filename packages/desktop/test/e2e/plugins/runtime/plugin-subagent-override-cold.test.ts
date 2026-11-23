@@ -40,7 +40,9 @@ describe("PLM-LC-020 插件 Subagent 覆盖冷启动请求", () => {
     await clearAppData();
   });
 
-  it("完整重启后 judge 使用已保存模型/high，父 continuation 保持原模型/max", async () => {
+  // Skipped until the upstream 4.0.0 source merge: 4.0.0 removed documents:visual-judge, the only
+  // official plugin subagent this case used, and upstream's rewritten case is not published yet.
+  it.skip("完整重启后 judge 使用已保存模型/high，父 continuation 保持原模型/max", async () => {
     requirePluginManualReview();
     await prepareV4ConversationE2E({ skipProvider: true });
     const selection = {
