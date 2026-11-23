@@ -130,6 +130,8 @@ Repository:
 - Upstream now resets a bound credential store in the background after a key failure. The fork cipher
   tests wait for `onReset` before removing their temp directory.
 - Fork LSP plugin tests use upstream's async `discoverPlugins` (the sync variant is gone).
+- `scripts/check-test-copy.mjs`: 10 new upstream suites with zh-CN locale setup join the verbatim list,
+  and five entries follow upstream's moves out of `manual-review/pending/`.
 
 ## Verification
 
@@ -158,7 +160,6 @@ Repository:
 - Chinese left in clean-merged upstream text: `apps/zcode-cli/docs/design/v2/tool/02-write.md` errorCode
   table, `docs/workspace-hook-trust.md` D24 and §12.9.
 - `docs/chat/composer-voice-input.md` still names `Cmd+Shift+D` for upstream voice input.
-- Upstream's new zh-CN browser suites may need `localeAllowlist` entries in `scripts/check-test-copy.mjs`.
 - knip: `previewProjectTaskDeletions` and `status-panel-insights` are unused until the follow-ups land.
 - `conversation-session-dynamic-workflow-gray-always-on-resume.test.ts`: the fork and upstream gates for
   the same race are combined; not run yet.
