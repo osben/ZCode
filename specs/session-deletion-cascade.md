@@ -137,6 +137,8 @@ Preserve controller tombstoning and projection events. Erase only successfully t
 
 Keep files-before-rows: failed known session-directory removal retains rows for retry. Delete workflow runs, nested runs and input history before sessions; FK cascades remove messages, parts and raw usage. Resolve the tree and preserve usage inside the same write transaction. Keep fork-file retention and existing late-child handling.
 
+Cross-session artifact retention. A session outside the erased tree can reference a file of a tree session S through a part whose data holds `zcode-artifact://S/<artifactId>`, with no parent or fork link between them (shared context, rewinds, copied transcripts). Before files are removed, the CLI store scans `part` rows of every session outside the tree. Any row that still exists counts, archived or soft-deleted included, because those sessions can still be restored. Self-references and references from sessions inside the same erase call do not count. For each referenced S, entries of `cli/artifacts/S/` whose name contains a referenced artifact id are kept. This is the same rule the artifact reader uses (`readdir` entry `includes(artifactId)`, so `zcode-artifact://S/shared` resolves to `shared.png`). Every other entry of that directory and the other per-session directories of S are removed. A partly kept artifact directory counts once in `filesRetainedCount`. The surviving-fork rule still keeps the whole source directory. Artifact ids are only compared with listed names and never joined into a path.
+
 Scrub tombstoned titles/searchable text, retaining identity and execution facts. Late writes cannot restore content or visible membership. Absent session rows can still have pending worktree cleanup.
 
 Separate outcomes for task content (erased/skipped/running/unsupported/failed), retained/failed session directories, and removed/retained/failed worktree targets with reasons. Extend `ZCodeTaskEraseResult` with `worktreeCleanup`: removed paths, retained/failed target-and-reason entries and counts. Update actual transport validation where the result crosses a boundary; do not report future worktree cleanup in the CLI result.
@@ -190,6 +192,7 @@ Immediate reads, recomputation, reopened connections and retries preserve the sa
 12. Repeat with stale/no rollup, partial pruning, old/shared buckets, debounce, subsequent same-bucket usage, recompute, reopen and retention expiry.
 13. Force a deletion-transaction failure: content/accounting roll back atomically; retry does not duplicate usage.
 14. E2E: isolated fixtures exercise sidebar cancel/confirm, dirty Delete anyway, running block, pinned batch, archived deletion and partial-result maintenance. Cover desktop/narrow Web, themes and locale lengths where runnable; record environment blockers honestly.
+15. Archived roots A and B are deleted while kept session K has a part with `zcode-artifact://A/shared` and no parent link to A: `artifacts/A/shared.png` survives, other files of A are removed, both rows are erased (desktop E2E TSL39).
 
 Run root typecheck/lint, CLI typecheck/lint, targeted store/bootstrap/services/shared/UI tests, architecture changed check and fork-scoped format check. Inspect final diff and report real results. Git publication requires explicit user authorization.
 
@@ -266,6 +269,7 @@ E2E: the pending manual-review cases under `packages/desktop/test/e2e/conversati
 - Remove worktree folders only; branches remain.
 - Preserve exact aggregate session metrics through approved anonymous accounting.
 - Historical maintenance remains in Sessions settings and covers content or pending cleanup.
+- Kept cross-session artifact files are not reclaimed when the referencing session is erased later. They stay under the erased owner's id until a future storage cleanup.
 - Non-goals: undo, remote permanent deletion, branch deletion, tombstone removal, a new Hide action, retained per-session conversation details or cross-window running-session leases.
 
 ## Verification evidence

@@ -394,6 +394,12 @@ export class SqliteSessionStore
     return sessionTreeRepository.listSessionTreeIdsWithSurvivingChildren(this.db, input.rootIds);
   }
 
+  async listSessionTreeArtifactReferences(input: {
+    rootIds: readonly SessionId[];
+  }): Promise<Map<SessionId, string[]>> {
+    return sessionTreeRepository.listSessionTreeArtifactReferences(this.db, input.rootIds);
+  }
+
   async deleteSessionTree(input: {
     rootIds: readonly SessionId[];
   }): Promise<{ erasedIds: SessionId[] }> {

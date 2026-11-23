@@ -1349,6 +1349,14 @@ export interface SessionStorePort {
     rootIds: readonly SessionId[];
   }): Promise<SessionId[]>;
   /**
+   * Tree session → artifact ids (`zcode-artifact://<session>/<artifactId>`) that parts of sessions outside
+   * the tree still reference, archived or soft-deleted rows included. Tree sessions without such
+   * references are absent. Read-only.
+   */
+  listSessionTreeArtifactReferences?(input: {
+    rootIds: readonly SessionId[];
+  }): Promise<Map<SessionId, string[]>>;
+  /**
    * Permanently remove the roots and their descendants (same scope as countSessionTree) in one
    * transaction, including workflow_run / dwf_run rows that foreign keys would otherwise orphan.
    * Idempotent: ids that no longer exist are skipped. Returns the session ids that were removed.
