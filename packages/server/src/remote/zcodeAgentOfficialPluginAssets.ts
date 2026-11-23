@@ -124,6 +124,10 @@ export const REMOTE_AGENT_OFFICIAL_PLUGIN_REQUIRED_RELATIVE_PATHS = [
   "presentations-plugin/dist/ui/assets.json",
   "presentations-plugin/dist/ui/panel.html",
   "spreadsheets-plugin/skills/xlsx/SKILL.md",
+  "spreadsheets-plugin/skills/xlsx-viewer/SKILL.md",
+  "spreadsheets-plugin/dist/server.mjs",
+  "spreadsheets-plugin/dist/ui/assets.json",
+  "spreadsheets-plugin/dist/ui/panel.html",
   // Design's full local seed paths are required (bootstrap OFFICIAL_DESIGN_REQUIRED_SEED_PATHS, mechanically cross-checked by server/test).
   // Unlike other plugins that list only sentinels: when the hook cannot find SKILL.md it exits silently, and the rule and script files are read or executed on demand, so a missing file only fails inside the session.
   "design-plugin/skills/design/SKILL.md",

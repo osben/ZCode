@@ -87,6 +87,7 @@
   "packages/rpc/test/messagePortBinaryFastPath.test.ts",
   "packages/server/test/dockerDaemonProbe.test.ts",
   "packages/server/test/entryHttpEnv.test.ts",
+  "packages/server/test/forkRemoteOfficeAssetsParity.test.ts",
   "packages/server/test/quickPromptReadOnlyWs.test.ts",
   "packages/server/test/remoteConnectionLifecycle.test.ts",
   "packages/server/test/remoteConnectionStore.test.ts",
