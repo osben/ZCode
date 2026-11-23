@@ -2704,6 +2704,11 @@ exceptions:
     paths:
       - packages/ui/src/hooks/useAcpSettingsHost.ts
     reason: 'The single owner of the host the ACP group of Model Settings configures (specs/acp-agent-runtime.md "Settings: workspace host") resolves the workspace''s services through the existing useWorkspaceServicesResolution and reads that host''s provider settings view through the existing useProviderSettingsServiceView, so every ACP settings hook receives one service. Same unmanaged packages/ui hooks tree as model-settings-review-hooks-unmanaged-files; adopting it needs a separate module boundary refactor.'
+  - id: git-branch-switch-guard-unmanaged-file
+    rule: unmanaged-new-file
+    paths:
+      - packages/ui/src/gitBranchSwitchGuard.ts
+    reason: The 4.0.0 sync review extracts the beforeSwitch guard chain out of GitBranchSwitcher (an unmanaged packages/ui root file) into a pure helper with its own fork test, so a rejecting guard fails closed instead of leaving an unhandled rejection. It sits next to GitBranchSwitcher in the same unmanaged packages/ui tree; adopting it needs a separate module boundary refactor.
   - id: legacy-snapshot-async-read-unmanaged-files
     rule: unmanaged-new-file
     paths:
