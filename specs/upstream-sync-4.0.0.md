@@ -138,9 +138,9 @@ Repository:
 - `pnpm lint`: 0 errors, 581 warnings. Hooks warnings compared per file against both parents: none new
   after the `insertVoiceTranscript` fix.
 - Staged-size gate: pass.
-- `pnpm test:fork`: see the PR description for the final run. Known failure not caused by the merge:
-  `packages/acp-agent-runtime/test/process-tree.test.ts` (2 cases). The package and the process-tree code
-  are identical to `fork`; it fails in the agent sandbox, which likely blocks process-group signals.
+- `pnpm test:fork`: 3421 passed, 2 failed, 6 skipped. The 2 failures predate the sync:
+  `packages/acp-agent-runtime/test/process-tree.test.ts` fails the same 2 cases on a clean `fork`
+  checkout (and outside the sandbox).
 - Not run: desktop E2E (runs in the Linux box, not on the Mac).
 
 ## Follow-ups
