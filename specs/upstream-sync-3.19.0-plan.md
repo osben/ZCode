@@ -169,7 +169,8 @@ format_mismatch,safety_rejected,type_rejected,upload_missing,upload_rejected}`, 
 
 ### J. Bash tool hardening (CLI) — medium
 
-- Direct `adb` is blocked (use the `android_*` MCP tools). Windows cmd dialect read-only allowlist (`dir`, `type`, `findstr`,
+- Direct `adb` is blocked (use the `android_*` MCP tools); 3.19.1 narrows this to workspace-controlled adb and
+  resolves bare `adb` through SDK paths (`ANDROID_HOME`/`ANDROID_SDK_ROOT`, `platform-tools`). Windows cmd dialect read-only allowlist (`dir`, `type`, `findstr`,
   `where`, read-only `git`) with safe external-lookup checks. Dangerous-option checks for tar, unzip, zipinfo, xxd, findstr, where.
   More read-only git flags and `git ls-tree`. Confirmed.
 - Files: `apps/zcode-cli/packages/adapters/src/exec/bash-shell-provider.ts` (1) and the classifier (not located).
@@ -252,6 +253,12 @@ taken from the 3.19.0 CLI bundle, not inferred from the patch:
   the simulated Android security update is always one patch above the shipped version; the zcode-site HTTP(S)
   endpoint transport no longer follows redirects (a redirect would drop the package PUT body or `Authorization`) and
   has its own test.
+- Upstream 3.19.1 (build `60f20117`, 2026-11-20, still binary only) changes one bundled plugin: android-emulator
+  0.1.2→0.1.3, skill text only. Bash now blocks only workspace-controlled adb; an installed SDK adb outside the
+  workspace may be used through Shell and the MCP tools are optional. Taken as text and version bumps (plugin.json,
+  package.json, README cache path, MCP server version, definitions, SEA list); the fork's newer dependency and Node 26
+  lines stay. The fork CLI has no adb Bash rule at all, so 0.1.3 matches fork behaviour better than 0.1.2 did. The
+  CLI side (`workspace-adb-blocked`, `adb-not-found`) arrives with the source merge (section J).
 - When the source arrives: take upstream's versions of these files; port design 0.8.0 with its tests.
 
 ## Merge checklist (when upstream pushes the 3.19.0 source)

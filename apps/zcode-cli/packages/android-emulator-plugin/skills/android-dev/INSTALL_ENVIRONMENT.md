@@ -1,9 +1,9 @@
 # Android Environment Setup
 
 Use `android_preflight` to check adb and `android_list_devices` to list devices.
-Do not locate or execute adb through Shell, including workspace copies. Missing
-SDK tools must be installed through the steps below, never replaced with a
-project executable or interpreter/script workaround.
+An installed SDK adb outside the workspace can also be used through Shell; MCP
+is optional. Missing SDK tools must be installed through the steps below, never
+replaced with a workspace executable or interpreter/script workaround.
 
 Use this procedure only when `android_preflight` reports that the Android development environment is not ready.
 

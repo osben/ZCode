@@ -73,7 +73,7 @@ export const officialSeaPlugins = [
     requiresRuntime: true,
     requiredRuntimePaths: ["dist/mcp/server.js"],
     rootPath: join("packages", "android-emulator-plugin"),
-    version: "0.1.2",
+    version: "0.1.3",
   },
   {
     marketplace: "zcode-plugins-official",
