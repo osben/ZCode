@@ -30,7 +30,7 @@ test("rejects an incomplete documents SEA seed", async () => {
 
     await assert.rejects(
       collectSeaOfficialPluginAssets({ root, stagingDirectory }),
-      /Missing documents required seed asset.*agents[/\\]visual-judge\.md/u,
+      /Missing documents required seed asset.*skills[/\\]docx[/\\]SKILL\.md/u,
     );
   } finally {
     await rm(directory, { force: true, recursive: true });

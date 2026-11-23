@@ -92,15 +92,11 @@ export const REMOTE_AGENT_OFFICIAL_PLUGIN_REQUIRED_RELATIVE_PATHS = [
   "browser-use-plugin/skills/control-browser/SKILL.md",
   "browser-use-plugin/skills/web-gui-tester/SKILL.md",
   // Fix rationale: checking only the manifest cannot detect documentation plugins missing skill
-  // content or the visual-review Agent.
+  // content.
   "image-search-plugin/.mcp.json",
-  "documents-plugin/agents/visual-judge.md",
   "documents-plugin/skills/docx/SKILL.md",
-  "pdf-plugin/agents/visual-judge.md",
   "pdf-plugin/skills/pdf/SKILL.md",
-  "presentations-plugin/agents/visual-judge.md",
   "presentations-plugin/skills/pptx/SKILL.md",
-  "spreadsheets-plugin/agents/visual-judge.md",
   "spreadsheets-plugin/skills/xlsx/SKILL.md",
   // Design's full local seed paths are required (bootstrap OFFICIAL_DESIGN_REQUIRED_SEED_PATHS, mechanically cross-checked by server/test).
   // Unlike other plugins that list only sentinels: when the hook cannot find SKILL.md it exits silently, and the rule and script files are read or executed on demand, so a missing file only fails inside the session.

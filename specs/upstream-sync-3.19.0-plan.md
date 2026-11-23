@@ -259,6 +259,22 @@ taken from the 3.19.0 CLI bundle, not inferred from the patch:
   package.json, README cache path, MCP server version, definitions, SEA list); the fork's newer dependency and Node 26
   lines stay. The fork CLI has no adb Bash rule at all, so 0.1.3 matches fork behaviour better than 0.1.2 did. The
   CLI side (`workspace-adb-blocked`, `adb-not-found`) arrives with the source merge (section J).
+- Upstream 4.0.0 (build `3bc8a247`, 2026-11-22, still binary only; diff in `~/Dev/zcode-upstream-diff-4.0.0/`)
+  drops the separate visual acceptance step from the office plugins. Product rule after the pre-port:
+  - documents, presentations, spreadsheets 0.2.10 and pdf 0.2.11 ship no `agents/` directory; no official plugin
+    provides a subagent. The pptx skill checks rendered slide images itself and never dispatches a subagent or an
+    external VLM for visual QA.
+  - `agents/visual-judge.md` leaves every required seed list (bootstrap definitions, SEA list, desktop packaging,
+    server remote assets, prebuild check), so a cache without it is complete. Old 0.2.9/0.2.10 caches keep their
+    copy; the new version directory is seeded fresh, so `<plugin>:visual-judge` disappears from the agent catalog.
+  - A saved `pluginAgentModelSelectionOverrides` entry for the removed agent stays in `agents-state.json` and has no
+    effect (no agent matches its id); nothing deletes it.
+  - The fork keeps its `zcode_libreoffice.py` cleanup and cancel fixes: upstream 4.0.0 still has the old code.
+  - The two upstream E2E cases that used `documents:visual-judge` as their only official plugin subagent
+    (`plugins/runtime/plugin-subagent-override-cold`, `settings-subagent-create-edit-persistence` SE-04) are skipped
+    until the source merge brings upstream's rewritten versions. This also pauses that case as a zcode-rs plugin
+    agent override gate (`specs/fork-rust-subagent-runtime-config.md`).
+  - Not taken: node-repl-host 0.7.1 (built `dist/` only).
 - When the source arrives: take upstream's versions of these files; port design 0.8.0 with its tests.
 
 ## Merge checklist (when upstream pushes the 3.19.0 source)

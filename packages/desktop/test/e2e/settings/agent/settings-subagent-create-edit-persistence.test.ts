@@ -144,7 +144,9 @@ describe("Settings subagent 创建/编辑文件持久化 E2E", () => {
     await createCustomAgent(USER_DEFAULT_UNTOUCHED, USER_AGENT_ROOT);
   });
 
-  it("SE-04: 内置官方插件 subagent 可见并按 agent id 持久化 model/effort 覆盖", async function () {
+  // Skipped until the upstream 4.0.0 source merge: 4.0.0 removed documents:visual-judge, the only
+  // official plugin subagent this case used, and upstream's rewritten case is not published yet.
+  it.skip("SE-04: 内置官方插件 subagent 可见并按 agent id 持久化 model/effort 覆盖", async function () {
     this.timeout(CASE_TIMEOUT_MS);
     await selectSubagentScope("user");
     // 官方插件没有安装记录；真实 CLI seed 后，Settings 也必须发现相同的只读 profile。

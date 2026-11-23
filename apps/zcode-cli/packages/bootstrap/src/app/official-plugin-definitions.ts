@@ -249,10 +249,10 @@ export const OFFICIAL_PLUGIN_DEFINITIONS: readonly OfficialPluginDefinition[] = 
     [
       // 版本按插件各自升，换新缓存目录：pdf 0.2.1 起面板带中日韩字体回退；0.2.1（pdf 0.2.2）起
       // server 由工作区内各 session 共享，旧缓存的 server 不区分 session，不能沿用。
-      ["documents", "docx", "Documents", "Word文档", "0.2.9"],
-      ["pdf", "pdf", "PDF", "PDF", "0.2.10"],
-      ["presentations", "pptx", "Presentations", "演示文档", "0.2.9"],
-      ["spreadsheets", "xlsx", "Spreadsheets", "电子表格", "0.2.9"],
+      ["documents", "docx", "Documents", "Word文档", "0.2.10"],
+      ["pdf", "pdf", "PDF", "PDF", "0.2.11"],
+      ["presentations", "pptx", "Presentations", "演示文档", "0.2.10"],
+      ["spreadsheets", "xlsx", "Spreadsheets", "电子表格", "0.2.10"],
     ] as const
   ).map(
     ([name, skill, displayName, chineseName, version]): OfficialPluginDefinition => ({
@@ -272,7 +272,6 @@ export const OFFICIAL_PLUGIN_DEFINITIONS: readonly OfficialPluginDefinition[] = 
       // assets are built into dist/ by office-runtime; missing either would seed a broken plugin
       // whose panel entry is visible but cannot start.
       requiredSeedPaths: [
-        "agents/visual-judge.md",
         `skills/${skill}/SKILL.md`,
         `skills/${skill}-viewer/SKILL.md`,
         ...OFFICIAL_OFFICE_VIEWER_RUNTIME_PATHS,

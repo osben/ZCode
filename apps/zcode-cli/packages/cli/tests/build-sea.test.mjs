@@ -717,7 +717,8 @@ test("includes bundled official plugin assets", async () => {
     assert.equal(documentPaths.has("skills/pdf/SKILL.md"), true);
     assert.equal(documentPaths.has("skills/pdf/scripts/pdf.py"), true);
     assert.equal(documentPaths.has("skills/pptx/SKILL.md"), true);
-    assert.equal(documentPaths.has("agents/visual-judge.md"), true);
+    // 4.0.0 removed the visual acceptance subagent: office plugins ship no agents/ directory.
+    assert.equal(documentPaths.has("agents/visual-judge.md"), false);
     assert.equal(documentPaths.has("skills/pptx/scripts/general_judge.py"), false);
     assert.equal(documentPaths.has("skills/xlsx/SKILL.md"), true);
     assert.equal(documentPaths.has("skills/xlsx/xlsx.py"), true);
@@ -1301,7 +1302,6 @@ async function writeDocumentPluginFixtures(root) {
     ["spreadsheets", "xlsx"],
   ]) {
     await writeTestFile(root, `packages/${name}-plugin/.zcode-plugin/plugin.json`, "{}");
-    await writeTestFile(root, `packages/${name}-plugin/agents/visual-judge.md`, "");
     await writeTestFile(root, `packages/${name}-plugin/skills/${skill}/SKILL.md`, "");
     // 0.2.0 起文档插件带查看面板：viewer skill 与 office-runtime 构建产物都是必需资产。
     await writeTestFile(root, `packages/${name}-plugin/skills/${skill}-viewer/SKILL.md`, "");
