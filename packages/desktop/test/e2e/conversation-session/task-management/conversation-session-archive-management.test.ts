@@ -19,8 +19,13 @@ function readRow(id: string) {
   const db = new DatabaseSync(join(home, ".zcode/v2/tasks-index.sqlite"), { readOnly: true });
   try {
     return db
-      .prepare("SELECT archived,cli_deleted,project_id FROM tasks WHERE task_id=?")
-      .get(id) as { archived: number; cli_deleted: number; project_id: string | null };
+      .prepare("SELECT archived,deleted,cli_deleted,project_id FROM tasks WHERE task_id=?")
+      .get(id) as {
+      archived: number;
+      deleted: number;
+      cli_deleted: number;
+      project_id: string | null;
+    };
   } finally {
     db.close();
   }
@@ -53,11 +58,25 @@ async function waitForArchiveAnimations() {
 }
 describe("归档管理", () => {
   // 每个 case 不继承上一个 case 残留的确认弹窗；只关闭弹窗，不吞掉 case 自身的失败。
+  // Specs without the coding plan mock reach the live marketing API, so a real campaign popup can
+  // open mid-suite and intercept clicks. Close it through its own X before each case.
+  beforeEach(async () => {
+    const cloudDialog = $('[data-testid="cloud-content-dialog"]');
+    if (await cloudDialog.isExisting()) {
+      await cloudDialog.$('[data-slot="dialog-close"]').click();
+      await cloudDialog.waitForExist({ reverse: true, timeoutMsg: "营销弹窗未能关闭" });
+    }
+  });
   afterEach(async () => {
-    const overlay = $('[data-testid="confirm-dialog-confirm"]');
-    if (await overlay.isExisting()) {
-      await browser.keys("Escape");
-      await overlay.waitForExist({ reverse: true, timeoutMsg: "确认弹窗未能关闭" });
+    for (const selector of [
+      '[data-testid="confirm-dialog-confirm"]',
+      `[data-testid="${TID_TASK_DELETE_DIALOG}"]`,
+    ]) {
+      const overlay = $(selector);
+      if (await overlay.isExisting()) {
+        await browser.keys("Escape");
+        await overlay.waitForExist({ reverse: true, timeoutMsg: "确认弹窗未能关闭" });
+      }
     }
   });
   before(async function () {
@@ -128,6 +147,8 @@ describe("归档管理", () => {
                 createdAt: now,
                 updatedAt: updated,
                 mode: "default",
+                // Real task meta always carries provider; the fork erase lists tombstones by provider.
+                provider: "glm",
                 archived: true,
                 ...(i === 2 ? { cronAutomationId: "arm-cron" } : {}),
               }),
@@ -173,120 +194,6 @@ describe("归档管理", () => {
     await $('[data-testid="task-settings-button"]').click();
     await $('[data-testid="settings-section-nav-archives"]').click();
     await $('[data-testid="archive-management"]').waitForDisplayed();
-  });
-  it("APD04/11：先弹框再预检，取消停发且迟到结果不污染新弹窗", async () => {
-    await setArchiveGroupsOpen(true);
-    // 只暂停真实 RPC 的发送，不替换预检结果或删除实现；释放后仍由 Host/CLI 查询隔离库。
-    await browser.execute(() => {
-      const original = MessagePort.prototype.postMessage;
-      const held: Array<() => void> = [];
-      const ports = new Set<MessagePort>();
-      const receive = (event: MessageEvent) => {
-        if (!(event.data instanceof Uint8Array)) return;
-        const payload = new TextDecoder().decode(event.data);
-        if (payload.includes('"revision"') && payload.includes('"retainedArtifacts"'))
-          probe.responses++;
-      };
-      const probe = {
-        calls: 0,
-        responses: 0,
-        openedBeforeRequest: true,
-        release: () => held.shift()?.(),
-        restore: () => {
-          MessagePort.prototype.postMessage = original;
-          for (const port of ports) port.removeEventListener("message", receive);
-          for (const send of held.splice(0)) send();
-          delete (window as typeof window & { __apdPreflight?: unknown }).__apdPreflight;
-        },
-      };
-      (window as typeof window & { __apdPreflight?: typeof probe }).__apdPreflight = probe;
-      MessagePort.prototype.postMessage = function (message: unknown, options?: unknown) {
-        const args = options === undefined ? [message] : [message, options];
-        if (
-          message instanceof Uint8Array &&
-          new TextDecoder().decode(message).includes("previewArchivedTaskDeletion")
-        ) {
-          probe.calls++;
-          probe.openedBeforeRequest &&= Boolean(
-            document.querySelector('[data-confirm-intent="archive-management-delete"]'),
-          );
-          if (!ports.has(this)) {
-            ports.add(this);
-            this.addEventListener("message", receive);
-          }
-          held.push(() => Reflect.apply(original, this, args));
-          return;
-        }
-        Reflect.apply(original, this, args);
-      };
-    });
-    const state = () =>
-      browser.execute(() => {
-        const probe = (
-          window as typeof window & {
-            __apdPreflight: { calls: number; responses: number; openedBeforeRequest: boolean };
-          }
-        ).__apdPreflight;
-        return {
-          calls: probe.calls,
-          responses: probe.responses,
-          openedBeforeRequest: probe.openedBeforeRequest,
-        };
-      });
-    const release = () =>
-      browser.execute(() =>
-        (
-          window as typeof window & { __apdPreflight: { release(): void } }
-        ).__apdPreflight.release(),
-      );
-    const dialog = $('[data-confirm-intent="archive-management-delete"]');
-    try {
-      await $('[data-testid="archive-delete-all"]').click();
-      await expect(dialog).toHaveText(expect.stringContaining("正在检查 0/5 个会话"));
-      await expect($('[data-testid="confirm-dialog-confirm"]')).toBeDisabled();
-      await browser.waitUntil(async () => (await state()).calls === 1);
-      expect((await state()).openedBeforeRequest).toBe(true);
-      await browser.saveScreenshot(
-        join(process.env.ZCODE_E2E_ARTIFACT_DIR!, "apd-preflight-pending.png"),
-      );
-      await browser.keys("Escape");
-      await dialog.waitForExist({ reverse: true });
-      await expect($('[data-testid="archive-delete-all"]')).toBeEnabled();
-      await row("arm-beta").$('[data-testid="archive-delete"]').click();
-      await expect(dialog).toHaveText(expect.stringContaining("正在检查 0/1 个会话"));
-      await browser.waitUntil(async () => (await state()).calls === 2);
-      await release();
-      await browser.waitUntil(async () => (await state()).responses === 1);
-      // 旧 RPC 已真实返回，但新弹窗仍停在自己的检查中；旧批次不得继续发第二项。
-      expect((await state()).calls).toBe(2);
-      await expect(dialog).toHaveText(expect.stringContaining("正在检查 0/1 个会话"));
-      await expect($('[data-testid="confirm-dialog-confirm"]')).toBeDisabled();
-      await release();
-      await expect($('[data-testid="confirm-dialog-confirm"]')).toBeEnabled();
-      await expect(dialog).toHaveText(expect.stringContaining("shared.png"));
-      await expect($('[data-testid="confirm-dialog-confirm"]')).toHaveText("永久删除 1 个会话");
-      await browser.keys("Escape");
-      await dialog.waitForExist({ reverse: true });
-      await $('[data-project-id="arm-project-0"] [data-testid="archive-group-menu"]').click();
-      await $('[data-testid="archive-group-delete"]').click();
-      await expect(dialog).toHaveText(expect.stringContaining("正在检查 0/2 个会话"));
-      await expect($('[data-testid="confirm-dialog-confirm"]')).toBeDisabled();
-      await browser.waitUntil(async () => (await state()).calls === 3);
-      await dialog.$("button*=取消").click();
-      await dialog.waitForExist({ reverse: true });
-      await release();
-      await browser.waitUntil(async () => (await state()).responses === 3);
-      expect((await state()).calls).toBe(3);
-      for (const id of ids) expect(readRow(id).archived).toBe(1);
-    } finally {
-      if (await dialog.isDisplayed()) await browser.keys("Escape");
-      await browser.execute(() =>
-        (
-          window as typeof window & { __apdPreflight?: { restore(): void } }
-        ).__apdPreflight?.restore(),
-      );
-      await setArchiveGroupsOpen(false);
-    }
   });
   it("ARM08：页面标题与固定文案统一为会话", async () => {
     const heading = $("h2=归档管理");
@@ -478,10 +385,10 @@ describe("归档管理", () => {
     await row("arm-alpha").waitForExist({ reverse: true });
     expect(readRow("arm-alpha").archived).toBe(0);
     await row("arm-beta").$('[data-testid="archive-delete"]').click();
-    // 永久删除先异步预检；必须等确认框打开后再取消，不能把 Escape 发给页面。
-    await $('[data-confirm-intent="archive-management-delete"]').waitForDisplayed();
+    // 必须等确认框打开后再取消，不能把 Escape 发给页面。
+    await $(`[data-testid="${TID_TASK_DELETE_DIALOG}"]`).waitForDisplayed();
     await browser.keys("Escape");
-    await $('[data-confirm-intent="archive-management-delete"]').waitForExist({ reverse: true });
+    await $(`[data-testid="${TID_TASK_DELETE_DIALOG}"]`).waitForExist({ reverse: true });
     expect(readRow("arm-beta").cli_deleted).toBe(0);
     await browser.execute(
       (path) =>
@@ -495,12 +402,13 @@ describe("归档管理", () => {
       DEFAULT_WORKSPACE,
     );
     await row("arm-beta").$('[data-testid="archive-delete"]').click();
-    await $(`[data-testid="${TID_TASK_DELETE_CONFIRM}"]`).click();
+    await confirmDelete();
     await row("arm-beta").waitForExist({ reverse: true });
     await expect($('[data-testid="archive-management"]')).toHaveText(
-      expect.stringContaining("已永久删除"),
+      expect.stringContaining("已删除会话：1"),
     );
-    expect(readRow("arm-beta")).toBeUndefined();
+    // The fork keeps a scrubbed tombstone row (specs/session-deletion-cascade.md) instead of removing it.
+    expect(readRow("arm-beta").deleted).toBe(1);
     expect(
       await browser.execute(
         (path) =>
@@ -514,15 +422,13 @@ describe("归档管理", () => {
       expect(cli.prepare("SELECT id FROM session WHERE id='arm-child'").get()).toBeUndefined();
       expect(cli.prepare("SELECT id FROM session WHERE id='arm-fork'").get()).toBeDefined();
       expect(cli.prepare("SELECT data FROM part WHERE id='arm-fork-part'").get()).toBeDefined();
-      expect(
-        cli.prepare("SELECT state FROM session_purge WHERE session_id='arm-beta'").get()?.state,
-      ).toBe("deleted");
       await expect(
         access(join(home, ".zcode/cli/artifacts/arm-beta/shared.png")),
       ).resolves.toBeUndefined();
+      // Fork rule (session-tree.ts): a surviving fork keeps the whole source session directory.
       await expect(
         access(join(home, ".zcode/cli/artifacts/arm-beta/private.png")),
-      ).rejects.toThrow();
+      ).resolves.toBeUndefined();
     } finally {
       cli.close();
     }
@@ -546,10 +452,10 @@ describe("归档管理", () => {
     await expect($(`[data-testid="${TID_TASK_DELETE_DIALOG}"]`)).toHaveText(
       expect.stringContaining("1"),
     );
-    await $(`[data-testid="${TID_TASK_DELETE_CONFIRM}"]`).click();
+    await confirmDelete();
     // A collapsed group has no row DOM; wait for the whole group to disappear and verify the DB write, so an unrendered row is not mistaken for a deleted one.
     await $('[data-testid="archive-group"][data-project-id=""]').waitForExist({ reverse: true });
-    expect(readRow("arm-loose")).toBeUndefined();
+    expect(readRow("arm-loose").deleted).toBe(1);
     expect(readRow("arm-scheduled").cli_deleted).toBe(0);
     expect(readRow("arm-removed").cli_deleted).toBe(0);
     await clearSearch();
@@ -562,34 +468,7 @@ describe("归档管理", () => {
     await group.waitForExist({ reverse: true });
     expect(readRow("arm-scheduled").archived).toBe(0);
   });
-  it("APD03/11：待处理输入逐项显示原因，零项可删时禁止确认", async () => {
-    const cli = new DatabaseSync(join(home, ".zcode/cli/db/db.sqlite"));
-    try {
-      cli
-        .prepare(
-          "INSERT INTO session_input(id,session_id,kind,delivery,payload,admitted_sequence,status,time_created,time_updated) VALUES('apd-queued','arm-removed','prompt','queue','{}',1,'admitted',1,1)",
-        )
-        .run();
-    } finally {
-      cli.close();
-    }
-    await $('[data-testid="archive-delete-all"]').click();
-    const confirmation = $('[data-confirm-intent="archive-management-delete"]');
-    await expect(confirmation).toHaveText(expect.stringContaining("任务仍在运行或有待处理输入"));
-    await expect($('[data-testid="confirm-dialog-confirm"]')).toBeDisabled();
-    await browser.keys("Enter");
-    // destructive 默认焦点为取消，Enter 可以取消，但不能触发删除。
-    if (await confirmation.isDisplayed()) await browser.keys("Escape");
-    await confirmation.waitForExist({ reverse: true });
-    expect(readRow("arm-removed")).toBeDefined();
-    const stopped = new DatabaseSync(join(home, ".zcode/cli/db/db.sqlite"));
-    try {
-      stopped.prepare("UPDATE session_input SET status='cancelled' WHERE id='apd-queued'").run();
-    } finally {
-      stopped.close();
-    }
-  });
-  it("APD11：手机真实配对后永久删除，桌面刷新与两库同步移除", async function () {
+  it("APD11：手机端永久删除禁用并说明原因，桌面删除后手机与两库同步移除", async function () {
     this.timeout(150000);
     await $('[data-testid="settings-back-button"]').click();
     let receive!: (url: string) => void;
@@ -699,37 +578,29 @@ describe("归档管理", () => {
       await page.getByTestId("task-settings-button").tap();
       await page.getByTestId("settings-section-nav-archives").tap();
       await page.getByTestId("archive-management").waitFor();
-      await page.getByTestId("archive-delete-all").tap();
-      const dialog = page.locator('[data-confirm-intent="archive-management-delete"]');
-      await dialog.waitFor();
-      await page.getByRole("button", { name: /^Cancel/ }).tap();
-      await dialog.waitFor({ state: "detached" });
-      expect(readRow("arm-removed")).toBeDefined();
-      await page.getByTestId("archive-delete-all").tap();
-      await dialog.waitFor();
-      await page.waitForFunction(() => {
-        const button = document.querySelector<HTMLButtonElement>(
-          '[data-testid="confirm-dialog-confirm"]',
-        );
-        return button && !button.disabled;
-      });
-      expect(await dialog.innerText()).toContain("E2E Removed");
-      expect(await dialog.innerText()).toContain("将保留");
-      await page.waitForFunction(() =>
-        document
-          .querySelector('[data-confirm-intent="archive-management-delete"]')!
-          .getAnimations({ subtree: true })
-          .every((animation) => animation.playState !== "running"),
+      // specs/session-deletion-cascade.md: Web remote control disables permanent Delete with a reason.
+      const mobileDeleteAll = page.getByTestId("archive-delete-all");
+      await mobileDeleteAll.waitFor();
+      expect(await mobileDeleteAll.isDisabled()).toBe(true);
+      expect(await mobileDeleteAll.getAttribute("title")).toBe(
+        "Delete is available only in the local desktop app.",
       );
-      expect(await dialog.evaluate((node) => node.scrollWidth <= node.clientWidth + 1)).toBe(true);
       await page.screenshot({
-        path: join(process.env.ZCODE_E2E_ARTIFACT_DIR!, "apd-mobile-confirmation.png"),
+        path: join(process.env.ZCODE_E2E_ARTIFACT_DIR!, "apd-mobile-delete-disabled.png"),
       });
-      await page.getByTestId("confirm-dialog-confirm").tap();
-      await page.waitForFunction(() =>
-        document.querySelector('[data-testid="archive-delete-all"]')?.hasAttribute("disabled"),
+      expect(readRow("arm-removed")).toBeDefined();
+      await $('[data-testid="task-settings-button"]').click();
+      await $('[data-testid="settings-section-nav-archives"]').click();
+      await $('[data-testid="archive-management"]').waitForDisplayed();
+      await $('[data-testid="archive-delete-all"]').click();
+      await expect($(`[data-testid="${TID_TASK_DELETE_DIALOG}"]`)).toHaveText(
+        expect.stringContaining("E2E Removed"),
       );
-      await browser.waitUntil(() => readRow("arm-removed") === undefined);
+      await confirmDelete();
+      await page
+        .locator('[data-testid="archive-task"][data-task-id="arm-removed"]')
+        .waitFor({ state: "detached" });
+      await browser.waitUntil(() => readRow("arm-removed").deleted === 1);
       const cli = new DatabaseSync(join(home, ".zcode/cli/db/db.sqlite"), { readOnly: true });
       try {
         expect(cli.prepare("SELECT 1 FROM session WHERE id='arm-removed'").get()).toBeUndefined();
@@ -767,6 +638,14 @@ describe("归档管理", () => {
     }
   });
 });
+
+async function confirmDelete() {
+  const confirm = $(`[data-testid="${TID_TASK_DELETE_CONFIRM}"]`);
+  // Capability, tree counts and the worktree preview load after the dialog opens; confirm waits for them.
+  await expect(confirm).toBeEnabled({ wait: 30000 });
+  await confirm.click();
+  await $(`[data-testid="${TID_TASK_DELETE_DIALOG}"]`).waitForExist({ reverse: true });
+}
 
 async function captureArchiveLayouts() {
   const original = await browser.execute(() =>

@@ -180,9 +180,27 @@ Repository:
   table, `docs/workspace-hook-trust.md` D24 and §12.9.
 - `docs/chat/composer-voice-input.md` still names `Cmd+Shift+D` for upstream voice input.
 - knip: `previewProjectTaskDeletions` and `status-panel-insights` are unused until the follow-ups land.
-- Desktop E2E for archive deletion: `conversation-session-archive-management.test.ts` already expected
-  upstream's inline confirm (`archive-management-delete`) on `fork`, which renders its own delete dialog;
-  4.0.0 adds the same expectation to `conversation-session-delete-all-archived-tasks.test.ts`. Both
-  need the fork dialog flow, checked in the Linux box.
+- Archive deletion E2E now drives the fork delete dialog (`task-delete-dialog`). Changes against the
+  upstream versions of `conversation-session-archive-management.test.ts` and
+  `conversation-session-delete-all-archived-tasks.test.ts`:
+  - APD03 (per-row pending input reasons) and APD04 (preflight race) are dropped. They test upstream's
+    preflight, and the fork running guard is process-local, so a queued `session_input` does not block
+    deletion.
+  - APD11 checks the fork Web remote gate: on the phone the delete button is disabled with
+    `taskDelete.remoteUnavailable`, then the row is deleted on desktop. The Linux box has no Chrome, so
+    this case has not run.
+  - ARM02, ARM03 and TSL39 expect fork tombstones (`deleted=1` rows stay in tasks-index, no
+    `session_purge`). ARM02 expects the whole source session directory to stay while a fork child
+    survives.
+  - Fixture meta_json now carries `provider: "glm"`. Without it the tombstone row got provider NULL and
+    the erase skipped it. Real data (1579 tasks) has no such rows.
+  - TSL39 counts every archived row: wdio seeds 25 more archived tasks for this spec.
+  - Specs without the coding plan mock reach the live marketing API. The archive spec closes the
+    campaign popup (`cloud-content-dialog`) before each case. Other specs may need the same.
+  - Box run on 2026-11-23: archive-management 5 of 6 pass (APD11 needs Chrome). TSL39 fails on a real
+    fork bug that predates the sync: permanent delete removes `shared.png` from the deleted session's
+    artifact directory while a kept session still references it by `zcode-artifact://` part URL.
+    Upstream 4.0.0 keeps such files (`retainedArtifacts`); the fork erase (`zcodeTaskErase.ts`,
+    `session-tree.ts`) does not track cross-session references. The assertion is left as is.
 - `conversation-session-dynamic-workflow-gray-always-on-resume.test.ts`: the fork and upstream gates for
   the same race are combined; not run yet.
