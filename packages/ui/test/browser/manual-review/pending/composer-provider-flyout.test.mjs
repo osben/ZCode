@@ -66,12 +66,8 @@ const snapshot = () => {
     return [left, top, width, height].map(Math.round);
   };
   const trigger = document.querySelector('[data-testid="composer-provider-trigger"]');
-  const panel =
-    document.querySelector('[data-testid="composer-model-panel"]') ??
-    trigger?.closest('[role="menu"]');
-  const flyout =
-    document.querySelector('[data-testid="composer-provider-panel"]') ??
-    document.querySelector('[data-slot="dropdown-menu-sub-content"]');
+  const panel = document.querySelector('[data-testid="composer-model-panel"]');
+  const flyout = document.querySelector('[data-testid="composer-provider-panel"]');
   return {
     panel: rect(panel),
     flyout: rect(flyout),
@@ -95,6 +91,9 @@ test("hovering provider rows keeps the panel, the flyout and the Models list sti
   await rows.first().waitFor();
   await page.waitForTimeout(300);
   const start = await page.evaluate(snapshot);
+  // A selector miss must fail here, not pass the stillness checks as null === null.
+  assert.ok(start.panel, "the model panel is open");
+  assert.ok(start.flyout, "the provider flyout is open");
   const frames = [];
   for (let index = 0; index < (await rows.count()); index += 1) {
     const box = await rows.nth(index).boundingBox();

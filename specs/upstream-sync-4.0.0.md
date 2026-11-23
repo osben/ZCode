@@ -133,6 +133,10 @@ Repository:
 - i18n: uk-UA gains the 113 new upstream keys, drops 18 keys upstream removed from en, and en drops five
   status-panel keys that no code reads any more. The zcode-rs inbound schema and tool contracts are
   regenerated (zod 4 output and the two new settings).
+- The merge dropped upstream's spreadsheets viewer paths (`skills/xlsx-viewer/SKILL.md` and the `dist`
+  viewer trio) from the remote official-plugin check. They are restored, and the fork test
+  `forkRemoteOfficeAssetsParity.test.ts` now compares the remote list for the four office plugins with
+  the desktop bundle list.
 - `scripts/check-test-copy.mjs`: 10 new upstream suites with zh-CN locale setup join the verbatim list,
   and five entries follow upstream's moves out of `manual-review/pending/`.
 
@@ -153,6 +157,11 @@ Repository:
   process-tree cases above, `windowsInstallerCompile.test.ts` (`makensis` aborts with `bad_alloc` on
   this Mac) and `audit-conversation-session-json-out.test.mjs` (the same 7 formal admission rejections).
 - Not run: desktop E2E (runs in the Linux box, not on the Mac).
+- Local ocr review of the conflict resolutions (glm-5.3, 221 of 237 review units, 16 failed on 429s):
+  18 comments. Fixed: the spreadsheets viewer paths above, the missing `typescript-lsp` fixture in
+  `build-sea.test.mjs` (it failed the same way on `fork`), a half-translated comment line in
+  `WorkspaceHookPendingBanner.tsx` and dead selector fallbacks in the fork flyout browser test. The other
+  comments point at upstream 4.0.0 code or text kept verbatim, or at fork code older than the sync.
 
 ## Follow-ups
 
@@ -163,5 +172,14 @@ Repository:
   table, `docs/workspace-hook-trust.md` D24 and §12.9.
 - `docs/chat/composer-voice-input.md` still names `Cmd+Shift+D` for upstream voice input.
 - knip: `previewProjectTaskDeletions` and `status-panel-insights` are unused until the follow-ups land.
+- Desktop E2E for archive deletion: `conversation-session-archive-management.test.ts` already expected
+  upstream's inline confirm (`archive-management-delete`) on `fork`, which renders its own delete dialog;
+  4.0.0 adds the same expectation to `conversation-session-delete-all-archived-tasks.test.ts`. Both
+  need the fork dialog flow, checked in the Linux box.
+- MCP resource subscriptions: upstream 4.0.0 removed the replay of registered subscriptions after a
+  reconnect (`McpResourceSubscriptionRegistry.uris()` has no callers). The merged adapter is upstream's
+  code; whether subscribers miss `resources/updated` after a reconnect is not checked yet.
+- `GitBranchSwitcher`: the `beforeSwitch` guard has no rejection handling (fork code, older than the
+  sync).
 - `conversation-session-dynamic-workflow-gray-always-on-resume.test.ts`: the fork and upstream gates for
   the same race are combined; not run yet.

@@ -90,7 +90,6 @@ export const WorkspaceHookPendingIndicator = memo(function WorkspaceHookPendingI
     // Open settings in two steps: set the settings intent, then open the tab (following V4ComposerToolbar's handleOpenModelProviderSettings).
     // ZP-20261110-06: hooks of a worktree task are discovered from the session cwd; passing only the section makes the settings page
     // discover from the project directory, so it cannot see declarations awaiting review in the worktree. Pass the project scope and cwd so the settings page discovers by cwd (D23).
-    // 发现，看不到 worktree 中待审核的声明。带上项目范围与 cwd，设置页按 cwd 发现（D23）。
     setPendingSettingsSectionIntent("hooks", {
       ...(worktreeCwd
         ? {

@@ -790,6 +790,9 @@ test("allows skill-only official plugins when SEA runtime assets are required", 
     // 新增官方内容插件后也要提供 fixture，否则采集会先报 manifest 缺失，无法验证免运行时资源。
     await writeTestFile(root, "packages/plugin-creator-plugin/.zcode-plugin/plugin.json", "{}");
     await writeTestFile(root, "packages/plugin-creator-plugin/skills/plugin-creator/SKILL.md", "");
+    // Fork-only typescript-lsp is in officialSeaPlugins too; without a manifest fixture the collector
+    // throws on it before the skill-only assertions run.
+    await writeTestFile(root, "packages/typescript-lsp-plugin/.zcode-plugin/plugin.json", "{}");
     // skill-creator 用作「带可执行 hook 的 skill-only 官方插件」载体（原先由 superpowers 覆盖）。
     // collector 按 officialSeaPlugins 登记 + 伪造目录采集，真实 skill-creator 是否带 hook 无关紧要。
     await writeTestFile(root, "packages/skill-creator-plugin/hooks/hooks.json", "{}");
