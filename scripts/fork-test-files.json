@@ -292,6 +292,7 @@
   "packages/ui/test/gitActionMenuDetachedCommitWarning.test.ts",
   "packages/ui/test/gitActionMenuError.test.ts",
   "packages/ui/test/gitAutoRefreshExternalChange.test.ts",
+  "packages/ui/test/gitBranchSwitchGuard.test.ts",
   "packages/ui/test/gitPaneDirectoryRowModel.test.ts",
   "packages/ui/test/gitPaneGroupByDirectoryPreference.test.ts",
   "packages/ui/test/gitPaneGroupByDirectoryView.test.ts",

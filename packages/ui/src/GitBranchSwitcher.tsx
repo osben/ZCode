@@ -27,6 +27,7 @@ import {
   GitBranchSwitchAssistDialog,
 } from "@/git-branch-switcher/GitBranchDialogs.js";
 import { GitGraphDialog } from "@/git-graph/GitGraphDialog.js";
+import { runAfterBranchSwitchGuard } from "@/gitBranchSwitchGuard.js";
 import { useGitBranchSwitcher } from "@/hooks/useGitBranchSwitcher.js";
 import { useZCodeIntl } from "@/i18n/IntlProvider.js";
 import {
@@ -421,13 +422,9 @@ function GitBranchSwitcherView({
                               selectionIntent.onSelect(branch.name);
                               return;
                             }
-                            if (beforeSwitch) {
-                              void beforeSwitch(branch.name).then((allowed) => {
-                                if (allowed) void switchBranch(branch.name);
-                              });
-                              return;
-                            }
-                            void switchBranch(branch.name);
+                            void runAfterBranchSwitchGuard(beforeSwitch, branch.name, () =>
+                              switchBranch(branch.name),
+                            );
                           }}
                         >
                           <GitBranchIcon className="mt-0.5 size-4 text-foreground-subtle" />
@@ -508,13 +505,7 @@ function GitBranchSwitcherView({
               setCreateBranchName("");
             }}
             onSubmit={() => {
-              if (beforeSwitch) {
-                void beforeSwitch(createBranchName).then((allowed) => {
-                  if (allowed) void createBranchAndSwitch();
-                });
-              } else {
-                void createBranchAndSwitch();
-              }
+              void runAfterBranchSwitchGuard(beforeSwitch, createBranchName, createBranchAndSwitch);
             }}
           />
 

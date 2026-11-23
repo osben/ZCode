@@ -156,12 +156,20 @@ Repository:
   The other three predate the sync and fail the same way on a clean `fork` checkout: the two
   process-tree cases above, `windowsInstallerCompile.test.ts` (`makensis` aborts with `bad_alloc` on
   this Mac) and `audit-conversation-session-json-out.test.mjs` (the same 7 formal admission rejections).
+- The case audit is fixed in this PR: the five ACP specs get `providerRequestPolicy: "none"` manifests
+  (they talk only to the mock ACP agent), the trajectory viewer manifest reason and the gray always-on
+  resume ledger (`dwu-c-agent-group`) match their fixtures, and five pending specs point at their new
+  paths. `audit-conversation-session-case-coverage.mjs --check` passes.
 - Not run: desktop E2E (runs in the Linux box, not on the Mac).
 - Local ocr review of the conflict resolutions (glm-5.3, 221 of 237 review units, 16 failed on 429s):
   18 comments. Fixed: the spreadsheets viewer paths above, the missing `typescript-lsp` fixture in
   `build-sea.test.mjs` (it failed the same way on `fork`), a half-translated comment line in
   `WorkspaceHookPendingBanner.tsx` and dead selector fallbacks in the fork flyout browser test. The other
   comments point at upstream 4.0.0 code or text kept verbatim, or at fork code older than the sync.
+  Two of those are handled anyway: `GitBranchSwitcher` now runs the `beforeSwitch` guard through
+  `runAfterBranchSwitchGuard`, which fails closed and logs when the guard rejects. The missing replay of
+  MCP resource subscriptions after a reconnect is upstream's contract (its test "does not replay
+  subscriptions after reconnect": the host re-subscribes after `onAppConnectionInvalidated`), so it stays.
 
 ## Follow-ups
 
@@ -176,10 +184,5 @@ Repository:
   upstream's inline confirm (`archive-management-delete`) on `fork`, which renders its own delete dialog;
   4.0.0 adds the same expectation to `conversation-session-delete-all-archived-tasks.test.ts`. Both
   need the fork dialog flow, checked in the Linux box.
-- MCP resource subscriptions: upstream 4.0.0 removed the replay of registered subscriptions after a
-  reconnect (`McpResourceSubscriptionRegistry.uris()` has no callers). The merged adapter is upstream's
-  code; whether subscribers miss `resources/updated` after a reconnect is not checked yet.
-- `GitBranchSwitcher`: the `beforeSwitch` guard has no rejection handling (fork code, older than the
-  sync).
 - `conversation-session-dynamic-workflow-gray-always-on-resume.test.ts`: the fork and upstream gates for
   the same race are combined; not run yet.
