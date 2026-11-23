@@ -718,7 +718,10 @@ test("includes bundled official plugin assets", async () => {
     assert.equal(documentPaths.has("skills/pdf/scripts/pdf.py"), true);
     assert.equal(documentPaths.has("skills/pptx/SKILL.md"), true);
     // 4.0.0 removed the visual acceptance subagent: office plugins ship no agents/ directory.
-    assert.equal(documentPaths.has("agents/visual-judge.md"), false);
+    assert.equal(
+      [...documentPaths].some((path) => path.startsWith("agents/")),
+      false,
+    );
     assert.equal(documentPaths.has("skills/pptx/scripts/general_judge.py"), false);
     assert.equal(documentPaths.has("skills/xlsx/SKILL.md"), true);
     assert.equal(documentPaths.has("skills/xlsx/xlsx.py"), true);

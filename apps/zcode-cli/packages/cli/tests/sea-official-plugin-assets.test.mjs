@@ -9,7 +9,7 @@ import {
 } from "../scripts/sea-official-plugin-assets.mjs";
 
 test("rejects an incomplete documents SEA seed", async () => {
-  const directory = await mkdtemp(join(tmpdir(), "zcode-sea-document-agent-missing-"));
+  const directory = await mkdtemp(join(tmpdir(), "zcode-sea-documents-seed-missing-"));
   const root = join(directory, "root");
   const stagingDirectory = join(directory, "staging");
 
