@@ -1,6 +1,0 @@
-# Why this fix is needed: when development auto-updates are explicitly enabled, electron-updater reads dev-app-update.yml to initialize its download cache.
-# The server manifest provider still supplies the real package URL; the generic URL here is only a local configuration placeholder.
-provider: generic
-url: http://localhost:8081
-useMultipleRangeRequest: false
-updaterCacheDirName: zcode-dev-updater

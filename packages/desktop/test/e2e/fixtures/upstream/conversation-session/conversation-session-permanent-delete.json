@@ -1,6 +1,0 @@
-{
-  "version": 1,
-  "caseName": "conversation-session-permanent-delete",
-  "spec": "./test/e2e/conversation-session/conversation-session-permanent-delete.test.ts",
-  "fixtures": []
-}
