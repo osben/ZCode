@@ -1,0 +1,6 @@
+{
+  "version": 1,
+  "caseName": "conversation-session-acp-agent-delegation",
+  "spec": "./test/e2e/conversation-session/conversation-session-acp-agent-delegation.test.ts",
+  "fixtures": []
+}

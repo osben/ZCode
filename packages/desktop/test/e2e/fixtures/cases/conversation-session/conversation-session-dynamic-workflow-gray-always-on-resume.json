@@ -44,6 +44,13 @@
       "syntheticReason": "子代理的回答以门闩挂起：第一次用来让用户在它未完成时停止，第二次让恢复后的运行态可被断言，不依赖固定响应延时。"
     },
     {
+      "id": "dwu-c-agent-group",
+      "kind": "main",
+      "source": "synthetic",
+      "timingPolicy": "controlled-stream",
+      "syntheticReason": "补全后脚本的最后一问以门闩挂起，直到补全那一轮收口再放行，好让它的通知自成一轮而不被 steer 进补全轮。"
+    },
+    {
       "id": "dwu-b-agent-done",
       "kind": "main",
       "source": "synthetic",
