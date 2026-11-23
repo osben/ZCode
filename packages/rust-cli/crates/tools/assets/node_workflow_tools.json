@@ -73,7 +73,8 @@
         "max_concurrency": {
           "description": "Subagents working at once, above or below the default. Only when the user asks for more or less parallelism; never as a reaction to provider errors.",
           "type": "integer",
-          "exclusiveMinimum": 0
+          "exclusiveMinimum": 0,
+          "maximum": 9007199254740991
         },
         "subagent_model": {
           "description": "Model for the subagents (`providerId/modelId` or a model id). Only when the user asks, and never a model under another provider the user did not name — ask them first if one would help; you stay on the session model.",
@@ -119,10 +120,11 @@
         },
         "max_concurrency": {
           "description": "Omit to keep the predecessor's limit, null to return to the default, a number to set one above or below it (only when the user asks).",
-          "oneOf": [
+          "anyOf": [
             {
               "type": "integer",
-              "exclusiveMinimum": 0
+              "exclusiveMinimum": 0,
+              "maximum": 9007199254740991
             },
             {
               "type": "null"
@@ -131,7 +133,7 @@
         },
         "subagent_model": {
           "description": "Omit to keep the predecessor's choice, null for the session model, a model id to set one (only when the user asks, never a model under another provider the user did not name — ask them first if one would help).",
-          "oneOf": [
+          "anyOf": [
             {
               "type": "string",
               "minLength": 1
