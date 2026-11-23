@@ -284,7 +284,7 @@ describe("desktop e2e Electron reload", () => {
     ).catch((error: unknown) => error);
     expect(failure).toBeInstanceOf(Error);
     expect((failure as Error).message).toContain(
-      "旧进程退出屏障失败: Electron reload 旧进程树退出超时: pids=4243,4242",
+      "old process exit barrier failed: Electron reload 旧进程树退出超时: pids=4243,4242",
     );
     expect((failure as Error).cause).toBe(originalError);
     expect(createNewSession).not.toHaveBeenCalled();

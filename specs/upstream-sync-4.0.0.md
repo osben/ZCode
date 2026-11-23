@@ -141,6 +141,12 @@ Repository:
 - `pnpm test:fork`: 3421 passed, 2 failed, 6 skipped. The 2 failures predate the sync:
   `packages/acp-agent-runtime/test/process-tree.test.ts` fails the same 2 cases on a clean `fork`
   checkout (and outside the sandbox).
+- Engineering suite (the affected selection is the whole suite, so it ran in full): 644 files passed,
+  4 failed, 5 skipped. One failure came from the sync and is fixed: the merge translated the
+  `e2e-electron-reload.ts` barrier error, so upstream's new assertion is updated to the English text.
+  The other three predate the sync and fail the same way on a clean `fork` checkout: the two
+  process-tree cases above, `windowsInstallerCompile.test.ts` (`makensis` aborts with `bad_alloc` on
+  this Mac) and `audit-conversation-session-json-out.test.mjs` (the same 7 formal admission rejections).
 - Not run: desktop E2E (runs in the Linux box, not on the Mac).
 
 ## Follow-ups
