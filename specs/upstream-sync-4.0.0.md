@@ -130,6 +130,9 @@ Repository:
 - Upstream now resets a bound credential store in the background after a key failure. The fork cipher
   tests wait for `onReset` before removing their temp directory.
 - Fork LSP plugin tests use upstream's async `discoverPlugins` (the sync variant is gone).
+- i18n: uk-UA gains the 113 new upstream keys, drops 18 keys upstream removed from en, and en drops five
+  status-panel keys that no code reads any more. The zcode-rs inbound schema and tool contracts are
+  regenerated (zod 4 output and the two new settings).
 - `scripts/check-test-copy.mjs`: 10 new upstream suites with zh-CN locale setup join the verbatim list,
   and five entries follow upstream's moves out of `manual-review/pending/`.
 
@@ -156,7 +159,6 @@ Repository:
 - Re-home the status panel features in the capsules (decision 3), after a mockup.
 - `node scripts/licenses.mjs notices` fails on `@koromix/koffi-*@3.0.2`. This predates the sync: #496
   bumped koffi from 2.15.6 to 3.0.2 without regenerating, and the inventory still says 2.15.6.
-- uk-UA lacks the picker's `searchPlaceholder` and `clearSearch` keys.
 - Chinese left in clean-merged upstream text: `apps/zcode-cli/docs/design/v2/tool/02-write.md` errorCode
   table, `docs/workspace-hook-trust.md` D24 and §12.9.
 - `docs/chat/composer-voice-input.md` still names `Cmd+Shift+D` for upstream voice input.
