@@ -53,23 +53,23 @@ never creates, ends, resamples, rewrites or reparents Spans; Host/CLI receive no
 
 ### Settings: 17 leaf features
 
-| feature_id               | action                                                                                                                                                                         |
-| ------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `settings.navigation`    | `open_section` / `back_to_workspace` / `open_onboarding`                                                                                                                       |
-| `settings.locale`        | `change_locale`                                                                                                                                                                |
-| `settings.appearance`    | `change_theme` / `change_ui_font_size` / `change_code_light_theme` / `change_code_dark_theme` / `toggle_code_line_numbers` / `toggle_code_line_wrap` / `change_code_font_size` |
-| `settings.terminal`      | `toggle_system_profile` / `save_font_family` / `change_shell`                                                                                                                  |
-| `settings.search`        | `toggle_native_search`                                                                                                                                                         |
-| `settings.network`       | `save_http_proxy` / `save_no_proxy` / `save_ca_certificate`                                                                                                                    |
-| `settings.desktop`       | `toggle_hardware_acceleration` / `toggle_close_to_tray` / `toggle_keep_awake`                                                                                                  |
-| `settings.update`        | `toggle_preview_updates` / `toggle_auto_update`                                                                                                                                |
-| `settings.notification`  | `toggle_notification` / `toggle_notification_sound`                                                                                                                            |
-| `settings.conversation`  | `change_interaction_behavior` / `toggle_ask_user_auto_resolution` / `toggle_model_io_retention` / `toggle_show_reasoning` / `toggle_show_todos`                                |
-| `settings.tool_grouping` | `toggle_explore_grouping` / `toggle_terminal_grouping` / `toggle_changes_grouping`                                                                                             |
-| `settings.task`          | `toggle_auto_archive` / `change_auto_archive_days`                                                                                                                             |
-| `settings.storage`       | `change_data_directory`                                                                                                                                                        |
-| `settings.memory`        | `toggle_memory` / `refresh_memory` / `change_memory_scope`                                                                                                                     |
-| `settings.browser`       | `toggle_browser_use` / `import_browser_data` / `toggle_insecure_certificates` / `clear_cache` / `clear_all_data`                                                               |
+| feature_id               | action                                                                                                                                                                                                              |
+| ------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `settings.navigation`    | `open_section` / `back_to_workspace` / `open_onboarding`                                                                                                                                                            |
+| `settings.locale`        | `change_locale`                                                                                                                                                                                                     |
+| `settings.appearance`    | `change_theme` / `change_ui_font_size` / `change_code_light_theme` / `change_code_dark_theme` / `toggle_code_line_numbers` / `toggle_code_line_wrap` / `change_code_font_size`                                      |
+| `settings.terminal`      | `toggle_system_profile` / `save_font_family` / `change_shell`                                                                                                                                                       |
+| `settings.search`        | `toggle_native_search`                                                                                                                                                                                              |
+| `settings.network`       | `save_http_proxy` / `save_no_proxy` / `save_ca_certificate`                                                                                                                                                         |
+| `settings.desktop`       | `toggle_hardware_acceleration` / `toggle_close_to_tray` / `toggle_keep_awake`                                                                                                                                       |
+| `settings.update`        | `toggle_preview_updates` / `toggle_auto_update`                                                                                                                                                                     |
+| `settings.notification`  | `toggle_notification` / `toggle_notification_sound`                                                                                                                                                                 |
+| `settings.conversation`  | `change_interaction_behavior` / `toggle_ask_user_auto_resolution` / `toggle_model_io_retention` / `toggle_show_reasoning` / `toggle_show_todos` / `toggle_total_tokens_reminder` / `toggle_agent_always_background` |
+| `settings.tool_grouping` | `toggle_explore_grouping` / `toggle_terminal_grouping` / `toggle_changes_grouping`                                                                                                                                  |
+| `settings.task`          | `toggle_auto_archive` / `change_auto_archive_days`                                                                                                                                                                  |
+| `settings.storage`       | `change_data_directory`                                                                                                                                                                                             |
+| `settings.memory`        | `toggle_memory` / `refresh_memory` / `change_memory_scope`                                                                                                                                                          |
+| `settings.browser`       | `toggle_browser_use` / `import_browser_data` / `toggle_insecure_certificates` / `clear_cache` / `clear_all_data`                                                                                                    |
 
 `toggle_*` expresses the target value via `state_after=enabled|disabled`; `change_*` allows only
 low-cardinality enums; `save_*` starts only on explicit submit. `toggle_memory` does not delete existing

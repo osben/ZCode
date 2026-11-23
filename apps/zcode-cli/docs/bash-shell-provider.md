@@ -1,6 +1,6 @@
 # Bash Shell Provider (current implementation)
 
-Updated: 2026-11-10. This file records current behavior, not a pending plan. The Bash execution
+Updated: 2026-11-17. This file records current behavior, not a pending plan. The Bash execution
 work has shipped and has since expanded to Windows, runtime shell selection, startup sources and
 the embedded search prelude.
 
@@ -18,15 +18,16 @@ command: {
 
 `shellProfile` is an internal execution-port profile: only the Bash tool sets it; generic shell,
 hooks and configured runners must not inherit it. The adapter resolves a real shell for this
-profile and spawns directly with `shell: false` where possible; when it cannot resolve one it
-returns an explicit `legacy-shell` selection and degrades to the legacy system shell.
+profile and spawns directly with `shell: false` where possible. On POSIX, when it finds neither
+bash nor zsh, it returns an explicit `legacy-shell` selection and degrades to the legacy system
+shell (`/bin/sh`). Windows no longer produces `legacy-shell`.
 
 ## Shell selection
 
 ```text
 user-config selection (new sessions and cold resume both read the current setting)
   -> platform auto-detect
-  -> legacy system shell fallback
+  -> POSIX：legacy system shell fallback；Windows：ComSpec 上的 CMD
 ```
 
 POSIX:
@@ -43,7 +44,10 @@ Windows:
 - Without an explicit selection, look up the default Program Files Git Bash, then infer it from
   the `git.exe` location.
 - Git Bash uses `dialect=git-bash`, `shell=false`; CMD uses `dialect=cmd` and the cmd shell.
-- With no usable selection, fall back to the legacy system shell.
+- A manually selected CMD and the fallback below both show the display name `cmd.exe`.
+- With no usable selection, return an auto-detected selection with `dialect=cmd` and
+  `path=ComSpec ?? "cmd.exe"`. The execution shape is the same as the old ComSpec fallback; the
+  reason is in `docs/runtime-tools/bash-effective-shell-snapshot.md`.
 
 The provider injects only the generic variables listed above plus ZCode-named variables; it does
 not introduce environment variables named for other products.

@@ -1,13 +1,10 @@
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
-import { open, utimes, writeFile } from "node:fs/promises";
+import { waitForControlledReplay, releaseControlledReplay } from "#e2e/helpers/controlled-replay";
+import { openStatusCapsule } from "#e2e/helpers/status-capsule";
+import { open, rm, utimes, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import {
-  TID_CHAT_SUMMARY_PANEL,
-  TID_GIT_PANE,
-  TID_TASK_ITEM,
-  testId,
-} from "@zcode/shared/test-ids";
+import { TID_GIT_PANE, TID_TASK_ITEM, testId } from "@zcode/shared/test-ids";
 import type { ChainablePromiseElement } from "webdriverio";
 import {
   DEFAULT_WORKSPACE,
@@ -16,13 +13,16 @@ import {
   waitForWorkspaceApp,
 } from "#e2e/helpers/desktop-app";
 import { PROVIDER_READINESS_HISTORY_SESSION_ID } from "#e2e/helpers/provider-readiness-history-fixture";
-import { selectV4TaskById } from "#e2e/helpers/v4-conversation";
+import {
+  prepareV4ConversationE2E,
+  sendV4Prompt,
+  waitForV4TimelineContaining,
+  selectV4TaskById,
+} from "#e2e/helpers/v4-conversation";
 
 const execGit = promisify(execFile);
 const CASE_TIMEOUT_MS = 120_000;
 const FILE_NAME = "status-panel-review.txt";
-const CHANGES_LABELS = ["Changes", "更改"];
-const EXPAND_LABELS = ["Expand status", "展开状态"];
 const UNSTAGED_LABELS = ["Unstaged", "未暂存"];
 
 describe("SP13：status panel Git Changes 打开变更审阅", () => {
@@ -42,6 +42,77 @@ describe("SP13：status panel Git Changes 打开变更审阅", () => {
     await selectV4TaskById(PROVIDER_READINESS_HISTORY_SESSION_ID);
     await waitForExpandedStatusPanel();
 
+    // 连接就绪会兑现暂存的输入框聚焦；用户已打开的 Git 浮层不能因此被关闭。
+    await browser.waitUntil(
+      async () =>
+        (await $('[data-testid="v4-composer-input"]').getAttribute("contenteditable")) === "true",
+    );
+    await browser.executeAsync((done) =>
+      requestAnimationFrame(() => requestAnimationFrame(() => done())),
+    );
+    expect(await $('[data-status-capsule-content="git"]').isDisplayed()).toBe(true);
+
+    // 分支入口复用真实服务；嵌套弹层关闭后仍能继续访问 Git 操作区。
+    const branchTrigger = await $('[data-testid="status-git-current-branch"] button');
+    await branchTrigger.waitForDisplayed();
+    expect(await branchTrigger.getAttribute("title")).toBeTruthy();
+    await branchTrigger.click();
+    await $("[cmdk-input]").waitForDisplayed();
+    await browser.keys("Escape");
+    await $("[cmdk-input]").waitForExist({ reverse: true });
+    // 嵌套菜单关闭后焦点应返回分支按钮，不能迟到地跳回输入框并关闭下一次菜单。
+    await browser.waitUntil(
+      () =>
+        browser.execute(
+          () =>
+            document.activeElement ===
+            document.querySelector('[data-testid="status-git-current-branch"] button'),
+        ),
+      { timeout: 5000 },
+    );
+    await openStatusCapsule("git");
+
+    await $('[data-testid="status-git-current-branch"] button').click();
+    await $("[cmdk-input]").waitForDisplayed();
+    const createAction = await findButtonByLabels(
+      $('[data-slot="popover-content"]:has([cmdk-input])'),
+      ["Create and switch to new branch...", "创建并检出新分支..."],
+    );
+    if (!createAction) throw new Error("分支菜单缺少新建分支入口");
+    await createAction.click();
+    await $('[role="dialog"]').waitForDisplayed();
+    await $('[data-status-capsule-content="git"]').waitForExist({ reverse: true });
+    await $("#git-branch-switcher-create-input").setValue("e2e-git-action-host");
+    // 中文实际文案为“创建并切换”；使用所属表单的 submit 语义，避免语言差异误报缺失。
+    const createSubmit = $(
+      '[role="dialog"] form:has(#git-branch-switcher-create-input) button[type="submit"]',
+    );
+    await createSubmit.waitForEnabled();
+    await createSubmit.click();
+    await $('[role="dialog"]').waitForExist({ reverse: true });
+    await openStatusCapsule("git");
+    await browser.waitUntil(
+      async () =>
+        (await $('[data-testid="status-git-current-branch"] button').getAttribute("title")) ===
+        "e2e-git-action-host",
+      { timeout: 10000 },
+    );
+    await $('[data-testid="status-git-current-branch"] button').click();
+    await $("[cmdk-input]").waitForDisplayed();
+    const graphAction = await findButtonByLabels(
+      $('[data-slot="popover-content"]:has([cmdk-input])'),
+      ["Git graph", "Git Graph", "Git 图谱"],
+    );
+    if (!graphAction) throw new Error("分支菜单缺少 Git 图谱入口");
+    await graphAction.click();
+    await $('[role="dialog"]').waitForDisplayed();
+    await $('[data-status-capsule-content="git"]').waitForExist({ reverse: true });
+    await $("[cmdk-input]").waitForExist({ reverse: true });
+    await browser.keys("Escape");
+    await $('[role="dialog"]').waitForExist({ reverse: true });
+    expect(await $('[data-status-capsule-content="git"]').isExisting()).toBe(false);
+    await openStatusCapsule("git");
+
     expect(await isGitPaneMounted()).toBe(false);
     await clickStatusPanelChanges();
     const review = await waitForGitReview();
@@ -51,10 +122,47 @@ describe("SP13：status panel Git Changes 打开变更审阅", () => {
     expect(review.rowCount).toBeGreaterThan(0);
   });
 
+  it("整轮成功完成后不等 watcher 防抖就刷新 Git 文件", async function () {
+    this.timeout(CASE_TIMEOUT_MS);
+    await prepareV4ConversationE2E();
+    await browser.execute(() =>
+      document
+        .querySelector('[data-testid="v4-composer-input"]')
+        ?.setAttribute("data-git-scope-retained", "yes"),
+    );
+    await sendV4Prompt("E2E_GIT_TURN_REFRESH 等待受控完成");
+    await waitForControlledReplay("git-turn-refresh");
+    expect(
+      await $('[data-testid="v4-composer-input"]').getAttribute("data-git-scope-retained"),
+    ).toBe("yes");
+    const name = "turn-completion-refresh.txt";
+    try {
+      await writeFile(join(DEFAULT_WORKSPACE, name), "completed turn refresh\n", "utf8");
+      await releaseControlledReplay("git-turn-refresh");
+      await waitForV4TimelineContaining("E2E_GIT_TURN_DONE", 15000);
+      await openStatusCapsule("git");
+      await browser.waitUntil(
+        async () => (await $('[data-status-capsule-content="git"]').getText()).includes(name),
+        {
+          timeout: 15000,
+          timeoutMsg: "整轮完成后 Git 列表未及时刷新",
+        },
+      );
+    } finally {
+      await rm(join(DEFAULT_WORKSPACE, name), { force: true });
+    }
+  });
+
   it("Git 自动刷新跳过超限行数统计且 Host 内存有界", async function () {
     this.timeout(CASE_TIMEOUT_MS);
     await waitForWorkspaceApp(DEFAULT_WORKSPACE, 45_000);
+    await browser.execute(() =>
+      document
+        .querySelector("[data-v4-timeline-scroll]")
+        ?.setAttribute("data-git-task-retained", "yes"),
+    );
     await selectV4TaskById(PROVIDER_READINESS_HISTORY_SESSION_ID);
+    expect(await $("[data-v4-timeline-scroll]").getAttribute("data-git-task-retained")).toBe("yes");
     await waitForExpandedStatusPanel();
     // Refresh through the real file watcher; no need to open the Git pane, create a session or call a model.
     const caseRoot = join(DEFAULT_WORKSPACE, ".zcode-e2e/conversation-session-git-review-entry");
@@ -95,11 +203,8 @@ describe("SP13：status panel Git Changes 打开变更审阅", () => {
       await utimes(join(DEFAULT_WORKSPACE, ".git", "HEAD"), changedAt, changedAt);
       await browser.waitUntil(
         async () => {
-          const changes = await findButtonByLabels(
-            $(`[data-testid="${TID_CHAT_SUMMARY_PANEL}"]`),
-            CHANGES_LABELS,
-          );
-          return Boolean(changes && /\+4\s+-0/u.test(await changes.getText()));
+          const text = await $('[data-status-capsule="git"]').getText();
+          return /\+4\s+[−-]0/u.test(text);
         },
         // The product's watcher debounce is 60 seconds; judge memory only after the new snapshot arrives.
         {
@@ -209,39 +314,39 @@ describe("SP13：status panel Git Changes 打开变更审阅", () => {
 });
 
 async function waitForExpandedStatusPanel() {
-  await waitForTestIdByDom(TID_CHAT_SUMMARY_PANEL, {
-    timeout: 30_000,
-    timeoutMsg: "SP13 未显示包含 Git Tools 的 status panel",
-  });
-
-  const panel = $(`[data-testid="${TID_CHAT_SUMMARY_PANEL}"]`);
-  // Auto mode reports expanded while CSS still shows the capsule on narrow windows.
-  // Inspect the visible action before deciding whether to expand the status panel.
-  if (!(await findButtonByLabels(panel, CHANGES_LABELS))) {
-    const expandButton = await findButtonByLabels(panel, EXPAND_LABELS);
-    if (!expandButton) {
-      throw new Error("SP13 status panel 处于收起态，但没有可点击的展开入口");
-    }
-    await expandButton.click();
-  }
-
-  await browser.waitUntil(
-    async () =>
-      (await panel.getAttribute("data-state")) === "expanded" &&
-      Boolean(await findButtonByLabels(panel, CHANGES_LABELS)),
-    {
-      timeout: 30_000,
-      timeoutMsg: "SP13 status panel 展开后没有可点击的 Changes / 更改入口",
-    },
-  );
+  await openStatusCapsule("git");
 }
 
 async function clickStatusPanelChanges() {
-  const panel = $(`[data-testid="${TID_CHAT_SUMMARY_PANEL}"]`);
-  const changesButton = await findButtonByLabels(panel, CHANGES_LABELS);
-  if (!changesButton) {
-    throw new Error("SP13 没有找到 Changes / 更改按钮");
-  }
+  // 文件数属于按钮内容，不能用完整文案定位，否则计数变化会让入口失配。
+  const changesButton = $(
+    '[data-status-capsule-content="git"] [data-testid="status-git-view-all"]',
+  );
+  await changesButton.waitForDisplayed();
+  const actionLayout = await browser.execute(() => {
+    const review = document.querySelector('[data-testid="status-git-view-all"]')!;
+    const branch = document.querySelector('[data-testid="status-git-current-branch"]')!;
+    const count = review.querySelector("span:last-child")!;
+    const capsule = document.querySelector('[data-status-capsule="git"]')!;
+    const trailing = branch.querySelector("[data-branch-switcher-trailing-icon]")!;
+    return {
+      count: count.textContent?.trim(),
+      capsuleText: capsule.textContent,
+      reviewFirst: Boolean(
+        review.compareDocumentPosition(branch) & Node.DOCUMENT_POSITION_FOLLOWING,
+      ),
+      rightDifference: Math.abs(
+        count.getBoundingClientRect().right - trailing.getBoundingClientRect().right,
+      ),
+      countColor: getComputedStyle(count).color,
+      arrowColor: getComputedStyle(trailing).color,
+    };
+  });
+  expect(Number(actionLayout.count)).toBeGreaterThan(0);
+  expect(actionLayout.capsuleText).toContain(actionLayout.count);
+  expect(actionLayout.reviewFirst).toBe(true);
+  expect(actionLayout.rightDifference).toBeLessThan(2);
+  expect(actionLayout.arrowColor).toBe(actionLayout.countColor);
   expect(await changesButton.isEnabled()).toBe(true);
   // On failure keep the real input and read-only navigation evidence, distinguishing a missed button, a read-only directory and an uncommitted panel state.
   await browser.execute(() => {

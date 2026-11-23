@@ -26,6 +26,7 @@ import {
   clickTestIdByDom,
   clickTestIdByWebDriver,
   getE2EAppDataPaths,
+  pinE2ELocale,
   setInputValueByTestIdDom,
   waitForTestIdByDom,
 } from "#e2e/helpers/desktop-app";
@@ -96,6 +97,8 @@ describe("Automation 在 Start/Coding Plan 间保存模型身份 E2E", () => {
     // First run the formal upstream provider initialization so the Automation form's local Host
     // already has an executable model; then switch to the two case-local plan providers from the real dropdown menu.
     await prepareV4ConversationE2E();
+    // 首帧跟随宿主语言，mac runner 上是英文；本 case 断言中文文案，须固定语言。
+    await pinE2ELocale("zh-CN");
 
     const codingTitle = `E2E_AUTOMATION_CODING_PLAN_${Date.now()}`;
     await createAutomation(codingTitle, "固定 Coding Plan 模型", PLAN_MODEL_VALUE);
@@ -374,7 +377,7 @@ async function selectAutomationModel(modelValue: string): Promise<void> {
   }
   // Hydration may finish after the menu opens; when the current item was dropped from the candidates, do not select again.
   if ((await trigger.getAttribute("data-model-current-value")) === modelValue) {
-    await browser.keys("Escape");
+    await closeComposerModelPanelByEscape();
     return;
   }
   if (!(await $(sel(itemTestId)).isDisplayed()) && visibleGroup) {
@@ -389,11 +392,23 @@ async function selectAutomationModel(modelValue: string): Promise<void> {
     { timeout: 15000, timeoutMsg: `Automation 模型没有切换到 ${modelValue}` },
   );
   // After selecting a model, the Composer keeps the popover open to continue picking a tier; explicitly end this interaction before the next independent selection.
-  await browser.keys("Escape");
+  await closeComposerModelPanelByEscape();
   await browser.waitUntil(async () => (await trigger.getAttribute("aria-expanded")) !== "true", {
     timeout: 15000,
     timeoutMsg: "模型选择结束后弹层未关闭",
   });
+}
+
+async function closeComposerModelPanelByEscape(): Promise<void> {
+  // 失败原因：供应商层是模型面板里嵌套的 Popover，选中供应商后它关闭但有约 100ms 退场动画，
+  // 退场期间节点仍挂载，Radix 的 Escape 只交给最上层 DismissableLayer（即这个退场中的供应商层），
+  // 模型面板收不到按键，aria-expanded 一直为 true（日志里选中模型项到 Escape 只隔 33ms，
+  // 之后 15s 轮询都是 true）。先等供应商层卸载，再按 Escape。
+  await $('[data-testid="composer-provider-panel"]').waitForExist({
+    reverse: true,
+    timeoutMsg: "供应商层没有卸载，Escape 会被它吞掉",
+  });
+  await browser.keys("Escape");
 }
 
 function decodeModelValue(value: string): { providerId: string } {

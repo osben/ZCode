@@ -1,8 +1,9 @@
+import { stationLampClass } from "@/components/workflow-timeline/WorkflowTimelineLedge.js";
 import { memo, useEffect, useMemo, useState } from "react";
-import { ChevronRightIcon } from "lucide-react";
+import type { WorkflowRunState } from "@zcode/shared/zcode-protocol-v4";
+import { WorkflowAgentFace } from "@/components/workflow-timeline/WorkflowAgentFace.js";
 import { cn } from "@/components/lib/utils.js";
 import {
-  RUN_STATUS_DOT,
   RUN_STATUS_TEXT,
   readWorkflowRunStopReason,
   workflowRunStopReasonMessageId,
@@ -33,7 +34,7 @@ import {
  * `running`, so both are available; live run steps and duration appear in the task list (above the row you clicked) and detail page,
  * so this page does not repeat that live status.
  *
- * It **does** subscribe to a projection, but only as a freshness trigger. The first version was implemented as
+ * The projection it subscribes to provides both avatar status and the directory freshness trigger. The first version was implemented as
  * “no session lease, no projection subscription,” leaving the page with no signal: the hook settled after its first response, and completed runs stayed
  * “running” forever. The lease + projection wiring exactly matches `SubagentDirectorySidePane`, which uses
  * `subagents.revision`; this key must be more selective (see `workflowRunDirectoryRefreshKey`) because dwf's
@@ -58,9 +59,11 @@ function buildWorkflowRunDirectoryOpenRequest(
 const DirectoryRow = memo(function DirectoryRow({
   onOpen,
   row,
+  actors,
 }: {
   onOpen: (row: WorkflowRunDirectoryRow) => void;
   row: WorkflowRunDirectoryRow;
+  actors?: WorkflowRunState["actors"];
 }) {
   const { intl } = useZCodeIntl();
   // Use the same fallback name as tool cards/task lists for unnamed runs; never expose the runId.
@@ -77,41 +80,73 @@ const DirectoryRow = memo(function DirectoryRow({
       data-run-status={row.status}
       aria-label={intl.formatMessage({ id: "chat.toolCall.workflow.openRunDetails" })}
       onClick={() => onOpen(row)}
-      className="flex w-full min-w-0 items-start gap-3 rounded-lg px-3 py-2.5 text-left text-ui-base transition-colors hover:bg-surface-hover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-input-border-focused"
+      className="flex w-full min-w-0 items-start gap-3 rounded-lg px-3 py-2 text-left text-ui-base transition-colors hover:bg-hover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-input-border-focused"
     >
-      {/* Always show a status label on the next line; the dot is only a redundant signal. */}
-      <span
-        aria-hidden="true"
-        className={cn("mt-2 size-1.5 shrink-0 rounded-full", RUN_STATUS_DOT[row.status])}
-      />
+      <span className="flex h-[1lh] w-5 shrink-0 items-center justify-center">
+        <span
+          aria-hidden
+          className={stationLampClass(
+            row.status === "completed"
+              ? "done"
+              : row.status === "errored"
+                ? "failed"
+                : row.status === "stopped"
+                  ? "pending"
+                  : row.status,
+          )}
+        />
+      </span>
       <span className="min-w-0 flex-1">
-        <span className="block truncate font-medium text-foreground">{name}</span>
-        <span className="mt-0.5 flex min-w-0 flex-wrap items-center gap-x-2 text-ui-sm">
-          <span className={cn("shrink-0", RUN_STATUS_TEXT[row.status])}>{statusLabel}</span>
-          {/*
-            The part explaining why a run is worth revisiting: stopped rows show the stop reason, and errored rows show failureCode.
-            If an older server does not provide a stopped reason, fall back to failureCode.
-          */}
-          {stopReason ? (
-            <span className="min-w-0 truncate text-foreground-subtle">
-              · {intl.formatMessage({ id: workflowRunStopReasonMessageId(stopReason) })}
+        <span className="flex min-w-0 items-center gap-2">
+          <span className="truncate font-medium text-foreground">{name}</span>
+          {row.status !== "completed" ? (
+            <span className={cn("shrink-0 text-ui-sm", RUN_STATUS_TEXT[row.status])}>
+              {statusLabel}
             </span>
-          ) : (row.status === "errored" || row.status === "stopped") && row.failureCode ? (
-            <span className="min-w-0 truncate text-foreground-subtle">· {row.failureCode}</span>
           ) : null}
         </span>
+        {(row.status === "running" || row.status === "completed") && actors?.length ? (
+          <span className="mt-1 flex flex-wrap items-center gap-2">
+            {actors.map((actor) => (
+              <span key={`${actor.siteId}:${actor.ordinal}`} title={actor.name || actor.siteId}>
+                <WorkflowAgentFace
+                  avatarIndex={undefined}
+                  name={actor.name || actor.siteId}
+                  status={
+                    actor.status === "completed"
+                      ? "done"
+                      : actor.status === "running"
+                        ? "running"
+                        : undefined
+                  }
+                  showCompletionMark={actor.status === "completed"}
+                  className="size-4 min-h-4! min-w-4!"
+                />
+              </span>
+            ))}
+          </span>
+        ) : null}
+        {stopReason ? (
+          <span className="mt-0.5 block truncate text-ui-sm text-foreground-subtle">
+            {intl.formatMessage({ id: workflowRunStopReasonMessageId(stopReason) })}
+          </span>
+        ) : (row.status === "errored" || row.status === "stopped") && row.failureCode ? (
+          <span className="mt-0.5 block truncate text-ui-sm text-foreground-subtle">
+            {row.failureCode}
+          </span>
+        ) : null}
       </span>
       {row.updatedAt === undefined ? null : (
-        <span className="shrink-0 text-ui-sm text-foreground-subtlest">
+        <span className="shrink-0 text-ui-sm text-foreground-subtle">
           {formatTaskRelativeTime(row.updatedAt, intl)}
         </span>
       )}
-      <ChevronRightIcon aria-hidden className="mt-0.5 size-4 shrink-0 text-foreground-subtlest" />
     </button>
   );
 });
 
 function DirectorySection({
+  runs,
   countTestId,
   emptyLabel,
   emptyTestId,
@@ -120,6 +155,7 @@ function DirectorySection({
   section,
   title,
 }: {
+  runs?: readonly WorkflowRunState[];
   countTestId: string;
   emptyLabel: string;
   emptyTestId: string;
@@ -129,15 +165,19 @@ function DirectorySection({
   title: string;
 }) {
   return (
-    <section
-      data-workflow-directory-section={section}
-      className={section === "ended" ? "mt-5" : ""}
-    >
+    <section data-workflow-directory-section={section} className="[&+section]:mt-3">
       <h3 className="px-3 pb-1.5 text-ui-sm font-medium text-foreground-subtlest">
         {title} · <span data-testid={countTestId}>{rows.length}</span>
       </h3>
       {rows.length > 0 ? (
-        rows.map((row) => <DirectoryRow key={row.runId} row={row} onOpen={onOpen} />)
+        rows.map((row) => (
+          <DirectoryRow
+            key={row.runId}
+            row={row}
+            actors={runs?.find((run) => run.runId === row.runId)?.actors}
+            onOpen={onOpen}
+          />
+        ))
       ) : (
         <p data-testid={emptyTestId} className="px-3 py-3 text-ui-base text-foreground-subtlest">
           {emptyLabel}
@@ -176,7 +216,7 @@ const WorkflowRunDirectoryContents = memo(function WorkflowRunDirectoryContents(
     limit: WORKFLOW_RUN_DIRECTORY_LIMIT,
     refreshKey: workflowRunDirectoryRefreshKey(projection.snapshot?.workflowRuns?.runs),
   });
-  const directory = useMemo(() => buildWorkflowRunDirectory(summaries), [summaries]);
+  const directory = useMemo(() => buildWorkflowRunDirectory(summaries ?? null), [summaries]);
   const handleOpen = (row: WorkflowRunDirectoryRow) => {
     onOpenWorkflowRun(buildWorkflowRunDirectoryOpenRequest(tab, row));
   };
@@ -186,13 +226,16 @@ const WorkflowRunDirectoryContents = memo(function WorkflowRunDirectoryContents(
 
   return (
     <div className="flex size-full min-h-0 flex-col bg-background">
-      <div className="border-b border-border px-4 py-3">
-        <h2 className="text-ui-base font-semibold text-foreground">
-          {intl.formatMessage({ id: "workflowDirectory.title" })}
-        </h2>
-      </div>
       <div className="min-h-0 flex-1 overflow-y-auto px-2 py-3">
-        {isUnavailable ? (
+        {summaries === undefined ? (
+          <p
+            data-testid="workflow-run-directory-loading"
+            role="status"
+            className="px-3 py-3 text-ui-base text-foreground-subtlest"
+          >
+            {intl.formatMessage({ id: "common.loading" })}
+          </p>
+        ) : isUnavailable ? (
           // Avoid an error tone: the most common reason the list is unavailable is that this conversation's runtime does not support enumeration.
           <p
             data-testid="workflow-run-directory-unavailable"
@@ -209,16 +252,20 @@ const WorkflowRunDirectoryContents = memo(function WorkflowRunDirectoryContents(
           </p>
         ) : (
           <>
+            {directory.running.length > 0 ? (
+              <DirectorySection
+                runs={projection.snapshot?.workflowRuns?.runs}
+                section="running"
+                title={intl.formatMessage({ id: "workflowDirectory.running" })}
+                rows={directory.running}
+                countTestId="workflow-run-directory-running-count"
+                emptyTestId="workflow-run-directory-running-empty"
+                emptyLabel={intl.formatMessage({ id: "workflowDirectory.runningEmpty" })}
+                onOpen={handleOpen}
+              />
+            ) : null}
             <DirectorySection
-              section="running"
-              title={intl.formatMessage({ id: "workflowDirectory.running" })}
-              rows={directory.running}
-              countTestId="workflow-run-directory-running-count"
-              emptyTestId="workflow-run-directory-running-empty"
-              emptyLabel={intl.formatMessage({ id: "workflowDirectory.runningEmpty" })}
-              onOpen={handleOpen}
-            />
-            <DirectorySection
+              runs={projection.snapshot?.workflowRuns?.runs}
               section="ended"
               title={intl.formatMessage({ id: "workflowDirectory.ended" })}
               rows={directory.ended}

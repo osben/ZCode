@@ -65,7 +65,11 @@ describe("private-file key fallback (upstream 3.18.2)", () => {
 
   it("keeps failing when the directory is pinned to the OS keyring", async () => {
     const mod = await loadModule();
-    mod.enablePrivateFileKeyFallback();
+    // Upstream 4.0.0 resets a bound store in the background after a key failure; wait for it so
+    // the temp directory is not written to while afterEach removes it.
+    let resetSettled!: () => void;
+    const reset = new Promise<void>((resolve) => (resetSettled = resolve));
+    mod.enablePrivateFileKeyFallback({ onReset: () => resetSettled() });
     await writeFile(join(root, "credential-source"), "os\n");
     const cipher = mod.createSystemCredentialCipher({
       filePath: join(root, "credentials.json"),
@@ -77,11 +81,16 @@ describe("private-file key fallback (upstream 3.18.2)", () => {
       code: "CREDENTIAL_SECURE_STORAGE_UNAVAILABLE",
     });
     await expect(stat(join(root, "credential-secret"))).rejects.toMatchObject({ code: "ENOENT" });
+    await reset;
   });
 
   it("keeps failing when OS-sealed data already exists", async () => {
     const mod = await loadModule();
-    mod.enablePrivateFileKeyFallback();
+    // Upstream 4.0.0 resets a bound store in the background after a key failure; wait for it so
+    // the temp directory is not written to while afterEach removes it.
+    let resetSettled!: () => void;
+    const reset = new Promise<void>((resolve) => (resetSettled = resolve));
+    mod.enablePrivateFileKeyFallback({ onReset: () => resetSettled() });
     const filePath = join(root, "credentials.json");
     await writeFile(filePath, JSON.stringify({ k: `enc:v2:os:${"a".repeat(24)}:payload` }));
     const cipher = mod.createSystemCredentialCipher({
@@ -94,6 +103,7 @@ describe("private-file key fallback (upstream 3.18.2)", () => {
       code: "CREDENTIAL_SECURE_STORAGE_UNAVAILABLE",
     });
     await expect(stat(join(root, "credential-secret"))).rejects.toMatchObject({ code: "ENOENT" });
+    await reset;
   });
 
   it("is off unless enabled", async () => {

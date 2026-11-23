@@ -1,6 +1,7 @@
 /* eslint-disable max-lines -- Desktop window chrome, webview security policy, and popup routing share one BrowserWindow lifecycle context. */
 import { app, BrowserWindow, Menu, nativeImage, nativeTheme, screen, shell } from "electron";
 import { join } from "node:path";
+import { pathToFileURL } from "node:url";
 import type {
   ContextMenuParams,
   DownloadItem,
@@ -294,6 +295,36 @@ function isAllowedEmbeddedBrowserUrl(url: string): boolean {
 function isAllowedEmbeddedBrowserNewWindowUrl(url: string): boolean {
   try {
     return ALLOWED_EMBEDDED_BROWSER_NEW_WINDOW_PROTOCOLS.has(new URL(url).protocol);
+  } catch {
+    return false;
+  }
+}
+
+// 挂载 window.zcode preload 的窗口（主窗口、更新状态窗口）顶层导航只能停留在应用自身的渲染入口。
+// Mermaid SVG 的 <a xlink:href> 不经过应用链接组件，点击即在窗口内顶层导航，因此在主进程导航边界统一拦截。
+// 子 frame 不注入 preload（未开启 nodeIntegrationInSubFrames），不在此范围内。
+export function guardWindowNavigation(
+  webContents: WebContents,
+  logger: { warn: (...args: unknown[]) => void },
+): void {
+  webContents.on("will-navigate", (event, url) => {
+    if (isAppOriginMainWindowUrl(url)) return;
+    event.preventDefault();
+    logger.warn("[desktop-window] blocked window top-level navigation");
+  });
+}
+
+// 主窗口顶层导航只能停留在应用自身的渲染入口。判定条件与 desktopHostProcess 的 loadWindow 保持一致：
+// 生产包忽略继承的 ELECTRON_RENDERER_URL，避免开发地址被当作可信来源。
+function isAppOriginMainWindowUrl(url: string): boolean {
+  try {
+    const target = new URL(url);
+    if (!app.isPackaged && process.env["ELECTRON_RENDERER_URL"]) {
+      return target.origin === new URL(process.env["ELECTRON_RENDERER_URL"]).origin;
+    }
+    // 目录前缀带尾部 "/"，避免同名前缀的兄弟目录被误判为应用目录。
+    const rendererPrefix = `${pathToFileURL(join(import.meta.dirname, "../renderer")).href}/`;
+    return target.href.startsWith(rendererPrefix);
   } catch {
     return false;
   }
@@ -658,6 +689,11 @@ export function createBrowserWindow(options: {
     }
     return { action: "deny" };
   });
+
+  // ZP-20261105-19 / ZP-20261110-03: a window with the window.zcode preload gains all privileged IPC after
+  // navigating to a remote page. Remote links are only logged, never opened automatically: the guard only
+  // blocks, and the UI layer decides how a link is opened.
+  guardWindowNavigation(win.webContents, options.logger);
 
   // The zoom command originally changed only the current window and was not restored after restart.
   // Apply the desktop zoom level from setting.json in main when creating the window, overriding any per-host zoom Chromium may retain.

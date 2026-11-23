@@ -1,11 +1,13 @@
 import { createServer } from "node:http";
 import { once } from "node:events";
 import { chromium } from "playwright-core";
+import { e2eMobileBrowserLaunchOptions } from "#e2e/helpers/e2e-mobile-browser-executable";
 import { openMobilePairingPage, seedMobileFixtureLogin } from "#e2e/helpers/mobile-pairing";
 import { DatabaseSync } from "node:sqlite";
 import { readFile, mkdir, writeFile, access } from "node:fs/promises";
 import { join, basename } from "node:path";
 import { TID_TASK_DELETE_CONFIRM, TID_TASK_DELETE_DIALOG } from "@zcode/shared/test-ids";
+import { isE2EHomeDirName } from "#e2e/helpers/e2e-runtime-paths";
 import { restartIntoWorkspacePreservingProfile } from "#e2e/helpers/model-provider-restart-runtime";
 import { waitForWorkspaceApp, DEFAULT_WORKSPACE } from "#e2e/helpers/desktop-app";
 import { seedArchiveAutomations } from "#e2e/helpers/archive-automations";
@@ -50,10 +52,23 @@ async function waitForArchiveAnimations() {
   );
 }
 describe("归档管理", () => {
+  // 每个 case 不继承上一个 case 残留的确认弹窗；只关闭弹窗，不吞掉 case 自身的失败。
+  afterEach(async () => {
+    const overlay = $('[data-testid="confirm-dialog-confirm"]');
+    if (await overlay.isExisting()) {
+      await browser.keys("Escape");
+      await overlay.waitForExist({ reverse: true, timeoutMsg: "确认弹窗未能关闭" });
+    }
+  });
   before(async function () {
     this.timeout(60000);
     // Reason: the batch runner isolates HOME by runId, so accepting only the directory name from an earlier manual replay is not enough.
-    if (!home || !/^(?:zcode-archive-e2e-|\.e2e-home-)/u.test(basename(home)))
+    // Fix reason: the old guard only recognized the `.e2e-home-` prefix; on Windows CI without ZCODE_E2E_HOME_DIR the default HOME is
+    // `.e2e-home`, so before threw immediately. Use isE2EHomeDirName throughout, accepting only `.e2e-home` and `.e2e-home-*`.
+    if (
+      !home ||
+      !(isE2EHomeDirName(basename(home)) || basename(home).startsWith("zcode-archive-e2e-"))
+    )
       throw new Error("isolated archive HOME required");
     await waitForWorkspaceApp(DEFAULT_WORKSPACE, 45000);
     // The old fixture wrote to the DB under a running Host and lacked required meta; being visible in the list does not mean task commands can read it.
@@ -526,7 +541,11 @@ describe("归档管理", () => {
   it("ARM03：全部删除仅作用于当前筛选，分组更多取消归档", async () => {
     await $('[data-testid="archive-search"]').setValue("Unclassified");
     await $('[data-testid="archive-delete-all"]').click();
-    expect(await $(`[data-testid="${TID_TASK_DELETE_DIALOG}"]`).getText()).toContain("1");
+    // Fix reason: the dialog text is empty on the first frame after the click (getText reads ""), and a dialog overlay left open after an ARM03 failure also intercepts later cases;
+    // wait until the text is ready (toHaveText retries by itself) and close any leftover dialog in afterEach.
+    await expect($(`[data-testid="${TID_TASK_DELETE_DIALOG}"]`)).toHaveText(
+      expect.stringContaining("1"),
+    );
     await $(`[data-testid="${TID_TASK_DELETE_CONFIRM}"]`).click();
     // A collapsed group has no row DOM; wait for the whole group to disappear and verify the DB write, so an unrendered row is not mistaken for a deleted one.
     await $('[data-testid="archive-group"][data-project-id=""]').waitForExist({ reverse: true });
@@ -593,9 +612,7 @@ describe("归档管理", () => {
     const address = server.address();
     if (!address || typeof address === "string") throw new Error("pair receiver unavailable");
     const mobile = await chromium.launch({
-      ...(process.env.ZCODE_E2E_MOBILE_BROWSER_EXECUTABLE
-        ? { executablePath: process.env.ZCODE_E2E_MOBILE_BROWSER_EXECUTABLE }
-        : { channel: "chrome" }),
+      ...e2eMobileBrowserLaunchOptions(),
       headless: true,
     });
     try {

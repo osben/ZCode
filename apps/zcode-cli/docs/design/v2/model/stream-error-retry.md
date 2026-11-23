@@ -272,6 +272,8 @@ ignores it and falls back to the next default layer, so a wrong debug variable c
 unusable. Logs and status events must not output the full set of environment variables and may expose
 only the normalized retry budget.
 
+The value above is the local backoff. When the request carries an admission port that implements `retryCooldownMs` (currently only the main agent's observer), the final wait of an ordinary retry (excluding off-peak queueing) is `max(local backoff, remaining cooldown reported by the port)`, with the cooldown part capped at 5 minutes. The first request does not read the cooldown. When the cooldown lengthens the wait and `jitter` is on, jitter of the same tier as Retry-After is added on top (at most 20% and at most 5 seconds, the total wait still not above 5 minutes). The single retry after an empty completion waits by the same rule and returns the admission ticket before sleeping; its status event does not forward the ticket.
+
 ## Test coverage
 
 - After a pure-signature or empty-body delta, with only an unfinished `tool_input_start` /

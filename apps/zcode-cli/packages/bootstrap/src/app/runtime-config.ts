@@ -9,9 +9,8 @@ import {
   type HookEventName,
   type HookMatcherConfig,
   type HooksRuntimeConfig,
-  type McpServerConfig,
+  type McpConfigurationSnapshot,
 } from "@zcode/contracts";
-import { omitMcpServers, resolveTrustedOfficialCuaServerNames } from "../mcp-config.js";
 import { resolveDefaultEmbeddedSearchBackend } from "./embedded-search-backend.js";
 import { getProjectMemoryRoot } from "./paths.js";
 import type { ZCodeAppOptions } from "./types.js";
@@ -22,7 +21,6 @@ import {
 } from "./provider-registry-selection.js";
 
 interface ResolvedAppRuntimeConfig {
-  configuredMcpServers: Record<string, McpServerConfig>;
   runtimeConfig: AgentRuntimeConfig;
   untrustedProjectMcpServers: Set<string>;
 }
@@ -40,10 +38,9 @@ export function resolveAppRuntimeConfig(input: {
   persistedSystemPromptOverrides?: AgentRuntimeConfig["systemPromptOverrides"];
   /** Active output style loaded from disk (docs/output-styles-settings.md); explicit session config wins. */
   persistedOutputStyle?: AgentRuntimeConfig["outputStyle"];
-  builtInMcpServers?: Record<string, McpServerConfig>;
+  mcpConfiguration: Partial<McpConfigurationSnapshot>;
   builtInSubagentModelSelectionOverrides?: BuiltInSubagentModelSelectionOverrides;
   pluginHooks?: Partial<Record<HookEventName, HookMatcherConfig[]>>;
-  pluginMcpServers?: Record<string, McpServerConfig>;
   pluginRuntimeFeatures?: AgentRuntimeConfig["runtimeFeatures"];
   subagentOutputRootDir: string;
   subagentProfiles?: readonly AgentProfile[];
@@ -58,8 +55,6 @@ export function resolveAppRuntimeConfig(input: {
     persistedMode,
     persistedSystemPromptOverrides,
     persistedOutputStyle,
-    builtInMcpServers,
-    pluginMcpServers,
     pluginRuntimeFeatures,
     subagentOutputRootDir,
     subagentProfiles = [],
@@ -99,46 +94,22 @@ export function resolveAppRuntimeConfig(input: {
               }
             : {}),
         };
-  // mcp.servers passed to Protocol session/create contains only user config from UI MCP settings,
-  // not MCP servers registered by plugins. Merge the host built-in server last and preserve its identity so user or third-party
-  // same-name config cannot hijack mcp__node_repl__*; explicit user config may still override ordinary plugin MCP servers.
-  const configuredMcpServers = {
-    ...pluginMcpServers,
-    ...(incognitoExcludes(incognito, "mcp")
-      ? {}
-      : (options.runtimeConfig?.mcp?.servers ?? configResult.config.mcp.servers)),
-    ...builtInMcpServers,
-  };
-  const trustedOfficialCuaServerNames = resolveTrustedOfficialCuaServerNames(
-    configuredMcpServers,
-    pluginMcpServers ?? {},
-  );
-  const cuaBridgeServerNames = new Set(trustedOfficialCuaServerNames);
-  if (pluginRuntimeFeatures?.computerUse === true && configuredMcpServers.node_repl) {
-    // node_repl needs broker injection but is not a CUA MCP server. Injection eligibility and the
-    // official CUA image authority must stay separate; putting it into
-    // trustedOfficialCuaServerNames would misroute every generic node_repl result into the
-    // exact-raster gate and break both Browser screenshots and console logging.
-    cuaBridgeServerNames.add("node_repl");
-  }
+  // Config merging and the source marks of on-disk servers are both done in the MCP config source; here workspace-sourced servers are counted into the to-be-trusted set,
+  // and explicit servers without a mark are marked according to createConfig's source.
+  const mcpServers = { ...input.mcpConfiguration.servers };
   const untrustedProjectMcpServers = new Set<string>();
-  for (const [name, config] of Object.entries(configuredMcpServers)) {
+  for (const [name, config] of Object.entries(mcpServers)) {
     if (
       config.source?.kind === "workspace" ||
       (!config.source && configResult.sources.mcp.serverSources[name] === "project")
     ) {
-      configuredMcpServers[name] = { ...config, source: { kind: "workspace" } };
+      mcpServers[name] = { ...config, source: { kind: "workspace" } };
       untrustedProjectMcpServers.add(name);
     } else if (!config.source && configResult.sources.mcp.serverSources[name] === "user") {
       // headless configs keep the user source too; a corrupt project file must not turn user MCP into a to-be-trusted declaration.
-      configuredMcpServers[name] = { ...config, source: { kind: "user" } };
+      mcpServers[name] = { ...config, source: { kind: "user" } };
     }
   }
-  const autoConnectMcpServers = omitMcpServers(
-    configuredMcpServers,
-    new Set(),
-    cuaBridgeServerNames,
-  );
   const runtimeBuiltInModelSelectionOverrides =
     options.runtimeConfig?.subagents?.builtInModelSelectionOverrides ?? {};
   // Attach the parent workspace reference to the execution-worktree fact so the env bullet can name
@@ -175,7 +146,6 @@ export function resolveAppRuntimeConfig(input: {
         env: options.env,
       }),
     runtimeFeatures: pluginRuntimeFeatures,
-    language: options.runtimeConfig?.language,
     systemPromptOverrides: incognitoExcludes(incognito, "systemPromptOverrides")
       ? undefined
       : (options.runtimeConfig?.systemPromptOverrides ?? persistedSystemPromptOverrides),
@@ -200,11 +170,7 @@ export function resolveAppRuntimeConfig(input: {
       ...configResult.config.modelAnomalyGuard,
       ...options.runtimeConfig?.modelAnomalyGuard,
     },
-    mcp: {
-      enabled: options.runtimeConfig?.mcp?.enabled ?? configResult.config.features.mcp,
-      servers: autoConnectMcpServers,
-      trustedOfficialCuaServerNames: [...trustedOfficialCuaServerNames],
-    },
+    mcp: { ...input.mcpConfiguration, servers: mcpServers },
     hooks: incognitoExcludes(incognito, "hooks")
       ? undefined
       : mergeRuntimeHooks(
@@ -245,7 +211,6 @@ export function resolveAppRuntimeConfig(input: {
     },
   };
   return {
-    configuredMcpServers,
     runtimeConfig,
     untrustedProjectMcpServers,
   };
@@ -352,6 +317,10 @@ export function runtimeConfigLogContext(
       : undefined,
     runtimeFeatureBrowserUse: runtimeConfig.runtimeFeatures?.browserUse === true,
     runtimeFeatureNodeRepl: runtimeConfig.runtimeFeatures?.nodeRepl === true,
+    // 评测时据此确认 runtime 实际用的 token 预算提醒开关。
+    totalTokensReminder: runtimeConfig.totalTokensReminder?.enabled === true,
+    // 评测时据此确认 Agent 是否总在后台运行（缺省开启）。
+    agentAlwaysBackground: runtimeConfig.subagents?.alwaysBackground !== false,
     // 只在被改过（开发环境变量或 runtimeConfig）时出现，便于确认 ZCODE_SUBAGENT_STALL_NOTIFY_MS 生效值。
     ...(runtimeConfig.subagents?.backgroundStallNotifyMs !== undefined
       ? { subagentStallNotifyMs: runtimeConfig.subagents.backgroundStallNotifyMs }

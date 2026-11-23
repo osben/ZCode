@@ -267,3 +267,17 @@ full provider response bodies, or unredacted headers.
 - After startup completes, retention cleanup is scheduled with the default 60-second delay, keeping
   at most the last 7 local calendar days of `zcode-YYYY-MM-DD.jsonl`, and cleanup failures do not
   affect the CLI/TUI/ZCode app-server main path.
+
+## Message first-response attribution facts
+
+`TurnStarted` may carry `isFirstMessage`. It is read from the persisted session_input for the
+current `queueItemId` (the inputId when there is no intent). The admission sequence starts at 0
+and is not reset by cancel or dequeue. A message is confirmed as the first only when it is the
+first admitted one and the running turnNumber is 0. For old sessions without a full admission
+history, the field is omitted and execution is not affected. V4 keeps the original `turn.started`
+field set and sends a separate `turn.admission` notification that carries this flag and the mapping
+of the original `intent.admittedDelivery`; guide keeps an unknown sendMode. Model request usage
+reuses `model.request.metrics`, keeps the missing/0 and cacheTokens fallbacks, and does not change
+the strict format of `usage.delta`. For the consumer side and the full semantics of the six
+completion properties, see
+[conversation telemetry spec](../../../../../docs/monitoring/conversation-telemetry-v4.md#message-首响归属2026-11-10).

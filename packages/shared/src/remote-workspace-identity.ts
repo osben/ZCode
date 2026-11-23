@@ -160,6 +160,25 @@ export function parseRemoteWorkspaceIdentity(
   return { kind, workspacePath, ...(sourceServerId ? { sourceServerId } : {}) };
 }
 
+/**
+ * Remote identity for scenarios that authorize by identity (Hook Trust): keeps the host namespace of the caller's remote identity
+ * and always takes the path from the actual execution directory workspacePath. An identity without the `remote:` prefix returns null, for the caller to handle by local rules.
+ *
+ * Fix rationale (CR-01): it used to fall back to a bare local path when the identity path and the execution directory differed, so a remote request could hit an existing
+ * local authorization, and different servers could land on the same key. A remote identity must never enter the local namespace;
+ * with the path taken from the execution directory, non-canonical forms such as `..` in the identity no longer affect the result.
+ * An identity with the `remote:` prefix that fails to parse is returned as is (third-round CR-01): it also cannot fall into the local namespace;
+ * the raw string cannot equal a valid remote key or a local path, so it only hits its own record, consistent with how a non-empty identity was handled before the fix.
+ */
+export function remoteWorkspaceTrustIdentity(
+  identity: string,
+  workspacePath: string,
+): string | null {
+  if (!identity.startsWith(REMOTE_IDENTITY_PREFIX)) return null;
+  const hostId = remoteHostIdFromWorkspaceIdentity(identity);
+  return hostId === null ? identity : buildRemoteHostWorkspaceIdentity(hostId, workspacePath);
+}
+
 /** Whether the identity is remote and can be parsed by parseRemoteWorkspaceIdentity. */
 export function isRemoteWorkspaceIdentity(identity: string): boolean {
   return parseRemoteWorkspaceIdentity(identity) !== null;

@@ -70,7 +70,6 @@ interface PendingState {
   expectedSession: Readonly<Record<string, string | null>>;
   redirectUri?: string;
   polling?: {
-    expiresAt: number;
     flowId: string;
     nextPollAt: number;
     pollIntervalMs: number;
@@ -825,7 +824,13 @@ export class OAuthService implements IOAuthService {
       authorizeUrl.searchParams.set("redirect_uri", redirectUri.toString());
     }
     const state = authorizeUrl.searchParams.get("state")?.trim();
-    const remainingLifetimeMs = expiresAt - this.now();
+    // Bug 原因：expires_at 是服务端时钟的绝对时间，旧逻辑直接减本机 Date.now()。服务端 flow 寿命
+    // 300 秒，本机时钟偏快 X 秒时剩余寿命只剩 300 − X 秒；Windows 时钟偏快 394 秒的用户每次初始化
+    // 都被判“初始化响应无效”，一直无法登录。expires_at 与同一响应的 server_time 同属服务端时钟，
+    // 相减得到与本机时钟无关的剩余寿命；服务端未返回数值 server_time 时才退回本机时间。
+    const remainingLifetimeMs = Number.isFinite(data.server_time)
+      ? expiresAt - (data.server_time as number) * 1_000
+      : expiresAt - this.now();
     if (
       authorizeUrl.protocol !== "https:" ||
       !state ||
@@ -870,7 +875,6 @@ export class OAuthService implements IOAuthService {
         ? { redirectUri: authorizeUrl.searchParams.get("redirect_uri") ?? undefined }
         : {}),
       polling: {
-        expiresAt,
         flowId,
         nextPollAt: this.monotonicNow(),
         pollIntervalMs,
@@ -902,10 +906,8 @@ export class OAuthService implements IOAuthService {
         throw new Error("OAuth flow 已过期");
       return null;
     }
-    if (this.now() >= polling.expiresAt) {
-      await this.cancelPending(pending.provider);
-      throw new Error("OAuth flow 已过期");
-    }
+    // Expiry is cleared only by the startOAuthWithPolling timer (monotonic clock); it is not re-judged here with system time:
+    // neither a forward system clock jump nor local clock skew may end a valid flow early, and the 3004 returned after server-side expiry is handled as a terminal 4xx.
     // A system clock rollback would keep absolute-time intervals from expiring; schedule polling with a monotonic clock only.
     // The server-side absolute expiry check above and the local five-minute cap still apply independently.
     const pollNow = this.monotonicNow();
@@ -1112,10 +1114,6 @@ export class OAuthService implements IOAuthService {
     const state = parsedUrl.searchParams.get("state");
     if (!state || state !== pending.state) {
       throw new Error("OAuth state 不匹配或已过期");
-    }
-    if (pending.polling && this.now() >= pending.polling.expiresAt) {
-      await this.cancelPending(pending.provider);
-      throw new Error("OAuth flow 已过期");
     }
 
     const attribution = parseOAuthLoginAttribution(parsedUrl.searchParams);

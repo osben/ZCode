@@ -407,6 +407,8 @@ declare global {
       executeDesktopCommand(command: DesktopCommandId): Promise<void>;
       /** Sync the application menu locale. */
       setApplicationLocale(locale: Locale): Promise<void>;
+      /** Save the Agent reply language (empty string clears it). */
+      setReplyLanguage(language: string): Promise<void>;
       /** Read the host system locale. */
       getSystemLocale?(): Promise<Locale>;
       /** Sync the title bar's light or dark theme. */

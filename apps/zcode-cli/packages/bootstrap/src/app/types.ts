@@ -1,3 +1,5 @@
+import type { McpConfigSourceRegistry } from "@zcode/adapters/mcp";
+import type { SkillCatalogSourceRegistry } from "@zcode/adapters/skills/catalog";
 import type { OfficialPluginPreparation } from "./bundled-plugins.js";
 import type { OfficialCommandSessionObserver } from "../official-command-endpoint/index.js";
 import type { AiSdkModelAdapter } from "@zcode/adapters/model";
@@ -37,6 +39,7 @@ import type {
   McpReadResourceResult,
   McpServerStatus,
   McpToolCallResult,
+  McpToolCatalogPort,
   MessageWithParts,
   ModelSelection,
   ModelToolCall,
@@ -88,8 +91,10 @@ import type {
   LockPendingInputEditResult,
   McpAppProvidedToolDefinition,
   McpAppProvidedToolExecutor,
+  McpStartupPolicy,
   ModelExecutionContext,
   PresentationSurface,
+  AgentRuntimeDeps,
   ProviderRuntimeHeadersPort,
   ResumeSessionResult,
   StartSavedWorkflowRunResult,
@@ -204,6 +209,8 @@ export interface ZCodeAppOptions {
    * runtime always obtains a derived instance from the parent runtime.
    */
   providerRuntimeHeadersPort?: ProviderRuntimeHeadersPort;
+  /** 回复语言来源：向 Host 读回复语言设置。只给主 runtime；没有 Host（TUI/headless）时缺省。 */
+  readReplyLanguage?: AgentRuntimeDeps["readReplyLanguage"];
   loggerFactory?: LoggerFactory;
   officialPluginRoots?: string[];
   pluginStorageRoot?: string;
@@ -238,6 +245,14 @@ export interface ZCodeAppOptions {
   includeVisualize?: boolean;
   skillPort?: SkillPort;
   mcpPort?: McpPort;
+  /** Process-level catalog injected by the protocol host; it does not hold live MCP clients. */
+  mcpToolCatalogPort?: McpToolCatalogPort;
+  /** Process-level MCP config source registry injected by the protocol host; when absent, each app builds its own private config source. */
+  mcpConfigSourceRegistry?: McpConfigSourceRegistry;
+  /** Process-level live Skill catalog registry injected by the protocol host; when absent, each app builds its own private catalog. */
+  skillCatalogSourceRegistry?: SkillCatalogSourceRegistry;
+  /** MCP startup policy, passed explicitly by the entry point; defaults to blocking. Interactive entry points pass background. */
+  mcpStartupPolicy?: McpStartupPolicy;
   /** Per-app lease provided by the host; the resulting port belongs to the app. */
   mcpPortFactory?: (input: { workingDirectory?: string }) => McpPort;
   permissionBroker?: PermissionBrokerPort;
@@ -489,6 +504,8 @@ export interface ZCodeApp {
   waitForMcpAppConnection(
     serverName: string,
   ): Promise<{ identity: string; generation: number } | null>;
+  /** 打开 MCP App 前连接不可用（如 stdio 进程崩溃）时重连一次，在预算内等待；结果由调用方读快照。 */
+  reconnectMcpAppConnection(serverName: string): Promise<void>;
   callMcpToolForUi(
     serverName: string,
     toolName: string,
@@ -612,6 +629,7 @@ export interface ZCodeApp {
    * in-memory journal runs never outlive the process anyway). `resumable` is precomputed with
    * the same predicate as the resume gate.
    */
+  getWorkflowActivityHistory?(): Promise<import("@zcode/contracts").DynamicWorkflowActivityHistory>;
   listDynamicWorkflowRuns?(input: { limit?: number }): Promise<DynamicWorkflowRunSessionSummary[]>;
   /**
    * Cold replay of workflow runs: runs under this session other than `excludeRunIds` are

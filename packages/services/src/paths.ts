@@ -4,6 +4,7 @@ import { cp } from "node:fs/promises";
 import { createHash } from "node:crypto";
 import { basename, join, win32 } from "node:path";
 import { homedir } from "node:os";
+import { readAssignedCredentialsFile } from "@zcode/shared/credential-security";
 import {
   DATA_BASE_DIR_FORBIDDEN_WINDOWS_INSTALL_DIR_ERROR_CODE,
   ZCODE_AGENT_RUNTIME,
@@ -55,6 +56,15 @@ export function getConversationWorkspaceDir(): string {
 /** {dataBaseDir}/.zcode/v2 */
 export function getAppConfigDir(): string {
   return join(getZCodeDataRootDir(), "v2");
+}
+
+/**
+ * The credential file read and written by this process; the sole resolution entry for all credential readers and writers.
+ * The ZCODE_CREDENTIALS_FILE assigned at process assembly takes precedence (set only by the Source Server Core that uses its own credential store,
+ * and inherited by its Agent); otherwise it is {appConfigDir}/credentials.json. Read at call time, never cached at module load.
+ */
+export function getCredentialsFilePath(): string {
+  return readAssignedCredentialsFile(process.env) ?? join(getAppConfigDir(), "credentials.json");
 }
 
 /**

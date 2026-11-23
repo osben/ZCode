@@ -44,6 +44,10 @@ User interface:
   order through the root pnpm workspace, and finally rebuilds the CLI bundle on its own. The Turbo graph
   of the CLI sub-workspace cannot see root packages, so it must not be the only build. The prepare
   step uses no Turbo cache and does not cache existing SEA artifacts.
+- `pnpm run build:sea --darwin`, `--linux`, `--win` (stackable, for example `--darwin --linux`): the
+  same entry, building all targets of the selected platforms only. pnpm appends the arguments after
+  the script name layer by layer after `build-sea.mjs --all`; the three package script layers do not
+  change.
 - Root `pnpm build:sea:all`: installs dependencies and forwards to the same all-target `build:sea`
   entry.
 - `pnpm run sea -- <target args>`: only wraps the existing `dist/zcode.cjs` and runtime assets; it does
@@ -54,6 +58,13 @@ User interface:
 - `node packages/cli/scripts/build-sea.mjs --all`: builds all first targets.
 - `node packages/cli/scripts/build-sea.mjs --node-binary linux-x64=/abs/path/node`: uses a user-provided target Node
   binary and skips download resolution for that target.
+
+The platform flags `--darwin`, `--linux`, `--win` only filter: they keep the selected platforms among
+the targets picked by `--all`, `--target`, `--targets` or `--node-binary`; with no other target
+argument they filter the full set of first targets. Without platform flags the result does not
+change. When no target remains after filtering (for example `--target darwin-x64 --linux`), it
+errors and does not fall back to the host. `--target` cannot narrow `build:sea`: it is united with
+`--all`.
 
 Target parameters use the platform names of release naming; Windows input is `win-x64` / `win-arm64`.
 Windows artifact file names use `windows`, aligned with the old GLM agent download contract; the
@@ -76,8 +87,9 @@ verify and prepare both kinds of prebuilt artifacts into
 `packages/desktop/bundled-tools/<platform>-<arch>/`. SEA does not cross-compile during a foreign target
 build, switch sources or silently omit tools.
 
-The existing contract of public `build:sea` is always all-target; it must not degrade to host-only
-because native search of some platform is not yet wired in. The build prepares and collects the runtime
+The public `build:sea` without platform flags is always all-target; it must not degrade to host-only
+because native search of some platform is not yet wired in. Platform flags are a scope the user picks
+explicitly, not a degradation by the build script. The build prepares and collects the runtime
 assets of every target automatically. If a prebuilt archive is missing, a download fails or target
 format/architecture verification fails, the build must stop before generating that target SEA; it must
 not produce an official binary whose provider-visible embedded search is enabled while the execution
@@ -151,8 +163,9 @@ JS builds shared by the CLI, the desktop built-in Agent and SEA must use Zod v4 
 avoid the old version creating all method closures of every schema at startup. The exact version in
 `packages/shared/package.json` is the source of truth of the build gate; other direct dependency
 declarations and the root lockfile must match it. A global override that would rewrite the dual-major
-peer range is not used. Zod v3 tool contracts and `zod-to-json-schema` keep their major; there is no
-cross-major replacement.
+peer range is not used. The tool contracts `@zcode/contracts` also use this version and no longer
+depend on Zod v3 and `zod-to-json-schema`; the Zod v3 bundled inside third-party dependencies is
+left as is.
 
 Dedupe is done by the CLI esbuild entry: it first picks the package version and exports by the
 consumer's original resolution rules, then merges different install directories of the same version into
@@ -234,6 +247,7 @@ is still out of scope of this script and must happen after SEA injection.
 ## Test coverage
 
 - Target parameter parsing: repeated target, CSV target, `--all` and illegal targets.
+- Platform flags: `--all --linux`, several platforms stacked, used alone, passed through with `--`, and an error when the combination with `--target` leaves nothing.
 - Package scripts guarantee that `build:sea` always passes `--all` explicitly, and the root
   `build:sea:all` forwards to that existing entry.
 - Mapping of target to release artifact, download URL and artifact name.

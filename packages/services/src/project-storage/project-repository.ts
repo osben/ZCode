@@ -20,6 +20,7 @@ import type {
   SaveProjectInput,
   VirtualProject,
 } from "#src/project-storage/contract.js";
+import { hostMismatch } from "#src/project-storage/host-mismatch.js";
 import {
   ensureHost,
   OWNERSHIP_DECIDED,
@@ -535,7 +536,12 @@ export class ProjectRepository implements ProjectRepositoryContract, ProjectData
           existing.root_path !== parent.root_path ||
           (existing.forked_from_task_id && existing.forked_from_task_id !== input.parentTaskId))
       )
-        throw new Error("project.host-mismatch");
+        throw hostMismatch("fork-parent", input.task, {
+          rowHostId: existing.host_id,
+          ownerHostId: this.ownerHostId,
+          projectId: existing.project_id ?? directories.projectId,
+          parentHostId: parent.host_id,
+        });
       if (!existing) {
         // The CLI commits the fork body first; the Host persists the parent's ownership before the ACK is visible to the UI, so an immediate open never sees empty ownership.
         this.db

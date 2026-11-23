@@ -75,6 +75,16 @@ export const OFFICIAL_NODE_REPL_HOST_REQUIRED_SEED_PATHS = ["dist/mcp/server.js"
 const NODE_REPL_HOST_BUILD_IDENTITY_PATH = "dist/build-identity.json";
 
 /** Build artifacts of the document plugins' (documents / pdf / presentations / spreadsheets) viewer panel. */
+export const OFFICIAL_OFFICE_INVOCATION_PATHS = [
+  "scripts/zcode_libreoffice.py",
+  "scripts/libreoffice-profile/user/registrymodifications.xcu",
+  "scripts/libreoffice-profile/user/basic/script.xlc",
+  "scripts/libreoffice-profile/user/basic/dialog.xlc",
+  "scripts/libreoffice-profile/user/basic/Standard/script.xlb",
+  "scripts/libreoffice-profile/user/basic/Standard/dialog.xlb",
+  "scripts/libreoffice-profile/user/basic/Standard/ZCode.xba",
+] as const;
+
 export const OFFICIAL_OFFICE_VIEWER_RUNTIME_PATHS = [
   "dist/server.mjs",
   "dist/ui/assets.json",
@@ -110,20 +120,27 @@ export const OFFICIAL_ZCODE_GUIDE_REQUIRED_SEED_PATHS = [
 
 // design 是纯内容型插件（技能 + 设计资源 + SessionStart hook，无 MCP），技能正文按需读取 references/
 // 与 scripts/；hook 只注入一句指针，正文缺失时 hook 静默退出，会话里就再也触发不到技能。
-// 所以这里钉住入口、7 份规则文件、三个随包脚本和 hook，seed 缺任一项都拒绝生成残缺缓存。
+// 所以这里钉住入口、11 份规则文件、7 个随包脚本和 hook，seed 缺任一项都拒绝生成残缺缓存。
 export const OFFICIAL_DESIGN_REQUIRED_SEED_PATHS = [
   "skills/design/SKILL.md",
+  "skills/design/references/app.md",
   "skills/design/references/catalog.md",
   "skills/design/references/check.md",
   "skills/design/references/create.md",
+  "skills/design/references/deck.md",
   "skills/design/references/design-system.md",
+  "skills/design/references/image.md",
   "skills/design/references/interact.md",
-  "skills/design/references/output.md",
+  "skills/design/references/motion.md",
+  "skills/design/references/page.md",
   "skills/design/references/redesign.md",
   "skills/design/scripts/adapt-canvas.mjs",
+  "skills/design/scripts/audit-page.js",
+  "skills/design/scripts/audit.mjs",
   "skills/design/scripts/design-lint.mjs",
   "skills/design/scripts/design-tokens.mjs",
   "skills/design/scripts/import-design-system.mjs",
+  "skills/design/scripts/probe.js",
   "hooks/hooks.json",
   "hooks/run-hook.cmd",
   "hooks/design-rules",
@@ -195,7 +212,7 @@ export const OFFICIAL_PLUGIN_DEFINITIONS: readonly OfficialPluginDefinition[] = 
       "../../node-repl-host",
       "../../../node-repl-host",
     ],
-    version: "0.7.0",
+    version: "0.7.1",
   },
   {
     listing: {
@@ -249,6 +266,7 @@ export const OFFICIAL_PLUGIN_DEFINITIONS: readonly OfficialPluginDefinition[] = 
     [
       // 版本按插件各自升，换新缓存目录：pdf 0.2.1 起面板带中日韩字体回退；0.2.1（pdf 0.2.2）起
       // server 由工作区内各 session 共享，旧缓存的 server 不区分 session，不能沿用。
+      // From 0.2.10 (pdf 0.2.11) the visual-judge subagent is no longer provided; a new cache directory keeps existing users from loading the old agents/.
       ["documents", "docx", "Documents", "Word文档", "0.2.10"],
       ["pdf", "pdf", "PDF", "PDF", "0.2.11"],
       ["presentations", "pptx", "Presentations", "演示文档", "0.2.10"],
@@ -275,6 +293,7 @@ export const OFFICIAL_PLUGIN_DEFINITIONS: readonly OfficialPluginDefinition[] = 
         `skills/${skill}/SKILL.md`,
         `skills/${skill}-viewer/SKILL.md`,
         ...OFFICIAL_OFFICE_VIEWER_RUNTIME_PATHS,
+        ...OFFICIAL_OFFICE_INVOCATION_PATHS,
       ],
       rootCandidates: [
         `packages/${name}-plugin`,
@@ -474,7 +493,7 @@ export const OFFICIAL_PLUGIN_DEFINITIONS: readonly OfficialPluginDefinition[] = 
       "../../design-plugin",
       "../../../design-plugin",
     ],
-    version: "0.7.2",
+    version: "0.8.0",
   },
   {
     // 产品决策：电脑控制回退为默认关闭，需用户在设置页显式开启。
@@ -517,14 +536,14 @@ export const OFFICIAL_PLUGIN_DEFINITIONS: readonly OfficialPluginDefinition[] = 
     // This version tracks the upstream zcode-cua runtime version so the plugin UI display,
     // cache path, and marketplace entry stay aligned; the actual bump is maintained by the
     // atomic producer bump workflow.
-    version: "0.6.5",
+    version: "0.6.6",
   },
   {
     // ZCode Sites (technical plan 4): a Skill-guided Agent converts the project into an artifact
-    // package the runner can execute directly, then uploads it via skills/site-deploy/scripts/zcode-site.mjs (CLI);
+    // package the runner can execute directly, then uploads it via skills/site-deploy/scripts/zcode-site.mjs (CLI, shipped inside the skill directory);
     // commands/ holds the /site-* slash commands.
     // Since 0.4.0 it ships a Sites panel (UI plugin): the MCP server and panel pages are built
-    // into dist/ for the panel only — invisible to the model (docs/site/sites-panel.md). Enabled
+    // into dist/ for the panel only, invisible to the model (docs/site/sites-panel.md). Enabled
     // by default so users can have the Agent deploy a site without first toggling it in settings.
     componentTypes: ["ui"],
     name: "zcode-site",
@@ -561,6 +580,7 @@ export const OFFICIAL_PLUGIN_DEFINITIONS: readonly OfficialPluginDefinition[] = 
       "dist/server.mjs",
       "dist/ui/panel.html",
     ],
+    // Aligned with 0.5.1 of the package/manifest and SEA, so it does not keep using the old version's cache identity.
     version: "0.5.1",
   },
 ];

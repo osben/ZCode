@@ -145,7 +145,7 @@ export async function listMcpServers(
         untrustedProjectMcpServers,
       );
     }
-    return zcodeMcpListResultSchema.parse({ statuses: await withReviews(statuses) });
+    return projectMcpListResult(await withReviews(statuses));
   }
 
   const mcpPort = context.deps.mcpPort
@@ -157,7 +157,7 @@ export async function listMcpServers(
     // any server is awaiting authorization. Default/connect serves "probe again" requests such as a
     // Settings refresh. mcpPort is a process-level `protocol-settings` lease; without revalidate the
     // connection pool reuses old entries and returns stale snapshots, leaving stopped HTTP MCPs
-    // shown as connected indefinitely (see adapters/src/mcp/pool.ts revalidateEntry).
+    // shown as connected indefinitely (the adapter now handles validation and recovery uniformly).
     const connectPromise = mcpPort.connectConfiguredServers(
       omitMcpServers(
         configuredMcpServers,
@@ -183,9 +183,7 @@ export async function listMcpServers(
           workspacePath: params.workspace.workspacePath,
         });
       });
-      return zcodeMcpListResultSchema.parse({
-        statuses: await withReviews(pendingAuthorizationSnapshot.statuses),
-      });
+      return projectMcpListResult(await withReviews(pendingAuthorizationSnapshot.statuses));
     }
 
     await connectPromise;
@@ -195,7 +193,20 @@ export async function listMcpServers(
     configuredMcpServers,
     untrustedProjectMcpServers,
   );
-  return zcodeMcpListResultSchema.parse({ statuses: await withReviews(statuses) });
+  return projectMcpListResult(await withReviews(statuses));
+}
+
+function projectMcpListResult(statuses: Record<string, McpServerStatus>): ZCodeMcpListResult {
+  // runtime 的诊断码不属于 App 状态协议；即使值为 undefined，直接透传也会触发严格 schema 拒绝。
+  // 三种返回路径共用投影，只移除这个内部字段，其余公开字段仍严格校验。
+  return zcodeMcpListResultSchema.parse({
+    statuses: Object.fromEntries(
+      Object.entries(statuses).map(([name, { errorCode: _errorCode, ...status }]) => [
+        name,
+        status,
+      ]),
+    ),
+  });
 }
 
 async function waitForOAuthAuthorizationSnapshot(

@@ -302,7 +302,7 @@ export class NodeExecutionAdapterRun extends NodeExecutionAdapterProcess {
     }
 
     try {
-      const prepared = await this.prepareChildSpawn(request);
+      const prepared = await this.prepareChildSpawn(request, options.signal);
 
       // Creating the shell-init snapshot is asynchronous; the user may cancel or close the adapter while it is pending.
 

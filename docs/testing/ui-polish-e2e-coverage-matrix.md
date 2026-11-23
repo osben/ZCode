@@ -1,5 +1,12 @@
 # UI Polish E2E Coverage Matrix
 
+- Official entry: `settings/general/settings-ui-polish.test.ts` holds 9 local cases and runs in the macOS and Windows desktop CI. UP-00 runs on Windows only. The remote `MP-UI-05-remote` uses `settings/general/settings-ui-polish-ssh.test.ts`, and the Linux remote queue configures the SSH target. The Linux queue without a target keeps running the local `MP-UI-05` as a targeted regression.
+- MP-UI-06 checks, in a narrow window, a 5px outer edge of the scroll area and a 16px right content margin. The 16px is measured from the usable content edge of the scroll area, so the width taken by the system scrollbar does not count as app margin.
+- The hover and keyboard focus of MP-UI-06 are desktop mouse scenarios. The settings spec in Windows CI has the test process declare a hover-capable fine pointer, then checks the same background through real mouse and keyboard input. It does not depend on whether the Windows service session has a mouse attached.
+- Windows baseline `ci-conversation-windows-335842-1118504-1-1`: the mouse event hit and the control entered `:hover`, but the browser reported `(hover: hover)` as false and the background stayed transparent. Moving the pointer directly through CDP did not change the result. After the test process declared the mouse capability, the strict Windows replay `ci-conversation-windows-335839-1118492-1-1` passed 18/18 over two full runs, and MP-UI-06 and UP-00 both passed on the first try both times.
+- After the split, the strict macOS replay `settings-polish-20261111160517-57114`: 8 cases passed and UP-00 was skipped by platform. After the mouse precondition check was added, the targeted MP-UI-06 replay `mp-ui-06-macos-20261111170800-91910` passed.
+- After the split, `MP-UI-05-remote` passed the strict replay on macOS Electron and a separate Linux arm64 SSH target: `local-docker-20261111080720-3f8d1b`.
+
 - Logo style migration: UP-00 verifies the old Windows settings-page position, the 18px base and the 11px static SVG. Windows run passed: `desktop-e2e-20261009065931122-p21208-9f6085045aa4ea21`, 1/1; light and dark screenshots checked.
 - 2026-10-09 platform sizes: UP-00 on the Windows settings page passes for the 6px outer edge, 8px radius and top-right action group alignment, run `desktop-e2e-20261009070918592-p12424-e7971ff15e21066b`.
 

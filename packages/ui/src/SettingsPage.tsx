@@ -48,11 +48,13 @@ import { useUsageEntitlement } from "@/hooks/useUsageEntitlement.js";
 import {
   addPendingSettingsSectionListener,
   clearPendingSettingsPluginOrigin,
+  clearPendingSettingsHookWorkspacePath,
   clearPendingSettingsPluginScopeKey,
   consumeInitialSettingsSection,
   consumePendingSettingsSourceServerId,
   consumePendingSettingsSourceServerDetails,
   consumePendingSettingsPluginOrigin,
+  consumePendingSettingsHookWorkspacePath,
   consumePendingSettingsPluginScopeKey,
   consumePendingSettingsPluginTab,
   consumePendingSettingsModelProviderTarget,
@@ -451,12 +453,16 @@ export function SettingsPage({
   const [pluginScopeKey, setPluginScopeKey] = useState(() =>
     consumePendingSettingsPluginScopeKey(),
   );
+  const [hookWorkspacePath, setHookWorkspacePath] = useState(() =>
+    consumePendingSettingsHookWorkspacePath(),
+  );
   const [settingsSectionNavigationVersion, setSettingsSectionNavigationVersion] = useState(0);
   useEffect(() => {
     // React Strict Mode 会双执行 state initializer；来源和 scopeKey 都在挂载完成后再清理，
     // Marketplace 只返回 User 已安装视图；Workspace 仍通过设置页自身的配置层切换进入。
     clearPendingSettingsPluginOrigin();
     clearPendingSettingsPluginScopeKey();
+    clearPendingSettingsHookWorkspacePath();
   }, []);
   const [settingsBreadcrumbItems, setSettingsBreadcrumbItems] = useState<
     readonly SettingsBreadcrumbItem[]
@@ -747,6 +753,8 @@ export function SettingsPage({
   const navigateToSettingsSection = (section: SettingsSectionId, setting?: SettingsSearchId) => {
     setPluginNavigationOrigin(undefined);
     setTargetSourceServerId(undefined);
+    // SG-01：worktree 审核上下文只属于「去审核」那次导航；侧栏或搜索进入钩子时按普通入口。
+    setHookWorkspacePath(undefined);
     setSettingsSectionNavigationVersion((version) => version + 1);
     setActiveSettingsSection(section);
     if (setting) setSearchTarget({ id: setting });
@@ -931,6 +939,8 @@ export function SettingsPage({
   }, [sharedSettings?.recentProjects, workspaceTabs]);
   const toolSearchMode = sharedSettings?.toolSearchMode ?? DEFAULT_APP_TOOL_SEARCH_MODE;
   const nativeSearchEnhancementsEnabled = sharedSettings?.nativeSearchEnhancementsEnabled !== false;
+  const totalTokensReminderEnabled = sharedSettings?.totalTokensReminderEnabled === true;
+  const agentAlwaysBackgroundEnabled = sharedSettings?.agentAlwaysBackgroundEnabled !== false;
   const askUserQuestionAutoResolutionEnabled =
     sharedSettings?.askUserQuestionAutoResolutionEnabled !== false;
   const codingPlanLimitAutoContinueDefaultEnabled =
@@ -1014,6 +1024,7 @@ export function SettingsPage({
           }
           // MCP is an independent section that also receives the workspace intent; otherwise an in-session review falls back to user config.
           setPluginScopeKey(detail?.pluginScopeKey);
+          setHookWorkspacePath(detail?.hookWorkspacePath);
           if (section === "sessions") {
             // The event carries the scope directly (sessionStorage was cleared by the listener);
             // an unscoped intent clears a previously applied workspace chip.
@@ -1177,6 +1188,36 @@ export function SettingsPage({
         action: "toggle_native_search",
         trigger: "switch",
         operation: () => updateSharedSettings({ nativeSearchEnhancementsEnabled: enabled }),
+        completed: {
+          resultSource: "shared_settings",
+          stateAfter: enabled ? "enabled" : "disabled",
+        },
+      });
+    },
+    [updateSharedSettings],
+  );
+  const handleTotalTokensReminderEnabledChange = useCallback(
+    async (enabled: boolean) => {
+      await runSettingsActionAsync({
+        featureId: "settings.conversation",
+        action: "toggle_total_tokens_reminder",
+        trigger: "switch",
+        operation: () => updateSharedSettings({ totalTokensReminderEnabled: enabled }),
+        completed: {
+          resultSource: "shared_settings",
+          stateAfter: enabled ? "enabled" : "disabled",
+        },
+      });
+    },
+    [updateSharedSettings],
+  );
+  const handleAgentAlwaysBackgroundEnabledChange = useCallback(
+    async (enabled: boolean) => {
+      await runSettingsActionAsync({
+        featureId: "settings.conversation",
+        action: "toggle_agent_always_background",
+        trigger: "switch",
+        operation: () => updateSharedSettings({ agentAlwaysBackgroundEnabled: enabled }),
         completed: {
           resultSource: "shared_settings",
           stateAfter: enabled ? "enabled" : "disabled",
@@ -2089,6 +2130,14 @@ export function SettingsPage({
                               onNativeSearchEnhancementsEnabledChange={
                                 handleNativeSearchEnhancementsEnabledChange
                               }
+                              totalTokensReminderEnabled={totalTokensReminderEnabled}
+                              onTotalTokensReminderEnabledChange={
+                                handleTotalTokensReminderEnabledChange
+                              }
+                              agentAlwaysBackgroundEnabled={agentAlwaysBackgroundEnabled}
+                              onAgentAlwaysBackgroundEnabledChange={
+                                handleAgentAlwaysBackgroundEnabledChange
+                              }
                               messageStreamShowReasoning={messageStreamShowReasoning}
                               messageStreamShowTodos={messageStreamShowTodos}
                               zcodeInteractionBehavior={zcodeInteractionBehavior}
@@ -2115,6 +2164,7 @@ export function SettingsPage({
                               onModelIoFullRetentionEnabledChange={
                                 handleModelIoFullRetentionEnabledChange
                               }
+                              replyLanguage={sharedSettings?.replyLanguage}
                             />
                           ) : activeSection === "dataSync" ? (
                             isDesktop ? (
@@ -2212,22 +2262,8 @@ export function SettingsPage({
                                   );
                                   onBack?.();
                                   if (target) {
+                                    // 已确认只需返回设备工作区；旧项目 DOM 标识已移除，不再异步查找并抢占焦点。
                                     activateTab(target.id);
-                                    requestAnimationFrame(() => {
-                                      const row = Array.from(
-                                        document.querySelectorAll<HTMLElement>(
-                                          "[data-remote-project-identity]",
-                                        ),
-                                      ).find(
-                                        (element) =>
-                                          element.dataset.remoteProjectIdentity ===
-                                          target.workspaceIdentity,
-                                      );
-                                      row?.scrollIntoView({ block: "center" });
-                                      row
-                                        ?.querySelector<HTMLElement>('[role="button"]')
-                                        ?.focus({ preventScroll: true });
-                                    });
                                   }
                                 }}
                                 settings={sharedSettings}
@@ -2449,6 +2485,10 @@ export function SettingsPage({
                             />
                           ) : activeSection === "hooks" ? (
                             <HooksSection
+                              key={`hooks:${settingsSectionNavigationVersion}`}
+                              // 只有 worktree 审核意图才固定范围；其他入口保持原有默认范围。
+                              initialScopeKey={hookWorkspacePath ? pluginScopeKey : undefined}
+                              reviewWorkspacePath={hookWorkspacePath}
                               workspacePath={activeWorkspacePath}
                               workspaceIdentity={activeWorkspaceIdentity}
                             />

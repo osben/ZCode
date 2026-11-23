@@ -17,7 +17,7 @@ Status: done
   - No empty state before loading finishes; the empty state offers a "新建连接" (new connection) button.
   - A toggle rolls back when saving fails.
   - The "last online" time is accurate.
-  - "在侧边栏中显示" (show in sidebar) locates the corresponding device.
+  - "在侧边栏中显示" (show in sidebar) leaves settings and activates the task workspace already open for that device; the sidebar does not need to be expanded, scrolled or auto-focused.
   - "重新安装并连接" (reinstall and connect) carries this device's information.
   - The same error is not shown twice.
 - **Edit connection**:
@@ -44,7 +44,7 @@ Acceptance criteria (all met):
 - **Destructive confirmation dialog**: default focus on "取消", Enter does not confirm. Covered by dialog tests, with regression over other destructive dialogs in the app.
 - **Remove and disconnect**: the remove-device dialog lists the projects that will be disconnected with consistent wording; disconnecting shows no dialog and uses an inline note instead.
 - **Button and state feedback**: a running button shows a busy state and cannot be clicked again; loading and empty states are clearly distinguished; a toggle save failure rolls back with a hint. Covered by settings panel component tests.
-- **Locate and reinstall**: "在侧边栏中显示" locates the device's project; "重新安装并连接" prefills this device's information; the "last online" time is accurate.
+- **Return and reinstall**: "在侧边栏中显示" leaves settings and activates the task workspace already open for the device. It does not depend on the device being online, and it does not need the sidebar to be expanded, scrolled or auto-focused. "重新安装并连接" prefills this device's information; the "last online" time is accurate.
 - **Edit dialog**: fields match the new-connection form; changing the connection name does not change the device name; saving shows a loading state and failure shows the real reason.
 - **Scope labels**: sections and forms show no "currently editing" hint row, and the scope menu keeps the device name. Component and E2E assertions are synced to this behavior.
 - **Update spec**: the Settings and edit-connection paragraphs in the UX spec are updated to the latest behavior; Settings-related E2E cases are synced.

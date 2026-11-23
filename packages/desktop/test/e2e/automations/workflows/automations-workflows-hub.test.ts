@@ -1,13 +1,12 @@
+import { openStatusCapsule } from "#e2e/helpers/status-capsule";
 import { access, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import {
   TID_AUTOMATIONS_OPEN,
   TID_AUTOMATIONS_PAGE_TAB,
-  TID_CHAT_SUMMARY_PANEL,
   TID_CHAT_WORKFLOW_RUN_DIGEST,
   TID_CONFIRM_DIALOG_CONFIRM,
   TID_TASK_ITEM,
-  TID_V4_COMPOSER_BACKGROUND_WORK_TRIGGER,
   TID_V4_TIMELINE,
   TID_WORKFLOW_ACTION_DELETE,
   TID_WORKFLOW_ACTION_MOVE,
@@ -1053,10 +1052,9 @@ describe("直接启动 E2E", () => {
     await leaveAutomationsPage();
   });
 
-  // Composer badge direct-open (docs/dynamic-workflow/presentation.md, "Other places a run appears"): when the only
-  // thing running in the session is a workflow, clicking the badge does not expand the status capsule; it opens that
-  // run's details side tab directly.
-  it("唯一在跑的工作流：composer 徽标直达详情 side tab，状态胶囊不展开", async function () {
+  // Activity entry (docs/dynamic-workflow/presentation.md, "Other places a run appears"):
+  // when the only thing running in the session is a workflow, expand the Activity capsule and open that run's details side tab from its row.
+  it("only running workflow: expand the Activity capsule, then open the details side tab from the run row", async function () {
     this.timeout(180000);
 
     await prepareHubCase();
@@ -1106,23 +1104,8 @@ describe("直接启动 E2E", () => {
       { timeout: 60000, timeoutMsg: "侧栏里发起工作流的会话行没有长出 running 的运行行" },
     );
 
-    // 2c) Status capsule (docs/dynamic-workflow/presentation.md, "Other places a run appears"): the running workflow
-    //     sorts first in the capsule and shows by name (name · lamp · word) instead of a count like "1 background".
-    await browser.waitUntil(
-      async () =>
-        browser.execute((panelTestId) => {
-          const panel = document.querySelector<HTMLElement>(`[data-testid="${panelTestId}"]`);
-          const pill = panel?.querySelector<HTMLElement>("[data-workflow-pill]");
-          const button = pill?.closest("button");
-          return (
-            pill !== null &&
-            pill !== undefined &&
-            (pill.textContent ?? "").trim().length > 0 &&
-            button?.querySelector('[data-workflow-run-lamp="running"]') !== null
-          );
-        }, TID_CHAT_SUMMARY_PANEL),
-      { timeout: 30000, timeoutMsg: "状态胶囊没有按名字显示在跑的工作流" },
-    );
+    // The unified Activity count entry replaces the old workflow-name capsule.
+    await $('[data-status-capsule="activity"]').waitForDisplayed({ timeout: 30000 });
 
     // 2d) The pill must not cover the launch card (docs/dynamic-workflow/presentation.md "The
     //     run card", transcript-top inset): the launch turn is the session's first turn with no
@@ -1146,7 +1129,7 @@ describe("直接启动 E2E", () => {
     });
     expect(coveredHeaderButtons).toEqual([]);
 
-    // 3) Composer badge: exactly one workflow, no terminals and no subagents, and its declared open target is workflow-run.
+    // 3) Activity count: exactly one workflow, no terminals and no standalone subagents.
     await browser.waitUntil(
       async () => {
         const counts = await getV4ComposerBackgroundWorkCounts();
@@ -1154,65 +1137,31 @@ describe("直接启动 E2E", () => {
           counts?.workflowCount === 1 &&
           counts.bashCount === 0 &&
           counts.subagentCount === 0 &&
-          counts.totalCount === 1 &&
-          counts.openTarget === "workflow-run"
+          counts.totalCount === 1
         );
       },
-      { timeout: 60000, timeoutMsg: "composer 徽标没有以 workflow-run 落点显示唯一在跑的工作流" },
+      { timeout: 60000, timeoutMsg: "Activity 没有显示唯一在跑的工作流" },
     );
-    const panelModeBefore = await browser.execute(
-      (panelTestId) =>
-        document.querySelector<HTMLElement>(`[data-testid="${panelTestId}"]`)?.dataset
-          .displayMode ?? null,
-      TID_CHAT_SUMMARY_PANEL,
-    );
-    expect(panelModeBefore).not.toBe("panel");
-
-    // 4) Click the badge → the side pane shows that run's workflow-run tab (structured id prefix), and the capsule was
-    //    not switched to panel mode.
-    await clickTestIdByDom(TID_V4_COMPOSER_BACKGROUND_WORK_TRIGGER, {
-      timeoutMsg: "composer 后台任务入口不可点击",
-    });
-    await browser.waitUntil(
-      async () =>
-        browser.execute(() =>
-          Boolean(document.querySelector('[data-side-pane-tab-id^="workflow-run:"]')),
-        ),
-      { timeout: 30000, timeoutMsg: "点徽标后侧板没有打开 workflow-run tab" },
-    );
-    const panelModeAfter = await browser.execute(
-      (panelTestId) =>
-        document.querySelector<HTMLElement>(`[data-testid="${panelTestId}"]`)?.dataset
-          .displayMode ?? null,
-      TID_CHAT_SUMMARY_PANEL,
-    );
-    expect(panelModeAfter).not.toBe("panel");
-
-    // 5) Click the capsule to expand: the "Workflows" section opens along with it, no separate section-header click
-    //    needed — what you see expanded must not be less than what the capsule shows
-    //    (docs/dynamic-workflow/presentation.md, "Other places a run appears"). The run row is a fixed two lines: name +
-    //    elapsed on the first, lamp + word on the second (the sleep script has no phase() markers, so it is one running
-    //    lamp + step count). Hovering the row overlays Stop on the elapsed time.
-    await browser.execute((panelTestId) => {
-      const panel = document.querySelector<HTMLElement>(`[data-testid="${panelTestId}"]`);
-      panel?.querySelector<HTMLElement>("[data-workflow-pill]")?.closest("button")?.click();
-    }, TID_CHAT_SUMMARY_PANEL);
+    // Click Activity to open the overlay, then click the workflow row to enter the details; there is no direct jump from the capsule anymore.
+    await openStatusCapsule("activity");
+    await $('[data-workflow-run-details-trigger="true"]').click();
+    await $('[data-side-pane-tab-id^="workflow-run:"]').waitForDisplayed({ timeout: 30000 });
+    await openStatusCapsule("activity");
     const rowSelector = 'li[data-background-task-kind="workflow"]';
     await browser.waitUntil(
       async () =>
         browser.execute((selector) => {
           const row = document.querySelector<HTMLElement>(selector);
-          return (
-            row?.querySelector('[data-workflow-island-line="name"] [data-workflow-run-elapsed]') !==
-              null &&
-            row?.querySelector(
-              '[data-workflow-island-line="phase"] [data-workflow-run-lamp="running"]',
-            ) !== null
+          return Boolean(
+            row &&
+            row.querySelector('[data-workflow-run-lamp="running"]') &&
+            /\d/.test(row.querySelector(".tabular-nums")?.textContent ?? "") &&
+            row.querySelector('[data-testid^="v4-background-work-cancel-"]'),
           );
         }, rowSelector),
       {
         timeout: 15000,
-        timeoutMsg: "点开胶囊后「工作流」分区没有直接显示 run 行（名字 + 时长 / 灯 + 词两行）",
+        timeoutMsg: "点开 Activity 后没有运行灯和单项停止控件",
       },
     );
     // The panel is still expanding when the row first appears, so one pointer move can land where the row was;

@@ -402,6 +402,9 @@ export const V4_METHODS = {
   sessionDataMeasure: "v4/storage/sessionData/measure",
   sessionDataPurge: "v4/storage/sessionData/purge",
   sessionDeletionPreview: "v4/storage/sessionData/deletionPreview",
+  // 归档永久删除批量预检：整批共用一次引用扫描，结果按顺序逐项返回。旧 CLI 返回 method-not-found，
+  // Host 据此回退逐项调用 deletionPreview。
+  sessionDeletionPreviewBatch: "v4/storage/sessionData/deletionPreviewBatch",
   sessionDeletionExecute: "v4/storage/sessionData/deletionExecute",
   // Attachment transaction: full-data RPC is forbidden. Decoded bytes per chunk <=512KiB,
   // each request must prove <=1MiB on both the renderer->host Channel and the host->CLI NDJSON.
@@ -456,6 +459,7 @@ export const V4_NOTIFICATIONS = {
   conversationContextCompositionChanged: "v4/conversation/contextCompositionChanged",
   // 模型请求指标（telemetry.ts 的 modelRequestMetricsFactSchema）：live-only，旧 App 不认识即忽略。
   modelRequestMetrics: "v4/telemetry/model-request-metrics",
+  turnAdmissionTelemetry: "v4/telemetry/turn-admission",
 } as const;
 
 /** SSH historical-task ownership proof in 3.3.6 shares the same bounded window as sessions-index cold seeding. */

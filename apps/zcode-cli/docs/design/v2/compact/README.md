@@ -85,7 +85,8 @@ A full compact runs:
 2. Run light compression or budget trimming (tool result budget, microcompact, snip).
 3. Check compact policy; manual compact proceeds directly.
 4. Run the `PreCompact` hook, which may append controlled summary instructions or block compact.
-5. Build the summary prompt. The summary agent outputs text only; tool calls are not allowed.
+5. Build the summary prompt. The summary prompt asks for text only; if the reply still carries
+   tool calls, handle it as described in "Summary text selection" below.
 6. Call the provider for the summary, normalizing prompt-too-long, network interruption and
    no-text-output failures.
 7. Create `CompactBoundary` and `CompactSummary`.
@@ -96,6 +97,14 @@ A full compact runs:
 
 Business core expresses only these state transitions and intent. Model requests, file reads,
 session storage, hook subprocesses, network and logging all go through adapters.
+
+#### Summary text selection
+
+- The summary request runs for one round only. Tool calls in the reply are not executed and do not enter history. The runtime writes one info log (`compact.summary.tool_calls_ignored`, with the tool names) and continues with the text.
+- When the reply has several text blocks, pick the last block that contains `<summary>`; if none does, pick the last text block. An empty text block still counts as a text block. Streaming results and the non-streaming fallback use the same rule; when the result has no block information, use the whole text.
+- Only the picked block is cleaned: remove the first `<analysis>...</analysis>` and replace the first `<summary>...</summary>` with `Summary:\n<content>`. When `<summary>` is split across two text blocks, only the block with the opening tag is used; it has no closing tag, so the tag is kept as is.
+- When the reply carries tool calls, the picked block must hold a summary: either a paired `<summary>...</summary>`, or a line that starts with `<summary>` (judged after removing the first `<analysis>...</analysis>`). If not, treat it as empty after cleaning. Reason: the model often says one sentence first (for example "Let me read the file first.") and then calls a tool. That sentence is not a summary, and accepting it would replace the whole history with one sentence. Replies without tool calls skip this check.
+- When the cleaned text is empty (including a reply with no text block, only tool calls), compaction fails with the error `Failed to generate compact summary` (retryable). Auto compact tries up to 3 times within one compaction; manual compact and reactive compact try only once.
 
 ### 1.4 Summary content requirements
 

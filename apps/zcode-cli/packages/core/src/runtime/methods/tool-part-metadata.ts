@@ -5,6 +5,7 @@ import {
   type ToolExecutionResult,
 } from "../deps.js";
 import { createMcpToolDisplay } from "../../tool/executor/result-display.js";
+import { isErrorForToolResult } from "../helpers/tool-result.js";
 
 export function mcpToolPartMetadata(
   presentation: { serverName: string; toolName: string; description?: string } | undefined,
@@ -36,5 +37,8 @@ export function completedToolPartMetadata(result: ToolExecutionResult): Complete
     // Resume must restore the file snapshot the model actually read. Depending only on tool_result text
     // would tie the main path to provider display formatting, so persist read-state structurally in the new session.
     ...(result.readFileStateMetadata ? { readFileState: result.readFileStateMetadata } : {}),
+    // 修复原因：错误结果（Bash 非零退出、超时、取消，MCP isError）的 part 仍是 completed，冷恢复原来固定
+    // 按成功结果回放，丢掉 live 请求里的 is_error，恢复后从这条结果起缓存失效。这里存下与 live 相同的判定。
+    ...(isErrorForToolResult(result) ? { providerIsError: true } : {}),
   };
 }

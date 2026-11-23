@@ -37,7 +37,8 @@ export type ShortcutCommandId =
   | "resetZoom"
   | "composerSend"
   | "composerInsertNewline"
-  | "voiceDictation";
+  | "voiceDictation"
+  | "toggleVoiceInput";
 
 /**
  * Command scope: global = dispatched globally (useAppKeyboard / menu accelerator);
@@ -106,6 +107,10 @@ export const SHORTCUT_COMMANDS: readonly ShortcutCommandEntry[] = [
   // Note: the shortcut key-name allowlist does not include Space, so defaults like Option+Space
   // cannot be used.
   { id: "voiceDictation", channel: "window", defaultBindings: ["CmdOrCtrl+Shift+d"] },
+  // Upstream composer voice input toggle (desktop only): consumed by the voice-input module's window
+  // capture listener, useAppKeyboard registers no handler. Fork: no default binding, because
+  // CmdOrCtrl+Shift+D stays with voiceDictation (specs/upstream-sync-4.0.0.md); users can assign one.
+  { id: "toggleVoiceInput", channel: "window", defaultBindings: [] },
 ];
 
 /** Get default bindings by command ID; unknown commands return an empty array (resolve ignores unknown commands in the active table). */

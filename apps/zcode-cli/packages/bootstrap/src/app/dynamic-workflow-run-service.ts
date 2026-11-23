@@ -256,7 +256,9 @@ export interface DynamicWorkflowRunServiceDeps {
    */
   artifactStore?: ToolArtifactStorePort;
   /** Create an actor's child AgentRuntime (production wraps createScriptWorkflowAgentRuntime). */
-  createActorRuntime: (input: DynamicWorkflowActorRuntimeInput) => AgentRuntime;
+  createActorRuntime: (
+    input: DynamicWorkflowActorRuntimeInput,
+  ) => AgentRuntime | Promise<AgentRuntime>;
   /** Persistence surface for an actor session's task link; if absent, skip the link (the session is still persisted). */
   taskLinkStore?: DynamicWorkflowTaskLinkStore;
   /**
@@ -492,6 +494,17 @@ export function createDynamicWorkflowRunService(
     async resume(runId: string): Promise<DynamicWorkflowRunResumeResult> {
       assertOpen();
       return trackOperation(() => resumeDynamicWorkflowRun(entryContext, runId));
+    },
+
+    async getActivityHistory() {
+      const journal = deps.journal as typeof deps.journal & {
+        getActivityHistory?: (
+          sessionId: string,
+        ) => import("@zcode/contracts").DynamicWorkflowActivityHistory;
+      };
+      return (
+        journal.getActivityHistory?.(deps.parentSessionId) ?? { runs: [], childSessionIds: [] }
+      );
     },
 
     async listRunsForSession(limit?: number): Promise<DynamicWorkflowRunSessionSummary[]> {

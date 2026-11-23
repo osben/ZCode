@@ -121,6 +121,13 @@ export interface ZCodeAgentSetPluginEnabledParams extends ZCodeAgentWorkspaceTar
   telemetry?: ZCodePluginMutationTelemetry;
 }
 
+/** Trust or revoke directory plugins declared by the project's `plugins.dirs` (docs/plugins/workspace-plugin-dir-trust.md). */
+export interface ZCodeAgentSetWorkspacePluginTrustParams extends ZCodeAgentWorkspaceTarget {
+  pluginRoot: string;
+  declarationDigest: string;
+  trusted: boolean;
+}
+
 // Plugin conversation reference catalog:
 // with sessionId → session-owned frozen catalog (must route to the workspace client that owns the session);
 // without it → current workspace catalog (new draft Picker).

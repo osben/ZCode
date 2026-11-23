@@ -5,12 +5,14 @@
 Old implementation wrote complete OAuth authorizeUrl into `app_login_ck.login_url`, and allowed arbitrary events' `error_msg` original text into HTTP body; automated local regex would miss values after Bearer and unknown-format keys.
 User confirmed first phase prioritizes privacy: do not encrypt-upload error original text, do not rely on regex guessing which segments are secrets.
 
-- Retain `login_url` field name, only send lowercase hostname of HTTP(S) URL, remove userinfo、port、path、query and fragment. Invalid or non-HTTP(S) URL returns empty string; already normalized hostname can be repeatedly processed.
+- Retain `login_url` field name, only send lowercase hostname of HTTP(S) URL, remove userinfo, port, path, query and fragment. Invalid or non-HTTP(S) URL returns empty string; already normalized hostname can be repeatedly processed.
 - **All events** `event_extra_detail.error_msg`: non-empty strings uniformly become `[redacted]`; empty strings remain empty, originally missing fields not added. Including current conversation/automation and future new events.
 - Conversation events retain existing `error_type`; automation creation failure fills fixed `error_code`:
   `limit` / `timeout` / `network` / `auth` / `validation` / `unknown`, success is empty.
   Locally identify known error codes/patterns in this order; unknown or missing text classified as `unknown`, only provides coarse-grained attribution,
   does not return matching content, does not promise full diagnostic capability of restored original text. Status, duration and correlation ID unchanged.
+- `agent_step.error_code` (2026-11-17): tool failure reason code. Locally, a whitelist normalizes the CLI error code into a lowercase CoreErrorType value, `h<number>`, `other` or `unknown`, and the same whitelist is applied again as a fallback before the event leaves the machine. It carries no raw error text.
+- `workflow_run_result` (2026-11-18): carries only whitelisted values for the run's final state and stop reason, plus the subagent count and IDs. The `errorMessage` of the run-settled fact does not enter the event.
 - Processing only affects telemetry copies, does not change OAuth browser address, login state, tool results or business error display.
 - UI before reporting and Core before serialization use the same pure function; function is idempotent, does not modify caller objects.
   agent_step/message_completion debug payload only records cleaned copies, changed to debug.

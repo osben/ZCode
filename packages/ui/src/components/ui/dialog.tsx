@@ -66,7 +66,12 @@ function DialogContent({
         className={cn(
           // With an Electron-drawn title bar, a dialog may overlap the window's top drag region.
           // Unless all dialog content is marked no-drag, interactions such as the top-right close button may be intercepted as window drags.
-          "fixed top-1/2 left-1/2 z-50 grid w-full max-w-[calc(100%-2rem)] -translate-x-1/2 -translate-y-1/2 gap-4 rounded-2xl border border-popover-border bg-popover p-4 text-ui-base/relaxed text-foreground shadow-md duration-100 outline-none data-open:animate-in data-open:fade-in-0 data-open:zoom-in-95 data-closed:animate-out data-closed:fade-out-0 data-closed:zoom-out-95 [app-region:no-drag]",
+          // Bugfix: when a grid declares no column track, the implicit column is auto and gets stretched by the children's
+          // min-content width beyond the dialog's own max-width (the Japanese feedback window at 480px: content 501px > dialog 446px),
+          // so the overflow is clipped, and on focus the browser scrolls horizontally and cuts off the left side.
+          // The column track is fixed to minmax(0,1fr) here so content never exceeds the dialog; inner elements wrap or truncate themselves.
+          // See docs/ui/feedback-dialog-narrow-window-layout.md.
+          "fixed top-1/2 left-1/2 z-50 grid w-full max-w-[calc(100%-2rem)] grid-cols-[minmax(0,1fr)] -translate-x-1/2 -translate-y-1/2 gap-4 rounded-2xl border border-popover-border bg-popover p-4 text-ui-base/relaxed text-foreground shadow-md duration-100 outline-none data-open:animate-in data-open:fade-in-0 data-open:zoom-in-95 data-closed:animate-out data-closed:fade-out-0 data-closed:zoom-out-95 [app-region:no-drag]",
           className,
         )}
         {...props}

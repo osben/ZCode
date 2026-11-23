@@ -59,6 +59,7 @@ export type PluginDiagnosticCode =
   // 敏感选项私有文件读不出（损坏或 I/O 失败）：按空处理，诊断里只有文件路径，不含任何值。
   | "plugin_secrets_unreadable"
   | "plugin_duplicate_id"
+  | "plugin_load_failed"
   | "plugin_not_found"
   | "plugin_ambiguous_name"
   | "lsp_config_invalid"
@@ -156,7 +157,16 @@ export interface PluginStoreListing {
    * this field stale.
    */
   requiresPaidPlan?: boolean;
+  /**
+   * 目录条目声明的可见区域：`cn` 国内、`global` 海外。商店按当前登录区域只显示对应插件；
+   * 缺省表示所有区域可见。CLI 只保留这两个值并去重，过滤后为空时不写。
+   * 只影响商店展示，不限制安装与运行（docs/plugin-marketplace-ui-ux.md「按登录区域定向展示」）。
+   */
+  regions?: PluginStoreRegion[];
 }
+
+/** 商店定向展示的区域：`cn` 国内登录入口，`global` 海外登录入口。 */
+export type PluginStoreRegion = "cn" | "global";
 
 export interface PluginManifest {
   agents?: unknown;
@@ -242,6 +252,26 @@ export interface PluginMetadata {
   uiSurfaces?: PluginUiSurfaceDefinition[];
   userConfig?: Record<string, PluginUserConfigOption>;
   version?: string;
+  /** 只有项目配置 `plugins.dirs` 声明的目录插件才有；见 docs/plugins/workspace-plugin-dir-trust.md。 */
+  workspaceTrust?: PluginWorkspaceTrust;
+}
+
+/**
+ * 项目目录插件的信任状态。pending 时插件强制停用、不解析任何组件；
+ * trusted 表示用户域记录命中当前声明摘要，启停回到配置。
+ */
+export interface PluginWorkspaceTrust {
+  state: "pending" | "trusted";
+  /** 插件根相对工作区目录的路径（`/` 分隔），是信任记录的定位键。 */
+  pluginRoot: string;
+  declarationDigest: string;
+}
+
+/** 项目目录插件的发现输入：候选目录来自项目配置，信任记录来自用户域存储。 */
+export interface WorkspacePluginDiscovery {
+  workspaceRoot: string;
+  roots: string[];
+  trusted: ReadonlyArray<{ pluginRoot: string; declarationDigest: string }>;
 }
 
 export interface PluginDiagnostic {
@@ -320,6 +350,8 @@ export interface PluginDiscoverRequest {
   storageRoot: string;
   trace?: TraceContext;
   workingDirectory: string;
+  /** 项目 `plugins.dirs` 候选；只有命中信任记录的目录才会启用。 */
+  workspacePlugins?: WorkspacePluginDiscovery;
 }
 
 export interface PluginOperationOptions {

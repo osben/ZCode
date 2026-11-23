@@ -149,12 +149,12 @@ export function replayRunProgressFromEvents(
       : {}),
     ...(row.failure === undefined ? {} : { error: row.failure }),
   };
-  payloads.push(
-    toProgressPayload({
+  payloads.push({
+    ...toProgressPayload({
       event: settled,
       runId: row.runId,
-      // When replacing, keep the replaced event's sequence (matching the live watermark); when appending, use the next sequence after the last event.
-      sequence: trailingSettle?.sequence ?? (last?.sequence ?? 0) + 1,
+      // A synthetic settlement must not pre-claim N+1, or the real start event after recovery would collide with it.
+      sequence: trailingSettle?.sequence ?? last?.sequence ?? 0,
       ...toolCallId,
       ...launchInputId,
       ...resumedFrom,
@@ -162,7 +162,8 @@ export function replayRunProgressFromEvents(
       ...modelBindings,
       concurrencyCeiling: defaultConcurrency,
     }),
-  );
+    ...(trailingSettle ? {} : { syntheticSettlement: true }),
+  });
   return payloads;
 }
 

@@ -32,12 +32,7 @@ export const TaskOutputInputSchema = z
 
 export type TaskOutputInput = z.infer<typeof TaskOutputInputSchema>;
 
-export const TaskOutputInputJsonSchema = {
-  ...toToolJsonSchema(TaskOutputInputSchema),
-
-  // The provider schema still requires the model to explicitly pass task_id, block, and timeout.
-  required: ["task_id", "block", "timeout"],
-};
+export const TaskOutputInputJsonSchema = toToolJsonSchema(TaskOutputInputSchema);
 
 export const TaskOutputTaskSchema = z
   .object({
@@ -87,7 +82,7 @@ export const TaskOutputResultJsonSchema = toToolJsonSchema(TaskOutputResultSchem
 
 function semanticBoolean(
   schema: z.ZodDefault<z.ZodBoolean>,
-): z.ZodEffects<z.ZodDefault<z.ZodBoolean>, boolean, unknown> {
+): z.ZodPreprocess<z.ZodDefault<z.ZodBoolean>> {
   return z.preprocess((value) => {
     if (value === "true") return true;
     if (value === "false") return false;

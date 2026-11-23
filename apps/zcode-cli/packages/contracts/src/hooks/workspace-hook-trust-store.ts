@@ -5,8 +5,7 @@
  * to disagree about the same corrupted file.
  *
  * Re-export here to preserve existing contracts import paths (adapters/bootstrap/core, etc.).
- * Shared and contracts use separate zod4 / zod3 instances; this re-export must not be used by
- * zod3 schema compositions inside contracts.
+ * Contracts and shared use the same zod 4, so schemas inside contracts can compose these schemas directly.
  */
 export {
   WORKSPACE_HOOK_TRUST_STORE_SCHEMA_VERSION,

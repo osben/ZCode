@@ -7,6 +7,7 @@
  */
 import {
   type ParsedShortcutBinding,
+  type ShortcutCommandEntry,
   type ShortcutCommandId,
   parseShortcutBinding,
   serializeShortcutBinding,
@@ -350,33 +351,109 @@ export function isShortcutRecordingActive(): boolean {
 export type EffectiveShortcutBindings = Readonly<Record<ShortcutCommandId, readonly string[]>>;
 
 /**
+ * Physical-equivalence normalization: the matching side treats platform-equivalent combinations as the same physical key
+ * (CmdOrCtrl ≡ explicit Ctrl on Windows/Linux; AltGr adds the Alt bit). If conflict detection and default-key yielding only
+ * compared strings exactly, a platform-normalized recorder value (for example, recording ⌃M on Windows yields "CmdOrCtrl+m")
+ * would miss explicit Ctrl bindings (such as the toolbar's "Ctrl+m"), causing a silent shadowing with no warning.
+ * Normalize into a stable comparison key according to the modifiersMatch semantics:
+ * - Non-Apple: primary = cmdOrCtrl | ctrl | altGr (same physical primary modifier), alt = alt | altGr
+ * - Apple: primary = cmdOrCtrl (meta), secondaryCtrl = ctrl (separate physical key), alt = alt | altGr
+ * Default-key yielding (this file) and conflict detection (conflicts.ts) share this one definition.
+ */
+export function canonicalShortcutBindingKey(binding: string, isApple: boolean): string | null {
+  const parsed = parseShortcutBinding(binding);
+  if (parsed === null) {
+    return null;
+  }
+  if (isApple) {
+    // On Apple, modifiersMatch's wantPrimaryOrCtrl also treats altGr as a primary modifier
+    // (AltGr+m ≡ ⌘⌥M ≡ CmdOrCtrl+Alt+m), so include it in canonical primary-modifier normalization.
+    return `${parsed.cmdOrCtrl || parsed.altGr ? 1 : 0}${parsed.ctrl ? 1 : 0}${
+      parsed.alt || parsed.altGr ? 1 : 0
+    }${parsed.shift ? 1 : 0}:${parsed.key}`;
+  }
+  return `${parsed.cmdOrCtrl || parsed.ctrl || parsed.altGr ? 1 : 0}${
+    parsed.alt || parsed.altGr ? 1 : 0
+  }${parsed.shift ? 1 : 0}:${parsed.key}`;
+}
+
+/**
  * Compute the active binding table from command defaults plus user overrides (replace the entire set).
  * An explicit empty array means the user cleared the binding to “unset” (the active table stays empty instead of reverting to the default; rebinding another command can clear the displaced command this way);
  * if every entry is invalid, fall back to defaults (invalid entries manually added to setting.json must not disable all shortcuts).
+ *
+ * Default keys yield to explicit overrides (docs/desktop/shortcut-settings-spec.md §5): a command added after shortcut
+ * customization shipped may have a default key the user already bound explicitly to another command. A window-channel
+ * command without its own override drops any default key physically equivalent to another same-scope command's explicit
+ * override, so the user's binding is never silently taken, and the settings page shows it as unassigned.
+ * The result is derived from overrides only and is not written to disk: once the user removes that override, the default comes back.
+ * Menu-channel defaults are resolved by main's resolveMenuAccelerator and do not yield, so both sides stay consistent.
  */
 export function resolveEffectiveShortcutBindings(
   overrides?: Record<string, readonly string[]>,
+  platformInfo?: KeyboardShortcutPlatformInfo,
 ): EffectiveShortcutBindings {
-  const effective: Record<ShortcutCommandId, readonly string[]> = {} as Record<
-    ShortcutCommandId,
-    readonly string[]
-  >;
+  // 用户显式覆盖的合法条目；全部非法的命令按未覆盖处理（回退默认）。
+  const explicit = new Map<ShortcutCommandId, readonly string[]>();
   for (const entry of SHORTCUT_COMMANDS) {
     const override = overrides?.[entry.id];
     if (override === undefined) {
-      effective[entry.id] = entry.defaultBindings;
       continue;
     }
     const valid = override.filter((binding) => parseShortcutBinding(binding) !== null);
     if (override.length > 0 && valid.length === 0) {
       logger.warn("[shortcuts] 覆盖绑定全部非法，回退默认", { commandId: entry.id, override });
-      effective[entry.id] = entry.defaultBindings;
       continue;
     }
     if (valid.length !== override.length) {
       logger.warn("[shortcuts] 忽略非法覆盖条目", { commandId: entry.id, override });
     }
-    effective[entry.id] = valid;
+    explicit.set(entry.id, valid);
+  }
+
+  const isApple = isAppleKeyboardPlatform(platformInfo);
+  const effective = {} as Record<ShortcutCommandId, readonly string[]>;
+  for (const entry of SHORTCUT_COMMANDS) {
+    const own = explicit.get(entry.id);
+    if (own !== undefined) {
+      effective[entry.id] = own;
+      continue;
+    }
+    if (entry.channel === "menu" || explicit.size === 0) {
+      effective[entry.id] = entry.defaultBindings;
+      continue;
+    }
+    const kept = entry.defaultBindings.filter(
+      (binding) => !isTakenByOtherExplicitOverride(entry, binding, explicit, isApple),
+    );
+    effective[entry.id] =
+      kept.length === entry.defaultBindings.length ? entry.defaultBindings : kept;
   }
   return effective;
+}
+
+/** 默认键是否已被同作用域其他命令的显式覆盖占用（物理等价比较）。 */
+function isTakenByOtherExplicitOverride(
+  entry: ShortcutCommandEntry,
+  binding: string,
+  explicit: ReadonlyMap<ShortcutCommandId, readonly string[]>,
+  isApple: boolean,
+): boolean {
+  const key = canonicalShortcutBindingKey(binding, isApple);
+  if (key === null) {
+    return false;
+  }
+  const scope = entry.scope ?? "global";
+  for (const other of SHORTCUT_COMMANDS) {
+    if (other.id === entry.id || (other.scope ?? "global") !== scope) {
+      continue;
+    }
+    const otherBindings = explicit.get(other.id);
+    if (
+      otherBindings?.some((candidate) => canonicalShortcutBindingKey(candidate, isApple) === key)
+    ) {
+      return true;
+    }
+  }
+  return false;
 }

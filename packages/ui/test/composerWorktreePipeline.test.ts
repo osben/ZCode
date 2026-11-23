@@ -2,6 +2,7 @@
 // state machine transitions (consume-once, withdraw/orphan), runner idempotency and outcome
 // mapping, and stale-creating reconcile.
 // @vitest-environment jsdom
+import "./resizeObserverStub.js";
 import { act, cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { createElement, type ReactNode } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";

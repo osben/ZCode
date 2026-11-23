@@ -136,8 +136,7 @@ function fakeFileSystemPort(
       globRequests.push(request);
       const all = options.globFiles ?? [];
       // Mirrors the real adapter's truncation semantics: slice within maxResults; truncated means more remain.
-      const files =
-        request.maxResults === undefined ? [...all] : all.slice(0, request.maxResults);
+      const files = request.maxResults === undefined ? [...all] : all.slice(0, request.maxResults);
       return {
         path: request.path,
         pattern: request.pattern,
@@ -251,7 +250,7 @@ describe("git world reads — exact argv", () => {
     ]);
     expect(gitCalls.map((c) => c.argv)).toEqual([
       ["rev-parse", "--show-prefix"],
-      ["diff", "--name-only", "-z", "HEAD", "--", "."],
+      ["diff", "--no-ext-diff", "--no-textconv", "--name-only", "-z", "HEAD", "--", "."],
       ["ls-files", "--others", "--exclude-standard", "-z", "--full-name", "--", "."],
     ]);
     // Every call runs with the workspace root as cwd.
@@ -269,7 +268,7 @@ describe("git world reads — exact argv", () => {
     ]);
     expect(gitCalls.map((c) => c.argv)).toEqual([
       ["rev-parse", "--show-prefix"],
-      ["diff", "--name-only", "-z", "main", "--", "."],
+      ["diff", "--no-ext-diff", "--no-textconv", "--name-only", "-z", "main", "--", "."],
     ]);
   });
 
@@ -279,7 +278,15 @@ describe("git world reads — exact argv", () => {
     // "what counts as a change" differently.
     const noPath = makeDriver({ git: [{ stdout: "@@ -1 +1 @@\n" }] });
     await expect(noPath.driver.executeWorldRead("git-diff", [])).resolves.toContain("@@");
-    expect(noPath.gitCalls[0]?.argv).toEqual(["diff", "--relative", "HEAD", "--", "."]);
+    expect(noPath.gitCalls[0]?.argv).toEqual([
+      "diff",
+      "--no-ext-diff",
+      "--no-textconv",
+      "--relative",
+      "HEAD",
+      "--",
+      ".",
+    ]);
 
     const withPath = makeDriver({ git: [{ stdout: "diff" }] });
     await withPath.driver.executeWorldRead("git-diff", ["main", "src/a.ts"]);
@@ -288,6 +295,8 @@ describe("git world reads — exact argv", () => {
     // default pathspec.
     expect(withPath.gitCalls[0]?.argv).toEqual([
       "diff",
+      "--no-ext-diff",
+      "--no-textconv",
       "--relative",
       "main",
       "--",
@@ -298,6 +307,8 @@ describe("git world reads — exact argv", () => {
     await pathOnly.driver.executeWorldRead("git-diff", [undefined, "src/a.ts"]);
     expect(pathOnly.gitCalls[0]?.argv).toEqual([
       "diff",
+      "--no-ext-diff",
+      "--no-textconv",
       "--relative",
       "HEAD",
       "--",
@@ -319,7 +330,15 @@ describe("git world reads — exact argv", () => {
     // Models writing Windows-style relative paths is routine; git pathspecs accept `/` on all three platforms.
     const { driver, gitCalls } = makeDriver({ git: [{ stdout: "diff" }] });
     await driver.executeWorldRead("git-diff", ["HEAD", "src\\app\\a.ts"]);
-    expect(gitCalls[0]?.argv).toEqual(["diff", "--relative", "HEAD", "--", "src/app/a.ts"]);
+    expect(gitCalls[0]?.argv).toEqual([
+      "diff",
+      "--no-ext-diff",
+      "--no-textconv",
+      "--relative",
+      "HEAD",
+      "--",
+      "src/app/a.ts",
+    ]);
   });
 
   it("status and log use their fixed argv", async () => {
@@ -650,7 +669,15 @@ describe("git world reads — argument validation", () => {
     for (const base of ["HEAD", "HEAD~3", "HEAD^", "main", "origin/main", "v1.2.3", "abc123"]) {
       const { driver, gitCalls } = makeDriver({ git: [{ stdout: "" }] });
       await driver.executeWorldRead("git-diff", [base]);
-      expect(gitCalls[0]?.argv).toEqual(["diff", "--relative", base, "--", "."]);
+      expect(gitCalls[0]?.argv).toEqual([
+        "diff",
+        "--no-ext-diff",
+        "--no-textconv",
+        "--relative",
+        base,
+        "--",
+        ".",
+      ]);
     }
   });
 
@@ -659,6 +686,8 @@ describe("git world reads — argument validation", () => {
     await driver.executeWorldRead("git-diff", ["HEAD", "sub/nested/deep.ts"]);
     expect(gitCalls[0]?.argv).toEqual([
       "diff",
+      "--no-ext-diff",
+      "--no-textconv",
       "--relative",
       "HEAD",
       "--",

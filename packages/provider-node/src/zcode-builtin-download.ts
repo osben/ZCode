@@ -1,5 +1,6 @@
 import { z } from "zod";
 import {
+  resolveClientConfigRefreshIntervalMs,
   resolveOptionalZCodeAuthorization,
   stripZcodeForkVersionSuffix,
   type ZCodeJwtTokenResolver,
@@ -40,12 +41,25 @@ export interface ZCodeBuiltinDownloadOptions {
   readonly request: (url: string | URL, init: RequestInit) => Promise<Response>;
   readonly signal?: AbortSignal;
   readonly resolveZcodeJwtToken?: ZCodeJwtTokenResolver;
+  /** 第一跳下发的地址与它相同时不请求 CDN；何时需要兜底重下由调用方决定。 */
+  readonly reuseUrl?: string;
 }
+
+/** Every result carries the refresh interval delivered by the first hop, so the synchronizer can schedule the next round. */
+export type ZCodeBuiltinDownloadResult =
+  | {
+      readonly kind: "release";
+      readonly release: ZCodeBuiltinRelease;
+      readonly url: string;
+      readonly refreshIntervalMs: number;
+    }
+  | { readonly kind: "not-modified"; readonly url: string; readonly refreshIntervalMs: number }
+  | { readonly kind: "missing"; readonly refreshIntervalMs: number };
 
 /** Shared download boundary for App/CLI. The total budget includes both response bodies and does not depend on ApiClient's response-header timeout. */
 export async function downloadZCodeBuiltinRelease(
   options: ZCodeBuiltinDownloadOptions,
-): Promise<ZCodeBuiltinRelease | null> {
+): Promise<ZCodeBuiltinDownloadResult> {
   const controller = new AbortController();
   let timedOut = false;
   const timer = setTimeout(() => {
@@ -66,10 +80,16 @@ export async function downloadZCodeBuiltinRelease(
     url.searchParams.set("platform", options.platform);
     const authorization = await resolveOptionalZCodeAuthorization(options.resolveZcodeJwtToken);
     const payload = clientConfigSchema.parse(await readJson(url, authorization));
+    // 间隔与地址各自校验：间隔写错只回落默认值，不能让整次 Built-in 刷新失败。
+    const refreshIntervalMs = resolveClientConfigRefreshIntervalMs(payload.data.configs);
     const downloadUrl = payload.data.configs.builtin_provider_config_json;
-    if (downloadUrl === undefined) return null;
+    if (downloadUrl === undefined) return { kind: "missing", refreshIntervalMs };
+    if (downloadUrl === options.reuseUrl) {
+      return { kind: "not-modified", url: downloadUrl, refreshIntervalMs };
+    }
     stage = "cdn";
-    return decodeZCodeBuiltinRelease(await readJson(new URL(downloadUrl)));
+    const release = decodeZCodeBuiltinRelease(await readJson(new URL(downloadUrl)));
+    return { kind: "release", release, url: downloadUrl, refreshIntervalMs };
   } catch (error) {
     // Do not pass URLs with query strings, response bodies, or Schema input (which may contain credentials) to higher-level logs.
     const reason = signal.aborted

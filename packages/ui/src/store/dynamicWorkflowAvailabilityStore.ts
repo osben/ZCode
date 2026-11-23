@@ -13,7 +13,9 @@ import { logger } from "@/logger.js";
 // - No forceRefresh here. Host derives the CLI tool policy from the same 1h snapshot;
 // an independent renderer refresh could make the UI show an entry point while the model has no tool.
 // To force a new read, call refresh().
-// - Treat a request failure as disabled (fail-closed, matching resolveDynamicWorkflowClientConfig),
+// - A failed server-side client/configs request is handled by Host itself according to onDemand
+// (DYNAMIC_WORKFLOW_MODE_ON_FETCH_FAILURE), so it never reaches the catch here.
+// - A failure here is an RPC failure to Host; treat it as disabled (fail-closed, matching resolveDynamicWorkflowClientConfig),
 // but **do not cache the failure**: a new service instance should retry. Mobile `/remote` gets an unsupported proxy
 // before the workspace bridge is ready, which necessarily throws; after bridging, the accessor changes and must be able to recover.
 

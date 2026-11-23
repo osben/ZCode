@@ -59,6 +59,19 @@ describe("context budget policy thresholds", () => {
     expect(getMicrocompactThresholdTokens({ contextWindow: 200_000 })).toBe(149_400);
   });
 
+  it("scales the output reserve with large windows like the 4.0.0 runtime policy", () => {
+    // 1M window: reserve = min(32_000, max(21_000, 80_000)) = 32_000; 1_000_000 - 32_000 - 13_000
+    expect(getAutoCompactThresholdTokens({ contextWindow: 1_000_000 })).toBe(955_000);
+    // 1M window, 128K max output: reserve = min(128_000, 80_000) = 80_000
+    expect(
+      getAutoCompactThresholdTokens({ contextWindow: 1_000_000, maxOutputTokens: 128_000 }),
+    ).toBe(907_000);
+    // Up to 262.5K the reserve stays 21K: 262_500 - 21_000 - 13_000
+    expect(getAutoCompactThresholdTokens({ contextWindow: 262_500, maxOutputTokens: 64_000 })).toBe(
+      228_500,
+    );
+  });
+
   it("reserves a smaller output budget when the model max output is below the cap", () => {
     // 200_000 - 8_000 - 13_000 = 179_000
     expect(getAutoCompactThresholdTokens({ contextWindow: 200_000, maxOutputTokens: 8_000 })).toBe(

@@ -11,6 +11,11 @@ export const DEFAULT_COMPACT_CONTEXT_WINDOW = 200_000;
 export const DEFAULT_AUTOCOMPACT_OUTPUT_RESERVE_TOKENS = 32_000;
 /** Hard cap on the reserved output budget so compaction never fires later than preflight allows. */
 export const PREFLIGHT_AUTOCOMPACT_OUTPUT_RESERVE_TOKENS = 21_000;
+/**
+ * Large windows reserve a share of the window instead of the fixed 21K, because the compaction summary cap
+ * equals the reserve (upstream 4.0.0). Windows up to 262.5K keep 21K.
+ */
+export const AUTOCOMPACT_OUTPUT_RESERVE_CONTEXT_WINDOW_RATIO = 0.08;
 export const AUTOCOMPACT_BUFFER_TOKENS = 13_000;
 export const DEFAULT_MICROCOMPACT_THRESHOLD_RATIO = 0.9;
 export const DEFAULT_MICROCOMPACT_THRESHOLD_BUFFER_TOKENS = 2_000;
@@ -37,10 +42,18 @@ function toNonNegativeInt(value: number | undefined): number | undefined {
   return Math.floor(value);
 }
 
-export function getAutoCompactOutputReserveTokens(maxOutputTokens?: number): number {
+export function getAutoCompactOutputReserveTokens(
+  maxOutputTokens?: number,
+  contextWindow?: number,
+): number {
+  const windowTokens = toPositiveInt(contextWindow) ?? DEFAULT_COMPACT_CONTEXT_WINDOW;
+  const windowReserve = Math.max(
+    PREFLIGHT_AUTOCOMPACT_OUTPUT_RESERVE_TOKENS,
+    Math.floor(windowTokens * AUTOCOMPACT_OUTPUT_RESERVE_CONTEXT_WINDOW_RATIO),
+  );
   return Math.min(
     toNonNegativeInt(maxOutputTokens) ?? DEFAULT_AUTOCOMPACT_OUTPUT_RESERVE_TOKENS,
-    PREFLIGHT_AUTOCOMPACT_OUTPUT_RESERVE_TOKENS,
+    windowReserve,
   );
 }
 
@@ -55,7 +68,8 @@ export function getEffectiveContextWindowSize({
   }
   return Math.max(
     0,
-    windowTokens - Math.min(getAutoCompactOutputReserveTokens(maxOutputTokens), windowTokens),
+    windowTokens -
+      Math.min(getAutoCompactOutputReserveTokens(maxOutputTokens, windowTokens), windowTokens),
   );
 }
 

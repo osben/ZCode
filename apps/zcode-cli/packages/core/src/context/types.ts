@@ -37,7 +37,6 @@ export type ContextSource =
   | "session_context" // git snapshot context
   | "model" // Identity of the currently executing model
   | "execution_worktree" // Execution-worktree isolation notice (dynamic system section)
-  | "skills" // Available skills
   | "tools" // Tool definitions
   | "request_user_context" // Combined provider-visible request-level user context
   | "memory" // Long-term memory read path
@@ -49,6 +48,8 @@ export type ContextSource =
   | "dynamic_behavior" // Dynamic behavior boundaries
   | "session_guidance" // Guidance for currently available built-in capabilities
   | "context_management" // Long-context management guidance
+  | "finishing_work" // Finishing: do not stop while work is still owed
+  | "memory_notes" // Rules for what to save as memory and notes
   | "total_tokens" // Fixed token budget line
   | "desktop_context"; // ZCode Desktop rendering and interaction protocol
 
@@ -96,10 +97,7 @@ export interface InstructionAnnouncement {
   reason?: InstructionRefreshReason;
 }
 
-export type ContextMetaUserAttachmentSource =
-  | "skills_listing"
-  | "context_prefix"
-  | "session_context";
+export type ContextMetaUserAttachmentSource = "context_prefix" | "session_context";
 
 export interface ContextMetaUserAttachment {
   source: ContextMetaUserAttachmentSource;
@@ -151,10 +149,10 @@ export interface ContextBuilderConfig {
   memoryRoot?: string;
   memoryIndexContent?: string;
   memoryIndexAsContext?: boolean;
+  /** Skill catalog at session start: only decides the skill guidance wording in the system prompt; the list is rendered by the skills_listing collector. */
   skills?: SkillLoadOutcome;
   agentProfiles?: readonly AgentProfile[];
   embeddedSearchEnabled?: boolean;
-  skillMetadataBudget?: number;
   customSystemPrompt?: string;
   /**
    * Identity input for a dynamic workflow subagent (workflow child). When present, use the builder's third path:
@@ -162,7 +160,6 @@ export interface ContextBuilderConfig {
    * rather than replacing the whole prompt as `customSystemPrompt` does. Mutually exclusive with `customSystemPrompt`.
    */
   workflowActor?: WorkflowActorContext;
-  language?: string;
   outputStyle?: OutputStylePromptConfig;
   /**
    * User overrides for the editable system-prompt sections (docs/system-prompt-overrides.md).
@@ -173,6 +170,8 @@ export interface ContextBuilderConfig {
   guidanceToolNames?: readonly string[];
   /** Frozen incognito profile; absent for a normal session. Gates identity, harness and environment text. */
   incognito?: IncognitoProfile;
+  /** Runtime switch for the token budget reminder; when on, the system prompt ends with a fixed budget line. Off by default. */
+  totalTokensReminder?: boolean;
 }
 
 /**

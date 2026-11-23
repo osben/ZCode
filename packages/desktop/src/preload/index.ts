@@ -1,3 +1,9 @@
+import {
+  preinstalledToolsStateSchema,
+  preinstalledToolsCommandSchema,
+  type PreinstalledToolsCommand,
+  type PreinstalledToolsState,
+} from "@zcode/shared/preinstalled-tools";
 import { installPluginSandboxHostBridge } from "./pluginSandbox/hostBridge.js";
 import type {
   ExtensionNotificationClick,
@@ -303,6 +309,24 @@ window.addEventListener("DOMContentLoaded", updateRendererProcessTitle, {
  * and is accessed through MessagePort RPC, no longer through this bridge.
  */
 contextBridge.exposeInMainWorld("zcode", {
+  executePreinstalledToolsCommand: async (command: PreinstalledToolsCommand): Promise<void> => {
+    await ipcRenderer.invoke(
+      PlatformChannels.ExecutePreinstalledToolsCommand,
+      preinstalledToolsCommandSchema.parse(command),
+    );
+  },
+  getPreinstalledToolsState: async (): Promise<PreinstalledToolsState> =>
+    preinstalledToolsStateSchema.parse(
+      await ipcRenderer.invoke(PlatformChannels.GetPreinstalledToolsState),
+    ),
+  onPreinstalledToolsState: (callback: (state: PreinstalledToolsState) => void): (() => void) => {
+    const handler = (_event: unknown, value: unknown) => {
+      const parsed = preinstalledToolsStateSchema.safeParse(value);
+      if (parsed.success) callback(parsed.data);
+    };
+    ipcRenderer.on(PlatformChannels.PreinstalledToolsState, handler);
+    return () => ipcRenderer.removeListener(PlatformChannels.PreinstalledToolsState, handler);
+  },
   connectRemote: (
     options: RemoteTarget,
     requestId?: string,
@@ -1048,6 +1072,9 @@ contextBridge.exposeInMainWorld("zcode", {
   /** Sync the application menu language */
   setApplicationLocale: (locale: Locale) =>
     ipcRenderer.invoke(PlatformChannels.SetApplicationLocale, locale),
+  /** Save the Agent reply language (an empty string clears it) */
+  setReplyLanguage: (language: string): Promise<void> =>
+    ipcRenderer.invoke(PlatformChannels.SetReplyLanguage, language),
   /** Read the host system language */
   getSystemLocale: (): Promise<Locale> => ipcRenderer.invoke(PlatformChannels.GetSystemLocale),
   /** Sync the title bar light/dark color */

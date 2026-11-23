@@ -19,7 +19,11 @@ export interface ConfirmDialogRequest {
   intent?: string;
   /** Stable visual spec for specific business dialogs; the default confirm dialog is
    *   unaffected. */
-  presentation?: "automation-confirmation" | "source-server-boundary" | "yolo-confirmation";
+  presentation?:
+    | "automation-confirmation"
+    | "source-server-boundary"
+    | "yolo-confirmation"
+    | "update-confirmation";
   confirmLabel?: string;
   confirmDisabled?: boolean;
   /** 弹窗挂载后开始只读检查；更新仅属于本次请求，关闭即取消。 */

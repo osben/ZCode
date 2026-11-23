@@ -1,3 +1,6 @@
+import { resolvePreinstalledToolsRelease } from "@zcode/shared/preinstalled-tools";
+import { resolvePreinstalledToolsBinDir } from "@zcode/shared/preinstalled-tools/node";
+import { ZCODE_PRODUCT_FLAVOR, resolveZCodeRuntimeEnv } from "@zcode/shared";
 import { normalizeRemoteConnectionError, sanitizeRemoteConnectionLog } from "@zcode/shared";
 import { createCredentialCipherBridge } from "@zcode/shared/credential-security";
 import { join } from "node:path";
@@ -106,6 +109,7 @@ import {
   type AppControlServiceHandle,
   type WindowHostExtensions,
   getAppConfigDir,
+  getZCodeDataRootDir,
   OffPeakModelUnavailableError,
   OffPeakPermanentDispatchError,
   type BotProjectConnection,
@@ -1380,16 +1384,16 @@ const runtimeProcessLifecycleReporter = {
   },
 } satisfies NonNullable<Parameters<typeof createLocalServices>[0]>["processLifecycleReporter"];
 
+let activeV4SessionCount = 0;
+let legacyRuntimeTaskCount = 0;
 const runtimeTaskReporter = {
+  onActiveSessionCountChanged(event: { runningTaskCount: number }) {
+    activeV4SessionCount = event.runningTaskCount;
+    reportHostRunningTaskCount();
+  },
   onRunningTaskCountChanged(event) {
-    if (!parentPort) {
-      return;
-    }
-
-    parentPort.postMessage({
-      type: HostResponseTypes.AgentRunningTaskCountChanged,
-      runningTaskCount: event.runningTaskCount,
-    });
+    legacyRuntimeTaskCount = event.runningTaskCount;
+    reportHostRunningTaskCount();
   },
 } satisfies NonNullable<Parameters<typeof createLocalServices>[0]>["taskRuntimeReporter"];
 
@@ -1413,8 +1417,14 @@ const cuaOperationStateReporter = {
 
 let untrackedPromptRpcCount = 0;
 function reportHostRunningTaskCount(): void {
-  runtimeTaskReporter.onRunningTaskCountChanged({
-    runningTaskCount: workspaceTaskTracker.getTotalRunningTaskCount() + untrackedPromptRpcCount,
+  // v4 会话与旧代理分别报告，统一出口避免旧 ready 归零覆盖仍在执行的后台工作。
+  parentPort?.postMessage({
+    type: HostResponseTypes.AgentRunningTaskCountChanged,
+    runningTaskCount:
+      activeV4SessionCount +
+      legacyRuntimeTaskCount +
+      workspaceTaskTracker.getTotalRunningTaskCount() +
+      untrackedPromptRpcCount,
   });
 }
 
@@ -1890,6 +1900,11 @@ function resolveHostClientLanguage(): Locale | undefined {
 }
 // Main holds InitLocal while another Host starts, so a locale change can reach this Host first; the older InitLocal value must not overwrite it.
 let applicationLocaleChangedBeforeInit = false;
+/**
+ * Agent reply language (null means unset), returned for the CLI's session/readReplyLanguage.
+ * The value is held by Main; this Host only trusts the InitLocal initial value and reply-language-changed, and does not read setting.json.
+ */
+let replyLanguage: string | null = null;
 let activeHostApiNetworkTransport: HostApiNetworkTransport | null = null;
 let sourceServerDirectory: SourceServerDirectory | null = null;
 let sourceServerConnectionManager: SourceServerConnectionManager | null = null;
@@ -2849,7 +2864,14 @@ function exposeServicesOnMessagePort(
   // Fork: every attachment owns unread signals (ownsUnreadSignals defaults to true), so the
   // web-remote-replayable attachment forwards them to the phone sidebar as well. Upstream gates this
   // to the local desktop-continuous attachment; that gate is not ported.
-  const controllerAttachment = windowHostControllerRuntime.createAttachmentService();
+  const controllerAttachment = windowHostControllerRuntime.createAttachmentService(
+    true,
+    // The manual sidebar order lives only in the desktop renderer preferences: the desktop reports it and it is overlaid
+    // on the phone readTree; the phone attachment must not write it.
+    clientMode === "desktop-continuous"
+      ? { onProjectDisplayOrder: (order) => webRemoteProjectTreeActivity.setProjectOrder(order) }
+      : {},
+  );
   const overrides = new Map<string, unknown>([
     [IWindowControllerService.channelName, controllerAttachment],
   ]);
@@ -3285,6 +3307,13 @@ parentPort.on("message", async (e: Electron.MessageEvent) => {
     !applicationLocaleChangedBeforeInit
   ) {
     applicationLocale = msg.locale;
+  }
+  if (msg.type === HostMessageTypes.InitLocal) {
+    replyLanguage = msg.replyLanguage ?? null;
+  }
+  if (msg.type === HostMessageTypes.ReplyLanguageChanged) {
+    replyLanguage = msg.replyLanguage;
+    return;
   }
   if (msg.type === HostMessageTypes.ApplicationLocaleChanged) {
     applicationLocale = msg.locale;
@@ -4135,6 +4164,14 @@ parentPort.on("message", async (e: Electron.MessageEvent) => {
           log: (message, details) => logger.warn(message, details),
           establishOwner: () => {
             const initializedServices = createLocalServices({
+              // 固定目录与发布目标无关；准备完成后，既有会话下一条命令即可找到入口。
+              preinstalledToolsBinDir: resolvePreinstalledToolsBinDir({
+                dataRoot: getZCodeDataRootDir(),
+                release: resolvePreinstalledToolsRelease({
+                  runtimeEnv: resolveZCodeRuntimeEnv(process.env),
+                  productFlavor: ZCODE_PRODUCT_FLAVOR,
+                }),
+              }),
               onAppControlServiceCreated: (handle) => {
                 appControlForExtensions = handle;
               },
@@ -4340,6 +4377,7 @@ parentPort.on("message", async (e: Electron.MessageEvent) => {
               prepareLegacyAccountConnections,
               hostApiNetworkTransport,
               resolveClientLanguage: resolveHostClientLanguage,
+              resolveReplyLanguage: () => replyLanguage,
               authorizeLocalMediaPreviewPath,
               // launch.md "The user's choice": when the local user's choice changes, push it to all online remote Hosts of this window.
               forwardDynamicWorkflowUserMode: (mode) => {

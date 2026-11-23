@@ -1,7 +1,6 @@
 import { createSystemCredentialCipher } from "@zcode/shared/credential-security";
 import { createHash } from "node:crypto";
 import { readFile } from "node:fs/promises";
-import { join } from "node:path";
 import {
   providerProvisioningEnvelopeSchema,
   OAUTH_LINKED_BIGMODEL_KEY,
@@ -17,7 +16,6 @@ import { decodeProviderConfigFile, encodeProviderConfigFile } from "@zcode/provi
 import { type CredentialCipherProvider } from "../credential/providers/credentialCipherProvider.js";
 import type { ISettingService } from "../setting/setting.js";
 
-const CREDENTIAL_FILE_NAME = "credentials.json";
 export const PROVIDER_PROVISIONING_LEGACY_OAUTH_CREDENTIAL_KEYS = [
   "oauth:active_provider",
   "oauth:zai:access_token",
@@ -166,10 +164,6 @@ function isFileNotFound(error: unknown): boolean {
     "code" in error &&
     (error as { code?: unknown }).code === "ENOENT"
   );
-}
-
-export function resolveCredentialFilePath(appConfigDir: string): string {
-  return join(appConfigDir, CREDENTIAL_FILE_NAME);
 }
 
 /** Enumerate only the physical keys in the Provisioning allowlist so the target can implement replace-allowlist deletion semantics. */

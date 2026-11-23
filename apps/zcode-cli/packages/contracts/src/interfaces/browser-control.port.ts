@@ -8,10 +8,9 @@ import type { TraceContext } from "../tracing/tracer.js";
  * it into a ZCode Protocol interaction/browserExecute reverse request, executed by the app
  * (host → main WebContentsView/CDP).
  *
- * Type note: BrowserCommand/BrowserCommandResult mirror the browser-use contract in
- * @zcode/shared. Define structural copies here (without importing @zcode/shared) to avoid
- * coupling agent contracts' zod v3 to shared's zod v4. The protocol boundary uses shared's
- * zod schema for runtime validation, and round-trip tests ensure both sides stay consistent.
+ * Type note: BrowserCommand/BrowserCommandResult mirror the browser-use contract in @zcode/shared.
+ * A structural mirror is defined here (historical reason: contracts used zod 3 and could not reuse shared's zod 4 contract; both sides
+ * are now the same zod 4, and reusing it directly is left for later). The protocol boundary uses shared's zod schema for runtime validation, and round-trip tests keep both sides consistent.
  */
 
 /** Playwright is a Tab API layer, not a backend family. */

@@ -130,6 +130,8 @@ CMD tail redirection: `git reset --hard 2>nul` and `git reset --hard > out.txt` 
 
 Shell selection missing: `bashShellSelection === undefined` is an infrastructure state, not a syntax boundary. Like the existing `isRuntimeReadOnlyBashCommand`, matching falls back to POSIX grammar; explicit `legacy-shell` stays `unsupported`. No platform probing.
 
+Windows fallback shell (2026-11-17): when Windows cannot find Git Bash, the selection used to be `legacy-shell`, every dangerous command was `unsupported`, and under Guarded it ran directly. Now that fallback is `dialect=cmd` (`path=ComSpec ?? cmd.exe`) and is matched with CMD grammar, the same as a hand-picked CMD; `legacy-shell` remains only for the POSIX `/bin/sh` fallback. See [Bash Effective Shell Snapshot](runtime-tools/bash-effective-shell-snapshot.md).
+
 Out of scope examples: `timeout`/`nohup`/`nice`/`exec`/`command`/`xargs` prefixes (outside the wrapper allowlist) and CMD `format`.
 
 ## Single authority and event order

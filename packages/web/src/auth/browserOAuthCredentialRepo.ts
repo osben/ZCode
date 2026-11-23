@@ -58,12 +58,50 @@ interface BrowserOAuthCredentialRepoStorage {
   localStorage: Storage;
 }
 
-/** One login redirect that left the app: the callback page uses it to validate state and exchange the token with the same provider and redirect URI. */
+/**
+ * Flow before a regional login (zai / zai_cn) redirects away.
+ *
+ * Bug cause: 3.18 opened the authorization tab with window.open and polled from the original page's memory; in the in-app browser the popup is null,
+ * replaces the current page, or the original page is paused in the background, so login failed. After switching to a same-page redirect the original page memory no longer exists,
+ * so the poll credential must be stored with the pending record in same-origin localStorage so the callback page (possibly another tab) can keep polling the same flow.
+ */
+export interface PendingRegionalFlow {
+  flowId: string;
+  /** Random credential valid only for this flow; removed once taken, and cleared together with pending on logout. */
+  pollToken: string;
+  /** Server authorization state; the callback finds this record by it. */
+  state: string;
+  intervalMs: number;
+  /** Deadline on the local clock: Date.now() at start plus the remaining lifetime computed from server_time. */
+  deadline: number;
+}
+
+/** One login redirect that left the app: the callback page uses it to validate state and complete the login with the same provider and redirect URI. */
 export interface PendingOAuthLogin {
   nonce: string;
   provider: WebOAuthProviderId;
   redirectUri: string;
   expectedSession: string;
+  /** 区域登录的 state 来自服务端，无法携带回跳地址，只能记在这里。 */
+  appReturnTo?: string;
+  regional?: PendingRegionalFlow;
+}
+
+function isPendingRegionalFlow(value: unknown): value is PendingRegionalFlow {
+  if (!value || typeof value !== "object") return false;
+  const flow = value as Partial<Record<keyof PendingRegionalFlow, unknown>>;
+  return (
+    typeof flow.flowId === "string" &&
+    hasText(flow.flowId) &&
+    typeof flow.pollToken === "string" &&
+    hasText(flow.pollToken) &&
+    typeof flow.state === "string" &&
+    hasText(flow.state) &&
+    typeof flow.intervalMs === "number" &&
+    Number.isFinite(flow.intervalMs) &&
+    typeof flow.deadline === "number" &&
+    Number.isFinite(flow.deadline)
+  );
 }
 
 function isPendingOAuthLogin(value: unknown): value is PendingOAuthLogin {
@@ -76,7 +114,9 @@ function isPendingOAuthLogin(value: unknown): value is PendingOAuthLogin {
     typeof login.redirectUri === "string" &&
     hasText(login.redirectUri) &&
     typeof login.expectedSession === "string" &&
-    hasText(login.expectedSession)
+    hasText(login.expectedSession) &&
+    (login.appReturnTo === undefined || typeof login.appReturnTo === "string") &&
+    (login.regional === undefined || isPendingRegionalFlow(login.regional))
   );
 }
 
@@ -377,6 +417,17 @@ export class BrowserOAuthCredentialRepo {
     if (!login) return null;
     this.writePendingLogins(logins.filter((pending) => pending !== login));
     return login;
+  }
+
+  /** 只读：回调页渲染前用它确定重试地址，不消费记录。 */
+  findRegionalPendingLogin(state: string): PendingOAuthLogin | null {
+    return this.readPendingLogins().find((pending) => pending.regional?.state === state) ?? null;
+  }
+
+  /** 取出并删除服务端 state 对应的区域登录记录；找不到时不改动其他记录。 */
+  takeRegionalPendingLogin(state: string): PendingOAuthLogin | null {
+    const login = this.findRegionalPendingLogin(state);
+    return login ? this.takePendingLogin(login.nonce) : null;
   }
 
   private readPendingLogins(): PendingOAuthLogin[] {

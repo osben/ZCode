@@ -523,6 +523,7 @@ async function runDreamConsolidation(
     phase = "agent_loop";
     const loopResult = await runMemoryAgentLoop({
       abortSignal: input.abortSignal,
+      bashShellSelection: context.bashShellSelection,
       entries: initialEntries,
       executeToolCalls: async (toolCalls, loopOptions) => {
         for (const toolCall of toolCalls) {

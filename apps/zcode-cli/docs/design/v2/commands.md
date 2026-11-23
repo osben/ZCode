@@ -3,14 +3,22 @@
 ## CLI Process Identity
 
 The CLI command name stays `zcode` for compatibility with the existing npm `bin`, scripts, help
-and doc examples. The OS-visible Node process name must be set uniformly to `zcode-cli`, so `ps`,
-Activity Monitor, Task Manager or the ZCode app-server parent-process panel never shows just
-`node` or an unstable script name.
+and doc examples. The plain CLI and the Agent keep the process name `zcode-cli`. MCP plugin
+processes started through `__zcode-plugin-host` use `zcode-mcp-<plugin-name>`, so a process viewer
+does not mistake a plugin host for the Agent.
 
-The entry layer sets `process.title = "zcode-cli"` before loading bootstrap, TUI, provider,
-storage or any module that may start async tasks. This adds no `ZCODE_*` environment variable and
-does not depend on the platform shell, binary file name or how the user launched it; plain Node
-bundles, the `tsx` dev entry and SEA binaries share the same process-name constant.
+The entry layer first picks a role from the startup subcommand, then sets `process.title` before
+loading bootstrap, TUI, provider, storage or plugin modules. The plugin name is taken from the part
+of the existing `ZCODE_PLUGIN_ID` before `@`, trimmed and lowercased; it must match
+`[a-z0-9][a-z0-9._-]{0,127}`. When it is missing or invalid, the title is `zcode-mcp`; the name is
+never guessed from a file path. The value is for display only and takes no part in permission or
+plugin identity decisions. A plain command keeps `zcode-cli` even when the plugin ID environment
+variable is set.
+
+This adds no environment variable and does not depend on the platform shell or binary file name;
+plain Node bundles, the `tsx` dev entry and SEA binaries share the entry naming logic. Storage
+migration and `--prepare-storage` are not renamed, so the Host Worker that carries them is not
+affected. How OS tools display or truncate the name is still limited by the platform.
 
 `zcode doctor --json` must report both `cli.processName` and `runtime.processTitle`, and plain
 `zcode doctor` output also shows the current process name, so scripts and manual diagnostics can
@@ -131,6 +139,13 @@ Process-level CLI commands:
   executability errors must happen before app/session creation; the implementation uses
   cross-platform path/fs APIs and argument-array spawn, no shell, and does not default to adding
   `--no-sandbox`.
+- Global `--browser-state <path>` / `--no-browser-state`: injects a read-only Playwright storage
+  state (login state) for `--browser-use=headless`. With no argument, `~/.zcode/cli/browser-state.json`
+  is loaded automatically when it exists; `--no-browser-state` turns the default load off. The two
+  are mutually exclusive, and neither can be used without `--browser-use=headless`. A missing file
+  or a validation failure must happen before app/session creation. Each session re-reads the file
+  when it creates its BrowserContext; login changes during the session are not written back. The
+  full contract is in `docs/browser-use/2026-11-17-cli-browser-state-spec.md`.
 - Global `--workflow-mode <disabled|onDemand|alwaysOn>`: decides the dynamic-workflow surface of
   this process's TUI and headless (`--prompt`, `--target`) sessions, with the same semantics as
   the server-side `dynamicWorkflow.mode` (`docs/dynamic-workflow/launch.md`, "The standalone CLI:
@@ -248,6 +263,11 @@ CLI process identity test coverage:
 - `zcode doctor --json` outputs `cli.processName = "zcode-cli"` and
   `runtime.processTitle = "zcode-cli"`.
 - Plain `zcode doctor` output includes the current process name for manual diagnostics.
+- A real plugin child process already shows `zcode-mcp-<plugin-name>` at module import time; Node
+  and desktop bundles are both verified, and the constraint that the plugin entry does not
+  evaluate Agent modules is kept.
+- When the plugin ID is missing or invalid, the title is `zcode-mcp`; plain commands are not
+  affected by the plugin ID environment variable.
 
 Headless `--prompt` test coverage:
 
@@ -264,6 +284,9 @@ CLI Browser Use test coverage:
 - With the browser-use plugin disabled, generic node_repl still works but no Chromium starts and
   no browser broker is injected.
 - app-server rejects the headless argument, preserving Desktop/Web Remote shared-host ownership.
+- Source resolution, mutual exclusion, default file discovery, pre-start failure and per-session
+  injection for `--browser-state` / `--no-browser-state` have their acceptance cases in
+  `docs/browser-use/2026-11-17-cli-browser-state-spec.md` section 9.
 - A real Chromium E2E on Linux without `DISPLAY` must go through MCP node_repl, the plugin
   browser-client, the broker and the port; mocks calling the adapter directly cannot impersonate
   the full Browser Use chain.

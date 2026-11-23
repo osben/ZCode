@@ -126,6 +126,7 @@ import {
 import { useZCodeIntl } from "@/i18n/IntlProvider.js";
 import { useBaseWorkspaceServices } from "@/hooks/useWorkspaceServices.js";
 import { getPathLeaf, toFileUrl } from "@/lib/path.js";
+import { buildFileLinkLineFocus } from "@/lib/codeViewer.js";
 import { shouldOpenAssistantHtmlInBrowser } from "@/lib/assistantPreviewCards.js";
 import { setWorkspaceSidebarResizeActive } from "@/lib/workspaceSidebarResizeState.js";
 import { buildTaskWorkspaceKey } from "@/lib/taskQueryCache.js";
@@ -395,8 +396,6 @@ const WorkspaceShellLayoutContent = memo(function WorkspaceShellLayoutComponent(
   sidePaneFullView,
   isBrowserOpen,
   supportsEmbeddedBrowser,
-  summaryPanelVariantOverride,
-  onSummaryPanelVariantOverrideChange,
   sidePaneState,
   recentClosedSidePaneTabs,
   projectName,
@@ -454,6 +453,7 @@ const WorkspaceShellLayoutContent = memo(function WorkspaceShellLayoutComponent(
   handleOpenDeveloperTools,
   handleOpenFileManager,
   handleNavigateFileManager,
+  handleCodeViewerFocusRequestApplied,
   handleOpenPluginMarket,
   handleOpenTerminalTab,
   handleOpenModelTrajectory,
@@ -2194,6 +2194,9 @@ const WorkspaceShellLayoutContent = memo(function WorkspaceShellLayoutComponent(
             type: "file",
             title: getPathLeaf(target.path),
             path: target.path,
+            // Bugfix：这里曾只传 path，链接里的行号被丢弃，预览总停在第 1 行。
+            // 每次点击带上新的 focusRequestId，复用已打开的同文件 tab 时也能重新定位。
+            ...buildFileLinkLineFocus(target.lineRanges),
             workspacePath: target.workspacePath,
             workspaceIdentity: target.workspaceIdentity,
             workspaceRemoteSessionId: target.workspaceRemoteSessionId,
@@ -2254,6 +2257,7 @@ const WorkspaceShellLayoutContent = memo(function WorkspaceShellLayoutComponent(
             type: "file",
             title: getPathLeaf(target.path),
             path: target.path,
+            ...buildFileLinkLineFocus(target.lineRanges),
             workspacePath: target.workspacePath,
             workspaceIdentity: target.workspaceIdentity,
             workspaceRemoteSessionId: target.workspaceRemoteSessionId,
@@ -2437,6 +2441,7 @@ const WorkspaceShellLayoutContent = memo(function WorkspaceShellLayoutComponent(
       onOpenDeveloperTools={handleOpenDeveloperTools}
       onOpenFileManager={handleOpenFileManager}
       onNavigateFileManager={handleNavigateFileManager}
+      onCodeViewerFocusRequestApplied={handleCodeViewerFocusRequestApplied}
       onOpenPluginMarket={handleOpenPluginMarket}
       onCreateTask={handleCreateTaskInChat}
       isMacDesktop={isMacDesktop}
@@ -2777,8 +2782,6 @@ const WorkspaceShellLayoutContent = memo(function WorkspaceShellLayoutComponent(
                   gitWorktreeReviewSourceId={gitWorktreeReviewSourceId}
                   gitWorktreeChangeSummary={gitWorktreeChangeSummary}
                   activeTaskChangeSummary={activeTaskChangeSummary}
-                  summaryPanelVariantOverride={summaryPanelVariantOverride}
-                  onSummaryPanelVariantOverrideChange={onSummaryPanelVariantOverrideChange}
                   onRefreshGit={handleRefreshGit}
                   onOpenGitReview={handleOpenGitReview}
                   onOpenBrowserUrl={handleOpenBrowserUrl}
@@ -3255,10 +3258,6 @@ const WorkspaceShellLayoutContent = memo(function WorkspaceShellLayoutComponent(
                                   activeTaskChangeSummary={activeTaskChangeSummary}
                                   gitWorktreeReviewSourceId={gitWorktreeReviewSourceId}
                                   gitWorktreeChangeSummary={gitWorktreeChangeSummary}
-                                  summaryPanelVariantOverride={summaryPanelVariantOverride}
-                                  onSummaryPanelVariantOverrideChange={
-                                    onSummaryPanelVariantOverrideChange
-                                  }
                                   onRefreshGit={handleRefreshGit}
                                   onOpenGitReview={handleOpenGitReview}
                                   onPaneActiveSessionChange={handlePaneActiveSessionChange}

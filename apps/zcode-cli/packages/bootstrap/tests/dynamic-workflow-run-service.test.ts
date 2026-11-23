@@ -4,25 +4,28 @@
  * driver, with only the model swapped for a predictable scripted adapter. The system under test is the run service itself:
  * compile once, engine-exclusive createRun, run metadata persisted, actor sessions materialized, cancel semantics, caps defaults, event paging.
  */
-
+import {
+  TYPED_SCRIPT,
+  type ActorPlan,
+  type ModelRequestLog,
+  type HarnessOptions,
+  type Harness,
+  HARNESS_PARENT_SESSION,
+  SweepableJournalStore,
+  preloadRun,
+  makeHarness,
+} from "./dynamic-workflow-run-service-fixture.js";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
-import { createTestAgentRuntime, createTestModelSelection } from "./helpers/test-agent-runtime.js";
+import { createTestAgentRuntime } from "./helpers/test-agent-runtime.js";
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { createHash } from "node:crypto";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createInMemorySessionEventStore, createSqliteSessionStore } from "@zcode/adapters/storage";
-import type {
-  DwfArtifactItem,
-  DwfRunIntrospectionQueries,
-  DwfRunLifeSpan,
-  DwfRunSessionListItem,
-} from "@zcode/adapters/storage";
+import type { DwfRunIntrospectionQueries, DwfRunLifeSpan } from "@zcode/adapters/storage";
 import {
-  CoreErrorType,
   ESCALATE_TOOL_NAME,
   RESOLVE_WORKFLOW_QUESTION_TOOL_NAME,
-  SUBMIT_RESULT_TOOL_NAME,
   createRootTraceContext,
   createSessionId,
   createToolCallId,
@@ -30,16 +33,13 @@ import {
   DYNAMIC_WORKFLOW_RUN_EVENT_PAYLOAD_LIMITS,
   LIST_WORKFLOW_RUNS_MAX_LIMIT,
   type CollaborationMode,
-  type CreateSessionTaskLinkInput,
   type DynamicWorkflowRunDetail,
   type DynamicWorkflowRunListQuery,
   type DynamicWorkflowRunListResult,
   type DynamicWorkflowRunProgressPayload,
   type MessageWithParts,
   type ModelSelection,
-  type SessionEventStorePort,
   type SessionId,
-  type SessionStorePort,
   type ToolArtifactStorePort,
   type ToolArtifactWriteRequest,
   type WorkflowEscalatePort,
@@ -64,37 +64,25 @@ import {
   InMemoryJournalStore,
   refToString,
   type JournalStorePort,
-  type NodeRecord,
   type RunEvent,
-  type RunRecord,
   type RunStatus,
   type RunStopReason,
 } from "@zcode/dynamic-workflow";
-
-import {
-  createDynamicWorkflowRunService,
-  resolveDynamicWorkflowJournalStore,
-  type DynamicWorkflowActorRuntimeInput,
-} from "../src/app/dynamic-workflow-run-service.js";
+import { resolveDynamicWorkflowJournalStore } from "../src/app/dynamic-workflow-run-service.js";
 import {
   createWorkflowConcurrencyGovernor,
   type WorkflowConcurrencyPort,
 } from "../src/app/workflow-concurrency-governor.js";
 import { resolveWorkflowDefaultConcurrency } from "../src/app/workflow-default-concurrency.js";
 import { replayRunProgress } from "../src/app/dynamic-workflow-run-replay.js";
-import { workflowActorModelPolicy } from "../src/app/workflow-actor-model.js";
-import { workflowActorToolPolicy } from "../src/app/workflow-actor-tools.js";
 import {
   WORKFLOW_QUOTA_RESUME_MARGIN_MS,
   startWorkflowQuotaAutoResume,
 } from "../src/app/dynamic-workflow-quota-resume.js";
-import {
-  fakeFileSystemPort,
-  unsupportedExecutionPort,
-  type PlannedResponse,
-} from "./workflow-driver.helpers.js";
+import { fakeFileSystemPort } from "./workflow-driver.helpers.js";
 import type { ExecutionPort } from "@zcode/contracts";
 import { mkdtempSync, readFileSync } from "node:fs";
+
 /**
  * A dedicated run cwd: the harness writes the entry file to `<cwd>/.zcode/workflow-runs/<runId>.mjs` and keeps it;
  * using process.cwd() would leave archives inside the package dir and let parallel test files overwrite each other's same-named entry files.
@@ -116,13 +104,6 @@ vi.mock("@zcode/dynamic-workflow", async (importOriginal) => {
   };
 });
 
-/** Minimal script with one typed ask; actor ref actor#1@1, ask site ask#1. */
-const TYPED_SCRIPT = [
-  "interface Answer { text: string }",
-  'const a = await agent("worker").ask<Answer>("do the thing");',
-  "return a.text;",
-].join("\n");
-
 const BROKEN_SCRIPT = 'const x: number = "definitely not a number";';
 
 /**
@@ -138,541 +119,13 @@ function traceFor(name: string) {
 }
 
 /**
- * This file's model plans add one kind over the helpers': `escalate` issues a real `escalate` tool call.
- * It runs the whole "actor hits a wall → asks → gets an answer → keeps working" chain through the **real tool layer**,
- * instead of the test holding a port and playing the model (which would skip the registration gate, allowlist re-adding, and tool-result feeding).
- */
-type ActorPlan =
-  | PlannedResponse
-  | { kind: "escalate"; question: string; context?: string }
-  // One real `Write` tool call: runs the "subagent writes file → executor emits ToolCallStarted → driver reports → engine closes the import cache"
-  // chain through the real tool layer (apps/zcode-cli/packages/dynamic-workflow/docs/execution-engine.md "Amend-resume").
-  | { kind: "write"; path: string; content: string }
-  // Hangs, but **honors cancellation**: the turn rejects with the abort signal, like a real provider.
-  //
-  // The difference from `hang` is not a detail but a watershed: `hang` simulates a provider that ignores even the AbortSignal;
-  // its turn never lands, so "did it finish writing" is forever unanswerable (the driver's quiescence ledger therefore
-  // refuses to continue its in-flight ask, see workflow-driver-quiescence.ts). This kind is the normal shape.
-  | { kind: "hang-until-cancelled" }
-  // The model request rejects with an adapter error (model-side error containment case).
-  | { kind: "throw"; error: unknown };
-
-/** Observation surface of one generateText request: the messages the model saw this round and the tools offered. */
-interface ModelRequestLog {
-  requests: { messages?: unknown; tools?: readonly { name: string }[] }[];
-}
-
-/** Scripted model adapter (same pattern as workflow-driver.helpers; this file keys plans by actor). */
-function scriptedModelAdapter(
-  responses: ActorPlan[],
-  onCall?: () => void,
-  log?: ModelRequestLog,
-): unknown {
-  let index = 0;
-  return {
-    async generateText(request?: {
-      abortSignal?: AbortSignal;
-      messages?: unknown;
-      tools?: readonly { name: string }[];
-    }) {
-      onCall?.();
-      log?.requests.push({ messages: request?.messages, tools: request?.tools });
-      const planned: ActorPlan = responses[index++] ?? {
-        kind: "text",
-        text: "(no further scripted response)",
-      };
-      // Hang: simulates an in-flight turn (cancel/resume cases use it to stop the run at a predictable point).
-      if (planned.kind === "hang") return new Promise(() => {});
-      if (planned.kind === "hang-until-cancelled") {
-        const signal = request?.abortSignal;
-        // Without a signal it degrades to a hang (must not happen: the driver builds an AbortController per ask).
-        if (signal === undefined) return new Promise(() => {});
-        return new Promise((_resolve, reject) => {
-          const fail = (): void => reject(new Error("model request aborted"));
-          if (signal.aborted) fail();
-          else signal.addEventListener("abort", fail, { once: true });
-        });
-      }
-      if (planned.kind === "throw") throw planned.error;
-      const usage = { inputTokens: 12, outputTokens: 8, totalTokens: 20 };
-      if (planned.kind === "submit") {
-        return {
-          finishReason: "tool-calls",
-          model: "scripted",
-          providerMetadata: undefined,
-          text: "",
-          toolCalls: [
-            {
-              id: `submit-call-${index}`,
-              name: SUBMIT_RESULT_TOOL_NAME,
-              input: { result: planned.result },
-            },
-          ],
-          usage,
-        };
-      }
-      if (planned.kind === "write") {
-        return {
-          finishReason: "tool-calls",
-          model: "scripted",
-          providerMetadata: undefined,
-          text: "",
-          toolCalls: [
-            {
-              id: `write-call-${index}`,
-              name: "Write",
-              input: { file_path: planned.path, content: planned.content },
-            },
-          ],
-          usage,
-        };
-      }
-      if (planned.kind === "escalate") {
-        return {
-          finishReason: "tool-calls",
-          model: "scripted",
-          providerMetadata: undefined,
-          text: "",
-          toolCalls: [
-            {
-              id: `escalate-call-${index}`,
-              name: ESCALATE_TOOL_NAME,
-              input: {
-                question: planned.question,
-                ...(planned.context === undefined ? {} : { context: planned.context }),
-              },
-            },
-          ],
-          usage,
-        };
-      }
-      return {
-        finishReason: "stop",
-        model: "scripted",
-        providerMetadata: undefined,
-        text: planned.text,
-        usage,
-      };
-    },
-  };
-}
-
-interface HarnessOptions {
-  actorScripts?: Record<string, ActorPlan[]>;
-  availableParallelism?: () => number;
-  /** Narrow port of the process-level governor; not wired by default (actors ungated, launch registers no ceiling). */
-  concurrency?: WorkflowConcurrencyPort;
-  journal?: JournalStorePort;
-  /** Keeps an actor runtime's turn from ever finishing on its own; for cancel cases. */
-  hangActors?: boolean;
-  actorCleanup?: () => Promise<void>;
-  /**
-   * Bounded wait ceiling for session quiescence (default {@link AMEND_TRANSCRIPT_QUIESCE_MS} = 5s). Only the path
-   * "amending an in-flight predecessor whose turn cannot land" actually waits the full span, so only that case group needs it shortened.
-   */
-  quiesceMs?: number;
-  onRunEvent?: (progress: DynamicWorkflowRunProgressPayload) => void;
-  /** Parent session's current permission mode (docs/dynamic-workflow/launch.md "Permissions inside a run"); not wired by default. */
-  permissionMode?: () => CollaborationMode;
-  /** Parent session of this service instance (the scope of orphan convergence). */
-  parentSessionId?: string;
-  /**
-   * Residency registration hook (apps/zcode-cli/packages/dynamic-workflow/docs/execution-engine.md "Engine ownership" rule 1).
-   * **Not wired by default**: every other case in this file thereby doubles as a regression for "behavior unchanged when the host has no residency concept".
-   */
-  registerResidencyBlockingWork?: (work: Promise<unknown>) => void;
-  /** Origin anchor resolution (apps/zcode-cli/packages/dynamic-workflow/docs/execution-engine.md "Token telemetry for subagents"): default means the host has no active turn. */
-  resolveLaunchInputId?: (trace: { turnId?: string }) => string | undefined;
-  /** Makes resumeFromStore throw SessionNotFound (fallback case for a cleaned-up session). */
-  resumeSessionMissing?: boolean;
-  /**
-   * Real session store: wiring it makes actor messages actually persist and lets the service hand the transcript face to the driver
-   * (the premise of ask-boundary bookkeeping, apps/zcode-cli/packages/dynamic-workflow/docs/execution-engine.md). Not wired by default.
-   */
-  sessionStore?: SessionStorePort;
-  /** Landing spot for user-facing artifacts. Not wired by default — content members are rejected with ArtifactStoreUnavailable. */
-  artifactStore?: ToolArtifactStorePort;
-  taskLinkStore?: { createSessionTaskLink(input: CreateSessionTaskLinkInput): Promise<unknown> };
-  /** Injection point that mints a draft when completion lands on a draft-less run (the hole-filling cases); not wired by default. */
-  writeWorkflowDraft?: Parameters<typeof createDynamicWorkflowRunService>[0]["writeWorkflowDraft"];
-  /** Execution port for world.run; touching it fails by default (most cases in this file must not run commands). */
-  executionPort?: ExecutionPort;
-}
-
-interface Harness {
-  /** Event store shared by actor runtimes (in production, the **parent runtime's** store). */
-  actorEventStore: SessionEventStorePort;
-  /** Per-actor model request ledger (keyed by actor ref string); observation surface for tool faces and tool results. */
-  actorModelRequests: Record<string, ModelRequestLog>;
-  actorRuntimeInputs: DynamicWorkflowActorRuntimeInput[];
-  /**
-   * Sessions that called subscribeEvents on an actor runtime. The run service itself must **never** (old dead seam);
-   * the driver subscribes exactly once per actor for rate-limit observation (docs/dynamic-workflow/concurrency.md "Protocol and UI"),
-   * and that subscription reads only ModelNetworkStatus — it is not a live transcript channel.
-   */
-  actorSubscribeCalls: SessionId[];
-  journal: JournalStorePort;
-  /** Logs recorded by the service (orphan convergence requires a warn per entry). */
-  logs: { level: string; message: string; context?: Record<string, unknown> }[];
-  /** Per-actor **ordering** of construction/persistence/live-wiring/subscription/first model call. */
-  order: string[];
-  persistedTitles: string[];
-  /** Actor sessions resumeFromStore was called on (observation surface of the rehydration cases). */
-  resumeCalls: SessionId[];
-  runEvents: DynamicWorkflowRunProgressPayload[];
-  runEventRoutings: { parentSessionId?: string }[];
-  service: ReturnType<typeof createDynamicWorkflowRunService>;
-  sessionEvents: unknown[];
-  taskLinks: CreateSessionTaskLinkInput[];
-}
-
-/** Default parent session for this service instance; orphan-convergence cases contrast it with "other sessions". */
-const HARNESS_PARENT_SESSION = createSessionId("harness-parent");
-/**
- * The harness's "parent session's current model": the same value as createTestAgentRuntime's default selection, so
- * "not overridden" and "overridden to the parent model" land on the same record here — mirroring production (create-app.ts passes
- * `getRuntime().getSessionModelSelection()` to the model strategy as parentSelection).
- */
-const HARNESS_PARENT_MODEL = createTestModelSelection("test/default-runtime-model");
-
-/**
- * Journal stand-in with the orphan-convergence narrow query. The real SQL semantics (pre-filtering non-terminal rows by
- * parent session) are pinned against the real database in `adapters/tests/dwf-journal-store.test.ts`; here we only need an
- * implementation the run service's capability probe recognizes, so the "what converges, what write fails" policy layer can be asserted in isolation.
- */
-class SweepableJournalStore extends InMemoryJournalStore {
-  private readonly createdRunIds: string[] = [];
-  /** Stand-in for row timestamps: the real DB maintains time_created/time_updated via SQL; the in-memory version carries none. */
-  private readonly rowTimes = new Map<string, number>();
-  private clock = 1_700_000_000_000;
-
-  override createRun(record: RunRecord): void {
-    super.createRun(record);
-    this.createdRunIds.push(record.runId);
-    // Increment one millisecond per row: makes "most recently updated first" an assertable fact even in the stand-in.
-    this.clock += 1;
-    this.rowTimes.set(record.runId, this.clock);
-  }
-
-  /** A row's stand-in timestamp (tests assert updatedAt pass-through from it). */
-  rowTimeOf(runId: string): number {
-    const time = this.rowTimes.get(runId);
-    if (time === undefined) throw new Error(`no row time for ${runId}`);
-    return time;
-  }
-
-  listNonTerminalRuns(parentSessionId: string): RunRecord[] {
-    return this.createdRunIds
-      .map((runId) => this.getRun(runId))
-      .filter(
-        (run): run is RunRecord =>
-          run !== undefined &&
-          run.parentSessionId === parentSessionId &&
-          !["completed", "errored", "stopped"].includes(run.status),
-      );
-  }
-
-  /**
-   * Enumeration stand-in: reversed creation order approximates "most recently updated first"; the real SQL ordering is pinned on the adapters side.
-   * Returns the narrow projection + timestamps ({@link DwfRunSessionListItem}) — `result` deliberately omitted, same rule
-   * as the real DB not selecting result_json.
-   */
-  listRunsByParentSession(parentSessionId: string, limit: number): DwfRunSessionListItem[] {
-    return this.createdRunIds
-      .map((runId) => this.getRun(runId))
-      .filter(
-        (run): run is RunRecord => run !== undefined && run.parentSessionId === parentSessionId,
-      )
-      .reverse()
-      .slice(0, Math.max(0, limit))
-      .map((run) => {
-        const { result: _result, ...rest } = run;
-        return {
-          ...rest,
-          timeCreated: this.rowTimeOf(run.runId),
-          timeUpdated: this.rowTimeOf(run.runId),
-        };
-      });
-  }
-
-  /**
-   * Artifact read-face stand-in (the real DB's two SQL statements are pinned on the adapters side; only the **semantics** must match here).
-   *
-   * `listArtifactRows` = the run's `kind = "artifact"` node rows in insertion order (= version order).
-   * **Includes failed rows**: callers filter by status themselves — the "a failed publish does not count as a version" ruling
-   * belongs to the read side; having the storage layer do it would leave nothing to test.
-   */
-  listArtifactRows(runId: string): NodeRecord[] {
-    return this.listNodes(runId, { kinds: "all", withResult: true }).filter(
-      (node) => node.kind === "artifact",
-    );
-  }
-
-  /**
-   * `listArtifactItems` = the run's `type = "report"` **event** rows matching `artifactId`,
-   * one page in ascending sequence. `limit` is honored **exactly** and never clamped (same as the real DB); `hasMore` is decided here.
-   * Byte bounds are not simulated in the stand-in — the real DB's byte rules are pinned by adapters tests.
-   */
-  listArtifactItems(
-    runId: string,
-    artifactId: string,
-    query: { afterSequence?: number; limit: number; maxBytes: number },
-  ): { items: DwfArtifactItem[]; hasMore: boolean } {
-    if (query.limit <= 0) return { items: [], hasMore: false };
-    const after = query.afterSequence ?? -1;
-    const items: DwfArtifactItem[] = [];
-    for (const stored of this.listEvents(runId, { types: "all", reportItems: "all" })) {
-      if (stored.sequence <= after) continue;
-      const event = stored.event as {
-        type?: string;
-        instance?: unknown;
-        item?: unknown;
-        artifactId?: unknown;
-      };
-      if (event.type !== "report" || event.artifactId !== artifactId) continue;
-      if (items.length >= query.limit) return { items, hasMore: true };
-      const instance = event.instance as { siteId?: string; ordinal?: number } | undefined;
-      items.push({
-        item: event.item,
-        ordinal: instance?.ordinal ?? 0,
-        sequence: stored.sequence,
-        siteId: instance?.siteId ?? "report#1",
-      });
-    }
-    return { items, hasMore: false };
-  }
-}
-
-/** Pre-seed one dwf_run row (simulating a record left by a previous process). */
-function preloadRun(
-  journal: JournalStorePort,
-  input: {
-    spentTokens?: number;
-    caps?: { maxConcurrency: number };
-    cwd?: string;
-    failure?: { code: string; message: string };
-    name?: string;
-    parentSessionId?: string;
-    result?: unknown;
-    runId: string;
-    scriptText?: string;
-    status: RunStatus;
-    stopReason?: RunStopReason;
-  },
-): void {
-  journal.createRun({
-    runId: input.runId,
-    ...(input.stopReason === undefined ? {} : { stopReason: input.stopReason }),
-    ...(input.parentSessionId === undefined ? {} : { parentSessionId: input.parentSessionId }),
-    ...(input.cwd === undefined ? {} : { cwd: input.cwd }),
-    ...(input.name === undefined ? {} : { name: input.name }),
-    ...(input.scriptText === undefined ? {} : { scriptText: input.scriptText }),
-    ...(input.failure === undefined ? {} : { failure: input.failure as never }),
-    ...("result" in input ? { result: input.result } : {}),
-    caps: input.caps ?? { maxConcurrency: 4 },
-    spentTokens: input.spentTokens ?? 0,
-    status: input.status,
-  });
-}
-
-function makeHarness(options: HarnessOptions = {}): Harness {
-  const journal = options.journal ?? new SweepableJournalStore();
-  const actorRuntimeInputs: DynamicWorkflowActorRuntimeInput[] = [];
-  const logs: { level: string; message: string; context?: Record<string, unknown> }[] = [];
-  const persistedTitles: string[] = [];
-  const runEvents: DynamicWorkflowRunProgressPayload[] = [];
-  const runEventRoutings: { parentSessionId?: string }[] = [];
-  const sessionEvents: unknown[] = [];
-  const actorSubscribeCalls: SessionId[] = [];
-  const resumeCalls: SessionId[] = [];
-  const actorEventStore = createInMemorySessionEventStore();
-  const taskLinks: CreateSessionTaskLinkInput[] = [];
-  const order: string[] = [];
-  const actorModelRequests: Record<string, ModelRequestLog> = {};
-
-  const fileSystemPort = fakeFileSystemPort({});
-  const logger = {
-    debug: (message: string, context?: Record<string, unknown>) =>
-      logs.push({ level: "debug", message, context }),
-    error: (message: string, context?: Record<string, unknown>) =>
-      logs.push({ level: "error", message, context }),
-    info: (message: string, context?: Record<string, unknown>) =>
-      logs.push({ level: "info", message, context }),
-    warn: (message: string, context?: Record<string, unknown>) =>
-      logs.push({ level: "warn", message, context }),
-  };
-
-  const service = createDynamicWorkflowRunService({
-    ...(options.availableParallelism ? { availableParallelism: options.availableParallelism } : {}),
-    ...(options.concurrency === undefined ? {} : { concurrency: options.concurrency }),
-    ...(options.resolveLaunchInputId === undefined
-      ? {}
-      : { resolveLaunchInputId: options.resolveLaunchInputId }),
-    ...(options.sessionStore === undefined ? {} : { actorTranscriptStore: options.sessionStore }),
-    ...(options.artifactStore === undefined ? {} : { artifactStore: options.artifactStore }),
-    // Only to shrink the bounded wait for "session quiescence" to milliseconds (the gate for amend
-    // continuing an in-flight ask, see workflow-driver-quiescence.ts). All other driver clock behavior uses real time.
-    ...(options.quiesceMs === undefined ? {} : { driverClock: { quiesceMs: options.quiesceMs } }),
-    createActorRuntime: (input) => {
-      actorRuntimeInputs.push(input);
-      const key = refToString(input.actor);
-      const responses: ActorPlan[] = options.hangActors
-        ? []
-        : (options.actorScripts?.[key] ?? [{ kind: "submit", result: { text: "done" } }]);
-      order.push(`construct:${key}`);
-      const modelRequests: ModelRequestLog = { requests: [] };
-      actorModelRequests[key] = modelRequests;
-      const runtime = createTestAgentRuntime(
-        input.sessionId,
-        {
-          systemPrompt: input.persona.system ?? "You are a workflow actor.",
-          mode: "yolo",
-          taskType: "workflow_child",
-          subagents: { enabled: false },
-          ...workflowActorToolPolicy(input.persona),
-          // The model face unfolds like the production factory (create-app.ts): pin and this run's subagentModel both enter the strategy,
-          // so the selection the runtime actually gets is the one journaled as journalActorResolvedModel. Without this layer,
-          // "which source wins" would only be visible at factory-input level in run service tests, not in what lands in the journal.
-          ...workflowActorModelPolicy(
-            {
-              parentSelection: HARNESS_PARENT_MODEL,
-              ...(input.runSubagentModel === undefined
-                ? {}
-                : { runSelection: input.runSubagentModel }),
-              ...(input.actorModel === undefined ? {} : { actorSelection: input.actorModel }),
-            },
-            input.pinnedModel,
-          ).configOverrides,
-        },
-        {
-          // Two essentials of the production wiring, per script-workflow-child-runtime.ts:
-          // (1) the event store is shared with the parent runtime (a harness-level store stands in for the parent's);
-          // (2) the live sink is a **construction-time** dep, not a later subscribeEvents.
-          eventStore: actorEventStore,
-          eventSink: {
-            onSessionEvent: (event) => {
-              if (sessionEvents.length === 0) order.push("sink");
-              sessionEvents.push(event);
-            },
-          },
-          modelAdapter: (options.hangActors
-            ? {
-                // Mimic a real adapter: end the request on cancel, or the new close contract would correctly wait on it forever.
-                generateText: (request: { abortSignal?: AbortSignal }) =>
-                  new Promise((_resolve, reject) => {
-                    const signal = request.abortSignal;
-                    if (signal?.aborted) reject(signal.reason);
-                    else
-                      signal?.addEventListener("abort", () => reject(signal.reason), {
-                        once: true,
-                      });
-                  }),
-              }
-            : scriptedModelAdapter(
-                responses,
-                () => order.push(`turn:${refToString(input.actor)}`),
-                modelRequests,
-              )) as never,
-          workflowSubmitPort: input.submitPort,
-          // Per production (script-workflow-child-runtime.ts): both control ports enter the actor session together.
-          // Port presence = `escalate` enters the registry — the sole switch for the actor-side escalation channel.
-          workflowEscalatePort: input.escalatePort,
-          fileSystemPort,
-          ...(options.sessionStore === undefined ? {} : { sessionStore: options.sessionStore }),
-        },
-      );
-      // The old dead seam: the run service used to subscribeEvents after persist as a live transcript channel. That must
-      // never happen again (a subscription installed after seq 1 makes the v4 gateway wait for seq 1 forever). Today's
-      // subscribers are only the driver's two observation faces (once per actor: rate-limit observation reads
-      // ModelNetworkStatus, tool-activity observation reads ToolCallStarted); the cases below count on that.
-      if (options.actorCleanup) {
-        const closeBrowserSession = runtime.closeBrowserSession.bind(runtime);
-        runtime.closeBrowserSession = async () => {
-          await closeBrowserSession();
-          await options.actorCleanup!();
-        };
-      }
-      const originalSubscribe = runtime.subscribeEvents.bind(runtime);
-      runtime.subscribeEvents = (sink) => {
-        actorSubscribeCalls.push(input.sessionId);
-        return originalSubscribe(sink);
-      };
-      // ensureSessionPersistedForExternalActivity is a no-op without a sessionStore,
-      // so wrap it to record the call fact (ordering assertions rely on its position relative to taskLinks).
-      const original = runtime.ensureSessionPersistedForExternalActivity.bind(runtime);
-      runtime.ensureSessionPersistedForExternalActivity = async (title, opts) => {
-        persistedTitles.push(title);
-        order.push(`persist:${key}`);
-        return original(title, opts);
-      };
-      // Full resumeFromStore stand-in (does not call original): the harness runtime has no sessionStore,
-      // so the real implementation would throw a config error. This only pins "rehydration called / not called" and the fallback path;
-      // the real messageHistory hydration semantics are covered by core's resume tests.
-      runtime.resumeFromStore = async () => {
-        order.push(`resume:${key}`);
-        resumeCalls.push(input.sessionId);
-        if (options.resumeSessionMissing) {
-          const gone = new Error("session not found (harness)");
-          (gone as unknown as { type: unknown }).type = CoreErrorType.SessionNotFound;
-          throw gone;
-        }
-        return { resumed: true } as never;
-      };
-      return runtime;
-    },
-    executionPort: options.executionPort ?? unsupportedExecutionPort(),
-    fileSystemPort,
-    journal,
-    logger: logger as never,
-    onRunEvent: (progress, routing) => {
-      runEvents.push(progress);
-      runEventRoutings.push(routing);
-      options.onRunEvent?.(progress);
-    },
-    parentSessionId: options.parentSessionId ?? HARNESS_PARENT_SESSION,
-    ...(options.writeWorkflowDraft === undefined
-      ? {}
-      : { writeWorkflowDraft: options.writeWorkflowDraft }),
-    ...(options.permissionMode === undefined ? {} : { permissionMode: options.permissionMode }),
-    ...(options.registerResidencyBlockingWork === undefined
-      ? {}
-      : { registerResidencyBlockingWork: options.registerResidencyBlockingWork }),
-    ...(options.taskLinkStore
-      ? { taskLinkStore: options.taskLinkStore }
-      : {
-          taskLinkStore: {
-            async createSessionTaskLink(input) {
-              order.push(`link:${input.childSessionId}`);
-              taskLinks.push(input);
-              return input;
-            },
-          },
-        }),
-  });
-
-  return {
-    actorEventStore,
-    actorModelRequests,
-    actorRuntimeInputs,
-    actorSubscribeCalls,
-    journal,
-    logs,
-    order,
-    persistedTitles,
-    resumeCalls,
-    runEventRoutings,
-    runEvents,
-    service,
-    sessionEvents,
-    taskLinks,
-  };
-}
-
-/**
- * Submit, assert acceptance, return the runId. submit's result is a discriminated union (amend-resume's three gates can
- * reject a submission, see DynamicWorkflowRunSubmitResult in contracts), so "submission accepted" must be established first
- * in every case; centralizing that assertion here keeps case bodies from each writing if (!result.ok).
- * Rejection paths are asserted directly against service.submit in the amend case group.
+ * submit and assert it was accepted, returning the runId. The submit result is a discriminated union (the three gates of amend-resume can reject a
+ * submission, see DynamicWorkflowRunSubmitResult in contracts), so "submission succeeded" must hold in every case first;
+ * keeping that assertion in one place means case bodies need not each write if (!result.ok).
+ * The rejection paths are asserted directly on service.submit by the amend group of cases.
+ 
+ 
+ 
  */
 async function submitRun(
   harness: Harness,
@@ -5684,74 +5137,6 @@ describe("dynamic workflow run service — replayProgressForSession（冷回放�
       expect(coldState?.runs[0]?.usage.spentTokens).toBeGreaterThan(0);
       expect(workflowRunsStateSchema.parse(coldState)).toEqual(coldState);
     });
-  });
-
-  it("被打断的 run（行 stopped/interrupted、事件流没有 run-settled）：追加内存态合成 settle，携 resumable；journal 不动", async () => {
-    const journal = new SweepableJournalStore();
-    preloadRun(journal, {
-      runId: "dwfrun-interrupted",
-      parentSessionId: HARNESS_PARENT_SESSION,
-      scriptText: TYPED_SCRIPT,
-      status: "running",
-    });
-    journal.appendEvent("dwfrun-interrupted", {
-      type: "run-started",
-      caps: { maxConcurrency: 4 },
-    } as never);
-    journal.appendEvent("dwfrun-interrupted", {
-      type: "actor-created",
-      actor: { siteId: "actor#1", ordinal: 1 },
-      name: "worker",
-    } as never);
-    journal.appendEvent("dwfrun-interrupted", {
-      type: "node-queued",
-      instance: { siteId: "ask#1", ordinal: 1 },
-      kind: "ask",
-      actor: { siteId: "actor#1", ordinal: 1 },
-    } as never);
-    journal.appendEvent("dwfrun-interrupted", {
-      type: "escalation-raised",
-      qid: "dwfq-1",
-      actor: { siteId: "actor#1", ordinal: 1 },
-      question: "which branch?",
-      askedAt: 1,
-    } as never);
-    const before = journal.listEvents("dwfrun-interrupted", {
-      types: "all",
-      reportItems: "all",
-    }).length;
-
-    // Construction is itself orphan convergence: the row is rewritten to stopped/interrupted, the event stream untouched (the converger synthesizes no events).
-    const harness = makeHarness({ journal });
-    expect(journal.getRun("dwfrun-interrupted")).toMatchObject({
-      status: "stopped",
-      stopReason: "interrupted",
-      failure: { code: "Interrupted" },
-    });
-    const replayed = await harness.service.replayProgressForSession!({ excludeRunIds: new Set() });
-
-    expect(
-      journal.listEvents("dwfrun-interrupted", { types: "all", reportItems: "all" }),
-    ).toHaveLength(before);
-    const last = replayed.at(-1);
-    expect(last).toMatchObject({
-      runId: "dwfrun-interrupted",
-      sequence: before,
-      eventType: "run-settled",
-      payload: {
-        status: "stopped",
-        stopReason: "interrupted",
-        error: { code: "Interrupted" },
-        resumable: true,
-      },
-    });
-    expect(replayed.filter((event) => event.eventType === "run-settled")).toHaveLength(1);
-    const state = reduceAll(replayed);
-    expect(state?.runs[0]).toMatchObject({ status: "stopped", resumable: true });
-    expect(state?.runs[0]?.error).toContain("exited");
-    // Parked questions clear with the terminal state: after the process dies, nobody is waiting for answers.
-    expect(state?.runs[0]?.pendingQuestions).toBeUndefined();
-    expect(state?.runs[0]?.actors[0]?.status).toBe("completed");
   });
 
   it("cancelled 行同样携 resumable；行终态且事件流已含 run-settled 时不再合成第二条", async () => {

@@ -30,7 +30,6 @@ import { SessionPane } from "@/v4/SessionPane.js";
 import type { SessionOpenTrigger } from "@/lib/sessionOpenArmsTelemetry.js";
 import type {
   ChatSearchResultHighlightRequest,
-  ChatViewSummaryPanelVariant,
   ConversationFindMatchState,
 } from "@/v4/legacyChatViewTypes.js";
 
@@ -61,8 +60,6 @@ export interface V4ChatPaneProps {
   gitWorktreeReviewSourceId?: GitChangeSourceId | null;
   gitWorktreeChangeSummary?: { added: number; removed: number } | null;
   activeTaskChangeSummary?: ZCodeTaskChangeSummary | null;
-  summaryPanelVariantOverride?: ChatViewSummaryPanelVariant | null;
-  onSummaryPanelVariantOverrideChange?: (variant: ChatViewSummaryPanelVariant | null) => void;
   onRefreshGit?: () => void;
   onOpenGitReview?: (sourceId?: GitChangeSourceId) => void;
   /** Opens a created worktree through the shared workspace + draft flow. */
@@ -118,8 +115,6 @@ export function V4ChatPane({
   gitWorktreeReviewSourceId,
   gitWorktreeChangeSummary,
   activeTaskChangeSummary,
-  summaryPanelVariantOverride,
-  onSummaryPanelVariantOverrideChange,
   onRefreshGit,
   onOpenGitReview,
   onCreateTaskInWorkspace,
@@ -187,8 +182,6 @@ export function V4ChatPane({
         gitWorktreeReviewSourceId={gitWorktreeReviewSourceId}
         gitWorktreeChangeSummary={gitWorktreeChangeSummary}
         activeTaskChangeSummary={activeTaskChangeSummary}
-        summaryPanelVariantOverride={summaryPanelVariantOverride}
-        onSummaryPanelVariantOverrideChange={onSummaryPanelVariantOverrideChange}
         onRefreshGit={onRefreshGit}
         onOpenGitReview={onOpenGitReview}
         onCreateTaskInWorkspace={onCreateTaskInWorkspace}

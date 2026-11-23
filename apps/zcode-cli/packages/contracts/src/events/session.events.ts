@@ -547,6 +547,8 @@ export function boundWorkflowLaunchMeta(input: WorkflowLaunchMeta): WorkflowLaun
 }
 
 export interface TurnStartedPayloadBase {
+  /** Confirmed from persisted admission history; omitted when old history cannot confirm it. */
+  isFirstMessage?: boolean;
   /** Client origin of the current input/background causal chain, for statistics only. */
   inputOrigin?: "desktop" | "mobile";
   /** Monotonic epoch ms of the execution entry; hooks/persistence happen before TurnStarted is published, so execution start cannot be inferred from publish time. */
@@ -1132,6 +1134,8 @@ export interface DynamicWorkflowRunProgressPayload {
   runId: string;
   /** The CreateWorkflow tool call that launched this run (tool-card → detail-page link key). */
   toolCallId?: ToolCallId | string;
+  /** Settlement supplied per run row during cold recovery; it does not occupy a real journal event watermark. */
+  syntheticSettlement?: boolean;
   /** journal sequence (monotonic, allocated by `appendEvent`); the event-log cursor uses the same ruler. */
   sequence: number;
   /** Engine event kind: run-started / actor-created / node-* / usage-updated / log / report / phase-entered / run-settled. */

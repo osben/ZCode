@@ -31,7 +31,7 @@ First-version defaults, to be tuned against real token statistics:
 
 | Name | Initial value | Purpose |
 | --- | ---: | --- |
-| summary output reserve | `min(modelMaxOutputTokens, 32_000)` | Reserve space for summary output and later requests; default 32k when the model has no output cap. |
+| summary output reserve | `min(modelMaxOutputTokens, max(21_000, contextWindow × 8%))` | Reserve space for summary output and later requests; also the `max_tokens` of the summary request. The current algorithm is in [model request output limit policy](../../../../../../docs/model-request-output-tokens.md). |
 | auto compact buffer | `13_000` | Auto compact does not wait for a full window. |
 | warning/error buffer | `20_000` | UI/SDK context warning. |
 | manual compact buffer | `3_000` | Blocking protection when auto compact is off. |
@@ -102,7 +102,8 @@ anchoring later rewind, partial compact and preserved-segment relink.
 Flow: CLI/TUI parses `/compact [instructions]`; core takes active messages after the latest
 boundary; too few messages returns `Not enough messages to compact.`; `PreCompact` hook merges
 user and hook instructions (user first); a no-tools summary prompt goes through the provider
-adapter in one round; `<analysis>` is stripped, keeping only `<summary>`; boundary and compact
+adapter in one round; one text block is picked as described in the README ("Summary text
+selection"), `<analysis>` is stripped, keeping only `<summary>`; boundary and compact
 summary are created; post-compact attachments are appended; the session log/message part is
 written; `PostCompact` runs; TUI/SDK receive `compact.completed` and `compact_boundary`.
 
@@ -115,11 +116,14 @@ First-version post-compact attachments:
 - session-start hook results.
 
 Tests: a custom `/compact 重点保留测试输出` reaches the summary prompt; hook instructions are
-appended after user instructions; a summary-agent tool call is rejected and converts to failure
-or retry; the next context builder after compact contains no old history; a failed compact
-writes no half boundary. Acceptance: both non-interactive `--prompt` and TUI trigger manual
-compact; the transcript still shows old history while the provider active context sees only the
-post-boundary projection.
+appended after user instructions; when the summary reply carries tool calls, the tools are not
+executed, and the picked block is used if it holds a summary (a paired `<summary>` or a line-start
+`<summary>`), while a reply with only tool calls or only an opener (for example "Let me read the
+file first.") fails (auto compact retries within the same compaction); with several text blocks,
+the last block that contains `<summary>` is used, else the last block; the next context builder
+after compact contains no old history; a failed compact writes no half boundary. Acceptance: both
+non-interactive `--prompt` and TUI trigger manual compact; the transcript still shows old history
+while the provider active context sees only the post-boundary projection.
 
 ### M2: Auto compact
 
@@ -130,7 +134,7 @@ only increments the consecutive-failure counter, and after `maxConsecutiveFailur
 automatic attempts are skipped until one successful compact resets the counter.
 
 ```text
-effectiveWindow = contextWindowForModel - min(modelMaxOutputTokens, 32_000)
+effectiveWindow = contextWindowForModel - min(modelMaxOutputTokens, max(21_000, contextWindowForModel × 8%))
 autoThreshold = effectiveWindow - 13_000
 shouldCompact = activeTokenEstimate >= autoThreshold
 ```

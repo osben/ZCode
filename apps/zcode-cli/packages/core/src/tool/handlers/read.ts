@@ -20,7 +20,7 @@ import {
   ReadOutputJsonSchema,
   ReadOutputSchema,
   createCoreError,
-  getReadPdfPagesValidationFailure,
+  getReadInputValidationFailure,
   isCoreError,
   isFileSystemPortError,
   type ReadInput,
@@ -33,6 +33,7 @@ import {
   type FileSystemStatResult,
   type TraceContext,
 } from "@zcode/contracts";
+import { levenshteinDistance } from "../levenshtein.js";
 import { resolveWorkspacePath } from "../path-policy.js";
 import {
   findLatestReadFileState,
@@ -157,7 +158,11 @@ function stringifyReadOutputFallback(output: unknown): string {
 }
 
 export const readHandler: ToolHandler = async (input, context) => {
-  const { file_path, offset, limit, pages } = parseReadInput(input);
+  const parsed = ReadInputSchema.parse(input) as ReadInput;
+  // hook 改写后的输入不再经过 validateInput，这里用同一个预检再拒绝一次。
+  const invalid = validateReadInput(parsed);
+  if (!invalid.result) return invalid;
+  const { file_path, offset, limit, pages } = parsed;
   const fileSystemPort = context.fileSystemPort;
 
   if (!fileSystemPort) {
@@ -267,63 +272,19 @@ export const readHandler: ToolHandler = async (input, context) => {
   }
 };
 
-function parseReadInput(input: unknown): ReadInput {
-  const parsed = ReadInputSchema.safeParse(input);
-  if (parsed.success) return parsed.data as ReadInput;
-
-  const toolUseErrorMessage = getReadInputToolUseErrorMessage(parsed.error);
-  if (!toolUseErrorMessage) {
-    throw parsed.error;
-  }
-
-  // A Read input preflight failure should reach the provider as <tool_use_error> text.
-  // Exposing raw ZodError JSON would make binary/device preflight differ from capture.
-  throw createCoreError(
-    CoreErrorType.ToolExecutionFailed,
-    `<tool_use_error>${toolUseErrorMessage}</tool_use_error>`,
-    {
-      cause: parsed.error,
-      context: {
-        code: "read_input_preflight_failed",
-      },
-      recoverable: true,
-    },
-  );
-}
-
+/**
+ * Path and page-number preflight completes before Hook and permission checks; for the rules see 01-read.md.
+ * Fix reason: the binary and device file checks used to live in ReadInputSchema's superRefine, where the handler threw an error.message
+ * carrying a `<tool_use_error>` tag, Hook and permission ran first, and the error shown in the UI carried the tag too.
+ */
 function validateReadInput(input: unknown): ToolInputValidationResult {
-  if (typeof input !== "object" || input === null || Array.isArray(input)) {
-    return { result: true };
-  }
-
-  const candidate = input as { file_path?: unknown; pages?: unknown };
-  if (typeof candidate.file_path !== "string" || typeof candidate.pages !== "string") {
-    return { result: true };
-  }
-
-  // If PDF pages constraints exist only in the runtime schema, JSON Schema accepts any string, so invalid calls pass Hook and
-  // permission checks before the handler throws a raw ZodError.
-  const failure = getReadPdfPagesValidationFailure(candidate.file_path, candidate.pages);
+  const candidate = (input ?? {}) as { file_path?: unknown; pages?: unknown };
+  if (typeof candidate.file_path !== "string") return { result: true };
+  const failure = getReadInputValidationFailure(
+    candidate.file_path,
+    typeof candidate.pages === "string" ? candidate.pages : undefined,
+  );
   return failure ? { result: false, ...failure } : { result: true };
-}
-
-function getReadInputToolUseErrorMessage(error: unknown): string | undefined {
-  const issues = (error as { issues?: unknown }).issues;
-  if (!Array.isArray(issues)) return undefined;
-
-  for (const issue of issues) {
-    if (!isReadInputToolUseIssue(issue)) continue;
-    return issue.message;
-  }
-  return undefined;
-}
-
-function isReadInputToolUseIssue(issue: unknown): issue is { message: string } {
-  if (!issue || typeof issue !== "object") return false;
-  const record = issue as { code?: unknown; message?: unknown; path?: unknown };
-  if (record.code !== "custom" || typeof record.message !== "string") return false;
-  if (!Array.isArray(record.path)) return false;
-  return record.path.length === 1 && record.path[0] === "file_path";
 }
 
 function createReadTrace(context: ToolExecutionContext): TraceContext {
@@ -441,7 +402,7 @@ export async function readFileForCompactRestore(input: {
   workingDirectory: string;
   workspaceRoot: string;
 }): Promise<PostCompactFileRead> {
-  if (!ReadInputSchema.safeParse({ file_path: input.filePath }).success) return { type: "skipped" };
+  if (getReadInputValidationFailure(input.filePath)) return { type: "skipped" };
   const filePath = resolveWorkspacePath({
     inputPath: input.filePath,
     operation: "read",
@@ -542,28 +503,6 @@ async function findSimilarFilename(
   } catch {
     return undefined;
   }
-}
-
-function levenshteinDistance(left: string, right: string): number {
-  const previous = Array.from({ length: right.length + 1 }, (_, index) => index);
-  const current = Array.from({ length: right.length + 1 }, () => 0);
-
-  for (let leftIndex = 1; leftIndex <= left.length; leftIndex += 1) {
-    current[0] = leftIndex;
-    for (let rightIndex = 1; rightIndex <= right.length; rightIndex += 1) {
-      const cost = left[leftIndex - 1] === right[rightIndex - 1] ? 0 : 1;
-      current[rightIndex] = Math.min(
-        current[rightIndex - 1]! + 1,
-        previous[rightIndex]! + 1,
-        previous[rightIndex - 1]! + cost,
-      );
-    }
-    for (let index = 0; index < previous.length; index += 1) {
-      previous[index] = current[index]!;
-    }
-  }
-
-  return previous[right.length] ?? 0;
 }
 
 export const readToolEntry: ToolEntry = {

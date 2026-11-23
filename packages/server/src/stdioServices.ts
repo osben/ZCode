@@ -1,10 +1,9 @@
 import {
   createLocalServices,
-  getAppConfigDir,
+  getCredentialsFilePath,
   type ZCodeAgentCommandResolver,
 } from "@zcode/services/node";
 import { createServerCredentialCipher } from "@zcode/shared/credential-security";
-import { join } from "node:path";
 import type { IChannel } from "@zcode/rpc";
 import {
   parseServiceAuthorityMode,
@@ -43,8 +42,9 @@ export async function createStdioServices(options: CreateStdioServicesOptions) {
   const remoteAgentNetwork = resolveRemoteAgentNetworkFromEnv(env);
   // The stdio entry must also verify storage before it publishes ready, so a failure
   // cannot surface after sync has already started.
+  // The cipher and the credential service inside createLocalServices share one path resolver.
   const credentialCipherProvider = await createServerCredentialCipher({
-    filePath: join(getAppConfigDir(), "credentials.json"),
+    filePath: getCredentialsFilePath(),
     env,
   });
   // Remote Desktop presentation capabilities must enter the Services derivation chain through the authority mode received by the stdio entry point.

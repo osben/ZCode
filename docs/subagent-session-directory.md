@@ -2,8 +2,8 @@
 
 ## Goal
 
-A parent Session's subagent state is one read-only projection that drives the composer's live entry,
-the top-right summary, the subagent directory and stale-tab cleanup. The directory shows only
+A parent Session's subagent state is one read-only projection that drives the Activity capsule and its
+popover, the subagent directory and stale-tab cleanup. The directory shows only
 Agent/Task calls in the currently effective conversation branch that can be reliably tied to a
 persisted `subagent_child` session. It creates no placeholder session and adds no database table.
 
@@ -71,14 +71,13 @@ CLI ProductProjection V4 snapshot.subagents
 ## UI contract
 
 ```text
-mini capsule
-├─ subagent-only -> counts only running subagents; no ended; shows "{count} running"
-└─ Bash/Subagent mixed -> counts running items of both kinds; shows "{count} running"
+Activity capsule
+├─ running items: top-level count of Bash / standalone Subagent / Workflow; Agents inside a Workflow are deduplicated
+└─ whole batch ended: keep the result until the next successful send
 
-expanded status panel
-└─ Agents (unified collapsible group, title tail shows "{count} running")
-   ├─ Running -> existing running items, child detail opens directly; controllable foreground/background items offer Stop
-   └─ Ended · N -> opens or reuses the Subagent directory tab
+Activity popover
+├─ current running items and the ended items of this batch; details can be opened, controllable running items offer Stop
+└─ Subagents · N -> opens or reuses the Subagent directory tab (N is the full ended total)
 
 Subagent directory (desktop / ordinary Web)
 ├─ Running (not paged)
@@ -87,18 +86,16 @@ Subagent directory (desktop / ordinary Web)
    └─ show 20 more
 ```
 
-- "{count} running" counts the members of `snapshot.subagents.running`, expressing the number of
-  subagents still running; it must not be shown as "{count} background", because the set contains
-  foreground, background, blocked and waiting together. (UI copy: zh-CN "{count} 运行" / "{count} 后台",
-  "智能体", "正在运行", "已结束 · N".)
-- Whenever the mini capsule count includes a running subagent it must use "{count} running"; only a pure
-  background terminal count keeps "{count} background".
-- Only when there is ended with no other summary content such as Git/plan/goal/running may the mini
-  disappear; no separate resident capsule is added for the directory.
-- In the expanded panel "Ended" must be inside the "Agents" collapsible content and must not be a
-  top-level section parallel to "Agents"; with no running but the panel present for other summary
-  content, an "Agents" group containing only "Ended" can still show.
-- The expanded panel's running items use V4 `snapshot.subagents.running` as the source of child identity,
+- The Activity running count is the total of Bash, standalone Subagent and top-level Workflow items, shown as
+  "Activity N" (zh-CN "活动 N"). `snapshot.subagents.running` contains foreground, background, blocked and
+  waiting together, so it must not be narrowed to "background". Agents inside a Workflow are deduplicated by
+  protocol identity.
+- After the whole batch ends, the completed / stopped / failed summary is kept; the next successful send clears
+  it, and a failed send keeps it. When only cleared history remains, no capsule is shown, and no resident
+  capsule is added for the directory.
+- The history directory entry sits at the bottom of the Activity popover list; there is no longer an "Agents"
+  collapsible section.
+- The Activity running items use V4 `snapshot.subagents.running` as the source of child identity,
   display and Stop capability. Only when the runtime confirms the current execution supports per-item
   stop does a running item carry `stopControl` (`taskId` and this execution's `executionId`). The UI
   does not infer Agent Stop from `backgroundWorks` and never guesses by agentId, title or time. Click
@@ -121,11 +118,22 @@ Subagent directory (desktop / ordinary Web)
   recovery rebuilds membership and display only: old events, invalid children, ended tasks and running
   rows without live-runtime proof get no Stop. Desktop continuous and mobile replayable consume the same
   projection; the runtime still validates at command time.
-- A directory item shows the Agent description, final summary or error, relative time and status icon;
-  the directory is read-only and adds no stop/cancel control.
+- A directory item uses a 20px `WorkflowAgentFace` (the completion badge scales with the same SVG) and keeps
+  the agent's configured color (falling back to a color by type name when absent). Running uses the running
+  expression, waiting / blocked the waiting expression, success the completion badge, failed the failure
+  expression, and cancelled / lost are static. A completed status shows only the avatar's completion badge
+  without repeating status text; other statuses keep localized text.
+- The avatar is vertically centered with the first row by the actual row height, with no fixed top offset.
+  Title, status and relative time are on the first row, and the summary or error on the second; the title uses
+  `text-ui-base`, and status, summary and time use `text-ui-sm`. The duplicate in-page title is removed; with
+  no running items the running group and its empty state are hidden and the ended list sits at the top. The
+  directory is read-only and adds no stop/cancel control; data, ordering, paging and original-session
+  navigation are unchanged.
 - On live completion the V4 projection moves the item out of running and updates `endedTotal`; the
   directory then merges the item at the top by an ended-only query while keeping the loaded pages and
   scroll position.
+- The directory tab uses a 16px neutral static `SubagentCollectionIcon`, vertically centered with the title,
+  and shows no single agent's status or completion badge.
 - The directory tab's stable identity is `subagent-directory:{workspaceKey}:{rootSessionId}:{parentSessionId}`;
   a child tab is `subagent-session:{workspaceKey}:{rootSessionId}:{childSessionId}`.
 - Clicking a directory item reuses the unified child detail open request. Repeated clicks within the

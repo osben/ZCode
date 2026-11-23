@@ -305,6 +305,7 @@ export async function startDraftFromProject(
   options: { workspaceIdentity?: string } = {},
 ): Promise<void> {
   let workspaceIdentity = options.workspaceIdentity?.trim();
+  let projectName = projectNameForWorkspace(workspacePath);
   if (!workspaceIdentity) {
     const project = $(projectSectionSelector(workspacePath));
     await project.waitForDisplayed({ timeout: 30_000 });
@@ -327,6 +328,10 @@ export async function startDraftFromProject(
     // Same-named same-path projects can exist across Sources; with an explicit identity, do not fall back to the first name match.
     const project = $(`[data-project-workspace-identity=${JSON.stringify(workspaceIdentity)}]`);
     await project.waitForDisplayed({ timeout: 30_000 });
+    // 复用远端服务器时项目名可能自动追加重名后缀；导航由 identity 定位，展示断言须读取真实名称。
+    const actualProjectName = await project.getAttribute("data-project-name");
+    if (!actualProjectName) throw new Error(`远端项目缺少显示名: ${workspaceIdentity}`);
+    projectName = actualProjectName;
     await project.moveTo();
     await project.$(`[data-testid="${TID_VIRTUAL_PROJECT_CREATE_TASK}"]`).click();
   } else {
@@ -380,7 +385,7 @@ export async function startDraftFromProject(
         TID_V4_COMPOSER_INPUT,
         TID_V4_SESSION_PANE,
         TID_COMPOSER_WORKSPACE_TRIGGER,
-        projectNameForWorkspace(workspacePath),
+        projectName,
         workspaceIdentity,
         draftKey,
         previousDraftVersion,

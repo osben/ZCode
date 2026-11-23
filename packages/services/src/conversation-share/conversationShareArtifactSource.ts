@@ -149,6 +149,7 @@ export function createRemoteConversationShareArtifactSource(
           throw new ConversationShareServiceError(
             "limit_exceeded",
             "Conversation artifact exceeds the byte limit",
+            { diagnostics: { actualBytes: before.size } },
           );
         }
 
@@ -291,6 +292,7 @@ export function createLocalConversationShareArtifactSource(): ConversationShareA
             throw new ConversationShareServiceError(
               "limit_exceeded",
               "Conversation artifact exceeds the byte limit",
+              { diagnostics: { actualBytes: artifactStat.size } },
             );
           }
           // The backend capability limit may be far larger than the current file; allocating maxBytes would use a large block even for small files.
@@ -308,6 +310,7 @@ export function createLocalConversationShareArtifactSource(): ConversationShareA
             bytesRead += result.bytesRead;
           }
           if (bytesRead > input.maxBytes) {
+            // 读到的字节数只到 stat 大小 + 1，不是真实大小，不作为 actual 上报。
             throw new ConversationShareServiceError(
               "limit_exceeded",
               "Conversation artifact exceeds the byte limit",

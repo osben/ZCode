@@ -32,14 +32,23 @@ import {
  * Lighting only tracks heads (`useFillHeadTarget`, shared with the card): the heading row and the pen
  * mark carry `data-fill-head`. The pane does not indent (user revision: nesting is expressed by frames
  * within frames); each nesting level insets its frame by 4px.
+ *
+ * Invariant: something drawn from measured geometry must not change the next measured value. The svg sits
+ * inside the measured scroll box and used to be sized from the measured `clientWidth × scrollHeight`: when
+ * the pane width is fractional (e.g. 547.55), `clientWidth` rounds up to 548, so the svg is less than 1px
+ * wider than the box -> a horizontal scrollbar (14px) appears -> the height no longer fits so a vertical
+ * scrollbar appears too -> `clientWidth` drops to 534 -> the svg narrows -> the scrollbars disappear ->
+ * it measures 548 again... The two values flip back and forth, "unchanged from last time, so do nothing"
+ * never stops it, React reports Maximum update depth, and the whole pane lands in the error boundary.
+ * So the svg box is set by CSS only (1px square, overflow visible) and does not take the measured size;
+ * the measured width is used only to compute the path.
  */
 interface SpineFrameGeometry {
   width: number;
-  height: number;
   boxes: Readonly<Record<string, FrameBox>>;
 }
 
-const EMPTY: SpineFrameGeometry = { width: 0, height: 0, boxes: {} };
+const EMPTY: SpineFrameGeometry = { width: 0, boxes: {} };
 
 function sectionOf(root: HTMLElement, attribute: string, value: string): HTMLElement | undefined {
   return [...root.querySelectorAll<HTMLElement>(`[${attribute}]`)].find(
@@ -99,7 +108,7 @@ export function useSpineFillFrames(
         width,
       });
     }
-    const next: SpineFrameGeometry = { boxes, height: root.scrollHeight, width };
+    const next: SpineFrameGeometry = { boxes, width };
     setGeometry((previous) =>
       JSON.stringify(previous) === JSON.stringify(next) ? previous : next,
     );
@@ -126,10 +135,9 @@ export function useSpineFillFrames(
   const frames = (
     <svg
       aria-hidden
-      className="pointer-events-none absolute left-0 top-0 overflow-visible"
+      // 盒子只由 CSS 定（见文件头的不变量）；1px 见方而不是 0：空视口的 svg 整个不画。
+      className="pointer-events-none absolute left-0 top-0 size-px overflow-visible"
       data-testid="workflow-run-fill-frames"
-      height={geometry.height}
-      width={geometry.width}
     >
       {[...fills, ...marks].map(({ holeId }) => {
         const box = geometry.boxes[holeId];

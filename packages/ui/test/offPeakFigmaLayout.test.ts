@@ -529,9 +529,8 @@ describe("idle-time task Figma layout contracts", () => {
     expect(automationConfirmDialogPresentationSource).not.toContain(
       "text-ui-base leading-6 text-foreground-subtle",
     );
-    expect(confirmDialogSource).toContain(
-      '<DialogTitle className="text-ui-lg font-semibold text-foreground">',
-    );
+    // Upstream 4.0.0 composes the title class with cn() (update confirmations use a smaller title).
+    expect(confirmDialogSource).toContain('"text-ui-lg font-semibold text-foreground",');
     expect(confirmDialogSource).toContain(
       "whitespace-pre-line pt-0.5 text-ui-base leading-6 text-foreground-subtle",
     );

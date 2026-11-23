@@ -8,7 +8,8 @@ main compact track.
 
 Current implementation already has: the `/compact` manual entry; auto compact policy and failure
 circuit breaker; reactive compact retry after provider context overflow; the compact summary
-prompt, tool-call denial and prompt-too-long retry; the compact timeline part, summary message
+prompt, no execution of tool calls in the summary reply (see the README, "Summary text
+selection") and prompt-too-long retry; the compact timeline part, summary message
 and compact boundary events; resume restoring provider-visible history after the latest
 compaction boundary; compact phase/compactReason metadata covering manual, pre-request, mid-turn
 and reactive paths; and the memory read path (loading a lightweight summary from the project

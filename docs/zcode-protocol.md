@@ -146,6 +146,29 @@ under that workspace as the create/prewarm seed, but it cannot override an exist
 Switching config while running affects the next turn by default. Secrets do not enter the snapshot; a
 remote workspace uses the same provider-registry command and does not depend on old config files.
 
+## Compatible turn-start events
+
+The CLI-internal `TurnStarted.isFirstMessage` is used only to attribute the first message and travels through a
+separate V4 telemetry notification. The mappers for the legacy `session/event` and `session/events` must remove
+this field and must not pass the internal field through to the legacy App's strict schema. Otherwise the running
+session summary, plugin reads and row subscriptions fail validation as a whole. The mapping must not modify the
+original event. The internal persisted fact and the V4 telemetry keep `true` / `false`, and a missing value stays
+unknown. Other legacy protocol fields, strict validation and the delivery semantics of both deliveryKind values are
+unchanged.
+
+The receiving side is made compatible with old senders separately. A CLI between 8172e49580 and 148827e6dc puts
+the field into `turn.started` as is (for example an old CLI on a remote device). The App's
+`zcodeTurnStartedEventPayloadSchema` therefore declares `isFirstMessage` as an optional boolean and ignores it, so
+the whole event is not dropped (found by the 2026-11-17 mac E2E: Bot turns got mixed up, and the running session
+summary and plugin session reads failed). The current CLI still does not send it, as described above. This
+compatibility does not change the sending-side rule. Regression: the CLI test
+`session-mapper-turn-payload.test.ts` bypasses the mapper and parses events carrying `true`, `false` and a missing
+value.
+
+Regression must cover the first message, later messages, a missing attribution, event replay and both
+deliveryKind values. V4 telemetry keeps verifying that the attribution enters only the separate admission and does
+not pollute the legacy started notification.
+
 ## Compatible tool-scheduling events
 
 The old `session/event` chain still receives `tool.updated(kind=scheduled)` emitted by the CLI. Its

@@ -8,7 +8,14 @@
     "lib": ["es2025", "dom"],
     "types": ["node", "electron"]
   },
-  "include": ["src/main", "src/shared", "src/scheduler", "src/extension-host"],
+  "include": [
+    "src/main",
+    "src/shared",
+    "src/scheduler",
+    "src/extension-host",
+    "src/preinstalled-tools",
+    "src/preinstalled-tools/catalog.json"
+  ],
   // Main depends directly on shared and services; these references let the Desktop subproject consistently reuse their generated declarations.
   "references": [
     { "path": "../shared" },

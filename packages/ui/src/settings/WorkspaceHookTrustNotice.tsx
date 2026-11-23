@@ -32,8 +32,17 @@ export function shouldShowWorkspaceHookTrustNotice({
   );
 }
 
-/** Display risk information for the current scope only; existing components still handle review, navigation, and toggle interactions. */
-export function WorkspaceHookTrustNotice({ hooks }: { hooks: readonly Hook[] }) {
+/**
+ * Display risk information for the current scope only; existing components still handle review, navigation, and toggle interactions.
+ * worktreeSourcePath: when the settings page discovers declarations by managed worktree, notes that the trust record is shared with the source repository (D23).
+ */
+export function WorkspaceHookTrustNotice({
+  hooks,
+  worktreeSourcePath,
+}: {
+  hooks: readonly Hook[];
+  worktreeSourcePath?: string;
+}) {
   const { intl } = useZCodeIntl();
 
   if (!hasWorkspaceHooksRequiringReview(hooks)) return null;
@@ -45,7 +54,20 @@ export function WorkspaceHookTrustNotice({ hooks }: { hooks: readonly Hook[] }) 
       className="flex w-full items-start gap-3 rounded-lg border border-warning/30 bg-warning/10 px-4 py-3 text-ui-base text-foreground"
     >
       <CircleAlert className="mt-0.5 size-4 shrink-0 text-warning" aria-hidden="true" />
-      <p className="min-w-0">{intl.formatMessage({ id: "settings.hooks.review.notice" })}</p>
+      <div className="flex min-w-0 flex-col gap-1">
+        <p>{intl.formatMessage({ id: "settings.hooks.review.notice" })}</p>
+        {worktreeSourcePath ? (
+          <p
+            data-testid="workspace-hook-worktree-notice"
+            className="break-words text-ui-sm text-foreground-subtle"
+          >
+            {intl.formatMessage(
+              { id: "settings.hooks.review.worktreeNotice" },
+              { path: worktreeSourcePath },
+            )}
+          </p>
+        ) : null}
+      </div>
     </div>
   );
 }

@@ -84,10 +84,10 @@ export interface ModelRequestAdmissionTicket extends ModelStatusSink {
  * `model_request_admitted`. Without this fast path, the runner cannot distinguish "queued" from
  * "admitted immediately," so it emits neither event.
  *
- * The port is bound to the runtime's model factory: every model handle returned by the runtime—turn
- * steps, model calls inside tools, compaction, and title sidecars—carries it. If absent, there is no
+ * The port is bound to the runtime's model factory: every model handle returned by the runtime (turn
+ * steps, model calls inside tools, compaction, and title sidecars) carries it. If absent, there is no
  * gate and runner behavior is unchanged. The main agent uses the governor's observer implementation:
- * `tryAcquire` always succeeds and only forwards signals.
+ * `tryAcquire` always succeeds and only forwards signals; on retry it consults the cooldown via `retryCooldownMs`.
  */
 export interface ModelRequestAdmission {
   /** Synchronous fast path: grant a lease if the gate is open and nobody is queued; otherwise return undefined so the runner calls `acquire` and reports queueing. */
@@ -96,6 +96,14 @@ export interface ModelRequestAdmission {
     model: ModelRequestTarget;
     signal?: AbortSignal;
   }): Promise<ModelRequestAdmissionTicket>;
+  /**
+   * 重试前至少还要等多久（ms）：这个模型身份上剩余的限流冷却，没有即 0。runner 只在**重试**的退避里读它，
+   * 等待取 `max(本地退避, 这个值)`（冷却部分封顶 5 分钟），首次请求不读。
+   *
+   * 只有主代理的 observer 实现：它不排队、不在闸门上等冷却，重试却不该在冷却期里白白撞墙。排队准入的端口
+   * 不实现——它们的重试会在 `acquire` 里等到冷却结束，再在退避里等一遍就是重复等待。
+   */
+  retryCooldownMs?(input: { model: ModelRequestTarget }): number;
 }
 
 /**
@@ -455,7 +463,8 @@ export interface ModelInputMessage {
   modelId?: ModelId;
   /**
    * 这条 assistant 由一次签名修复后成功的请求产出：它之前的已签名/redacted reasoning
-   * 已被服务端判为失效，之后的请求投影一律不再发送（见 anthropic-reasoning-history-replay.md）。
+   * （OpenAI Responses 为加密推理）已被服务端判为失效，之后的请求投影一律不再发送
+   * （见 anthropic-reasoning-history-replay.md、openai-responses-tool-continuation-boundary.md）。
    */
   signedReasoningReset?: boolean;
 }

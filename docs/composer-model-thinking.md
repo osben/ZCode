@@ -2,6 +2,18 @@
 
 ## Interaction
 
+2026-11-13 acceptance: the browser scenarios for the Popover, Provider hover expansion and the pill search box passed 8/8 (macOS Electron and 390px phone emulation, light and dark themes, Chinese and English). The desktop Composer integration regression passed 16/16, with artifacts in `packages/desktop/.e2e-artifacts/desktop-e2e-20261113-072002-565/`. A real dev window verified search, clear, hover keeping focus, keyboard model selection and tier slider operation. Full typecheck, E2E typecheck, lint, architecture and changed-file format checks passed. No native Windows/Linux UI or real phone acceptance was done.
+
+The merged panel is hosted by a `Popover` with dialog semantics. The title, the search box and the thinking slider are ordinary controls, no longer Dropdown menu items. The model list uses listbox/option semantics and focus movement stays inside the list: Up/Down and Home/End move, Enter/Space confirm, and Tab enters or leaves the list. The search box has a transparent default background and border; hover and focus both show the border with `border-border`, and the focused background stays transparent. The search box uses pill rounding and keeps the existing height, the search icon and the tertiary-color round clear button. The right edge of the search box aligns with the right edge of the model row hover background, reusing the panel's 4px inner padding; the clear icon keeps about 6-8px of right spacing inside the input. Arrow Down in the search box enters the first available result; typing, clearing and mouse hover do not move focus. Opening the panel focuses the panel container by default and does not raise the phone keyboard. Escape and one outside click close it, and the existing Composer picker mutual exclusion and focus restore on close are kept.
+
+Hover and expanded states of the Provider title row, the Provider options and the model rows all use `bg-menu-hover` without stacking opacity. On desktop the Provider opens a separate Popover on hover; opening or closing by hover does not change the search focus, the mouse can cross the gap between the panels into the child panel, and it closes after leaving the title, the child panel and the connecting area. After opening by click or ArrowRight, keyboard operation works; narrow screens keep click to enter and a back action. The Provider list also uses listbox/option, and switching still goes through the existing owner. The pointermove/pointerleave, stopPropagation and focus-forwarding patches that model rows, the search title and the slider carried to stop Dropdown from stealing focus are removed; the pending disable gate, the IME composition guard and the native slider business constraints are kept.
+
+```text
+Popover open/close → existing Composer picker owner
+search term → local filter → list focus navigation → click/Enter/Space → existing model select callback
+native slider input → existing tier callback; mouse hover only changes the CSS background
+```
+
 The normal input's model and Think controls share one entry. The entry shows no Provider prefix:
 
 ```text
@@ -9,6 +21,25 @@ The normal input's model and Think controls share one entry. The entry shows no 
 ```
 
 The menu shows a Models (zh: 「模型」) section title in `text-ui-sm` with secondary text color; model names keep the base font size and capability tags stay as is.
+
+A "Search model" input sits to the right of the title. It matches only within the current Provider, by model display name, as a case-insensitive substring with leading and trailing spaces ignored; an empty search shows all models and no match shows a localized empty state. Filtering keeps the catalog order, locked state, capability tags and selected state, and does not change the selected model or thinking tier. Closing the menu or switching Provider clears the search, and on phones opening the menu does not auto-focus the input.
+
+The search row uses a light menu style: the title on the left is small secondary text in regular weight, with a search icon on the right; the input area is 24px high, uses small text on desktop and keeps a safe input font size on phones. The default background and border are transparent and only a faint border shows on focus; the whole row shows no menu-item selected background. When the input is not empty, a clear button shows as a tertiary gray solid circle with a hollow x, slightly darker on hover; the browser's native search clear style is disabled. Clicking clear keeps the input focused and the menu open, restores the full list and does not change the model selection.
+
+2026-11-13 style acceptance: the running desktop menu was inspected through CDP; after typing a model keyword, focus, the clear button and its hover state were checked, and after clicking clear the full list returned with the input still focused. The default background and border are transparent and focus shows the theme's faint border. The existing browser scenarios passed 8/8 on Electron and 390px phone emulation, in light and dark themes, in Chinese and English. No real phone or native Windows/Linux visual acceptance was done.
+
+The search term is held only by the current menu instance, and results are derived from the current catalog; nothing is persisted and no remote request is made. The mouse hover background of a model row is independent of keyboard focus: while the search box is focused the hover background still shows and returns to normal when the pointer moves away, without interrupting input or changing the current model; mouse click and arrow-key model selection use the original path, and no copy of the hover state is added. Typing text, spaces and cursor keys do not trigger menu typeahead; Arrow Down enters the available results, Escape closes the menu, and confirming Chinese IME composition does not select a model. A selected result still uses the existing model select callback.
+
+```text
+search input → ComposerModelMenu local search term → current Provider catalog filter → existing model rows
+click result → existing onSelectModel / renderItems callback → Composer selection owner
+```
+
+Acceptance: desktop and 390px phone layouts, light and dark themes, Chinese and English; verify case and spaces, the empty state, clearing, locked items, keyboard selection, close and reopen, and the search reset after a Provider switch. The browser scenarios are in `composer-menu-dismiss.test.mjs` and the desktop integration assertions in `conversation-session-v4-composer-toolbar.test.ts`; the browser fixture does not stand for real remote transport acceptance.
+
+2026-11-11: the browser scenarios above passed 8/8 on macOS Electron and phone emulation layout, with artifacts in `packages/desktop/.e2e-artifacts/composer-menu-dismiss/`. Reordering search results does not change the input focus; Tab goes from the Provider button into the search box and Arrow Down enters the results.
+
+The desktop Composer integration regression passed 16/16 (`packages/desktop/.e2e-artifacts/desktop-e2e-20261111-093827-824/`), including the search empty state, a blank query restoring the list, and the existing model selection, tier, picker mutual exclusion and remote-control config gate. Full typecheck, E2E typecheck, lint, architecture and changed-file format checks passed; no native Windows/Linux UI or real phone IME acceptance was done.
 
 `High` uses secondary text color. The green bar is display-only inside the same button and never responds to clicks itself; it shows strength by the model's declared tiers and is an empty slot when off or the selection is invalid.
 
@@ -282,7 +313,7 @@ Problem: in an SSH workspace, "personal plan -> ordinary API -> same personal pl
 
 1. An equal value still bumped the operation version.
 2. The write pushed one Provisioning round to every online remote through the `account-settings` trigger.
-3. The target Host's refresh returns only a round that started after the request, so it waited for the push to finish.
+3. After saving, the flow must wait for this push round to finish on the remote, then refresh the target Host and verify (see the section "Waiting for the remote rollout result after saving" below).
 
 In the user's log, 5 switch-backs triggered one remote sync each, 1.4-5.5 s per round.
 
@@ -311,7 +342,8 @@ click a plan row
   │     │     -> re-read shared settings snapshot -> target Host current catalog -> select model -> display receipt
   │     └ otherwise ↓
   └ anything else
-        -> save settings (CAS) -> Provisioning -> root/target refresh -> verify -> select model -> display receipt
+        -> save settings (CAS) -> root refresh -> remote: wait for the Provisioning lane result -> target refresh -> verify
+        -> select model -> display receipt
 ```
 
 Accepted behavior changes:
@@ -322,6 +354,44 @@ Accepted behavior changes:
 Unchanged: the sync cost of a real identity change (personal <-> team, between teams). Switching the connection in the settings page does not go through this owner and is unaffected. When two windows switch the same brand at once, the final identity still follows the shared settings. When another window has already switched to a team, clicking that team row in this window also takes effect per the shared settings.
 
 Acceptance: CTP-32 (`docs/testing/coding-plan-team-e2e-cases.md`): run "personal -> ordinary API -> personal" and "team -> ordinary API -> same team"; after switching back `providerFamilyDomainUpdatedAt` and the connection mapping are unchanged, the model returns to the plan Provider, the thinking tiers are complete, no error. CTP-33: simulate another window changing team A to team B while this window's Host is not refreshed; click the team B row in the Composer: the root Host `connectionKey` becomes team B, the connection label shows team B, the settings version is unchanged, no error. CTP-28/29/31 same-connection retries and CTP-22 cross-identity switching regress with the original assertions. Remote workspaces are covered by RPR-01 (`docs/conversation-session-case-catalog.md`): switching back to an effective connection causes no `account-settings` sync; when the remote is not synced, it falls back to the original flow and re-pushes once.
+
+### Waiting for the remote rollout result after saving (2026-11-16)
+
+Problem: in an SSH workspace, switching the plan connection in the Composer (for example team to personal) sometimes, or several times in a row, reported "switch connection failed" and rolled back to the original connection (ZCT-2121942668678008832).
+
+Root cause: the check after saving depended on timing, not on a result.
+
+1. Saving settings only makes the root Host send one `account-settings` notification to Main. The Provisioning lane in Main runs the rollout asynchronously. While the lane is running the previous round, this one is only queued as a trailing round.
+2. The connection owner did not wait for the rollout and refreshed the target Host right away. The target Host's refresh only reads the remote's current settings file. It does not know a rollout is still on its way and does not wait for it.
+3. While the remote still had the old connection, the `connectionKey` comparison failed, threw `Target connection has not synchronized`, and rolled back. The rollback queued another rollout round. When the user retried at once, the lane was still running the rollback round and this one queued behind it, so it failed again and again.
+
+Rule: after saving a connection for a remote workspace, first wait for the Main lane's result, then refresh the target Host and verify.
+
+- The wait uses the root Host's `providerProvisioningStatusService.getStatus({ sourceServerId, waitForIdle: true })`. The data sync page uses the same interface. It is read-only, does not advance the generation and does not trigger a rollout.
+- The order is guaranteed: after settings are written, the root Host sends the `account-settings` notification synchronously before `update` returns. The wait request then goes from the same Host over the same message channel to Main, so Main always advances the generation first and handles the wait after. `waitForIdle` waits until the current drain ends, trailing rounds included.
+- When the result is `failed`, treat it as a switch failure and take the existing rollback. The error carries the lane's `errorCode`, to tell "rollout failed" from "rollout succeeded but identity mismatch".
+- When the result is success, the account source and registry were already refreshed before the remote apply returned. Refreshing the target Host then reads the connection from this rollout. The `connectionKey` comparison stays, because another window may have changed settings in between.
+- These cases do not wait and keep the original behavior: no lane service (Web, mobile remote control), no `sourceServerId` in the workspace identity (old format, Direct URL Server), the lane returns "no lane", and the recovery sync during rollback (`restoring`).
+- No timeout is added. When the remote apply hangs, loading continues until the connection closes (`ConnectionClosed`) or the component unmounts. This matches the "syncing" semantics of the data sync page.
+
+```text
+before: update ─▶ Host notifies Main (async rollout)
+        base.refresh ─▶ target.refresh ─▶ remote reads file: rollout may not have arrived ✗ → rollback
+after:  update ─▶ Host notifies Main: generation+1, drain starts
+        base.refresh ─▶ getStatus(waitForIdle) ─▶ drain ends (trailing rounds included)
+          ├ failed  → switch failed (with errorCode) → existing rollback
+          └ success → target.refresh ─▶ remote already has the new connection → verify ✓
+```
+
+Accepted behavior changes:
+
+- The loading of a cross-identity switch includes the time of the whole rollout round. When the lane is busy it also includes the trailing round.
+- When the remote returns a failure such as `rollback_failed` but the remote settings happen to already hold the new connection, the old flow could judge success; now it is judged a failure and rolled back.
+- If the connection drops or reconnects during the switch, the wait returns when the drain ends, and the error then comes from the `connectionKey` comparison or the lane failure result.
+
+Acceptance: RPR-02 (`docs/conversation-session-case-catalog.md`). Requests of the remote's account mock are slowed through a delay proxy: on the settings page change the connection to team, and while the remote is still slowly refreshing after writing team, click personal in the Composer. Before the fix this reported "switch connection failed" and rolled back; after the fix there is no error, local and remote are both personal, and the last `account-settings` rollout is `applied`. RPR-01 and CTP-22/28/29/31/32/33 are regressed with their original assertions.
+
+Verification (2026-11-16): RPR-02 failed before the fix and passed twice in a row after it; the RPR-01 regression passed (evidence in the case directory). On local Electron, CTP-22 both directions, CTP-28, CTP-32 both directions and CTP-33 passed (`packages/desktop/.e2e-artifacts/zct2121-ctp-regression/`). CTP-29/31 failed in the preparation stage (`chat-model-select-trigger: not-started`), and with the hook switched back to the pre-fix one the failure signature is the same (`packages/desktop/.e2e-artifacts/zct2121-ctp-baseline/`); this is an existing issue and was not handled.
 
 ### Legacy CLI attachment input compatibility
 

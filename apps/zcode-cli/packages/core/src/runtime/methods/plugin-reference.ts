@@ -10,30 +10,31 @@ import {
   type LivePluginSkill,
   type LivePluginSubagent,
 } from "../../plugin-reference/index.js";
+import { systemReminderAttachmentEntry } from "../../agent/message-history.js";
+import { commitTurnRequestEntries } from "./turn-output-token-continuation.js";
+import type { TurnRequestState } from "./turn-loop-state.js";
+import type { McpSessionView } from "../../mcp/runtime/session.js";
 import { createMessageId, traceContextToLogContext } from "../deps.js";
 import type { TraceContext } from "../deps.js";
 import type { AgentRuntimeInternal } from "../internal.js";
+import { currentSkillCatalog } from "./context.js";
 
-async function collectLiveMcpServers(
+function collectLiveMcpServers(
   runtime: AgentRuntimeInternal,
-  traceContext: TraceContext,
+  view: McpSessionView | undefined,
   toolDisallowlist: readonly string[] | undefined,
-): Promise<LivePluginMcpServer[]> {
-  if (!runtime.mcpPort) return [];
-  // initializeMcp is idempotent; the turn loop already waits for it before its first provider request,
-  // so awaiting it here adds no extra delay. A reference never triggers connect/reconnect/OAuth—it reads the current state only.
-  await runtime.initializeMcp(traceContext);
-  const statuses = await runtime.mcpPort.status();
-  const snapshot = runtime.mcpStartupPromise ? await runtime.mcpStartupPromise : undefined;
+): LivePluginMcpServer[] {
+  if (!view) return [];
+  // Shares the ordinary step's snapshot with this tool projection; the reference neither waits for connections nor reads the first-load catalog.
   const registeredToolNames = new Set(runtime.getTools().map((tool) => tool.name));
   // Match the turn-loop's provider-tool filter semantics for "full tool names" exactly.
   // Parameterized execution rules do not remove an entire tool from the provider tool list, so the reminder must not broaden their meaning.
   const turnDisallowedToolNames = new Set(toolDisallowlist ?? []);
   const providerVisibleToolCounts = new Map<string, number>();
-  for (const descriptor of snapshot?.tools ?? []) {
-    // provider-visible = tools in the startup snapshot that pass Session-wide allow/disallow registry filtering,
-    // then this turn's toolDisallowlist. Looking only at the registry incorrectly counts an MCP tool that is hidden for this turn
-    // but still globally registered as visible, causing the reminder to claim a server the provider cannot actually access.
+  for (const descriptor of view.tools) {
+    // provider-visible = tools in the current snapshot that pass Session-wide allow/disallow registry filtering,
+    // then this turn's toolDisallowlist. Root cause: looking only at the registry counts an MCP tool that is hidden for this turn
+    // but still globally registered as visible, so the reminder would claim a server the provider cannot actually access.
     const toolName = toMcpToolName(descriptor);
     if (!registeredToolNames.has(toolName)) continue;
     if (turnDisallowedToolNames.has(toolName)) continue;
@@ -42,7 +43,7 @@ async function collectLiveMcpServers(
       (providerVisibleToolCounts.get(descriptor.serverName) ?? 0) + 1,
     );
   }
-  return Object.entries(statuses).map(([serverName, status]) => ({
+  return Object.entries(view.servers).map(([serverName, { status }]) => ({
     serverName,
     connected: status.status === "connected",
     providerVisibleToolCount: providerVisibleToolCounts.get(serverName) ?? 0,
@@ -51,7 +52,7 @@ async function collectLiveMcpServers(
 
 function collectLivePluginSkills(runtime: AgentRuntimeInternal): LivePluginSkill[] {
   const skills: LivePluginSkill[] = [];
-  for (const skill of runtime.skillLoadOutcome?.skills ?? []) {
+  for (const skill of currentSkillCatalog(runtime)?.skills ?? []) {
     if (skill.source !== "plugin") continue;
     if (!skill.pluginName || !skill.qualifiedName) continue;
     skills.push({
@@ -81,6 +82,8 @@ export async function injectPluginReferenceReminderFromTurn(
   this: AgentRuntimeInternal,
   userInput: string,
   traceContext: TraceContext,
+  requestState: TurnRequestState,
+  mcpView: McpSessionView | undefined,
   toolDisallowlist?: readonly string[],
 ): Promise<void> {
   // No references is the overwhelmingly common path: do not touch MCP/skills and return at zero cost.
@@ -99,7 +102,7 @@ export async function injectPluginReferenceReminderFromTurn(
 
   const startedAt = Date.now();
   try {
-    const liveMcpServers = await collectLiveMcpServers(this, traceContext, toolDisallowlist);
+    const liveMcpServers = collectLiveMcpServers(this, mcpView, toolDisallowlist);
     const liveSkills = collectLivePluginSkills(this);
     const liveSubagents = collectLivePluginSubagents(this);
     const result = buildPluginReferenceReminderBody({
@@ -125,8 +128,10 @@ export async function injectPluginReferenceReminderFromTurn(
       truncated: result.diagnostics.truncated || extraction.truncatedCount > 0,
     });
     if (!result.body) return;
-    this.messageHistory.addAttachment("plugin_reference", result.body);
-    // If only the runtime attachment is written, a warm session retains the reminder but cold resume loses it,
+    commitTurnRequestEntries(this, requestState, [
+      systemReminderAttachmentEntry("plugin_reference", result.body),
+    ]);
+    // Root cause: if only the runtime attachment is written, a warm session retains the reminder but cold resume loses it,
     // misaligning history messages and breaking provider prefix caching. Inject it first, then persist the original text as a model-only notice;
     // generic hydration rebuilds the attachment from the same source without creating a user bubble in the UI.
     await this.persistSyntheticUserNoticeForSession({

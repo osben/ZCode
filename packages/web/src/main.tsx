@@ -42,7 +42,6 @@ import { WebCallbackPage } from "./auth/WebCallbackPage.js";
 import { WebLoginPage } from "./auth/WebLoginPage.js";
 import { createWebAuthService } from "./auth/webAuthService.js";
 import { WEB_ZAI_OAUTH_CONFIG, resolveWebAuthDevReturnTo } from "./auth/webZaiOAuthConfig.js";
-import { parseOAuthState, resolveSafeAppReturnTo } from "./auth/oauthStateCodec.js";
 import {
   ConversationShareLandingLoader,
   ConversationShareLandingStatus,
@@ -274,10 +273,8 @@ function isWebOAuthCallback(params: URLSearchParams): boolean {
 
 function renderWebAuthCallbackPage(): void {
   document.title = "ZCode - Web Remote Control Sign In";
-  const callbackState = parseOAuthState(
-    new URLSearchParams(window.location.search).get("state") ?? "",
-  );
-  const safeRetryTarget = resolveSafeAppReturnTo(callbackState?.app_return_to);
+  // 区域登录的 state 来自服务端，回跳地址只记在 pending 里；必须在 handleCallback 取出前读取。
+  const safeRetryTarget = webAuthService.resolveCallbackReturnTo(window.location.href);
   root.render(
     <WebCallbackPage
       authService={webAuthService}
@@ -728,6 +725,7 @@ export function createHomeOnlyWebRemoteControlServices(): RootServices {
         pluginStoreOrder: null,
         zsrcUrl: null,
         uiPluginRecommendations: [],
+        draftModelMigration: null,
       }),
     }),
     // When mobile Web is not connected to a shared-host attachment, do not call the scenes HTTP endpoint directly; return an empty configuration so the home page remains usable.

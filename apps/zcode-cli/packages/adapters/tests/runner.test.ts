@@ -18,6 +18,7 @@ import { createTestModelProperties } from "./test-model-format.js";
 import { AiSdkModelAdapterError } from "../src/model/errors.js";
 import { resolveModelStreamIdleTimeoutMs } from "../src/model/stream-idle-timeout.js";
 import {
+  markUnparsedToolInput,
   ModelErrorCode,
   ModelFailureReason,
   WEBSEARCH_PROVIDER_NATIVE_SPEC,
@@ -5046,7 +5047,8 @@ describe("AiSdkModelAdapter", () => {
       type: "tool_call",
       toolCall: {
         id: "call_malformed_ask",
-        input: {},
+        // adapter 对无法解析的 JSON 返回带标记的 {}（序列化后仍是 {}），executor 据此报解析错误。
+        input: markUnparsedToolInput(malformedInput),
         name: "AskUserQuestion",
       },
     });
@@ -5058,7 +5060,7 @@ describe("AiSdkModelAdapter", () => {
         context: expect.objectContaining({
           inputLength: 884,
           parseErrorType: "SyntaxError",
-          recovery: "empty_object",
+          recovery: "unparsed_marker",
           source: "streamText",
           status: "failed",
           toolName: "AskUserQuestion",
@@ -6496,7 +6498,8 @@ describe("AiSdkModelAdapter", () => {
       type: "tool_call",
       toolCall: {
         id: "call_malformed_compact",
-        input: {},
+        // adapter 对无法解析的 JSON 返回带标记的 {}（序列化后仍是 {}），executor 据此报解析错误。
+        input: markUnparsedToolInput("not-json"),
         name: "Read",
       },
     });
@@ -6644,7 +6647,8 @@ describe("AiSdkModelAdapter", () => {
         type: "tool_call",
         toolCall: {
           id: "call_direct_bad_input",
-          input: {},
+          // adapter 对无法解析的 JSON 返回带标记的 {}（序列化后仍是 {}），executor 据此报解析错误。
+          input: markUnparsedToolInput("not-json"),
           name: "Read",
           providerExecuted: undefined,
         },

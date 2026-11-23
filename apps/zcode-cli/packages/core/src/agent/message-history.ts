@@ -5,6 +5,9 @@ import { genUiModelContextSchema, type GenUiModelContext } from "@zcode/shared/g
 
 import {
   type RuntimeInputPresentation,
+  type ToolSearchAnnouncement,
+  type ToolSearchMcpDelta,
+  type ToolSearchDelivery,
   type ModelCallWrapper,
   type FilePart,
   isBlockIndex,
@@ -23,6 +26,7 @@ import {
   type PromptAttachmentReminderInput,
 } from "../system-reminder/prompt-attachment.js";
 import { parseAgentListingDelta, type AgentListingDelta } from "./agent-listing-metadata.js";
+import { parseSkillsListingDelta, type SkillsListingDelta } from "../skills/listing-metadata.js";
 import {
   parseEnvironmentAnnouncement,
   type EnvironmentAnnouncement,
@@ -74,6 +78,8 @@ export type RuntimeMessageSource =
   | "shared_context"
   // Plain user text marker appended after the user stops this turn; joins adjacent-user line-break rules as user input.
   | "interrupt_marker"
+  // 输出达到上限后追加的 Continue 提示：普通 user 文本，按隐藏提醒记录持久化，不算用户输入。
+  | "output_token_continuation"
   | "real_user"
   | "legacy_synthetic";
 
@@ -84,13 +90,13 @@ export type RuntimeMessageSource =
  */
 export const INTERRUPT_MARKER_SOURCE = "interrupt_marker" satisfies RuntimeMessageSource;
 
+/** Continue 提示的 source；持久化与冷恢复按它识别，用法同 INTERRUPT_MARKER_SOURCE。 */
+export const OUTPUT_TOKEN_CONTINUATION_SOURCE =
+  "output_token_continuation" satisfies RuntimeMessageSource;
+
 export interface RuntimeMessageMetadata {
   compactBoundary?: { boundaryId: string; preCompactDiscoveredTools?: readonly string[] };
-  toolSearchAnnouncement?: {
-    addedNames: readonly string[];
-    removedNames: readonly string[];
-    readdedNames: readonly string[];
-  };
+  toolSearchAnnouncement?: ToolSearchAnnouncement;
   /**
    * Names from the announcement's removedNames that are still in the registry and only hidden by
    * this round's restriction; the request projection renders neutral removal wording from this.
@@ -99,8 +105,11 @@ export interface RuntimeMessageMetadata {
    * versions ignore.
    */
   toolSearchHiddenNames?: readonly string[];
+  toolSearchMcpDelta?: ToolSearchMcpDelta;
   source: RuntimeMessageSource;
   agentListingDelta?: AgentListingDelta;
+  /** skills_listing 公告列出的 skill 与整行指纹；之后的请求据此只追加增量。 */
+  skillsListingDelta?: SkillsListingDelta;
   environment?: EnvironmentAnnouncement;
   /** context_prefix 公告了哪些指令文件；之后的请求据此判断是否追加增量。 */
   instructions?: InstructionAnnouncement;
@@ -110,19 +119,21 @@ export interface RuntimeMessageMetadata {
 }
 
 export interface RuntimeMessageMessageEntry {
+  /** 实际交付定义的内部记录，仅随有效 assistant 提交，不进入 provider 消息。 */
+  toolSearchDelivery?: ToolSearchDelivery;
   kind?: "message";
   message: ModelInputMessage;
   metadata?: RuntimeMessageMetadata;
   /** Provider tokens from the committed assistant message itself; not sent to the provider. */
   tokens?: TokenUsageInfo;
-  /** Applies only to the current query; must not enter canonical history or session persistence. */
-  queryScope?: "output_token_continuation";
   /**
    * Grouping key shared by the runtime entries split from one persisted assistant (server-built-in
    * tool rounds). compact treats these entries as one group by it, consistent with the database
    * message-grouping persistence boundary; never sent to the provider.
    */
   compactGroupKey?: string;
+  /** 见 {@link RuntimeAttachmentEntry.time}。 */
+  time?: number;
 }
 
 export interface RuntimeAttachmentEntry {
@@ -130,6 +141,11 @@ export interface RuntimeAttachmentEntry {
   content: string;
   cacheControl?: ModelCacheControl;
   metadata: RuntimeMessageMetadata;
+  /**
+   * 条目进入历史的时间（毫秒），静默提醒按它计时，不发送到 provider。live 由带时钟的 MessageHistory 记录，
+   * 冷恢复取持久化行的时间（meta-user-context.md「Silent-turn reminder」）。
+   */
+  time?: number;
 }
 
 export type RuntimeMessageEntry = RuntimeMessageMessageEntry | RuntimeAttachmentEntry;
@@ -165,6 +181,7 @@ export interface MessageHistory {
     reasoning?: ReasoningContentInput[],
     model?: Pick<Model, "providerId" | "modelId">,
     tokens?: TokenUsageInfo,
+    delivery?: ToolSearchDelivery,
   ): void;
 
   // Add tool result
@@ -210,18 +227,16 @@ export class MessageHistoryImpl implements MessageHistory {
     lastCacheHit: false,
   };
 
+  /** now 由 runtime 传入，给还没有时间的条目记录加入时间；不传时（单元测试直接构造）不记录。 */
+  constructor(private readonly now?: () => number) {}
+
   init(systemPromptOrMessages?: string | Array<ModelInputMessage | RuntimeMessageEntry>): void {
     this.entries = [];
 
     if (typeof systemPromptOrMessages === "string" && systemPromptOrMessages.length > 0) {
-      this.entries.push({
-        message: {
-          role: "system",
-          content: systemPromptOrMessages,
-        },
-      });
+      this.push([{ message: { role: "system", content: systemPromptOrMessages } }]);
     } else if (Array.isArray(systemPromptOrMessages)) {
-      this.entries.push(...systemPromptOrMessages.map(cloneEntryInput));
+      this.push(systemPromptOrMessages.map(cloneEntryInput));
     }
 
     this.cacheStats = {
@@ -232,18 +247,15 @@ export class MessageHistoryImpl implements MessageHistory {
   }
 
   addUser(content: ModelMessageContent, metadata?: RuntimeMessageMetadata): void {
-    this.entries.push(createRuntimeUserEntry(content, metadata));
-    this.cacheStats.totalMessages = this.entries.length;
+    this.push([createRuntimeUserEntry(content, metadata)]);
   }
 
   addAttachment(source: SystemReminderSource, content: string): void {
-    this.entries.push(systemReminderAttachmentEntry(source, content));
-    this.cacheStats.totalMessages = this.entries.length;
+    this.push([systemReminderAttachmentEntry(source, content)]);
   }
 
   addEntries(entries: readonly RuntimeMessageEntry[]): void {
-    this.entries.push(...entries.map(cloneRuntimeMessageEntry));
-    this.cacheStats.totalMessages = this.entries.length;
+    this.push(entries.map(cloneRuntimeMessageEntry));
   }
 
   addAssistant(
@@ -252,29 +264,32 @@ export class MessageHistoryImpl implements MessageHistory {
     reasoning?: ReasoningContentInput[],
     model?: Pick<Model, "providerId" | "modelId">,
     tokens?: TokenUsageInfo,
+    delivery?: ToolSearchDelivery,
   ): void {
     const reasoningBlocks = reasoning?.map((block) => cloneReasoningBlock(block)) ?? [];
-    this.entries.push({
-      message: {
-        role: "assistant",
-        content:
-          reasoningBlocks.length > 0
-            ? [
-                ...reasoningBlocks,
-                ...(content.length > 0 ? [{ type: "text" as const, text: content }] : []),
-              ]
-            : content,
-        toolCalls: toolCalls?.map((tc) => ({
-          id: tc.id,
-          name: tc.name,
-          input: tc.input,
-          ...(tc.modelCallWrapper ? { modelCallWrapper: tc.modelCallWrapper } : {}),
-        })),
-        ...(model ? { providerId: model.providerId, modelId: model.modelId } : {}),
+    this.push([
+      {
+        message: {
+          role: "assistant",
+          content:
+            reasoningBlocks.length > 0
+              ? [
+                  ...reasoningBlocks,
+                  ...(content.length > 0 ? [{ type: "text" as const, text: content }] : []),
+                ]
+              : content,
+          toolCalls: toolCalls?.map((tc) => ({
+            id: tc.id,
+            name: tc.name,
+            input: tc.input,
+            ...(tc.modelCallWrapper ? { modelCallWrapper: tc.modelCallWrapper } : {}),
+          })),
+          ...(model ? { providerId: model.providerId, modelId: model.modelId } : {}),
+        },
+        ...(tokens ? { tokens: cloneTokenUsageInfo(tokens) } : {}),
+        ...(delivery ? { toolSearchDelivery: structuredClone(delivery) } : {}),
       },
-      ...(tokens ? { tokens: cloneTokenUsageInfo(tokens) } : {}),
-    });
-    this.cacheStats.totalMessages = this.entries.length;
+    ]);
   }
 
   addToolResult(
@@ -285,10 +300,9 @@ export class MessageHistoryImpl implements MessageHistory {
     isError = !success,
     modelCallWrapper?: ModelCallWrapper,
   ): void {
-    this.entries.push(
+    this.push([
       createRuntimeToolResultEntry(toolCallId, toolName, content, isError, modelCallWrapper),
-    );
-    this.cacheStats.totalMessages = this.entries.length;
+    ]);
   }
 
   borrowReadOnlyRuntimeEntries(): readonly RuntimeMessageEntry[] {
@@ -300,7 +314,9 @@ export class MessageHistoryImpl implements MessageHistory {
   }
 
   replaceMessages(messages: readonly (ModelInputMessage | RuntimeMessageEntry)[]): void {
-    this.entries = messages.map(cloneEntryInput);
+    // 保留下来的条目带着原时间；新条目（例如 compact summary）记录替换时间。
+    this.entries = [];
+    this.push(messages.map(cloneEntryInput));
     this.cacheStats = {
       totalMessages: this.entries.length,
       cachedMessages: countContextPrefixMessages(this.entries),
@@ -337,6 +353,16 @@ export class MessageHistoryImpl implements MessageHistory {
       cachedMessages: contextPrefixMessages.length,
       lastCacheHit: false,
     };
+  }
+
+  /** 加入条目并更新计数；条目还没有时间时记录加入时间。按数组传入，长历史不经过参数展开。 */
+  private push(entries: readonly RuntimeMessageEntry[]): void {
+    const time = this.now?.();
+    for (const entry of entries)
+      this.entries.push(
+        time === undefined || entry.time !== undefined ? entry : { ...entry, time },
+      );
+    this.cacheStats.totalMessages = this.entries.length;
   }
 }
 
@@ -646,14 +672,18 @@ export function cloneRuntimeMessageEntry(entry: RuntimeMessageEntry): RuntimeMes
       content: entry.content,
       cacheControl: entry.cacheControl ? { ...entry.cacheControl } : undefined,
       metadata: cloneRuntimeMessageMetadata(entry.metadata)!,
+      ...(entry.time !== undefined ? { time: entry.time } : {}),
     };
   }
   return {
     message: cloneModelInputMessage(entry.message),
     metadata: cloneRuntimeMessageMetadata(entry.metadata),
     ...(entry.tokens ? { tokens: cloneTokenUsageInfo(entry.tokens) } : {}),
-    ...(entry.queryScope ? { queryScope: entry.queryScope } : {}),
+    ...(entry.toolSearchDelivery
+      ? { toolSearchDelivery: structuredClone(entry.toolSearchDelivery) }
+      : {}),
     ...(entry.compactGroupKey ? { compactGroupKey: entry.compactGroupKey } : {}),
+    ...(entry.time !== undefined ? { time: entry.time } : {}),
   };
 }
 
@@ -686,8 +716,10 @@ export function cloneRuntimeMessageMetadata(
   metadata: RuntimeMessageMetadata | undefined,
 ): RuntimeMessageMetadata | undefined {
   if (!metadata) return undefined;
-  const { agentListingDelta, environment, instructions, ...rest } = metadata;
+  const { agentListingDelta, skillsListingDelta, environment, instructions, ...rest } = metadata;
   const delta = parseAgentListingDelta(agentListingDelta);
+  const skillsDelta =
+    metadata.source === "skills_listing" ? parseSkillsListingDelta(skillsListingDelta) : undefined;
   const announcement =
     metadata.source === "environment" ? parseEnvironmentAnnouncement(environment) : undefined;
   const instructionAnnouncement =
@@ -695,6 +727,7 @@ export function cloneRuntimeMessageMetadata(
   return {
     ...rest,
     ...(delta ? { agentListingDelta: delta } : {}),
+    ...(skillsDelta ? { skillsListingDelta: skillsDelta } : {}),
     ...(announcement ? { environment: announcement } : {}),
     ...(instructionAnnouncement ? { instructions: instructionAnnouncement } : {}),
     ...(metadata.compactBoundary
@@ -707,13 +740,12 @@ export function cloneRuntimeMessageMetadata(
           },
         }
       : {}),
+    ...(metadata.toolSearchMcpDelta
+      ? { toolSearchMcpDelta: structuredClone(metadata.toolSearchMcpDelta) }
+      : {}),
     ...(metadata.toolSearchAnnouncement
       ? {
-          toolSearchAnnouncement: {
-            addedNames: [...metadata.toolSearchAnnouncement.addedNames],
-            removedNames: [...metadata.toolSearchAnnouncement.removedNames],
-            readdedNames: [...metadata.toolSearchAnnouncement.readdedNames],
-          },
+          toolSearchAnnouncement: structuredClone(metadata.toolSearchAnnouncement),
         }
       : {}),
     ...(metadata.toolSearchHiddenNames

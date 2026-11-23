@@ -546,6 +546,7 @@ export function SlashCommandPlugin({
       sections={panelSections}
       emptyText=""
       selectedIndex={selectedIndex}
+      selectionScope={activeSignature}
       hasActiveQuery={hasActiveQuery}
       onSelect={selectSuggestion}
     />,

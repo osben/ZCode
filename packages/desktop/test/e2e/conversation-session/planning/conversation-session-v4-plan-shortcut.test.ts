@@ -46,9 +46,9 @@ async function enterSearch(text = "/plan") {
   await $(PLAN_OPTION).waitForDisplayed({ timeout: 15000 });
   const optionText = await $(PLAN_OPTION).getText();
   expect(optionText).toMatch(/计划模式|Plan mode/);
-  // The shipped slash panel (upstream 3.17.2 included) labels app commands with their slash name and shows the
-  // description below it, so the Plan row reads "/plan" + "Enable Plan mode".
-  expect(optionText).toContain("/plan");
+  // Panel options show a localized name and description; `/plan` is only a search term and is not shown as the command name
+  // (see docs/plan-slash-command.md, 8f13cd8415 restored the localized label).
+  expect(optionText).not.toContain("/plan");
 }
 
 async function assertSelected(expectedText: string) {

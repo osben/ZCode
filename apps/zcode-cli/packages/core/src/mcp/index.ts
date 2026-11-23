@@ -10,6 +10,7 @@ import {
   type McpPort,
   type McpToolCallResult,
   type McpToolDescriptor,
+  type McpToolDefinition,
   type ModelMessageContent,
   type ModelMessageContentBlock,
   type ModelToolSideEffectScope,
@@ -54,8 +55,27 @@ const CUA_USER_TITLE_SCHEMA = {
   description:
     "Required short user-facing title in the user's language that describes why the app interface is being read without implementation terms such as CUA, MCP, or get_app_state",
 } satisfies JsonSchema;
-const ZCODE_CUA_CANONICAL_MODEL_PREFIX = "mcp__computer-use__";
+export const ZCODE_CUA_CANONICAL_MODEL_PREFIX = "mcp__computer-use__";
 const ZCODE_CUA_PROVIDER_SPELLING_ALIAS_PREFIX = "mcp__computer_use__";
+
+export interface ResolvedMcpTool {
+  descriptor: McpToolDescriptor;
+  /** 权限或 hook 等待之后复查目标；返回不可用原因，仍可调用时返回 undefined。 */
+  checkTarget(): string | undefined;
+  /** 调用失败后复查：server 正等待或需要用户授权时返回固定原因，否则返回 undefined。 */
+  authorizationReason(): string | undefined;
+}
+
+export type McpToolResolution = ResolvedMcpTool | { unavailableReason: string };
+
+/** 执行准入与 handler 共用的不可用文本；不带原因时只报工具名。 */
+function unavailableToolMessage(name: string, reason?: string): string {
+  return `MCP tool is unavailable in the current session: ${name}${reason ? `. ${reason}` : ""}`;
+}
+
+function unavailableToolError(name: string, reason: string): Error {
+  return new Error(unavailableToolMessage(name, reason));
+}
 
 export interface RegisterMcpToolsOptions {
   allowedTools?: readonly string[];
@@ -66,6 +86,11 @@ export interface RegisterMcpToolsOptions {
    * without projecting official CUA canonical names or attaching provider spelling aliases.
    */
   officialCuaServerNames?: ReadonlySet<string>;
+  /** advertisement cache 命中时，执行前解析当前 session 的 live descriptor。 */
+  resolveLiveDescriptor?: (
+    descriptor: McpToolDefinition,
+    signal?: AbortSignal,
+  ) => Promise<McpToolResolution | undefined>;
   /**
    * Namespaced server name → stable plugin ID, from the PluginReferenceCatalog frozen for this session.
    * Used only to project ownership into display.ui; if absent, this server's tools do not project UI.
@@ -76,35 +101,55 @@ export interface RegisterMcpToolsOptions {
 export function registerMcpTools(
   registry: ToolRegistry,
   mcpPort: McpPort,
-  descriptors: readonly McpToolDescriptor[],
+  descriptors: readonly McpToolDefinition[],
   options: RegisterMcpToolsOptions = {},
 ): string[] {
+  const registered: string[] = [];
+  for (const { name, descriptor, officialCuaAuthorityVerified } of selectMcpTools(
+    descriptors,
+    options,
+  )) {
+    registry.register(
+      createMcpToolEntry(
+        name,
+        descriptor,
+        mcpPort,
+        officialCuaAuthorityVerified,
+        { pluginId: options.pluginIdByServerName?.get(descriptor.serverName) },
+        options.resolveLiveDescriptor,
+      ),
+    );
+    registered.push(name);
+  }
+  return registered;
+}
+
+/** 执行注册和实时搜索共用名称、别名及权限准入；搜索不创建执行 handler。 */
+export function* selectMcpTools(
+  descriptors: readonly McpToolDefinition[],
+  options: RegisterMcpToolsOptions = {},
+) {
   const allowed = options.allowedTools ? new Set(options.allowedTools) : undefined;
   const disallowed = createToolRuleNameSet(options.disallowedTools);
-  const registered: string[] = [];
-
   for (const descriptor of descriptors) {
     const officialCuaAuthorityVerified =
       options.officialCuaServerNames?.has(descriptor.serverName) === true;
     const descriptorName = toMcpToolName(descriptor);
     const name = toRegisteredMcpToolName(descriptor, officialCuaAuthorityVerified);
-    // After projecting the official CUA name for the model, checking rules only against the new name would silently ignore
-    // namespaced denylists saved before the upgrade. Deny if either old or new name matches deny; allow if either matches allow.
+    // Deny if either the old or new name matches deny, accept if either matches allow; search must not loosen this.
     if (allowed && !allowed.has(name) && !allowed.has(descriptorName)) continue;
     if (disallowed?.has(name) || disallowed?.has(descriptorName)) continue;
-    registry.register(
-      createMcpToolEntry(name, descriptor, mcpPort, officialCuaAuthorityVerified, {
-        pluginId: options.pluginIdByServerName?.get(descriptor.serverName),
-      }),
-    );
-    registered.push(name);
+    yield {
+      name,
+      descriptor,
+      officialCuaAuthorityVerified,
+      aliases: officialCuaProviderSpellingAliases(name, descriptor, officialCuaAuthorityVerified),
+    };
   }
-
-  return registered;
 }
 
 function toRegisteredMcpToolName(
-  descriptor: McpToolDescriptor,
+  descriptor: McpToolDefinition,
   officialCuaAuthorityVerified: boolean,
 ): string {
   if (
@@ -121,13 +166,17 @@ function toRegisteredMcpToolName(
 
 export function createMcpToolEntry(
   name: string,
-  descriptor: McpToolDescriptor,
+  descriptor: McpToolDefinition,
   mcpPort: McpPort,
   officialCuaAuthorityVerified: boolean,
   presentation: { pluginId?: string } = {},
+  resolveLiveDescriptor?: RegisterMcpToolsOptions["resolveLiveDescriptor"],
+  target?: ResolvedMcpTool,
 ): ToolEntry {
   const readOnly = descriptor.annotations?.readOnlyHint === true;
-  const destructive = descriptor.annotations?.destructiveHint === true;
+  // The cache carries no execution annotations, so schedule as possibly destructive; unknown must not be treated as false.
+  const destructive =
+    descriptor.catalogOnly === true || descriptor.annotations?.destructiveHint === true;
   // Plugin UI: tools whose visibility excludes "model" are available only through UI callbacks (mcp/uiCallTool).
   // Keep them in the registry to reuse metadata, but omit them from provider contracts (registry.toContracts filters providerVisible=false).
   // Fix: previously only ui.visibility was checked, so app-only data tools without a resourceUri were incorrectly exposed to the model.
@@ -172,7 +221,7 @@ export function createMcpToolEntry(
           preview: { direction: "head" as const },
         };
 
-  return {
+  const entry: ToolEntry = {
     // Exact lookup returned Tool not found. Add a one-way alias only when the unforgeable official-authority gate passes and the internal
     // serverName is still the official namespaced name; the provider continues to see only the canonical name.
     aliases: officialCuaProviderSpellingAliases(name, descriptor, officialCuaAuthorityVerified),
@@ -242,48 +291,68 @@ export function createMcpToolEntry(
       recordOutput: "summary",
     },
     handler: async (input, context) => {
+      // 权限/hook 可异步等待；准入之后配置被替换、连接不可用或工具已下线时不能继承这次授权。
+      if (descriptor.catalogOnly) throw new Error(`MCP tool is unavailable: ${name}`);
+      const unavailable = target?.checkTarget();
+      if (unavailable) throw unavailableToolError(name, unavailable);
       const startedAt = Date.now();
-      const result = await mcpPort.callTool(
-        {
-          serverName: descriptor.serverName,
-          toolName: descriptor.toolName,
-          arguments: toMcpRuntimeArguments(input, isCuaAppObservation),
-          trace: {
-            traceId: context.traceId,
-            spanId: context.spanId,
-            parentSpanId: context.parentSpanId,
-            sessionId: context.sessionId,
-            turnId: context.turnId,
+      const result = await mcpPort
+        .callTool(
+          {
+            serverName: descriptor.serverName,
+            toolName: descriptor.toolName,
+            arguments: toMcpRuntimeArguments(input, isCuaAppObservation),
+            trace: {
+              traceId: context.traceId,
+              spanId: context.spanId,
+              parentSpanId: context.parentSpanId,
+              sessionId: context.sessionId,
+              turnId: context.turnId,
+            },
+            runtimeScope: context.runtimeScope ?? "main",
+            workspacePath: context.workingDirectory,
+            ...(context.remoteSessionId ? { remoteSessionId: context.remoteSessionId } : {}),
+            ...(context.workspaceIdentity?.trim()
+              ? { workspaceIdentity: context.workspaceIdentity.trim() }
+              : {}),
+            // Fix reason: local sessions used to always key by working directory; a managed worktree session's working directory is the worktree,
+            // so the Host's key-isolated MCP could not find the owning project. The session key is supplied by the protocol entry (docs/git/worktree.md §9.3).
+            workspaceKey:
+              context.workspaceKey ??
+              (context.workspaceIdentity?.trim() || context.workingDirectory),
+            ...(context.turnId ? { turnId: context.turnId } : {}),
+            clientMode: context.clientMode ?? "desktop-continuous",
+            deliveryKind: context.deliveryKind ?? "desktop-continuous",
           },
-          runtimeScope: context.runtimeScope ?? "main",
-          workspacePath: context.workingDirectory,
-          ...(context.remoteSessionId ? { remoteSessionId: context.remoteSessionId } : {}),
-          ...(context.workspaceIdentity?.trim()
-            ? { workspaceIdentity: context.workspaceIdentity.trim() }
-            : {}),
-          // 修复原因：本地会话曾一律用工作目录当 key；受管 worktree 会话的工作目录是 worktree，
-          // Host 按 key 隔离的 MCP 找不到所属项目。会话 key 由协议入口给出（docs/git/worktree.md §9.3）。
-          workspaceKey:
-            context.workspaceKey ?? (context.workspaceIdentity?.trim() || context.workingDirectory),
-          ...(context.turnId ? { turnId: context.turnId } : {}),
-          clientMode: context.clientMode ?? "desktop-continuous",
-          deliveryKind: context.deliveryKind ?? "desktop-continuous",
-        },
-        {
-          signal: context.abortSignal,
-          timeoutMs,
-          // MCP progress notifications (A8) → ToolCallProgress: use the same event as Bash output progress, so the UI uses its existing tool-row progress path.
-          ...(context.emitEvent
-            ? {
-                onProgress: (progress: { progress: number; total?: number; message?: string }) => {
-                  void context.emitEvent?.(
-                    createMcpProgressEvent(context, name, startedAt, progress),
-                  );
-                },
-              }
-            : {}),
-        },
-      );
+          {
+            signal: context.abortSignal,
+            timeoutMs,
+            // MCP progress notifications (A8) → ToolCallProgress: use the same event as Bash output progress, so the UI uses its existing tool-row progress path.
+            ...(context.emitEvent
+              ? {
+                  onProgress: (progress: {
+                    progress: number;
+                    total?: number;
+                    message?: string;
+                  }) => {
+                    void context.emitEvent?.(
+                      createMcpProgressEvent(context, name, startedAt, progress),
+                    );
+                  },
+                }
+              : {}),
+          },
+        )
+        .catch((error: unknown) => {
+          // Fix reason: a 401 during the call makes the adapter start authorization, and after the link is published the call ends with the raw error;
+          // the raw error does not tell the model that user authorization is needed. By then the server is already needs-auth, so use the same fixed text as execution admission.
+          // User cancellation is not rewritten; other failures (including exhausted recovery) still return the raw error.
+          const authorization = context.abortSignal?.aborted
+            ? undefined
+            : target?.authorizationReason();
+          if (authorization) throw unavailableToolError(name, authorization);
+          throw error;
+        });
       // MCP servers can return large base64 images, while resultBudget sees only image placeholder text.
       // Save a copy and replace model-visible content in the handler to prevent oversized provider requests.
       return normalizeMcpToolResultForModel({
@@ -297,6 +366,58 @@ export function createMcpToolEntry(
     },
     formatModelContent: (output) => formatMcpToolResult(output),
   };
+  if (resolveLiveDescriptor) {
+    entry.resolveForExecution = async ({ signal }) => {
+      const resolved = await resolveLiveDescriptor(descriptor, signal);
+      if (resolved && "unavailableReason" in resolved)
+        return {
+          status: "unavailable",
+          message: unavailableToolMessage(name, resolved.unavailableReason),
+        };
+      const liveDescriptor = resolved?.descriptor;
+      // live 名称必须走同一套官方 CUA 投影规则，否则缓存命中的 CUA 工具在执行时会被误判为不可用。
+      if (
+        !liveDescriptor ||
+        toRegisteredMcpToolName(liveDescriptor, officialCuaAuthorityVerified) !== name
+      ) {
+        return {
+          status: "unavailable",
+          message: unavailableToolMessage(name),
+        };
+      }
+      const liveEntry = createMcpToolEntry(
+        name,
+        liveDescriptor,
+        mcpPort,
+        officialCuaAuthorityVerified,
+        presentation,
+        undefined,
+        resolved,
+      );
+      // 调度（提前执行、并发分组、可见性）按注册时定义做出；live 定义更严格时，
+      // 本次不调用 handler，也不在旧并发组内重试，下一次请求会拿到新定义。
+      const stricter = findStricterLiveConstraint(entry, liveEntry);
+      if (stricter) {
+        return {
+          status: "unavailable",
+          message: `MCP tool ${name} now has a stricter live ${stricter} constraint than its registered definition; it was not called. Call it again in the next request.`,
+        };
+      }
+      return { status: "ready", entry: liveEntry };
+    };
+  }
+  return entry;
+}
+
+// 直接比较两份 entry metadata：未声明 destructiveHint 的注册定义按非破坏性调度，live 改为 true 同样算收紧。
+function findStricterLiveConstraint(registered: ToolEntry, live: ToolEntry): string | undefined {
+  if (registered.metadata.readOnly && !live.metadata.readOnly) return "readOnly";
+  if (registered.metadata.concurrentSafe && !live.metadata.concurrentSafe) return "concurrency";
+  if (!registered.metadata.destructive && live.metadata.destructive) return "destructive";
+  if (registered.metadata.providerVisible !== false && live.metadata.providerVisible === false) {
+    return "visibility";
+  }
+  return undefined;
 }
 
 function createMcpProgressEvent(
@@ -327,7 +448,7 @@ function createMcpProgressEvent(
 
 function officialCuaProviderSpellingAliases(
   name: string,
-  descriptor: McpToolDescriptor,
+  descriptor: McpToolDefinition,
   officialCuaAuthorityVerified: boolean,
 ): readonly string[] | undefined {
   if (
@@ -388,7 +509,7 @@ function normalizeInputSchema(schema: JsonSchema | undefined): JsonSchema {
 }
 
 function createModelFacingMcpInputSchema(
-  descriptor: McpToolDescriptor,
+  descriptor: McpToolDefinition,
   isCuaAppObservation: boolean,
 ): JsonSchema {
   const schema = normalizeInputSchema(descriptor.inputSchema);
@@ -427,23 +548,14 @@ function isZCodeCuaGetAppState(
   );
 }
 
-function hasInformativeStructuredContent(value: unknown): boolean {
-  if (value === null || value === undefined) return false;
-  if (Array.isArray(value)) return value.length > 0;
-  if (typeof value === "object") return Object.keys(value).length > 0;
-  return true;
-}
-
 export function formatMcpToolResult(output: unknown): ModelMessageContent {
   if (!isMcpToolCallResult(output)) {
     return stringify(output);
   }
 
   const blocks = output.content.flatMap(formatContentBlock);
-  // Production adapters preserve empty structuredContent keys; undefined, null, empty objects, and
-  // empty arrays contain no model information and must not produce a fabricated "Structured content" block. Non-empty error details
-  // must be preserved because permission guidance depends on this structured channel.
-  if (hasInformativeStructuredContent(output.structuredContent)) {
+  // content is the server's representation for the model; fall back to the structured result only when there are no visible blocks, avoiding double-written compatibility output.
+  if (blocks.length === 0 && output.structuredContent !== undefined) {
     blocks.push({
       type: "text",
       text: `Structured content:\n${stringify(output.structuredContent)}`,

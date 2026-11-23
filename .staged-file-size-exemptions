@@ -484,3 +484,24 @@ apps/zcode-cli/packages/documents-plugin/scripts/zcode_libreoffice.py
 apps/zcode-cli/packages/pdf-plugin/scripts/zcode_libreoffice.py
 apps/zcode-cli/packages/presentations-plugin/scripts/zcode_libreoffice.py
 apps/zcode-cli/packages/spreadsheets-plugin/scripts/zcode_libreoffice.py
+
+# Upstream sync 4.0.0 (specs/upstream-sync-4.0.0.md): upstream files with fork deltas on top.
+apps/zcode-cli/packages/adapters/src/auth/shared-credentials.ts
+apps/zcode-cli/packages/adapters/src/model/reasoning-history-normalization.ts
+apps/zcode-cli/packages/adapters/src/plugins/atomic-directory.ts
+apps/zcode-cli/packages/adapters/src/storage/session-store/repositories/dwf-journal.ts
+apps/zcode-cli/packages/adapters/src/storage/session-store/repositories/messages.ts
+apps/zcode-cli/packages/core/src/hooks/runner.ts
+apps/zcode-cli/packages/core/src/runtime/methods/mcp.ts
+apps/zcode-cli/packages/core/src/runtime/methods/session-title.ts
+apps/zcode-cli/packages/core/src/runtime/session-fork-commit/builders.ts
+packages/desktop/tsup.config.ts
+packages/services/src/credential/credentialService.ts
+packages/services/src/feedback/feedbackLogArchive.ts
+packages/services/src/git/repo/gitCheckpointRepo.ts
+packages/shared/src/workspace-hook-config.ts
+packages/ui/src/GitBranchSwitcher.tsx
+packages/ui/src/chat-input-toolbar/ComposerModelMenu.tsx
+packages/ui/src/hooks/useGitRepository.ts
+packages/ui/src/v4/ConversationSelectionTooltip.tsx
+packages/ui/src/v4/V4InteractionDialogs.tsx

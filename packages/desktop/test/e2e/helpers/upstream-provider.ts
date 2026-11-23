@@ -1,5 +1,8 @@
 /* eslint-disable max-lines -- Upstream E2E 初始化包含设置页、provider store、模型选择三段探针，集中维护方便失败诊断 */
-import { selectCombinedComposerThoughtLevel } from "./composer-model-picker.js";
+import {
+  closeComposerModelPanel,
+  selectCombinedComposerThoughtLevel,
+} from "./composer-model-picker.js";
 import { ZCODE_AGENT_PROVIDER, encodeCustomModelValue } from "@zcode/shared";
 import {
   TID_CHAT_MODEL_SELECT_GROUP,
@@ -689,7 +692,7 @@ export async function selectRegistryProviderModelById(
         (await trigger.getAttribute("data-composer-combined-model")) === "true" &&
         (await trigger.getAttribute("aria-expanded")) === "true"
       )
-        await browser.keys("Escape");
+        await closeComposerModelPanel();
     }
 
     await waitForModelSwitchIdle(`${providerName} 模型 ${modelId} 切换持久化没有完成`);

@@ -14,7 +14,7 @@ Save `--version`, `doctor --json`, the build commit or artifact SHA-256, the com
 
 ## Tools produced no result
 
-- `No permission client configured`: this call needs approval but the prompt has no interactive client. Check the mode, the tool and the Hook decision.
+- `... requested permissions to use <Tool>, but you haven't granted it yet.` or `No permission client configured` (guarded mode): this call needs approval but the prompt has no interactive client. Check the mode, the tool and the Hook decision.
 - Only a plan is output: check whether plan mode was triggered; for unattended tasks remove the unneeded plan and question tools per the [tool configuration](04-tools.md).
 - A project Hook does not run: check enabled, the matcher, the trust state and whether the event naturally occurred; after trusting, a skipped SessionStart is not replayed.
 - The plugin list is empty: check the global plugin switch, asset preparation and diagnostics. The current version can list directly and does not require a model request first.

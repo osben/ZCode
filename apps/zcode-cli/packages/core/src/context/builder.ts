@@ -21,7 +21,6 @@ import {
   buildExecutionWorktreeSection,
   buildGitSystemContextSection,
 } from "./sections/env-info.js";
-import { buildSkillsSection } from "./sections/skills.js";
 import { buildRequestUserContextSection } from "./sections/request-user-context.js";
 import { buildCurrentDateSection } from "./sections/current-date.js";
 import { buildMemorySection } from "./sections/memory.js";
@@ -30,6 +29,8 @@ import { buildDesktopContextSection } from "./sections/desktop.js";
 import {
   buildContextManagementSection,
   buildDynamicBehaviorSection,
+  buildFinishingWorkSection,
+  buildMemoryNotesSection,
   buildSessionGuidanceSection,
   buildTotalTokensSection,
 } from "./dynamic-sections.js";
@@ -39,8 +40,6 @@ import {
 // -----------------------------------------------
 
 const EPHEMERAL_CACHE_CONTROL = { type: "ephemeral" as const };
-/** Registered name of the Skill tool (same literal as metadata.name in tool/handlers/skill.ts; contracts has no constant). */
-const SKILL_TOOL_NAME = "Skill";
 
 export class ContextBuilder {
   private config: ContextBuilderConfig;
@@ -165,7 +164,8 @@ export class ContextBuilder {
     // A custom prompt does not replace only the stable body; it skips the default system prompt's dynamic sections.
     // Otherwise, dynamic system sections such as Session Guidance would still be included after the user provides a custom prompt.
     // Workflow subagents skip the three sections aimed at "talking with the user" (desktop, Dynamic Behavior, and session
-    // guidance—the contract already carries Report outcomes faithfully), while retaining memory and subsequent sections.
+    // guidance; the contract already carries Report outcomes faithfully), and also skip the Finishing work and
+    // memory notes sections; they keep memory, Context management and the token budget line.
     if (!hasCustomSystemPrompt) {
       if (!isWorkflowActor && !harnessOff && this.config.presentationSurface === "zcode_desktop") {
         sections.push(buildDesktopContextSection(Boolean(this.config.genUiOutputDirectory)));
@@ -203,7 +203,14 @@ export class ContextBuilder {
 
       // Context Management
       sections.push(buildContextManagementSection(promptOverrides?.["context-management"]));
-      sections.push(buildTotalTokensSection());
+      // Workflow subagents have their own finishing contract and do not take these two main-session sections.
+      if (!isWorkflowActor) {
+        sections.push(buildFinishingWorkSection(), buildMemoryNotesSection());
+      }
+      const totalTokensSection = buildTotalTokensSection(this.config.totalTokensReminder === true);
+      if (totalTokensSection) {
+        sections.push(totalTokensSection);
+      }
 
       const gitSystemContextSection = environmentOff
         ? null
@@ -215,19 +222,9 @@ export class ContextBuilder {
       sections.push(...environmentSections);
     }
 
-    // 4. Skills appear as a meta user system-reminder, matching provider block layout.
-    // guidanceToolNames is the runtime's current tool list. Telling a workflow subagent without a registered Skill tool that
-    // "the following skills can be used through the Skill tool" would make it believe it has a tool it does not have.
-    // Preserve existing behavior when the list is absent (tests / older callers).
-    if (this.config.skills && this.skillToolAvailable()) {
-      const skillsSection = buildSkillsSection({
-        outcome: this.config.skills,
-        metadataBudget: this.config.skillMetadataBudget,
-      });
-      if (skillsSection) {
-        sections.push(skillsSection);
-      }
-    }
+    // 4. The skill list is not rendered here: the runtime's skills_listing collector appends increments
+    // from the live catalog (docs/skills-live-catalog.md at the repo root). This used to render a full list
+    // again from the catalog at session start; with increments nothing reads it, so it was removed.
 
     // 5. Meta user context (workspace instructions / project memory); the date is a separate announcement after it.
     const requestUserContextSection = buildRequestUserContextSection({
@@ -264,11 +261,6 @@ export class ContextBuilder {
       systemMessages,
       metaUserAttachments,
     };
-  }
-
-  private skillToolAvailable(): boolean {
-    const names = this.config.guidanceToolNames;
-    return names === undefined || names.includes(SKILL_TOOL_NAME);
   }
 
   private assembleSystemMessages(sections: ContextSection[]): ModelInputMessage[] {
@@ -333,7 +325,6 @@ export function buildMetaUserAttachments(sections: ContextSection[]): ContextMet
   // Route each source explicitly; date, environment, and Git are no longer folded into the instructions carrier.
   const sourceMap: Partial<Record<ContextSection["source"], ContextMetaUserAttachment["source"]>> =
     {
-      skills: "skills_listing",
       request_user_context: "context_prefix",
       session_context: "session_context",
     };

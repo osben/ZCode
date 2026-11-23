@@ -21,6 +21,7 @@ import {
   RESUME_WORKFLOW_RUN_TOOL_NAME,
   SAVE_WORKFLOW_TOOL_NAME,
   SUBMIT_RESULT_TOOL_NAME,
+  WAIT_FOR_MCP_SERVERS_TOOL_NAME,
   type JsonSchema,
 } from "@zcode/contracts";
 import type { ToolEntry } from "../types.js";
@@ -75,6 +76,7 @@ import { createWorkflowToolEntry } from "./create-workflow.js";
 import { saveWorkflowToolEntry } from "./save-workflow.js";
 import { listSavedWorkflowsToolEntry } from "./list-saved-workflows.js";
 import { listModelsToolEntry } from "./list-models.js";
+import { waitForMcpServersToolEntry } from "./wait-for-mcp-servers.js";
 import { evalWorkflowSnippetToolEntry } from "./eval-workflow-snippet.js";
 import { listWorkflowRunsToolEntry } from "./list-workflow-runs.js";
 import { getWorkflowRunToolEntry } from "./get-workflow-run.js";
@@ -159,6 +161,8 @@ export const builtInTools: ToolEntry[] = [
   // WORKFLOW_CHILD_DISALLOWED_TOOLS because that denylist prevents alwaysAsk from opening a dialog in child runtimes, which does not
   // apply to read-only queries.
   listModelsToolEntry,
+  // MCP 连接中的等待入口；只在 runtime 持有 MCP 会话时注册，本轮是否可见由 getTools(model) 决定。
+  waitForMcpServersToolEntry,
   // workflowToolEntry,
 ];
 
@@ -222,6 +226,13 @@ interface RegisterBuiltInToolsOptions {
    * service's appRuntimePreferences, not at this layer.
    */
   includeDynamicWorkflow?: boolean;
+  /**
+   * Whether Agent / Task always run in the background (see createAgentToolEntry). Same polarity as the dynamic-workflow rollout gate:
+   * **absent means on**; only an explicit false returns to the old form with optional run_in_background.
+   */
+  agentAlwaysBackground?: boolean;
+  /** WaitForMcpServers: registered only when the runtime holds an MCP session that can be waited on. */
+  includeMcpServerWait?: boolean;
   /** node_repl (js) is disabled by default and enabled by the official browser-use plugin. */
   includeNodeRepl?: boolean;
   /** browser-use guidance and agent.browsers injection are enabled jointly by the official browser-use plugin and host browser bridge. */
@@ -337,6 +348,12 @@ export function registerBuiltInTools(
     ) {
       continue;
     }
+    if (
+      entry.metadata.name === WAIT_FOR_MCP_SERVERS_TOOL_NAME &&
+      options.includeMcpServerWait !== true
+    ) {
+      continue;
+    }
     if (entry.metadata.name === "js" && options.includeNodeRepl !== true) {
       continue;
     }
@@ -367,11 +384,13 @@ function resolveBuiltInToolEntryForBranch(
   // the same options.includeDynamicWorkflow as registration filtering so initial setup and branch refresh produce matching descriptions.
   if (entry.metadata.name === "Agent") {
     return createAgentToolEntry({
+      alwaysBackground: options.agentAlwaysBackground !== false,
       dynamicWorkflowEnabled: options.includeDynamicWorkflow !== false,
     });
   }
   if (entry.metadata.name === "Task") {
     return createTaskToolEntry({
+      alwaysBackground: options.agentAlwaysBackground !== false,
       dynamicWorkflowEnabled: options.includeDynamicWorkflow !== false,
     });
   }

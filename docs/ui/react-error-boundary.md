@@ -13,5 +13,9 @@ The strategy is "survive first, recover next": `重试` clears the error boundar
 current tree again; `刷新应用` refreshes the current renderer directly, suited to a corrupted Provider or
 initialization state.
 
+- Desktop also injects `onRestart`, which offers "Restart app": it runs an emergency restart through the main
+  process and does not depend on any Provider inside the failed tree. Web and mobile do not inject it and keep the
+  page refresh. Scope and acceptance are in [crash restart](../desktop/crash-restart.md).
+
 Finer-grained isolation can later add secondary Error Boundaries in local areas such as workspace, sidebar and
 right panel, but the root boundary must be kept so the app never returns to a white screen.

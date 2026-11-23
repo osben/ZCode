@@ -6,7 +6,7 @@ import type {
   KeyboardEvent as ReactKeyboardEvent,
   Ref,
 } from "react";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useEffectEvent, useMemo, useRef, useState } from "react";
 import { Trash2Icon } from "lucide-react";
 import type { FileContents, LineAnnotation, SupportedLanguages } from "@pierre/diffs";
 import { File, type FileOptions } from "@pierre/diffs/react";
@@ -49,7 +49,19 @@ export interface CodeViewerProps extends HTMLAttributes<HTMLDivElement> {
   topCommentShowRange?: boolean;
   topCommentNotice?: string;
   focusedRange?: CodeCommentRange | null;
+  /**
+   * 文件链接定位的行号段（已按文件行数截断，按链接里的顺序）。与 focusedRange（代码评审）互斥使用：
+   * 首段走 selectedLines，其余段经 unsafeCSS 注入同款选中样式；滚动时跨度（首段起始行到最大结束行）
+   * 放得下就居中，放不下起始行置顶。同样由 focusRequestId 变化触发。
+   */
+  focusedLineRanges?: readonly CodeCommentRange[] | null;
   focusRequestId?: string;
+  /**
+   * Reports this focusRequestId after a successful locate-and-scroll. File links use it so the owner of the tab state
+   * can record "already located"; after a remount or content refresh the viewer then does not scroll again. It cannot be
+   * tracked with an in-component ref because a remount loses it. Code review does not pass it; behavior is unchanged.
+   */
+  onFocusRequestApplied?: (requestId: string) => void;
   /**
    * Line numbers to highlight (1-based, in the same coordinate system as `firstLineNumber`): tint only these rows' **line numbers** with a warning color;
    * leave the code itself unchanged. Compilation feedback cards use this to mark the lines referenced by diagnostics.
@@ -145,6 +157,38 @@ export function codeViewerMarkedLinesCss(lines: readonly number[] | undefined): 
   if (unique.length === 0) return "";
   const selector = unique.map((line) => `[data-column-number="${line}"]`).join(",");
   return `${selector}{color:var(--color-warning);}`;
+}
+
+/**
+ * 文件链接多段高亮里第一段以外的行。@pierre/diffs 的 selectedLines 只支持一个连续区间，
+ * 选中样式又只认它自己写在 Shadow DOM 里的 `[data-selected-line]` 属性；这里按行号点名，
+ * 照抄 @pierre/diffs style.css 中 `[data-selected-line]` 规则设置的同一组变量，
+ * 让代码底色、行号底色和行号文字色与第一段完全一致，深浅主题随其 light-dark() 自动跟随。
+ * 升级 @pierre/diffs 时若选中规则变化需同步；MFL02 E2E 比对各段计算后的颜色，能发现漂移。
+ * 选择器按行号点名，体积随行数线性增长；按段顺序累计（去重）最多点名
+ * CODE_VIEWER_EXTRA_SELECTED_LINES_LIMIT 行，超出部分不注入高亮（docs/ui/preview-pane.md）。
+ */
+const CODE_VIEWER_EXTRA_SELECTED_LINES_LIMIT = 2000;
+
+export function codeViewerExtraSelectedLinesCss(
+  ranges: readonly CodeCommentRange[] | undefined,
+): string {
+  const lines = new Set<number>();
+  for (const { startLine, endLine } of ranges ?? []) {
+    for (let line = startLine; line <= endLine; line += 1) {
+      if (lines.size >= CODE_VIEWER_EXTRA_SELECTED_LINES_LIMIT) break;
+      lines.add(line);
+    }
+  }
+  if (lines.size === 0) return "";
+  const codeSelector = [...lines].map((line) => `[data-line="${line}"]`).join(",");
+  const gutterSelector = [...lines].map((line) => `[data-column-number="${line}"]`).join(",");
+  const selectedBackground =
+    "--diffs-computed-selected-line-bg:light-dark(color-mix(in lab, var(--diffs-computed-diff-line-bg) var(--mix-selection-light), var(--diffs-selection-mix-target)),color-mix(in lab, var(--diffs-computed-diff-line-bg) var(--mix-selection-dark), var(--diffs-selection-mix-target)));--diffs-line-bg:var(--diffs-computed-selected-line-bg,inherit);";
+  return [
+    `:is(${codeSelector}):not([data-column-number]){--mix-selection-light:82%;--mix-selection-dark:75%;${selectedBackground}}`,
+    `:is(${gutterSelector}){--mix-selection-light:75%;--mix-selection-dark:60%;--diffs-selection-mix-target:var(--diffs-bg-selection-number-override,var(--diffs-selection-base));${selectedBackground}color:var(--diffs-selection-number-fg);}`,
+  ].join("");
 }
 
 function toCssString(value: string) {
@@ -456,7 +500,9 @@ export function CodeViewer({
   topCommentShowRange = true,
   topCommentNotice,
   focusedRange = null,
+  focusedLineRanges = null,
   focusRequestId,
+  onFocusRequestApplied,
   markedLines,
   enableLineSelection = false,
   enableGutterUtility = false,
@@ -520,12 +566,28 @@ export function CodeViewer({
 
     return annotations;
   }, [activeDraftRange, canCreateComment, comments, firstLineNumber]);
+  // 代码评审用 focusedRange；文件链接用 focusedLineRanges，首段走原生选中样式。
+  // 用起止行原始值做依赖：调用方每次渲染都会给新的数组/对象，不该因此重设选中区间。
+  const primaryFocusedStartLine = (focusedRange ?? focusedLineRanges?.[0])?.startLine;
+  const primaryFocusedEndLine = (focusedRange ?? focusedLineRanges?.[0])?.endLine;
+  const hasActiveDraft = canCreateComment && activeDraftRange !== null;
   const selectedLines = useMemo(() => {
-    if (canCreateComment && activeDraftRange) {
+    if (hasActiveDraft && activeDraftRange) {
       return codeCommentRangeToSelectedRange(activeDraftRange, firstLineNumber);
     }
-    return focusedRange ? codeCommentRangeToSelectedRange(focusedRange, firstLineNumber) : null;
-  }, [activeDraftRange, canCreateComment, firstLineNumber, focusedRange]);
+    return primaryFocusedStartLine !== undefined && primaryFocusedEndLine !== undefined
+      ? codeCommentRangeToSelectedRange(
+          { startLine: primaryFocusedStartLine, endLine: primaryFocusedEndLine },
+          firstLineNumber,
+        )
+      : null;
+  }, [
+    activeDraftRange,
+    firstLineNumber,
+    hasActiveDraft,
+    primaryFocusedEndLine,
+    primaryFocusedStartLine,
+  ]);
   const handleLineSelectionEnd = useCallback(
     (range: SelectedLineRange | null) => {
       if (!canCreateComment || !range) {
@@ -631,8 +693,17 @@ export function CodeViewer({
       }
     };
   }, [canUseCommentGutterUtility, labels.addCommentTooltip]);
-  const focusedStartLine = focusedRange?.startLine;
-  const focusedEndLine = focusedRange?.endLine;
+  const focusedStartLine = primaryFocusedStartLine;
+  const focusedEndLine = primaryFocusedEndLine;
+  // 文件链接的定位跨度终点：各段中最大的结束行；代码评审不设，保持只居中起始行的旧行为。
+  const fileLinkSpanEndLine =
+    !focusedRange && focusedLineRanges?.length
+      ? Math.max(...focusedLineRanges.map((range) => range.endLine))
+      : undefined;
+  // 回调身份随父组件渲染变化，不应让定位 effect 重跑；用 effect event 读最新回调。
+  const reportFocusRequestApplied = useEffectEvent((requestId: string) => {
+    onFocusRequestApplied?.(requestId);
+  });
   useEffect(() => {
     if (!focusRequestId || focusedStartLine === undefined || !viewerRef.current) {
       return;
@@ -661,7 +732,31 @@ export function CodeViewer({
         container.scrollLeft = horizontalScrollLeft;
         return;
       }
-      if (container && line) {
+      if (container && line && fileLinkSpanEndLine !== undefined) {
+        const spanEnd = findCodeViewerLineElement(
+          container,
+          fileLinkSpanEndLine - firstLineNumber + 1,
+        );
+        if (spanEnd) {
+          const containerRect = container.getBoundingClientRect();
+          const horizontalScrollLeft = container.scrollLeft;
+          const spanTop =
+            container.scrollTop + line.getBoundingClientRect().top - containerRect.top;
+          const spanHeight =
+            spanEnd.getBoundingClientRect().bottom - line.getBoundingClientRect().top;
+          // 文件链接区间/多段：整体放得下就居中；放不下时起始行置顶，保证从起始行开始读。
+          // 单行时跨度就是一行，结果与旧的居中一致。
+          container.scrollTop = Math.max(
+            0,
+            spanHeight <= container.clientHeight
+              ? spanTop + spanHeight / 2 - container.clientHeight / 2
+              : spanTop,
+          );
+          container.scrollLeft = horizontalScrollLeft;
+          reportFocusRequestApplied(focusRequestId);
+          return;
+        }
+      } else if (container && line) {
         const containerRect = container.getBoundingClientRect();
         const lineRect = line.getBoundingClientRect();
         const horizontalScrollLeft = container.scrollLeft;
@@ -669,6 +764,7 @@ export function CodeViewer({
           container.scrollTop + lineRect.top - containerRect.top + lineRect.height / 2;
         container.scrollTop = Math.max(0, lineCenter - container.clientHeight / 2);
         container.scrollLeft = horizontalScrollLeft;
+        reportFocusRequestApplied(focusRequestId);
         return;
       }
 
@@ -684,9 +780,34 @@ export function CodeViewer({
     return () => {
       window.cancelAnimationFrame(animationFrame);
     };
-  }, [file.cacheKey, firstLineNumber, focusedEndLine, focusedStartLine, focusRequestId]);
+  }, [
+    file.cacheKey,
+    fileLinkSpanEndLine,
+    firstLineNumber,
+    focusedEndLine,
+    focusedStartLine,
+    focusRequestId,
+  ]);
   // Depend on the CSS string content, not the array reference: callers may create a new array on each render, but options should not change (File would reorder).
   const markedLinesCss = codeViewerMarkedLinesCss(markedLines);
+  // 文件链接第一段以外的段。用户拖选写评论时选中样式让给草稿，这些段也一起撤掉，避免只剩部分段高亮。
+  // 调用方每次渲染都给新数组；以序列化后的段内容做 memo 依赖，只在段变化时重新生成选择器。
+  const extraSelectedRangesKey =
+    focusedRange || hasActiveDraft
+      ? ""
+      : JSON.stringify(
+          (focusedLineRanges ?? []).slice(1).map((range) => ({
+            startLine: range.startLine - firstLineNumber + 1,
+            endLine: range.endLine - firstLineNumber + 1,
+          })),
+        );
+  const extraSelectedLinesCss = useMemo(
+    () =>
+      extraSelectedRangesKey
+        ? codeViewerExtraSelectedLinesCss(JSON.parse(extraSelectedRangesKey) as CodeCommentRange[])
+        : "",
+    [extraSelectedRangesKey],
+  );
   const options = useMemo<FileOptions<CodeViewerAnnotationMetadata>>(
     () => ({
       disableFileHeader: true,
@@ -704,11 +825,12 @@ export function CodeViewer({
       onGutterUtilityClick: canUseCommentGutterUtility ? handleGutterUtilitySelection : undefined,
       // The built-in comment + sits immediately to the right of the line number by default and can be confused with the code start while dragging.
       // Adjust only the position of the gutter utility inside the Shadow DOM; do not take over pointer events or break multi-line drag ranges.
-      unsafeCSS: CODE_VIEWER_UNSAFE_CSS + markedLinesCss,
+      unsafeCSS: CODE_VIEWER_UNSAFE_CSS + markedLinesCss + extraSelectedLinesCss,
     }),
     [
       canUseCommentGutterUtility,
       canUseCommentLineSelection,
+      extraSelectedLinesCss,
       handleGutterUtilitySelection,
       handleLineSelectionEnd,
       markedLinesCss,

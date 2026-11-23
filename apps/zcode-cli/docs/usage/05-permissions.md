@@ -32,6 +32,6 @@ This diagram shows user-observable outcomes, not the strict call order of every 
 
 Test Read, Write and Bash in a throwaway directory. For ordinary built-in file tools, plan should deny writes and edit may write files; build write approval may fail in a prompt with no client. With custom tools, plugins or MCP, verify their capability declarations and permission rules separately.
 
-When `No permission client configured` appears, check whether the current mode and tool need interaction. Do not try to fix it by repeating the prompt to the model. Remove the interactive tools you do not need, or choose an interactive entry with an approval client.
+When approval is needed but the prompt has no approval client, the tool is denied and the model receives `ZCode requested permissions to use <Tool>, but you haven't granted it yet.` (Write / Edit say `...to write to <file_path>...`); in guarded mode the call fails directly with the error `No permission client configured`. When either appears, check whether the current mode and tool need interaction. Do not try to fix it by repeating the prompt to the model. Remove the interactive tools you do not need, or choose an interactive entry with an approval client.
 
 After a tool is denied the model may still continue answering and the process may return `0`. Check streamed events, tool results and file artifacts together. A synchronous `PreToolUse` Hook can block a kind of tool by arguments, but a simple command regex is not a complete sandbox; see [Hooks](09-hooks.md).

@@ -34,6 +34,12 @@ const { editor } = vi.hoisted(() => ({
 
 // The draft owner (useDraftConfigControl) reads the session service and settings hooks; this suite
 // has no ServiceProvider, so both are stubbed. The owner's write paths are exercised unchanged.
+// Upstream 4.0.0 ComposerStatusRow measures its capsules with DOM APIs the minimal DOM lacks; this
+// suite does not cover the status row.
+vi.mock("@/v4/ConversationStatusPanel.js", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/v4/ConversationStatusPanel.js")>()),
+  ComposerStatusRow: () => null,
+}));
 vi.mock("@/hooks/useZCodeSessionService.js", () => ({
   useZCodeSessionService: () => ({}),
 }));

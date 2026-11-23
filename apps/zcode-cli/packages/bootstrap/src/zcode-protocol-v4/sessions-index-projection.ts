@@ -130,6 +130,7 @@ export function deriveSessionSummary(
     // 忠实透传 control.sessionEnded（语义：成功轮收口后即 true，不代表已删除）。
     sessionEnded: snapshot.control.sessionEnded,
     hasBackgroundWork,
+    hasCompactWork: snapshot.control.activeWorks.some((work) => work.kind === "compact"),
     ...(workflowActivity === undefined ? {} : { workflowActivity }),
     ...(pendingInteraction ? { pendingInteraction } : {}),
     ...(permissionCount > 0 || userInputCount > 0
@@ -177,6 +178,8 @@ function summariesEqual(a: SessionSummary, b: SessionSummary): boolean {
     a.worktreePreparation?.failureMessage === b.worktreePreparation?.failureMessage &&
     a.sessionEnded === b.sessionEnded &&
     a.hasBackgroundWork === b.hasBackgroundWork &&
+    // compact does not flip phase, so it must be compared separately to keep conflation from dropping its start or end; a missing old frame equals false.
+    Boolean(a.hasCompactWork) === Boolean(b.hasCompactWork) &&
     // Conflation must never discard phase changes, settlement, or changes to running-subagent counts. Node-only changes compare equal here
     // (in the real system, advancing lastActivityAt still produces a frame; that reflects activity without changing these semantics).
     JSON.stringify(a.workflowActivity ?? null) === JSON.stringify(b.workflowActivity ?? null) &&

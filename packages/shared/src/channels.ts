@@ -240,6 +240,9 @@ export type ServiceChannelName = (typeof ServiceChannels)[keyof typeof ServiceCh
 
 /** Electron IPC channel names. Used only between preload and main. */
 export const PlatformChannels = {
+  ExecutePreinstalledToolsCommand: "zcode:preinstalled-tools:command",
+  GetPreinstalledToolsState: "zcode:preinstalled-tools:get-state",
+  PreinstalledToolsState: "zcode:preinstalled-tools:state",
   /** renderer → main: release the plugin UI sandbox (close ports, remove the protocol handler, clear the partition) */
   PluginSandboxDispose: "zcode:plugin-sandbox-dispose",
   PluginSandboxCopyImage: "zcode:plugin-sandbox-copy-image",
@@ -574,6 +577,8 @@ export const PlatformChannels = {
   ExecuteDesktopCommand: "zcode:execute-desktop-command",
   /** Renderer → Main: sync the application menu language so the native menu can be rebuilt */
   SetApplicationLocale: "zcode:set-application-locale",
+  /** Renderer → Main: save the Agent reply language (empty string clears it); Main writes it to disk and pushes it to each window Host */
+  SetReplyLanguage: "zcode:set-reply-language",
   /** Renderer → Main: sync the title-bar light/dark theme for native window-control button colors */
   SetTitleBarTheme: "zcode:set-title-bar-theme",
   /** Renderer → Main: migrate the legacy Common MCP configuration */
@@ -769,6 +774,8 @@ export const HostMessageTypes = {
   NetworkCapture: "network-capture",
   /** main → host: the Main UI language changed in real time (the Host uses it for the ZCode endpoint's X-Client-Language) */
   ApplicationLocaleChanged: "application-locale-changed",
+  /** main → host：Agent 回复语言变化（Host 内存持有，应答 CLI 的 session/readReplyLanguage） */
+  ReplyLanguageChanged: "reply-language-changed",
 } as const;
 
 /** Response message types from the host process to the main process */
@@ -1519,6 +1526,10 @@ export interface PlatformChannelMap {
   };
   [PlatformChannels.SetApplicationLocale]: {
     request: Locale;
+    response: void;
+  };
+  [PlatformChannels.SetReplyLanguage]: {
+    request: string;
     response: void;
   };
   [PlatformChannels.SetTitleBarTheme]: {

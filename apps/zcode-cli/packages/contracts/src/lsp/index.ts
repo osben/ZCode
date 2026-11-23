@@ -21,7 +21,7 @@ export const LspServerConfigSchema = z
       }),
     args: z.array(z.string()).optional(),
     transport: z.enum(["stdio", "socket"]).optional(),
-    env: z.record(z.string()).optional(),
+    env: z.record(z.string(), z.string()).optional(),
     initializationOptions: z.unknown().optional(),
     settings: z.unknown().optional(),
     workspaceFolder: z.string().min(1).optional(),
@@ -80,7 +80,7 @@ export const LspPreferencesSchema = z
   .object({
     version: z.literal(1),
     enabled: z.boolean(),
-    diagnosticsAfterEdit: z.record(z.boolean()),
+    diagnosticsAfterEdit: z.record(z.string(), z.boolean()),
   })
   .strict();
 

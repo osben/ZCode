@@ -2,6 +2,8 @@ import type {
   V4SessionDeletionParams,
   V4SessionDeletionExecuteParams,
   V4SessionDeletionPreview,
+  V4SessionDeletionPreviewBatchParams,
+  V4SessionDeletionPreviewBatchResult,
   V4SessionDeletionResult,
 } from "@zcode/shared/zcode-protocol-v4";
 import type { PluginUiToolResultNotification } from "@zcode/shared/mcp-apps";
@@ -87,6 +89,7 @@ import type {
   ZCodePluginsSetEnabledResult,
   ZCodeLspPreferences,
   ZCodeLspStatusResult,
+  ZCodePluginsWorkspaceTrustResult,
   ZCodePluginsCancelOperationResult,
   ZCodePluginOperationProgressNotification,
   ZCodeProviderRuntimeHeadersRequestParams,
@@ -123,7 +126,7 @@ import type {
   CommandKey,
   CommandsQueryResult,
   ConversationTopicWireCandidate,
-  ConversationTelemetryFact,
+  ConversationTelemetryInput,
   CuaPermissionObservation,
   ConversationRowTarget,
   HelloMessage,
@@ -198,6 +201,7 @@ import type {
   ZCodeAgentRestoreBuiltinPluginParams,
   ZCodeAgentSetPluginEnabledParams,
   ZCodeAgentSetLspPreferencesParams,
+  ZCodeAgentSetWorkspacePluginTrustParams,
   ZCodeAgentSetAutomationEnabledParams,
   ZCodeAgentUninstallPluginParams,
   ZCodeAgentUpdatePluginMarketplaceParams,
@@ -753,6 +757,10 @@ export interface IZCodeAgentService {
   ): Promise<ZCodeSessionSubagentsResult>;
   getAppUsageStats(params: ZCodeAgentAppUsageParams): Promise<AppUsageSnapshot>;
   previewSessionDeletion?(params: V4SessionDeletionParams): Promise<V4SessionDeletionPreview>;
+  /** 批量预检：按 workspace 分组，每组整批一次 CLI 扫描；结果按 items 顺序逐项返回。 */
+  previewSessionDeletions?(
+    params: V4SessionDeletionPreviewBatchParams,
+  ): Promise<V4SessionDeletionPreviewBatchResult>;
   executeSessionDeletion?(params: V4SessionDeletionExecuteParams): Promise<V4SessionDeletionResult>;
   /** Measurement before project data deletion: read-only, uses an existing local runtime or the management process; never spawns an Agent for a project. */
   measureSessionData?(params: V4SessionDataParams): Promise<V4SessionDataMeasureResult>;
@@ -937,6 +945,9 @@ export interface IZCodeAgentService {
   getLspPreferences(params: ZCodeAgentPluginViewParams): Promise<ZCodeLspPreferences>;
   setLspPreferences(params: ZCodeAgentSetLspPreferencesParams): Promise<ZCodeLspPreferences>;
   getLspStatus(params: ZCodeAgentPluginViewParams): Promise<ZCodeLspStatusResult>;
+  setWorkspacePluginTrust(
+    params: ZCodeAgentSetWorkspacePluginTrustParams,
+  ): Promise<ZCodePluginsWorkspaceTrustResult>;
   // ---- Scheduled task (automation) management ----
   listAutomations(params: ZCodeAgentWorkspaceTarget): Promise<ZCodeAutomation[]>;
   listAllAutomations(): Promise<ZCodeAutomation[]>;
@@ -1146,7 +1157,7 @@ export interface IZCodeAgentService {
   ): Event<import("@zcode/shared").LocalTtftFacts>;
   onDynamicConversationTelemetryFact(
     params: ZCodeAgentWorkspaceTarget,
-  ): Event<ConversationTelemetryFact>;
+  ): Event<ConversationTelemetryInput>;
   /** CUA permission observations for all local live tasks in the current window; history, remote tasks, and replayable events are excluded. */
   onDynamicCuaPermissionObservation(): Event<ZCodeAgentCuaPermissionObservation>;
   /**

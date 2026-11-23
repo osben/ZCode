@@ -237,7 +237,16 @@ function looksAbsolute(value: string): boolean {
 export function gitChangedFilesPlan(base: string | undefined): GitCommandPlan[] {
   const ref = base === undefined ? "HEAD" : validateGitRef("git-changed-files", base);
   const tracked: GitCommandPlan = {
-    argv: ["diff", "--name-only", "-z", ref, "--", WORKSPACE_PATHSPEC],
+    argv: [
+      "diff",
+      "--no-ext-diff",
+      "--no-textconv",
+      "--name-only",
+      "-z",
+      ref,
+      "--",
+      WORKSPACE_PATHSPEC,
+    ],
   };
   if (base !== undefined) return [tracked];
   return [tracked, { argv: [...GIT_UNTRACKED_ARGV] }];
@@ -247,10 +256,11 @@ export function gitChangedFilesPlan(base: string | undefined): GitCommandPlan[] 
  * argv for `git.diff(base?, path?)`. The path always follows `--`. `--relative` makes the patch headers
  * workspace-relative, so the patch agrees with changedFiles(). `-- .` stays explicit rather than relying on `--relative`.
  */
+// 只读 diff 不能执行配置中的外部命令；--no-ext-diff 不包含 textconv，需分别禁止。
 export function gitDiffArgv(base: string | undefined, path: string | undefined): string[] {
   const ref = base === undefined ? "HEAD" : validateGitRef("git-diff", base);
   const pathspec = path === undefined ? WORKSPACE_PATHSPEC : validateGitPath("git-diff", path);
-  return ["diff", "--relative", ref, "--", pathspec];
+  return ["diff", "--no-ext-diff", "--no-textconv", "--relative", ref, "--", pathspec];
 }
 
 /**

@@ -184,6 +184,7 @@ export interface ZCodeTaskIndexSyncer {
 interface CreateZCodeTaskIndexSyncerOptions {
   agentService: IZCodeAgentService;
   taskIndexRepo: TaskIndexRepo;
+  reportActiveSessionCount?: (count: number) => void;
 }
 
 /** Terminal phases used to detect transitions in the conflated latest state from sessions-index. */
@@ -283,6 +284,8 @@ interface WorkspaceIngestState {
   configLastWarnAt: number | null;
   /** Session summary baseline used to diff terminal transitions and title changes. */
   summaries: Map<string, SessionSummary>;
+  /** The current runtime has applied an activity snapshot; a same-generation resubscribe keeps it, a new generation revokes it. */
+  hasActivityBaseline: boolean;
   /** The first frame (snapshot) silently inserts missing rows without replaying historical terminal events or list broadcasts. */
   seeded: boolean;
   /** Keep the workspace-level frame emitter stable across runtime generations and install only one listener set. */
@@ -322,6 +325,27 @@ export function createZCodeTaskIndexSyncer(
   // status(phase)/title/lastActivity; workspace-config provides hot updates to the configuration catalog. Converge the body search index from a full snapshot
   // on terminal phase transitions (the V4 command path no longer has an op-driven snapshot-sync fallback).
   const workspaceIngests = new Map<string, WorkspaceIngestState>();
+  let reportedActiveSessionCount = 0;
+  function reportActiveSessions(): void {
+    if (!options.reportActiveSessionCount) return;
+    let count = 0;
+    for (const state of workspaceIngests.values()) {
+      // Summaries of an old runtime stay for task-index reconciliation; only a baseline applied by the current generation can prove activity.
+      if (!state.hasActivityBaseline) continue;
+      for (const summary of state.summaries.values()) {
+        if (
+          summary.phase === "prewarming" ||
+          summary.phase === "running" ||
+          summary.hasBackgroundWork ||
+          summary.hasCompactWork === true
+        )
+          count += 1;
+      }
+    }
+    if (count === reportedActiveSessionCount) return;
+    reportedActiveSessionCount = count;
+    options.reportActiveSessionCount(count);
+  }
   // Previously workspaceEmitters were private to the adapter, leaving no broadcast path after the syncer wrote SQLite;
   // the UI never received workspace_task_list_changed. Move the emitter to the syncer and have the adapter forward to it,
   // so adapter and desktop-continuous paths share one subscription and events no longer split.
@@ -1259,6 +1283,8 @@ export function createZCodeTaskIndexSyncer(
         // so an empty SQLite database on remote/new installations is populated through the pure V4 path.
         state.summaries = nextSummaries;
         state.seeded = true;
+        state.hasActivityBaseline = true;
+        reportActiveSessions();
         void seedMissingRowsFromInitialSnapshot(state, nextSummaries.values());
         const generation = state.indexSubscriptionGeneration;
         void repairSubagentTaskIndex({
@@ -1285,6 +1311,8 @@ export function createZCodeTaskIndexSyncer(
       for (const summary of nextSummaries.values()) {
         processSummary(state, previousSummaries.get(summary.sessionId), summary, deliveryKind);
       }
+      state.hasActivityBaseline = true;
+      reportActiveSessions();
       completeIndexRecoveryFrame(state, deliveryKind);
       return;
     }
@@ -1322,6 +1350,7 @@ export function createZCodeTaskIndexSyncer(
     }
     state.indexSeq = frame.toSeq;
     state.indexHasAppliedBase = true;
+    reportActiveSessions();
     completeIndexRecoveryFrame(state, deliveryKind);
   }
 
@@ -1687,7 +1716,12 @@ export function createZCodeTaskIndexSyncer(
       if (isLiveState(state) && state.indexSubscriptionGeneration === generation) {
         clearIndexPendingState(state);
         if (isRuntimeUnavailableError(error)) {
-          state.runtimeGeneration = null;
+          if (state.runtimeGeneration !== null) {
+            suspendWorkspaceAfterRuntimeUnavailable(
+              resolveWorkspaceKey(state.target),
+              state.runtimeGeneration,
+            );
+          }
           return;
         }
         const retryKind = isProviderNotReadyError(error) ? "provider-not-ready" : "transient";
@@ -1728,7 +1762,12 @@ export function createZCodeTaskIndexSyncer(
       if (isLiveState(state) && state.configSubscriptionGeneration === generation) {
         clearConfigPendingState(state);
         if (isRuntimeUnavailableError(error)) {
-          state.runtimeGeneration = null;
+          if (state.runtimeGeneration !== null) {
+            suspendWorkspaceAfterRuntimeUnavailable(
+              resolveWorkspaceKey(state.target),
+              state.runtimeGeneration,
+            );
+          }
           return;
         }
         const retryKind = isProviderNotReadyError(error) ? "provider-not-ready" : "transient";
@@ -1791,6 +1830,8 @@ export function createZCodeTaskIndexSyncer(
     const state = workspaceIngests.get(workspaceKey);
     if (!state || state.runtimeGeneration !== generation) return;
     state.runtimeGeneration = null;
+    state.hasActivityBaseline = false;
+    reportActiveSessions();
     state.indexSubscriptionGeneration += 1;
     state.configSubscriptionGeneration += 1;
     state.indexRecoveryGeneration += 1;
@@ -1835,15 +1876,20 @@ export function createZCodeTaskIndexSyncer(
     }
     if (existing.runtimeGeneration === event.runtimeIdentity.generation) return;
     existing.runtimeGeneration = event.runtimeIdentity.generation;
+    existing.hasActivityBaseline = false;
+    reportActiveSessions();
     resubscribeWorkspaceAfterRuntimeRestart(event.workspaceKey);
   });
 
   // Keep restart compatibility for legacy test fixtures/hosts without lifecycle; production uses only available/unavailable.
   const runtimeRestartedDisposable = hasRuntimeLifecycle
     ? undefined
-    : agentService.onAgentRuntimeRestarted?.((event) =>
-        resubscribeWorkspaceAfterRuntimeRestart(event.workspaceKey),
-      );
+    : agentService.onAgentRuntimeRestarted?.((event) => {
+        const state = workspaceIngests.get(event.workspaceKey);
+        if (state) state.hasActivityBaseline = false;
+        reportActiveSessions();
+        resubscribeWorkspaceAfterRuntimeRestart(event.workspaceKey);
+      });
 
   function ensureWorkspaceSubscription(target: ZCodeAgentWorkspaceTarget): void {
     if (disposed) {
@@ -1885,6 +1931,7 @@ export function createZCodeTaskIndexSyncer(
       indexLastWarnAt: null,
       configLastWarnAt: null,
       summaries: new Map(),
+      hasActivityBaseline: false,
       seeded: false,
       frameListenersInstalled: false,
       disposables: [],
@@ -2075,6 +2122,7 @@ export function createZCodeTaskIndexSyncer(
         }
       }
       workspaceIngests.clear();
+      reportActiveSessions();
       for (const emitter of workspaceEmitters.values()) {
         emitter.dispose();
       }

@@ -33,6 +33,7 @@ const CLEANABILITY: Record<StorageCategoryId, StorageCleanability> = {
   backups: "confirm",
   exports: "safe",
   runtimes: "none",
+  preinstalledTools: "none",
   config: "none",
   other: "none",
 };
@@ -94,6 +95,7 @@ const PREFIX_RULES: Record<Exclude<StorageCategoryId, "other">, string[]> = {
   logs: ["v2/logs", "cli/log", "logs", "v2/crash", "v2/perf", "feedback/logs"],
   backups: ["backup", "v2/backup", "v2/migrations", "cli/db/backup", "cli/db/backups"],
   exports: ["export-log", "export-log-stage", "feedback"],
+  preinstalledTools: ["preinstalled-tools"],
   runtimes: ["agents", "bundled-agents", "lite", "computer-use", "cli/plugins"],
   // Nothing under cli/plugins (including cache) can be cleaned; plugin cache belongs to the runtime.
   config: [
@@ -141,7 +143,7 @@ const PROTECTED_BASENAMES = new Set([
   ".tokens",
   "zcode-stdio-tap.json",
 ]);
-const PROTECTED_PREFIXES = ["v2/crash/live"];
+const PROTECTED_PREFIXES = ["v2/crash/live", "preinstalled-tools"];
 
 export function normalizeStorageRelativePath(relativePath: string): string {
   return relativePath.replace(/\\/g, "/").replace(/^\/+|\/+$/g, "");

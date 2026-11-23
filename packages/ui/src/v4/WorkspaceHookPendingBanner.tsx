@@ -58,6 +58,8 @@ export interface WorkspaceHookPendingIndicatorProps {
   sessionId: string;
   workspacePath: string;
   workspaceIdentity?: string;
+  /** 受管 worktree 任务的会话 cwd；普通任务为 undefined。 */
+  worktreeCwd?: string;
   admission: WorkspaceHookAdmissionInfo | null;
 }
 
@@ -67,6 +69,7 @@ export const WorkspaceHookPendingIndicator = memo(function WorkspaceHookPendingI
   sessionId,
   workspacePath,
   workspaceIdentity,
+  worktreeCwd,
   admission,
 }: WorkspaceHookPendingIndicatorProps) {
   const { intl } = useZCodeIntl();
@@ -85,7 +88,17 @@ export const WorkspaceHookPendingIndicator = memo(function WorkspaceHookPendingI
   const handleReview = useCallback(() => {
     setOpen(false);
     // Open settings in two steps: set the settings intent, then open the tab (following V4ComposerToolbar's handleOpenModelProviderSettings).
-    setPendingSettingsSectionIntent("hooks");
+    // ZP-20261110-06: hooks of a worktree task are discovered from the session cwd; passing only the section makes the settings page
+    // discover from the project directory, so it cannot see declarations awaiting review in the worktree. Pass the project scope and cwd so the settings page discovers by cwd (D23).
+    // 发现，看不到 worktree 中待审核的声明。带上项目范围与 cwd，设置页按 cwd 发现（D23）。
+    setPendingSettingsSectionIntent("hooks", {
+      ...(worktreeCwd
+        ? {
+            pluginScopeKey: getWorkspaceKey(workspacePath, workspaceIdentity),
+            hookWorkspacePath: worktreeCwd,
+          }
+        : {}),
+    });
     openSettingsTab?.();
 
     // Send requestWorkspaceHookReview through the command binding.
@@ -115,7 +128,15 @@ export const WorkspaceHookPendingIndicator = memo(function WorkspaceHookPendingI
         });
       });
     }
-  }, [admission, commandBindings, openSettingsTab, sessionId, workspaceIdentity, workspacePath]);
+  }, [
+    admission,
+    commandBindings,
+    openSettingsTab,
+    sessionId,
+    workspaceIdentity,
+    workspacePath,
+    worktreeCwd,
+  ]);
 
   const handleDismiss = useCallback(() => {
     if (admission) {
@@ -156,7 +177,7 @@ export const WorkspaceHookPendingIndicator = memo(function WorkspaceHookPendingI
             <span
               data-testid={TID_V4_WORKSPACE_HOOK_PENDING_UNREAD}
               aria-hidden="true"
-              className="pointer-events-none absolute right-0.5 top-0.5 size-1.5 rounded-full bg-brand"
+              className="pointer-events-none absolute right-0.5 top-0.5 size-1.5 rounded-full bg-workspace-admission-unread"
             />
           ) : null}
         </Button>
@@ -249,7 +270,7 @@ export const WorkspaceMcpPendingIndicator = memo(function WorkspaceMcpPendingInd
             <span
               data-testid={TID_V4_WORKSPACE_MCP_PENDING_UNREAD}
               aria-hidden="true"
-              className="pointer-events-none absolute right-0.5 top-0.5 size-1.5 rounded-full bg-brand"
+              className="pointer-events-none absolute right-0.5 top-0.5 size-1.5 rounded-full bg-workspace-admission-unread"
             />
           ) : null}
         </Button>

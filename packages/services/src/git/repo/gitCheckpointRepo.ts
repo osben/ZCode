@@ -87,6 +87,7 @@ export function createGitCheckpointRepo(options?: {
     // When a monorepo subdirectory is open, later restore/summary/conflict checks then stay within the current workspace boundary.
     const resolution = await ensureRepository(params.workspacePath);
     const pathspec = getWorkspacePathspec(resolution.workspaceInRepoPath);
+    // 统计范围收束在 workspace pathspec 内；外部 diff 与 textconv 由 GitCommandProvider 统一禁用。
     const [nameStatusResult, numstatResult] = await Promise.all([
       commandProvider.run({
         cwd: resolution.repoRoot,

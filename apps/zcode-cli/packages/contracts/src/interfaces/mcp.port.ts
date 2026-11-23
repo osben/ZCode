@@ -109,6 +109,22 @@ export interface McpSseServerConfig extends McpServerConfigBase {
 
 export type McpServerConfig = McpStdioServerConfig | McpHttpServerConfig | McpSseServerConfig;
 
+/**
+ * MCP 配置的唯一身份：键排序、丢弃 undefined 字段后序列化。pool 连接 key、adapter 复用判断、
+ * MCP App 连接摘要与 session 的配置变化判断共用它；修复前三处各自比较（排序 key、深比较、
+ * 原样 JSON），`{ timeoutMs: undefined }` 与 `{}` 会被判成不同配置并重建共享连接。
+ */
+export function mcpConfigKey(value: unknown): string {
+  if (value === null || typeof value !== "object") return JSON.stringify(value) ?? "null";
+  if (Array.isArray(value)) return `[${value.map(mcpConfigKey).join(",")}]`;
+  const record = value as Record<string, unknown>;
+  return `{${Object.keys(record)
+    .toSorted()
+    .filter((key) => record[key] !== undefined)
+    .map((key) => `${JSON.stringify(key)}:${mcpConfigKey(record[key])}`)
+    .join(",")}}`;
+}
+
 export type McpServerStatusKind =
   | "connecting"
   | "connected"
@@ -124,6 +140,8 @@ export interface McpServerStatus {
   toolCount: number;
   updatedAt: string;
   error?: string;
+  /** 端点/传输诊断码，与供 UI 分类的 failureKind 分开。 */
+  errorCode?: string;
   failureKind?: McpServerFailureKind;
   serverRequestId?: string;
   protocolEra?: "legacy" | "modern";
@@ -191,6 +209,8 @@ export const ZCODE_MCP_NODE_REPL_COMPUTER_USE_META_KEY = "zcode/nodeReplComputer
 export const ZCODE_MCP_SERVER_REQUEST_ID_META_KEY = "zcode/officialMcpServerRequestId";
 
 export interface McpToolDescriptor {
+  /** live discovery；展示缓存必须显式使用 catalogOnly:true 的投影。 */
+  catalogOnly?: false;
   alwaysLoad?: boolean;
   searchHint?: string;
   serverName: string;
@@ -326,11 +346,106 @@ export interface McpNotificationPort {
   onNotification(notification: McpServerNotification): void;
 }
 
+export interface McpConfigurationSnapshot {
+  enabled: boolean;
+  servers: Record<string, McpServerConfig>;
+  trustedOfficialCuaServerNames?: readonly string[];
+}
+export interface McpConfigurationSource {
+  getSnapshot(): McpConfigurationSnapshot;
+  subscribe(listener: () => void): () => void;
+  close(): void;
+}
+
 export interface McpConnectionSnapshot {
   statuses: Record<string, McpServerStatus>;
   tools: McpToolDescriptor[];
 }
 
+/**
+ * 单个 server 的内存快照：只读当前连接层状态，不发起网络/进程 I/O。
+ * `tools` / `toolsVersion` 只在该 server 曾经成功拿到 tools/list 时出现；
+ * 空数组表示"已确认没有工具"，与"还没拿到列表"（undefined）严格区分。
+ * 断线后保留最后一次成功列表与版本（展示保留），执行前仍要重新取 live 连接。
+ * 授权未完成就结束（`failureKind: "oauth_authorization_failed"`）的行同样保留上次的工具，执行准入时重连。
+ * 来源 `builtin` 的 stdio server 超过自动重启上限（`failureKind: "unexpected_disconnect"`）时也保留，执行准入时重启。
+ */
+export interface McpServerToolSnapshot {
+  status: McpServerStatus;
+  tools?: McpToolDescriptor[];
+  /** 不透明版本号；同一 server 列表每次成功替换都会变化。 */
+  toolsVersion?: string;
+}
+
+export interface McpWaitForServerOptions {
+  signal?: AbortSignal;
+  timeoutMs: number;
+  /**
+   * 工具执行前检查与 MCP App 打开前：server 已断线时走与 callTool 相同的重连路径再等待。
+   * ToolSearch 不传，不触发自动重连。
+   */
+  reconnect?: boolean;
+  /**
+   * 仅供工具执行准入，与 reconnect 一起传：授权未完成就结束、保留了目录的 server 也重连，
+   * 仍需授权时发起交互授权。MCP App 打开不传，不发起授权。
+   */
+  reauthorize?: boolean;
+}
+
+export interface McpToolCatalogScope {
+  servers: Record<string, McpServerConfig>;
+  workingDirectory?: string;
+  /** 身份隔离使用 workspaceIdentity；本地缺省时才 fallback 到 workingDirectory。 */
+  workspaceIdentity?: string;
+}
+
+export type McpCatalogToolDescriptor = Pick<
+  McpToolDescriptor,
+  | "serverName"
+  | "toolName"
+  | "name"
+  | "description"
+  | "inputSchema"
+  | "outputSchema"
+  | "alwaysLoad"
+  | "searchHint"
+  | "visibility"
+>;
+
+/** 展示定义不能携带执行注解；消费方必须解析 live 定义。 */
+export type McpToolDefinition =
+  | McpToolDescriptor
+  | (McpCatalogToolDescriptor & {
+      catalogOnly: true;
+      annotations?: never;
+      timeoutMs?: never;
+      official?: never;
+      ui?: never;
+    });
+
+export interface McpToolCatalogLookupResult {
+  /** 按 server 命中的缓存；[] 是缓存过的合法空列表，缺 key 才是未命中。 */
+  byServer: Record<string, McpCatalogToolDescriptor[]>;
+  /** complete：所有启用的 server 都命中。 */
+  status: "complete" | "incomplete";
+}
+
+export interface McpToolCatalogPublication {
+  lookup: McpToolCatalogLookupResult;
+  /** 有效生产者发布；prepare/lookup 不撤销其他生产者，invalidate 后拒绝该来源迟到写入。 */
+  publish(snapshot: Readonly<Record<string, McpServerToolSnapshot>>): void;
+  invalidate?(serverNames?: readonly string[]): void;
+}
+
+/**
+ * 进程级 MCP tool catalog 只负责 provider advertisement 快路径。
+ * 它不持有 live client，也不能作为工具执行或权限判断的事实来源。
+ */
+export interface McpToolCatalogPort {
+  prepare(scope: McpToolCatalogScope): McpToolCatalogPublication;
+}
+
+/** 相同 `mcpConfigKey` 的连接请求只复用当前记录与连接任务，不探测、不重启失败连接。 */
 export interface McpConnectOptions {
   /**
    * Maximum wait for the authorization_code OAuth callback.
@@ -339,10 +454,8 @@ export interface McpConnectOptions {
    */
   oauthAuthorizationTimeoutMs?: number;
   /**
-   * Check that an existing connection is alive before reusing it (see McpPort.pingServer); reconnect
-   * if it has died. Calls where the user explicitly requests a new check, such as refreshing the
-   * settings page, must set this flag; session startup need not, and can reuse a recently established
-   * pooled connection.
+   * Explicit validation (settings-page refresh, manual connect): ping when connected; when the ping fails or the server is not connected, reconnect and allow interactive authorization;
+   * while connecting, disabled or untrusted, only return the current state. The caller's signal cancels only its own wait.
    */
   revalidate?: boolean;
   signal?: AbortSignal;
@@ -382,8 +495,13 @@ export interface McpToolCallProgress {
 }
 
 export interface McpCallToolOptions {
-  /** Pin page write operations to this connection; do not replay automatically after recovery or reauthorization. */
+  /** An MCP App call pins the connection identity and generation at open time; after a generation change it is rejected, not retried, and no authorization recovery is done. */
   appConnection?: { identity: string; generation: number };
+  /**
+   * 模型调用在重连后重试前由租约持有方确认仍可重放；返回 false 时直接返回原错误。
+   * 自动重试只在会话过期或连接关闭时发生一次，见 `docs/mcp-async-tool-catalog-cache.md`。
+   */
+  retryAllowed?: () => boolean;
   signal?: AbortSignal;
   timeoutMs?: number;
   /** Called for server progress notifications; the SDK also uses resetTimeoutOnProgress to reset the timeout on each update. */
@@ -475,6 +593,8 @@ export interface McpElicitationPort {
 export interface McpPort {
   /** Read-only recompute of workspace admission that notifies the session projection; does not connect, authorize, or replay tools. */
   refreshWorkspaceTrustAdmission?(reannounce?: boolean): Promise<void>;
+  /** In-memory catalog or connection state changed; subscribing does no I/O. */
+  onSnapshotChanged?(listener: () => void): () => void;
   /** Stable source derived from trusted configuration and the existing connection generation. Do not issue new page credentials after disconnect. */
   onAppConnectionInvalidated?(serverName: string, listener: () => void): () => void;
   appConnectionSnapshot?(serverName: string): { identity: string; generation: number } | null;
@@ -494,20 +614,29 @@ export interface McpPort {
   ): Promise<McpServerStatus>;
   disconnectServer(name: string): Promise<McpServerStatus | undefined>;
   /**
-   * Actively check whether the connection is still alive; returns false if the transport is disconnected.
+   * Actively check whether the connection is still alive; false means liveness was not confirmed this time, not an instruction to reconnect.
+   * A failed probe goes through the adapter's shared invalidation entry (remote servers enter recovery, stdio enters failed); explicit validation uses connectServer's revalidate.
    * Stopping an HTTP/SSE MCP does not dispatch onclose, so status() may remain connected indefinitely;
-   * only an explicit ping reveals this "silent death." Optional implementation: callers treat the
-   * connection as alive when this method is unavailable.
+   * only an explicit ping reveals this "silent death." Optional implementation: callers treat the connection as alive when it is unavailable.
    */
   pingServer?(name: string, options?: { timeoutMs?: number }): Promise<boolean>;
   status(): Promise<Record<string, McpServerStatus>>;
   listTools(): Promise<McpToolDescriptor[]>;
   /**
-   * Cumulative number of `notifications/tools/list_changed` notifications received since the port was
-   * created. Before a turn, runtime compares this value and relists tools and re-registers them only if
-   * it changed. If unimplemented, the port does not change proactively.
+   * Synchronously read each server's in-memory snapshot (used while preparing a request; does not wait for any server).
+   * The getter only reads memory and does no I/O: a server marked stale by list_changed is refreshed in the background after the notification, and this call returns the old list.
    */
-  toolListRevision?(): number;
+  getToolSnapshot(): Record<string, McpServerToolSnapshot>;
+  /**
+   * 等待该 server 已有的启动任务结束（复用同一个启动 Promise，不新建连接、不重连）。
+   * 启动转为 OAuth 授权 pending 时也结束本次等待（不取消授权或共享连接）。
+   * 超时返回 `{ timedOut: true }` 且不取消启动；signal 中止时以 signal.reason 拒绝。
+   * 没有启动任务时立即返回 `{ timedOut: false }`，调用方再读 getToolSnapshot 得到结果。
+   */
+  waitForServer?(
+    serverName: string,
+    options: McpWaitForServerOptions,
+  ): Promise<{ timedOut: boolean }>;
   callTool(request: McpCallToolRequest, options?: McpCallToolOptions): Promise<McpToolCallResult>;
   /**
    * Read an MCP resource (plugin UI `ui://` HTML). Optional like pingServer: mock ports need not

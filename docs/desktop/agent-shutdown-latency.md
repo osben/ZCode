@@ -43,6 +43,22 @@ sequenceDiagram
 - An abnormal host exit may not have delivered empty. The Host must first wait for the old host to exit, then run the read-only `--check-empty <jobName>` of the same binary: cleanup is done only if the original Job is gone or has zero active members. A named object is destroyed by the kernel only after the last handle closes and all associated processes exit. On access failure or remaining members, ownership is kept and a later active request re-verifies.
 - A timeout is not evidence of empty. A failed cleanup wait does not break the control connection, caches no permanent failed Promise, and does not allow a new instance to overwrite the old ownership. In-flight cleanup shares one Promise; a retry must not reassign this round's deadline. Passive queries do not start cleanup.
 
+## Windows exit diagnostics
+
+The diagnostics only add facts. They do not change the exit classification, the control frame, the 1800ms grace period or the Job cleanup order.
+
+- The Host records, in the existing helper exit and control pipe error/close callbacks, the Host/helper/CLI PIDs, the exit code, the error code, the last valid control event, the root/empty state and the active-close state. Each spawn uses a random run id that contains no workspace, to correlate handshake failures whose PID is not yet known.
+- At the existing termination decision, the native helper fixes the first reason and tells apart control loss, parent exit, root exit, cancellation of a pending start, start timeout and exhausted close grace; it prints one exit summary with a fixed marker. A failure records only a fixed phase name and the Win32 error code, never a command, path, environment or arbitrary body text.
+- The native summary reuses the existing line-by-line stderr entry, strictly projects finite enums, numbers and booleans, and then writes them to the production log; other stderr is still handled on the original path, with no new protocol or listener.
+- Pipe EOF and helper exit belong to different event queues, so the log order does not prove cause and effect. When the helper is killed from outside there may be no native summary, and the Host's actual exit record cannot identify who terminated it.
+
+```text
+helper / pipe facts → existing stderr and exit callbacks → safe-field log → existing diagnostic package
+                                          └→ existing exit and Job cleanup (unchanged)
+```
+
+Acceptance confirms, in the existing native/Host scenarios, the diagnostic fields and the cleanup behavior for a normal root exit, a control disconnect and a killed helper; it does not conclude that a historical fault is fixed.
+
 ## Exit budget and concurrency
 
 Main ordinary exit and update install share a 7.5 s force-end of the Host and a 9 s total wait upper bound; an early finish returns at once. Cron and Host start concurrently; update install still keeps its own resource scan and installer handoff.

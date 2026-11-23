@@ -28,7 +28,7 @@ Agent stderr
    │    └─ ProcessManager.markReady (idempotent once per runtime)
    │         └─ host IPC → desktop main → perf_agent_ready
    │
-   ├─ Host services: sanitize and retain last 20 lines
+   ├─ Host services: sanitize and retain up to 20 lines (native fatal header plus the trailing stack)
    │
    └─ Agent exit
         │
@@ -54,6 +54,15 @@ Agent stderr
 ```
 
 `protocol-close` is a common result after Agent crash, not an active exit intent, prohibits marking exit as expected based on this.
+
+The stderr ring tail keeps its existing limits of 20 lines and 1000 characters per line. The native/JS
+stack and separator lines that follow `FATAL ERROR:` must not push this error header out. When the
+capacity is exceeded, keep the error header and the latest 19 lines. When ordinary log lines appear
+afterwards, the tail goes back to normal sliding, so a stale fatal header is never attached to an
+unrelated exit. This only changes which in-memory evidence is kept. It adds no log writes, stream
+listeners, exit waits or cleanup dependencies. Runtime acceptance uses the same tail implementation,
+triggers a real OOM with a limited heap, and checks that the final ZIP still has the OOM category and
+the allocation site before the crash.
 
 Desktop main is the sole source of truth for application exit lifecycle. `perf_app_exit` emitted must continuously maintain
 `app_quit` / `update_install` until process exit; Host IPC late Agent exit even if lacking

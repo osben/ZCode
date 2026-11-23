@@ -349,8 +349,6 @@ export const TID_CHAT_SEND_BUTTON = "chat-send-button";
 export const TID_CHAT_STOP_BUTTON = "chat-stop-button";
 /** Chat loading indicator. */
 export const TID_CHAT_LOADING = "chat-loading";
-/** Chat status-summary panel in the upper-right corner. */
-export const TID_CHAT_SUMMARY_PANEL = "chat-summary-panel";
 /** Chat context-compaction timeline bar (dynamic suffix is inputId or operationId). */
 export const TID_CHAT_COMPACT_MARKER = "chat-compact-marker";
 /** Retry button after chat context compaction fails/is interrupted (dynamic suffix is inputId or operationId). */
@@ -439,6 +437,13 @@ export const TID_SETTINGS_SECTION_NAV = "settings-section-nav";
 export const TID_SETTINGS_TOOL_SEARCH_SELECT = "settings-tool-search-select";
 export const TID_SETTINGS_TOOL_SEARCH_OPTION = "settings-tool-search-option";
 export const TID_SETTINGS_NATIVE_SEARCH_SWITCH = "settings-native-search-switch";
+/** Token budget reminder switch in Behavior and Tools. */
+export const TID_SETTINGS_TOTAL_TOKENS_REMINDER_SWITCH = "settings-total-tokens-reminder-switch";
+/** Agent always-run-in-background switch in Behavior and Tools. */
+export const TID_SETTINGS_AGENT_ALWAYS_BACKGROUND_SWITCH =
+  "settings-agent-always-background-switch";
+/** Agent reply language input in Behavior and Tools. */
+export const TID_SETTINGS_REPLY_LANGUAGE_INPUT = "settings-reply-language-input";
 /** Read-only data-storage path input in General Settings. */
 export const TID_SETTINGS_DATA_BASE_DIR_INPUT = "settings-data-base-dir-input";
 /** Data-storage path directory-picker button in General Settings. */
@@ -629,6 +634,10 @@ export const TID_TOAST = "toast";
 // Chat Toolbar
 /** Model-selection button in the chat toolbar. */
 export const TID_CHAT_MODEL_SELECT_TRIGGER = "chat-model-select-trigger";
+/** Guide bubble on the model selection button (for example the hint after a server rule switches the draft model). */
+export const TID_CHAT_MODEL_GUIDE = "chat-model-guide";
+/** Close button of the model guide bubble. */
+export const TID_CHAT_MODEL_GUIDE_DISMISS = "chat-model-guide-dismiss";
 /** Model Provider group in the chat toolbar (dynamic suffix is the provider group key). */
 export const TID_CHAT_MODEL_SELECT_GROUP = "chat-model-select-group";
 /** Model option in the chat toolbar (dynamic suffix is the model value). */
@@ -699,8 +708,6 @@ export const TID_V4_WORKSPACE_MCP_PENDING_DISMISS = "v4-workspace-mcp-pending-di
 export const TID_V4_COMPOSER = "v4-composer";
 /** v4 Composer text input. */
 export const TID_V4_COMPOSER_INPUT = "v4-composer-input";
-/** v4 Composer entry point for background tasks in the current session. */
-export const TID_V4_COMPOSER_BACKGROUND_WORK_TRIGGER = "v4-composer-background-work-trigger";
 /** Persistent Computer Use (CUA) entry button in v4 Composer. */
 export const TID_V4_COMPOSER_CUA_ENTRY = "v4-composer-cua-entry";
 export const TID_V4_COMPOSER_VOICE_ENTRY = "v4-composer-voice-entry";

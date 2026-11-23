@@ -1,5 +1,5 @@
 {
-  "upstreamCommit": "fec975905a2abd4c07e35c40d51fa097a2258ec9",
+  "upstreamCommit": "a4b4445141eb7d3b3e99eada9292775383bfc44e",
   "sets": {
     "cli": [
       {
@@ -101,6 +101,10 @@
       {
         "id": "0025_session_permanent_deletion",
         "checksum": "608f3ea3aad458679a4b377968413575749f2231c88133765a088564fc20691e"
+      },
+      {
+        "id": "0026_dwf_run_parent_session_index",
+        "checksum": "6d69a28db682619252975fb1113fefb22a5499efefe1249da4b04190830ff48d"
       }
     ],
     "tasks_index:base": [
