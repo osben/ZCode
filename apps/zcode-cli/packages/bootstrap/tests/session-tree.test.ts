@@ -231,6 +231,43 @@ describe("session tree protocol handlers", () => {
     expect(await readdir(join(root, "cli", "artifacts"))).toEqual(["sess_parent"]);
   });
 
+  it("keeps only the artifact files that a kept session still references", async () => {
+    const root = await mkdtemp(join(tmpdir(), "zcode-tree-files-"));
+    tempRoots.push(root);
+    const artifacts = join(root, "cli", "artifacts", "sess_owner");
+    await mkdir(artifacts, { recursive: true });
+    // The URI has no extension; the reader resolves it to the entry whose name contains the id.
+    await writeFile(join(artifacts, "shared.png"), "kept");
+    await writeFile(join(artifacts, "call_1-tool-result-1.json"), "kept");
+    await writeFile(join(artifacts, "private.png"), "x");
+    await mkdir(join(artifacts, "nested"), { recursive: true });
+    await mkdir(join(root, "cli", "image-cache", "sess_owner"), { recursive: true });
+    await mkdir(join(root, "cli", "artifacts", "sess_child"), { recursive: true });
+    const { context, store } = createContext({
+      treeIds: ["sess_owner", "sess_child"],
+      storageRoot: root,
+      store: {
+        listSessionTreeArtifactReferences: vi.fn(
+          async () =>
+            new Map([["sess_owner" as SessionId, ["shared", "tool-result-1", "../escape"]]]),
+        ),
+        deleteSessionTree: vi.fn(async () => ({
+          erasedIds: ["sess_owner", "sess_child"] as SessionId[],
+        })),
+      },
+    });
+    const result = await eraseSessionTrees(context, { sessionIds: ["sess_owner"] });
+    expect(result).toMatchObject({
+      erasedSessionIds: ["sess_owner", "sess_child"],
+      fileFailureCount: 0,
+      filesRetainedCount: 1,
+    });
+    expect(store!.deleteSessionTree).toHaveBeenCalled();
+    expect((await readdir(artifacts)).sort()).toEqual(["call_1-tool-result-1.json", "shared.png"]);
+    expect(await readdir(join(root, "cli", "artifacts"))).toEqual(["sess_owner"]);
+    expect(await readdir(join(root, "cli", "image-cache"))).toEqual([]);
+  });
+
   it("never builds a path from an id that is not a plain segment", async () => {
     const root = await mkdtemp(join(tmpdir(), "zcode-tree-files-"));
     tempRoots.push(root);
