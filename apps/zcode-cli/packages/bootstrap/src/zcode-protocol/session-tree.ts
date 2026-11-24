@@ -1,7 +1,7 @@
 // session/treeCounts and session/eraseTree (specs/session-deletion-cascade.md §4-§6).
 // The store owns the database rows; this module owns the process-local facts the store cannot know
 // (live runtimes, busy turns) and the per-session directories under the CLI storage root.
-import { rm } from "node:fs/promises";
+import { readdir, rm } from "node:fs/promises";
 import { isAbsolute, join, relative } from "node:path";
 import type { SessionId } from "@zcode/contracts";
 import {
@@ -93,13 +93,54 @@ export async function countSessionTrees(
   return { ...counts, running: findRunningSessionIds(context, treeIds).length };
 }
 
+/**
+ * Removes every entry of an artifact directory except the files a kept session still resolves. The match
+ * is the artifact reader's own rule (entry name contains the artifact id), so a URI without an extension
+ * keeps `shared.png`. Ids are only compared with listed names, never joined into a path.
+ */
+async function removeUnreferencedArtifacts(
+  target: string,
+  artifactIds: readonly string[],
+): Promise<{ failures: number; kept: number }> {
+  let entries;
+  try {
+    entries = await readdir(target, { withFileTypes: true });
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return { failures: 0, kept: 0 };
+    return { failures: 1, kept: 0 };
+  }
+  let failures = 0;
+  let kept = 0;
+  for (const entry of entries) {
+    if (!entry.isDirectory() && artifactIds.some((id) => entry.name.includes(id))) {
+      kept += 1;
+      continue;
+    }
+    try {
+      await rm(join(target, entry.name), { recursive: true, force: true });
+    } catch {
+      failures += 1;
+    }
+  }
+  if (kept === 0 && failures === 0) {
+    try {
+      await rm(target, { recursive: true, force: true });
+    } catch {
+      failures += 1;
+    }
+  }
+  return { failures, kept };
+}
+
 async function removeSessionDirectories(
   storageRoot: string | undefined,
   sessionIds: readonly string[],
-): Promise<number> {
+  referencedArtifacts: ReadonlyMap<string, readonly string[]> = new Map(),
+): Promise<{ failures: number; partlyRetained: number }> {
   // Without a storage root (embedded callers) there is nothing to resolve; the rows are still erased.
-  if (!storageRoot) return 0;
+  if (!storageRoot) return { failures: 0, partlyRetained: 0 };
   let failures = 0;
+  let partlyRetained = 0;
   for (const sessionId of sessionIds) {
     if (!isPlainSegment(sessionId)) continue;
     for (const directory of PER_SESSION_DIRECTORIES) {
@@ -112,6 +153,13 @@ async function removeSessionDirectories(
         failures += 1;
         continue;
       }
+      const artifactIds = directory === "artifacts" ? referencedArtifacts.get(sessionId) : undefined;
+      if (artifactIds?.length) {
+        const outcome = await removeUnreferencedArtifacts(target, artifactIds);
+        failures += outcome.failures;
+        if (outcome.kept > 0) partlyRetained += 1;
+        continue;
+      }
       try {
         await rm(target, { recursive: true, force: true });
       } catch {
@@ -119,7 +167,7 @@ async function removeSessionDirectories(
       }
     }
   }
-  return failures;
+  return { failures, partlyRetained };
 }
 
 export async function eraseSessionTrees(
@@ -158,23 +206,33 @@ export async function eraseSessionTrees(
   for (const sessionId of treeIds) {
     if (!isPlainSegment(sessionId)) retained.add(sessionId);
   }
-  const fileFailureCount = await removeSessionDirectories(
+  // Kept sessions without any parent link can still reference a tree session's artifact files by URI
+  // (shared context, rewinds, copied transcripts); those files stay, the rest of the session goes.
+  const referencedArtifacts = new Map<string, string[]>(
+    [...((await store.listSessionTreeArtifactReferences?.({ rootIds })) ?? new Map())].map(
+      ([sessionId, ids]) => [String(sessionId), ids] as const,
+    ),
+  );
+  const removal = await removeSessionDirectories(
     context.deps.storageRoot,
     treeIds.filter((sessionId) => !retained.has(sessionId)),
+    referencedArtifacts,
   );
+  const fileFailureCount = removal.failures;
+  const filesRetainedCount = retained.size + removal.partlyRetained;
   if (fileFailureCount > 0) {
     return {
       erasedSessionIds: [],
       blockedRunningSessionIds: [],
       fileFailureCount,
-      filesRetainedCount: retained.size,
+      filesRetainedCount,
     };
   }
 
   const { erasedIds } = await store.deleteSessionTree!({ rootIds });
   const erasedSessionIds = erasedIds.map(String);
   // A child created between the listing and the delete is erased too; its directory is best effort.
-  const lateFailures = await removeSessionDirectories(
+  const { failures: lateFailures } = await removeSessionDirectories(
     context.deps.storageRoot,
     erasedSessionIds.filter((sessionId) => !treeIds.includes(sessionId)),
   );
@@ -185,12 +243,12 @@ export async function eraseSessionTrees(
     requestedRootCount: rootIds.length,
     erasedSessionCount: erasedSessionIds.length,
     fileFailureCount: lateFailures,
-    filesRetainedCount: retained.size,
+    filesRetainedCount,
   });
   return {
     erasedSessionIds,
     blockedRunningSessionIds: [],
     fileFailureCount: lateFailures,
-    filesRetainedCount: retained.size,
+    filesRetainedCount,
   };
 }

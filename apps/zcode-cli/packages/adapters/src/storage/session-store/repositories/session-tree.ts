@@ -98,6 +98,48 @@ export function listSessionTreeIdsWithSurvivingChildren(
   return [...retained] as SessionId[];
 }
 
+const ARTIFACT_URI_SCHEME = "zcode-artifact://";
+/** Session segment, then the artifact id up to the end of the URI inside JSON or prose. */
+const ARTIFACT_URI = /zcode-artifact:\/\/([^/"\\\s]+)\/+([^/"\\\s?#)\]]+)/gu;
+
+function decodeSegment(segment: string): string | undefined {
+  try {
+    return decodeURIComponent(segment);
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * Artifact ids of tree sessions that parts of sessions outside the tree still reference. Shared context,
+ * rewinds and copied transcripts keep `zcode-artifact://<owner>/<id>` URIs without any parent link, so
+ * the scan reads part content. Every surviving row counts: archived and soft-deleted sessions can be
+ * restored. Runs only on permanent erase, so a full scan of the part table is acceptable.
+ */
+export function listSessionTreeArtifactReferences(
+  db: DatabaseSync,
+  rootIds: readonly SessionId[],
+): Map<SessionId, string[]> {
+  const tree = resolveTreeIds(db, rootIds);
+  const references = new Map<string, Set<string>>();
+  if (tree.size === 0) return new Map();
+  const rows = db
+    .prepare("select session_id, data from part where instr(data, ?) > 0")
+    .iterate(ARTIFACT_URI_SCHEME) as Iterable<{ session_id: string; data: string }>;
+  for (const row of rows) {
+    if (tree.has(row.session_id)) continue;
+    for (const match of row.data.matchAll(ARTIFACT_URI)) {
+      const owner = decodeSegment(match[1]!);
+      const artifactId = decodeSegment(match[2]!);
+      if (!owner || !artifactId || !tree.has(owner)) continue;
+      references.set(owner, (references.get(owner) ?? new Set()).add(artifactId));
+    }
+  }
+  return new Map(
+    [...references].map(([owner, ids]) => [owner as SessionId, [...ids]] as const),
+  );
+}
+
 export function countSessionTree(
   db: DatabaseSync,
   rootIds: readonly SessionId[],

@@ -5,6 +5,7 @@ import { DatabaseSync } from "node:sqlite";
 import { afterEach, describe, expect, it } from "vitest";
 import {
   createMessageId,
+  createPartId,
   createProjectId,
   createSessionId,
   createToolCallId,
@@ -218,6 +219,44 @@ describe("session tree count and erase", () => {
       await expect(
         h.store.listSessionTreeIdsWithSurvivingChildren!({ rootIds: [other] }),
       ).resolves.toEqual([]);
+    } finally {
+      h.close();
+    }
+  });
+
+  it("lists artifact ids of tree sessions that sessions outside the tree still reference", async () => {
+    const h = await openStore();
+    try {
+      const { parent, other } = await seedFamily(h);
+      const kept = await seedSession(h.store, "kept", "interactive");
+      const archivedKept = await seedSession(h.store, "archived-kept", "interactive");
+      const refer = async (sessionID: SessionId, text: string) => {
+        await h.store.savePart({
+          id: createPartId(`${sessionID}-ref-${text.length}`),
+          sessionID,
+          messageID: createMessageId(`${String(sessionID).replace(/^sess_/u, "")}-message`),
+          type: "text",
+          text,
+          time: { start: 1, end: 1 },
+        });
+      };
+      // No parent link between kept and parent: the reference lives only in the part data.
+      await refer(kept, `see zcode-artifact://${parent}/shared and zcode-artifact://${raw("sub")}/tool-result-1`);
+      await refer(archivedKept, `zcode-artifact://${parent}/second`);
+      await h.store.softDeleteSession!(archivedKept);
+      // References from inside the erased tree and self references do not keep files.
+      await refer(createSessionId("chat"), `zcode-artifact://${parent}/from-inside`);
+      await refer(parent, `zcode-artifact://${parent}/self`);
+      await refer(other, `zcode-artifact://${other}/own`);
+
+      const references = await h.store.listSessionTreeArtifactReferences!({ rootIds: [parent] });
+      expect(Object.fromEntries([...references].map(([id, names]) => [id, [...names].sort()]))).toEqual({
+        [parent]: ["second", "shared"],
+        [raw("sub")]: ["tool-result-1"],
+      });
+      await expect(
+        h.store.listSessionTreeArtifactReferences!({ rootIds: [other] }),
+      ).resolves.toEqual(new Map());
     } finally {
       h.close();
     }
