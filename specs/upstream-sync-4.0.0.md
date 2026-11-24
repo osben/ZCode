@@ -226,12 +226,11 @@ Repository:
     desktop in Chinese. APD11 switches the desktop to English for the case and back in `finally`, so
     its locators stay English (`scripts/check-test-copy.mjs` rejects CJK locators). It also closes
     the desktop remote control dialog before the desktop delete steps.
-  - Open: APD11's last step (an offline phone draft of the deleted task is cleared after reload)
-    fails. The phone learns about permanent deletions from `task_purge` receipts
-    (`listPermanentlyDeletedTaskIds`), and the fork erase writes tombstones instead, so no receipt
-    exists. Needs a decision on how fork tombstones reach that replay.
-  - Box runs on 2026-11-24 with the fixture: archive-management 5 of 6 (APD11 fails only at the
-    offline draft step above); `conversation-session-hooks-mobile` and
+  - APD11's last step (an offline phone draft of the deleted task is cleared after reload) failed:
+    the phone learns about permanent deletions from `listPermanentlyDeletedTaskIds`, which read
+    only `task_purge` receipts, and the fork erase writes tombstones instead. The fork now answers it
+    with tombstones plus receipts (`specs/session-deletion-cascade.md`, removal replay paragraph).
+  - Box runs on 2026-11-24 with the fixture: archive-management 6 of 6 after the replay fix; `conversation-session-hooks-mobile` and
     `conversation-session-workspace-mcp-trust` pass; `conversation-session-hook-trust` fails HK19
     (expects the Chinese missing-entry reason, the phone shows English text) with and without the
     Settings flag fix, so it is not caused by it and was not investigated. VP13 in

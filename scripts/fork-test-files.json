@@ -157,6 +157,7 @@
   "packages/services/test/taskIndexRepoCliUpdatedAtWriter.test.ts",
   "packages/services/test/taskIndexRepoForkLink.test.ts",
   "packages/services/test/taskIndexRepoLightSelect.test.ts",
+  "packages/services/test/taskIndexRepoPermanentRemovalReplay.test.ts",
   "packages/services/test/taskIndexRepoReservationDiscard.test.ts",
   "packages/services/test/taskIndexRepoReservationPlaceholder.test.ts",
   "packages/services/test/taskIndexRepoSearchScope.test.ts",
