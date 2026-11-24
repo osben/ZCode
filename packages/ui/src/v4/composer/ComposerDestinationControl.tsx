@@ -428,10 +428,19 @@ export function ComposerDestinationControl({
               worktreeMode && "text-worktree-task",
             )}
           >
+            {/* Same marker as the upstream GitBranchSwitcher this chip replaces; upstream E2E locates it. */}
             {worktreeMode ? (
-              <Split className="size-4 rotate-90" aria-hidden="true" />
+              <Split
+                data-branch-switcher-primary-icon="true"
+                className="size-4 rotate-90"
+                aria-hidden="true"
+              />
             ) : (
-              <GitBranch className="size-4 text-foreground-subtle" aria-hidden="true" />
+              <GitBranch
+                data-branch-switcher-primary-icon="true"
+                className="size-4 text-foreground-subtle"
+                aria-hidden="true"
+              />
             )}
             {!compactForRemoteControl ? (
               <>

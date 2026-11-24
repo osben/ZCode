@@ -266,6 +266,16 @@ describe("destination popover branch list reloads on every open (render)", () =>
     cleanup();
   });
 
+  it("marks the trigger's leading icon like the upstream branch switcher", () => {
+    branchFetch.getLocalBranches.mockResolvedValue(branchList(["main"], "main"));
+    renderDestination("main");
+
+    // Upstream E2E (VP13) locates the composer branch entry by this marker.
+    expect(trigger().querySelectorAll('[data-branch-switcher-primary-icon="true"]')).toHaveLength(
+      1,
+    );
+  });
+
   it("(a) re-opening the popover calls getLocalBranches again", async () => {
     branchFetch.getLocalBranches.mockResolvedValue(branchList(["main"], "main"));
     renderDestination("main");
