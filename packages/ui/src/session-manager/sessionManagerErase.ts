@@ -2,6 +2,7 @@ import type { IZCodeTaskService, ZCodeTaskEraseResult, ZCodeTaskTreeCounts } fro
 import { toast } from "@/components/ui/toast.js";
 import { sumTreeCounts } from "@/lib/taskTreeCounts.js";
 import { logger } from "@/logger.js";
+import { clearBrowserRecentVisitsForTask } from "@/store/browserRecentVisitsStore.js";
 import type { SessionManagerRow } from "./sessionManagerModel.js";
 
 type RowServiceResolver = (row: SessionManagerRow) => IZCodeTaskService | null;
@@ -79,6 +80,10 @@ export async function eraseHiddenRows(
         continue;
       }
       erased += result.erasedTaskIds.length;
+      // eraseTasks fires no permanentlyDeleted removal signal; clear the erased sessions' browser history here.
+      const workspaceKey = first.task.workspaceIdentity?.trim() || first.task.workspacePath;
+      for (const taskId of result.erasedTaskIds)
+        clearBrowserRecentVisitsForTask(workspaceKey, taskId);
       fileFailures += result.fileFailureCount;
       kept +=
         result.skippedTaskIds.length +

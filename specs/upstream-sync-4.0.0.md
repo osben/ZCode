@@ -197,10 +197,12 @@ Repository:
   - TSL39 counts every archived row: wdio seeds 25 more archived tasks for this spec.
   - Specs without the coding plan mock reach the live marketing API. The archive spec closes the
     campaign popup (`cloud-content-dialog`) before each case. Other specs may need the same.
-  - Box run on 2026-11-23: archive-management 5 of 6 pass (APD11 needs Chrome). TSL39 fails on a real
-    fork bug that predates the sync: permanent delete removes `shared.png` from the deleted session's
-    artifact directory while a kept session still references it by `zcode-artifact://` part URL.
-    Upstream 4.0.0 keeps such files (`retainedArtifacts`); the fork erase (`zcodeTaskErase.ts`,
-    `session-tree.ts`) does not track cross-session references. The assertion is left as is.
+  - TSL39 found two fork bugs that predate the sync. Permanent delete removed attachment files that a
+    kept session still referenced by `zcode-artifact://` URL: fixed in #634 (merged into `fork`, then
+    into this branch). The fork erase path also kept the deleted tasks' browser recent visits, because
+    `eraseTasks` fires no `permanentlyDeleted` signal: `permanentlyDeleteTasks` and `eraseHiddenRows`
+    now clear them (`specs/session-deletion-cascade.md`).
+  - Box run on 2026-11-24: TSL39 passes, archive-management 5 of 6 pass. APD11 needs Chrome for the
+    phone browser, which the box does not have.
 - `conversation-session-dynamic-workflow-gray-always-on-resume.test.ts`: the fork and upstream gates for
   the same race are combined; not run yet.

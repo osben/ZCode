@@ -3,6 +3,7 @@ import { buildTaskWorkspaceKey } from "@/lib/taskQueryCache.js";
 import { removeTaskFromTaskCaches } from "@/lib/taskListMetaSync.js";
 import { sumTreeCounts } from "@/lib/taskTreeCounts.js";
 import { logger } from "@/logger.js";
+import { clearBrowserRecentVisitsForTask } from "@/store/browserRecentVisitsStore.js";
 import type { TaskDeleteDialogRow, TaskDeleteWorktreePreview } from "./taskDeletionTypes.js";
 
 export interface TaskDeleteTarget extends TaskDeleteDialogRow {
@@ -302,6 +303,11 @@ export async function permanentlyDeleteTasks(
             return;
           }
           result.erased += erased.erasedTaskIds.length;
+          // The fork erases through eraseTasks, which fires no permanentlyDeleted removal signal, so the
+          // per-task browser history is cleared here; otherwise it outlives the deleted session.
+          const workspaceKey = first.workspaceIdentity?.trim() || first.workspacePath;
+          for (const taskId of erased.erasedTaskIds)
+            clearBrowserRecentVisitsForTask(workspaceKey, taskId);
           result.skipped += erased.skippedTaskIds.length;
           result.running += erased.blockedRunningTaskIds.length;
           result.failed += erased.failedTaskIds.length;
