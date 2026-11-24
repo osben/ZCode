@@ -41,7 +41,7 @@
       "kind": "main",
       "source": "synthetic",
       "timingPolicy": "fast-text",
-      "syntheticReason": "固定 thinking/text stream 使 CLI model-io 的 timing 与 reasoningText 落盘可被稳定断言。"
+      "syntheticReason": "固定 thinking/text stream 使 CLI model-io 的 timing 与 reasoningText 落盘可被稳定断言；其余 UI 状态由 case-local 记录驱动。"
     },
     {
       "id": "model-trajectory-v2-title-task2",

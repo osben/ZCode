@@ -60,6 +60,9 @@ const WEB_REMOTE_REPLAYABLE_ALLOWED_CHANNELS = new Set<string>([
   ServiceChannels.UsageStats,
   ServiceChannels.CodingPlanSubscription,
   ServiceChannels.ClientScenes,
+  // 手机此前被白名单挡住，插件推荐、草稿模型迁移规则都读不到公开配置。
+  // 服务只返回裁剪后的公开字段，JWT 留在桌面 Host 注入，手机不接触凭据。
+  ServiceChannels.ClientConfig,
   ServiceChannels.Skills,
   // The mobile side has no sync UI, and hiding it in the UI layer alone does not prevent writes: import methods stay callable at the RPC layer.
   // Therefore SkillSync, PluginSync, and any sync channel added later must never enter the mobile allowlist.

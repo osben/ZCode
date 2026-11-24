@@ -127,7 +127,10 @@ async function panel() {
   return (await import("@/v4/ConversationStatusPanel.js")).ConversationStatusPanel;
 }
 
-describe("ConversationStatusPanel Context and Last turn sections", () => {
+// Fork: the 4.0.0 sync (specs/upstream-sync-4.0.0.md) took upstream's composer status capsules, which
+// replace the status panel. The fork's Last turn and Context sections are hidden until a follow-up re-homes them in the capsules,
+// so this suite is skipped (not deleted).
+describe.skip("ConversationStatusPanel Context and Last turn sections", () => {
   it("never mounts the panel on their own", async () => {
     const ConversationStatusPanel = await panel();
     const html = renderToStaticMarkup(

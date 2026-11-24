@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { IZCodeTaskService, ZCodeTaskTreeCounts } from "@zcode/services";
 import { removeTaskFromTaskCaches } from "@/lib/taskListMetaSync.js";
+import { clearBrowserRecentVisitsForTask } from "@/store/browserRecentVisitsStore.js";
 import {
   loadTaskDeletionWorktreePreview,
   permanentlyDeleteTasks,
@@ -10,6 +11,9 @@ import type { TaskDeleteTarget } from "@/task-deletion/taskDeletion.js";
 
 vi.mock("@/lib/taskListMetaSync.js", () => ({
   removeTaskFromTaskCaches: vi.fn(),
+}));
+vi.mock("@/store/browserRecentVisitsStore.js", () => ({
+  clearBrowserRecentVisitsForTask: vi.fn(),
 }));
 
 afterEach(() => vi.clearAllMocks());
@@ -151,6 +155,36 @@ describe("task deletion", () => {
       workspacePath: "/repo",
       taskIds: ["a"],
     });
+  });
+
+  it("clears browser history only for erased tasks, keyed by workspace identity", async () => {
+    const services = mockServices({
+      eraseTasks: vi.fn(async () => ({
+        erasedTaskIds: ["a"],
+        skippedTaskIds: ["b"],
+        blockedRunningTaskIds: [],
+        failedTaskIds: [],
+        fileFailureCount: 0,
+        filesRetainedCount: 0,
+        worktreeCleanup: {
+          removed: [],
+          retained: [],
+          failed: [],
+          removedCount: 0,
+          retainedCount: 0,
+          failedCount: 0,
+        },
+      })),
+    });
+    await permanentlyDeleteTasks(
+      [
+        target("a", { workspaceIdentity: "remote:a" }),
+        target("b", { workspaceIdentity: "remote:a" }),
+      ],
+      () => services,
+    );
+    expect(clearBrowserRecentVisitsForTask).toHaveBeenCalledTimes(1);
+    expect(clearBrowserRecentVisitsForTask).toHaveBeenCalledWith("remote:a", "a");
   });
 
   it("previews worktree removal through the dedicated Git query and keeps every reported file", async () => {

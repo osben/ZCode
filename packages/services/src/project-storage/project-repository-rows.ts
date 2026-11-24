@@ -6,6 +6,7 @@ import type {
   ProjectTaskRef,
   VirtualProject,
 } from "#src/project-storage/contract.js";
+import { hostMismatch } from "#src/project-storage/host-mismatch.js";
 import { OWNERSHIP_DECIDED } from "#src/project-storage/legacy-tasks.js";
 import { assertRemoteTaskDirectories } from "#src/project-storage/remote-policy.js";
 
@@ -87,10 +88,21 @@ export function resolveDirectories(
 ): ProjectDirectories {
   const row = readTask(db, task);
   // 旧远端影子行仍可能保留；行与项目一致不代表当前 Host 有权加载其目录。
-  if (row && row.host_id !== ownerHostId) throw new Error("project.host-mismatch");
+  if (row && row.host_id !== ownerHostId)
+    throw hostMismatch("owner", task, {
+      rowHostId: row.host_id,
+      ownerHostId,
+      projectId: row.project_id,
+    });
   const workspacePath = row ? String(row.root_path) : task.workspacePath;
   const project = row?.project_id ? requireProject(db, String(row.project_id)) : null;
-  if (project && row?.host_id !== project.hostId) throw new Error("project.host-mismatch");
+  if (project && row?.host_id !== project.hostId)
+    throw hostMismatch("project", task, {
+      rowHostId: row?.host_id,
+      ownerHostId,
+      projectId: project.id,
+      projectHostId: project.hostId,
+    });
   assertRemoteTaskDirectories(
     ownerHostId,
     project,

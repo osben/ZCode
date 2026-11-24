@@ -23,6 +23,16 @@ const browserUseRequiredRuntimePaths = [
 
 // The viewer panels of the document plugins (documents / pdf / presentations / spreadsheets) are built
 // into each plugin's dist/ by the shared @zcode/office-runtime package; the plugin packages have no TypeScript source.
+const officeInvocationPaths = [
+  "scripts/zcode_libreoffice.py",
+  "scripts/libreoffice-profile/user/registrymodifications.xcu",
+  "scripts/libreoffice-profile/user/basic/script.xlc",
+  "scripts/libreoffice-profile/user/basic/dialog.xlc",
+  "scripts/libreoffice-profile/user/basic/Standard/script.xlb",
+  "scripts/libreoffice-profile/user/basic/Standard/dialog.xlb",
+  "scripts/libreoffice-profile/user/basic/Standard/ZCode.xba",
+];
+
 const officeViewerRuntimePaths = ["dist/server.mjs", "dist/ui/assets.json", "dist/ui/panel.html"];
 
 export const officialPluginPackages = [
@@ -39,7 +49,11 @@ export const officialPluginPackages = [
     relativePath: "apps/zcode-cli/packages/documents-plugin",
     requiresRuntime: true,
     requiredRuntimePaths: officeViewerRuntimePaths,
-    requiredSeedPaths: ["skills/docx/SKILL.md", "skills/docx-viewer/SKILL.md"],
+    requiredSeedPaths: [
+      "skills/docx/SKILL.md",
+      "skills/docx-viewer/SKILL.md",
+      ...officeInvocationPaths,
+    ],
     runtimeBuildScript: "../office-runtime/scripts/build.mjs",
     stagedPath: "packages/documents-plugin",
   },
@@ -55,7 +69,11 @@ export const officialPluginPackages = [
     relativePath: "apps/zcode-cli/packages/pdf-plugin",
     requiresRuntime: true,
     requiredRuntimePaths: officeViewerRuntimePaths,
-    requiredSeedPaths: ["skills/pdf/SKILL.md", "skills/pdf-viewer/SKILL.md"],
+    requiredSeedPaths: [
+      "skills/pdf/SKILL.md",
+      "skills/pdf-viewer/SKILL.md",
+      ...officeInvocationPaths,
+    ],
     runtimeBuildScript: "../office-runtime/scripts/build.mjs",
     stagedPath: "packages/pdf-plugin",
   },
@@ -64,7 +82,11 @@ export const officialPluginPackages = [
     relativePath: "apps/zcode-cli/packages/presentations-plugin",
     requiresRuntime: true,
     requiredRuntimePaths: officeViewerRuntimePaths,
-    requiredSeedPaths: ["skills/pptx/SKILL.md", "skills/pptx-viewer/SKILL.md"],
+    requiredSeedPaths: [
+      "skills/pptx/SKILL.md",
+      "skills/pptx-viewer/SKILL.md",
+      ...officeInvocationPaths,
+    ],
     runtimeBuildScript: "../office-runtime/scripts/build.mjs",
     stagedPath: "packages/presentations-plugin",
   },
@@ -73,7 +95,11 @@ export const officialPluginPackages = [
     relativePath: "apps/zcode-cli/packages/spreadsheets-plugin",
     requiresRuntime: true,
     requiredRuntimePaths: officeViewerRuntimePaths,
-    requiredSeedPaths: ["skills/xlsx/SKILL.md", "skills/xlsx-viewer/SKILL.md"],
+    requiredSeedPaths: [
+      "skills/xlsx/SKILL.md",
+      "skills/xlsx-viewer/SKILL.md",
+      ...officeInvocationPaths,
+    ],
     runtimeBuildScript: "../office-runtime/scripts/build.mjs",
     stagedPath: "packages/spreadsheets-plugin",
   },
@@ -195,17 +221,24 @@ export const officialPluginPackages = [
     requiresRuntime: false,
     requiredSeedPaths: [
       "skills/design/SKILL.md",
+      "skills/design/references/app.md",
       "skills/design/references/catalog.md",
       "skills/design/references/check.md",
       "skills/design/references/create.md",
+      "skills/design/references/deck.md",
       "skills/design/references/design-system.md",
+      "skills/design/references/image.md",
       "skills/design/references/interact.md",
-      "skills/design/references/output.md",
+      "skills/design/references/motion.md",
+      "skills/design/references/page.md",
       "skills/design/references/redesign.md",
       "skills/design/scripts/adapt-canvas.mjs",
+      "skills/design/scripts/audit-page.js",
+      "skills/design/scripts/audit.mjs",
       "skills/design/scripts/design-lint.mjs",
       "skills/design/scripts/design-tokens.mjs",
       "skills/design/scripts/import-design-system.mjs",
+      "skills/design/scripts/probe.js",
       "hooks/hooks.json",
       "hooks/run-hook.cmd",
       "hooks/design-rules",

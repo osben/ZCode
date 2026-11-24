@@ -1,7 +1,7 @@
 {
   "version": 1,
   "caseName": "conversation-session-message-pins",
-  "spec": "./test/e2e/conversation-session/conversation-session-message-pins.test.ts",
+  "spec": "./test/e2e/conversation-session/presentation/conversation-session-message-pins.test.ts",
   "fixtures": [
     {
       "id": "message-pins-title",

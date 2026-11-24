@@ -1,4 +1,11 @@
-// Thin service implementation for plugin management in Settings—the only host-side consumer of legacy plugins/* protocol terms.
+import {
+  collectTelemetryRendererContext,
+  resolveWorkspaceTelemetryDetail,
+  ZCODE_OFFICIAL_PLUGIN_MARKETPLACE_ID,
+  type RendererTelemetryEventPayload,
+} from "@zcode/shared";
+import type { ConversationTelemetryFact } from "@zcode/shared/zcode-protocol-v4";
+// Thin service implementation for plugin management in Settings, the only host-side consumer of legacy plugins/* protocol terms.
 // The zcode-cli process is the source of truth for plugin installation, marketplace, and enablement (it reads/writes the ~/.zcode plugin directory and hot-updates
 // runtime state). The host has no copy, so this implementation keeps the agent protocol round trip. Its purpose is to stop the UI from calling
 // IZCodeAgentService directly and centralize consumption of these terms in this file.
@@ -43,6 +50,7 @@ export interface PluginManagementServiceDependencies {
     | "getLspPreferences"
     | "setLspPreferences"
     | "getLspStatus"
+    | "setWorkspacePluginTrust"
   >;
 }
 
@@ -132,5 +140,54 @@ export function createPluginManagementService(
     getLspPreferences: (params) => agent.getLspPreferences(params),
     setLspPreferences: (params) => agent.setLspPreferences(params),
     getLspStatus: (params) => agent.getLspStatus(params),
+    setWorkspacePluginTrust: (params) => agent.setWorkspacePluginTrust(params),
+  };
+}
+
+type PluginDiscoveryFact = Extract<ConversationTelemetryFact, { kind: "plugin.discovery" }>;
+
+const DISCOVERY_ACTION = {
+  searched: "agent_search",
+  card_shown: "recommend_view",
+  card_resolved: "recommend_decision",
+} as const;
+
+/** CLI facts from the Agent recommendation flow become plugin business telemetry; called from a single place in the Host, see docs/monitoring/plugin-lifecycle-telemetry.md. */
+export function toAgentPluginDiscoveryTelemetry(
+  fact: PluginDiscoveryFact,
+  workspace: { workspaceIdentity?: string | null; remoteSessionId?: string | null },
+): RendererTelemetryEventPayload {
+  const detail: Record<string, string> = {
+    schema_version: "1",
+    entry: "agent_recommendation",
+    ...resolveWorkspaceTelemetryDetail(workspace),
+    ...(fact.pluginId
+      ? { plugin_id: fact.pluginId, marketplace: ZCODE_OFFICIAL_PLUGIN_MARKETPLACE_ID }
+      : {}),
+    ...(fact.result ? { result: fact.result } : {}),
+    ...(fact.decision ? { decision: fact.decision } : {}),
+    ...(fact.resultCount !== undefined ? { result_count: String(fact.resultCount) } : {}),
+  };
+  if (fact.phase === "install_settled") {
+    return {
+      elementName: "plugin_lifecycle",
+      eventRegion: "app",
+      eventType: "result",
+      context: collectTelemetryRendererContext(),
+      eventExtraDetail: {
+        ...detail,
+        action: fact.action ?? "install",
+        trigger: "user",
+        scope: "workspace",
+        ...(fact.durationMs !== undefined ? { duration_ms: String(fact.durationMs) } : {}),
+      },
+    };
+  }
+  return {
+    elementName: "plugin_discovery",
+    eventRegion: "app",
+    eventType: fact.phase === "card_resolved" ? "ck" : "view",
+    context: collectTelemetryRendererContext(),
+    eventExtraDetail: { ...detail, action: DISCOVERY_ACTION[fact.phase] },
   };
 }

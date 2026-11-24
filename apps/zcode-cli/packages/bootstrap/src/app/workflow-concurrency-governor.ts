@@ -12,7 +12,7 @@
 // This is the governor's **only** code that touches clocks and timers: the controller receives `now`; cooldown expiry must wake waiters,
 // so use setTimeout (injectable and unref'd).
 
-import { resolveWorkflowModelFailurePolicy } from "@zcode/adapters/model";
+import { resolveWorkflowModelFailurePolicy, retryWaitJitterSpreadMs } from "@zcode/adapters/model";
 import {
   ModelErrorCode,
   type ModelNetworkStatusEvent,
@@ -62,8 +62,9 @@ export interface WorkflowConcurrencyPort {
 
 interface WorkflowConcurrencyGovernor extends WorkflowConcurrencyPort {
   /**
-   * Admission for the main agent: acquire immediately—no queue or cooldown check—but **count it in inFlight**
+   * Admission for the main agent: acquire immediately (no queue, no cooldown check) but **count it in inFlight**
    * and feed its signals (its provider requests are visible too). Workflow traffic must never block the main agent's turn.
+   * Only it implements `retryCooldownMs`: the first request is still sent immediately, and on retry the runner waits max(local backoff, remaining cooldown).
    */
   observer(): ModelRequestAdmission;
   /**
@@ -124,12 +125,30 @@ interface Bucket {
    */
   readonly runs: Set<string>;
   cancelCooldownWake?: () => void;
+  /**
+   * 估计冷却：`rate_limited` 重试**没带** Retry-After 时，按那个请求自己算出的退避（`delayMs`）估计 provider
+   * 还要拒多久，取更晚者。**只给主代理（observer）的重试等待参考**（`retryCooldownMs`），不进控制器：
+   * 闸门、排队者的冷却唤醒、cap 的增减都不读它，subagent 与 workflow 的准入行为不变。
+   *
+   * 为什么要它：线上 1302 的 Retry-After 时有时无（2026-11 按服务端看到的重试间隔推断：glm-5.3 的大多带、
+   * glm-5.3-flash 的大多不带），不带时控制器的 `cooldownUntil` 永远不被设置，主代理的重试只能看见自己的本地退避。
+   */
+  estimatedCooldownUntil?: number;
 }
 
 /** Run identity for the observer (main agent): never queued or subscribed, and treated as "not a run" only during fanout filtering. */
 const OBSERVER_RUN_ID = "\0observer";
 /** Run identity prefix for the main-agent subagent pool; starts with `\0` so it can never collide with a workflow run id. */
 const SESSION_SUBAGENTS_RUN_PREFIX = "\0subagents:";
+/**
+ * Upper bound on the estimated cooldown: same value as the cap on Retry-After the runner trusts (`MAX_REASONABLE_RETRY_AFTER_MS`); the runner also caps again when it layers the cooldown.
+ */
+const MAX_ESTIMATED_COOLDOWN_MS = 5 * 60_000;
+/**
+ * Time slack when deciding a "follower": between the runner reading the cooldown and retry_scheduled reaching the ticket there are logging and status hops,
+ * so the real gap is only a few milliseconds; 1 second is enough and far below the increment of any real backoff.
+ */
+const ESTIMATE_FOLLOWER_SLACK_MS = 1_000;
 /** Placeholder when the runner gives no signal: never aborts (user cancellation goes through the request's own signal). */
 const NEVER_ABORTED: AbortSignal = new AbortController().signal;
 
@@ -236,6 +255,45 @@ export function createWorkflowConcurrencyGovernor(
   };
 
   /**
+   * Record the estimated cooldown of a rate limit that lacked Retry-After (see `Bucket.estimatedCooldownUntil`); capped at 5 minutes.
+   *
+   * Do not record a "follower": the bucket already has a cooldown, and this wait falls within "existing cooldown + jitter tier". That is the main agent's
+   * retry that waited on the cooldown and then added jitter (runner-retry.ts `retryDelayWithAdmissionCooldown`); its `delayMs` is not new rate-limit evidence.
+   * Recording it would push the cooldown back by one jitter step each time it is followed, and several main sessions following each other could push it ever further out.
+   * The cost: a real backoff that is later than the existing cooldown by less than "jitter tier + 1 second" is not recorded, so at most that much extra wait is lost.
+   */
+  const noteEstimatedCooldown = (bucket: Bucket, delayMs: number): void => {
+    if (!Number.isFinite(delayMs) || delayMs <= 0) return;
+    const at = now();
+    const until = at + Math.min(delayMs, MAX_ESTIMATED_COOLDOWN_MS);
+    const existing = Math.max(
+      bucket.controller.snapshot().cooldownUntil ?? 0,
+      bucket.estimatedCooldownUntil ?? 0,
+    );
+    if (
+      existing > at &&
+      until <= existing + retryWaitJitterSpreadMs(delayMs) + ESTIMATE_FOLLOWER_SLACK_MS
+    ) {
+      return;
+    }
+    bucket.estimatedCooldownUntil = Math.max(bucket.estimatedCooldownUntil ?? 0, until);
+  };
+
+  /**
+   * How long the main agent still has to wait before a retry: the later of the controller's Retry-After cooldown and the estimated cooldown, minus now, 0 if <= 0. Read-only: builds no bucket,
+   * does no idle reset, no fan-out.
+   */
+  const retryCooldownMs = (key: string): number => {
+    const bucket = buckets.get(key);
+    if (bucket === undefined) return 0;
+    const until = Math.max(
+      bucket.controller.snapshot().cooldownUntil ?? 0,
+      bucket.estimatedCooldownUntil ?? 0,
+    );
+    return Math.max(0, until - now());
+  };
+
+  /**
    * Ticket for one admitted attempt; event mapping stays consistent. Settle on any terminal mapping (idempotently); if `release()`
    * sees no terminal event, treat it as `ended`. Publish / release after settlement are no-ops because the runner may still send
    * a fallback event in rare paths after the attempt has ended.
@@ -270,6 +328,9 @@ export function createWorkflowConcurrencyGovernor(
               return;
             }
             if (THROTTLE_REASONS.has(reason)) {
+              if (reason === "rate_limited" && event.retryAfterMs === undefined) {
+                noteEstimatedCooldown(bucket, event.delayMs);
+              }
               settle((at) =>
                 bucket.controller.throttled(
                   at,
@@ -438,12 +499,15 @@ export function createWorkflowConcurrencyGovernor(
     }
   };
 
-  // No queue or cooldown check (decisions 37/47); observe happens in grant. The fast path always succeeds, so the runner never emits queued / admitted
-  // for main-agent requests (decision 44).
+  // The first request is not queued and does not check the cooldown (decisions 37/47): the user's own conversation never waits behind a workflow; observe happens in grant.
+  // The fast path always succeeds, so the runner never emits queued / admitted for main-agent requests (decision 44).
+  // On retry the cooldown is consulted: the runner reads `retryCooldownMs` in the backoff and waits max(local backoff, remaining cooldown), since a retry during the cooldown
+  // is almost certainly another 1302 and only burns retry attempts (docs/dynamic-workflow/concurrency.md "Where the port is bound").
   const observerAdmission: ModelRequestAdmission = {
     tryAcquire: ({ model }) => grant(bucketFor(workflowConcurrencyKey(model)), OBSERVER_RUN_ID),
     acquire: ({ model }) =>
       Promise.resolve(grant(bucketFor(workflowConcurrencyKey(model)), OBSERVER_RUN_ID)),
+    retryCooldownMs: ({ model }) => retryCooldownMs(workflowConcurrencyKey(model)),
   };
 
   // Fix rationale: subagents used to inherit the parent's observer, so one turn with ten

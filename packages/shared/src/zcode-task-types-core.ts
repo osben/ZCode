@@ -665,6 +665,8 @@ export interface ZCodeToolCallUpdate {
   input?: unknown;
   content?: unknown;
   error?: string;
+  /** Error code of a tool terminal state (CLI ErrorPayload.code ?? type); used only for telemetry normalization, never displayed. */
+  errorCode?: string;
   /** Raw agent ToolCallUpdate payload; use this when debugging protocol fields. */
   raw: unknown;
   pluginMetadata?: { pluginId: string; component: "mcp" };

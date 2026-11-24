@@ -1347,8 +1347,6 @@ const ukUA: Record<string, string> = {
   "subagentDirectory.status.failed": "Помилка",
   "subagentDirectory.status.cancelled": "Скасовано",
   "subagentDirectory.status.lost": "Втрачено",
-  "chat.statusPanel.endedAgents": "Завершені",
-  "chat.statusPanel.endedWorkflows": "Завершені робочі процеси",
   "workflowDirectory.title": "Запуски робочих процесів",
   "workflowDirectory.running": "Виконуються",
   "workflowDirectory.runningEmpty": "Немає робочих процесів, що виконуються",
@@ -5396,7 +5394,7 @@ const ukUA: Record<string, string> = {
   "chat.message.fork": "Розгалузити",
   "chat.message.forking": "Розгалуження...",
   "chat.message.fork.unsupported": "Поточний агент поки не підтримує розгалуження",
-  "chat.message.fork.failed": "Не вдалося розгалузити сеанс: {error}",
+  "chat.message.fork.failed": "Не вдалося розгалузити сеанс. Спробуйте пізніше.",
   "chat.message.fork.derivedFrom": "Відгалужено від розмови",
   "chat.message.fork.derivedFromMissing":
     "Відгалужено від старішої розмови (відомості про джерело втрачено)",
@@ -5640,15 +5638,6 @@ const ukUA: Record<string, string> = {
   "chat.summaryPanel.duration.hours": "год",
   "chat.summaryPanel.duration.minutes": "хв",
   "chat.summaryPanel.duration.seconds": "с",
-  "chat.summaryPanel.showMini": "Згорнути в капсулу",
-  "chat.summaryPanel.showPanel": "Розгорнути стан",
-  "chat.summaryPanel.displayMode": "Режим відображення панелі стану",
-  "chat.summaryPanel.displayModeAuto": "Розгортати автоматично",
-  "chat.summaryPanel.displayModeExpanded": "Завжди розгорнуто",
-  "chat.summaryPanel.displayModeCollapsed": "Завжди згорнуто",
-  "chat.summaryPanel.runningBackgroundTasks": "Фонові завдання, що виконуються",
-  "chat.summaryPanel.runningBackgroundTasksMiniValue": "У фоні: {count}",
-  "chat.summaryPanel.runningBackgroundTasksMiniValuePlural": "У фоні: {count}",
   "chat.summaryPanel.stopRunningBackgroundTask": "Зупинити фонове завдання",
   "chat.summaryPanel.stopRunningSubagent": "Зупинити запущений агент",
   "chat.summaryPanel.stopSubagentFailed": "Не вдалося зупинити агент. Спробуйте ще раз.",
@@ -5661,13 +5650,6 @@ const ukUA: Record<string, string> = {
   "chat.statusPanel.dream.resultPending": "Завершено",
   "chat.statusPanel.dream.failed": "Помилка",
   "chat.statusPanel.dream.cancelled": "Скасовано",
-  "chat.composer.backgroundWorks.tooltipTerminal": "Відкрити запущені термінали",
-  "chat.composer.backgroundWorks.tooltipAgent": "Відкрити запущених агентів",
-  "chat.composer.backgroundWorks.tooltipWorkflow": "Відкрити запущені робочі процеси",
-  "chat.composer.backgroundWorks.tooltipWorkflowDetails": "Відкрити деталі робочого процесу",
-  "chat.composer.backgroundWorks.tooltipMixed": "Відкрити фонові завдання",
-  "chat.composer.backgroundWorks.ariaLabel":
-    "Відкрити запущені фонові завдання: Bash — {bashCount}, робочі процеси — {workflowCount}, субагенти — {subagentCount}, усього — {count}",
   "chat.summaryPanel.goalIterationValue": "Ітерація {count}",
   "chat.statusPanel.environment": "Інструменти Git",
   "chat.statusPanel.changes": "Зміни",
@@ -5700,11 +5682,6 @@ const ukUA: Record<string, string> = {
   "chat.statusPanel.contextCumulative.input": "Вхід {tokens}",
   "chat.statusPanel.contextCumulative.output": "Вихід {tokens}",
   "chat.statusPanel.contextCumulative.cacheRead": "З кешу {tokens}",
-  "chat.statusPanel.workflows": "Робочі процеси",
-  "chat.statusPanel.runningStatusValue": "У фоні: {count}",
-  "chat.statusPanel.runningStatusValuePlural": "У фоні: {count}",
-  "chat.statusPanel.runningAgentsValue": "Виконується: {count}",
-  "chat.statusPanel.runningAgentsValuePlural": "Виконується: {count}",
   "chat.statusPanel.runningStop": "Зупинити",
   "chat.toolbar.model.label": "Вибрати модель",
   "chat.toolbar.draftConfigWriteFailed": "Не вдалося оновити конфігурацію. Спробуйте ще раз.",
@@ -8302,7 +8279,6 @@ const ukUA: Record<string, string> = {
   "browser.permission.stateDeny": "Заблокувати",
   "browser.permission.stateAsk": "Запитувати",
   "browser.permission.denyThisTime": "Не дозволяти",
-  "chat.statusPanel.workflowsLive": "{count} виконується",
   "pluginUi.loading": "Завантаження UI плагіна...",
   "pluginUi.loadFailed": "Не вдалося завантажити UI плагіна.",
   "pluginUi.retry": "Перезавантажити",
@@ -10533,6 +10509,161 @@ const ukUA: Record<string, string> = {
   "voiceInput.error.audio_limit_exceeded":
     "Запис досяг максимальної тривалості. Розпізнаний текст збережено.",
   "voiceInput.error.failed": "Не вдалося розпізнати мовлення. Спробуйте ще раз.",
+  // Upstream 4.0.0 keys.
+  "preinstalledTools.purpose.python":
+    "Запускає скрипти плагінів для документів і надає бібліотеки для таблиць, Word і PDF",
+  "preinstalledTools.purpose.qpdf": "Розділяє, об'єднує, шифрує та відновлює PDF-файли",
+  "preinstalledTools.purpose.pandoc": "Читає вміст документів Word",
+  "preinstalledTools.purpose.poppler": "Перетворює сторінки PDF на зображення та видобуває текст",
+  "preinstalledTools.phase.queued": "Очікування, поки інші інструменти завершать підготовку…",
+  "preinstalledTools.update": "Оновити",
+  "preinstalledTools.status.update-available": "Доступне оновлення",
+  "preinstalledTools.currentInfo": "Зараз використовується версія {current}.",
+  "preinstalledTools.updateInfo":
+    "Зараз використовується версія {current}. Версія {version} потребує близько {download} МБ для завантаження та {installed} ГБ для встановлення.",
+  "preinstalledTools.delete": "Видалити",
+  "preinstalledTools.deleteTitle": "Видалити {name}?",
+  "preinstalledTools.deleteDescription": "Це звільнить близько {size} ГБ на диску.",
+  "preinstalledTools.deleteNotice.python": "Пакети Python, додані Агентом, також буде видалено.",
+  "preinstalledTools.deleteAutoNotice":
+    "Якщо автоматичне попереднє встановлення ввімкнено, ZCode завантажить інструмент знову під час наступного запуску.",
+  "preinstalledTools.deleteCancel": "Скасувати",
+  "preinstalledTools.deletionBlocked": "{name} зараз використовує Агент. Спробуйте пізніше.",
+  "resourceManager.storage.category.preinstalledTools": "Попередньо встановлені інструменти",
+  "resourceManager.storage.categoryDescription.preinstalledTools":
+    "Керовані інструменти для документів. Видалити їх можна в меню Довідка → Попередньо встановлені інструменти.",
+  "preinstalledTools.autoInstall": "Автоматичне попереднє встановлення",
+  "preinstalledTools.entryOutOfSync":
+    "Налаштування збережено, але воно ще не діє. Спробуйте ще раз.",
+  "preinstalledTools.agentEnabled": "Агент використовує попередньо встановлену версію",
+  "preinstalledTools.agentEnabledDescription":
+    "Вимкніть, щоб Агент використовував {name}, уже встановлений на цьому комп'ютері.",
+  "preinstalledTools.autoInstallDescription":
+    "Готувати інструменти у фоні під час запуску ZCode. Якщо вимкнути, автоматичні завантаження припиняться. Уже встановлені інструменти залишаться доступними.",
+  "preinstalledTools.remoteNotice":
+    "Відкрито віддалений робочий простір. Це вікно керує цим комп'ютером і не встановлює інструменти на віддалений пристрій.",
+  "preinstalledTools.download": "Завантажити",
+  "preinstalledTools.cancel": "Скасувати завантаження",
+  "preinstalledTools.retry": "Повторити",
+  "preinstalledTools.commandFailed": "Не вдалося виконати дію. Спробуйте ще раз.",
+  "preinstalledTools.title": "Попередньо встановлені інструменти",
+  "preinstalledTools.description":
+    "Ці інструменти встановлено на цьому комп'ютері для роботи з документами.",
+  "preinstalledTools.purpose.libreoffice":
+    "Для перетворення документів на PDF, конвертації презентацій і перерахунку формул у таблицях",
+  "preinstalledTools.loading": "Завантаження…",
+  "preinstalledTools.loadFailed":
+    "Не вдалося запустити попередньо встановлені інструменти. Перезапустіть ZCode і спробуйте ще раз. Якщо проблема не зникне, повідомте про неї через Довідка → Експортувати журнали.",
+  "preinstalledTools.unavailable": "Ця версія ще не надає цей інструмент.",
+  "preinstalledTools.readyInfo": "Версія {version} · зайнято {size} ГБ",
+  "preinstalledTools.downloadInfo": "Завантаження {loaded} / {total} МБ",
+  "preinstalledTools.sizeInfo":
+    "Близько {download} МБ для завантаження; {installed} ГБ після встановлення",
+  "preinstalledTools.status.not-installed": "Не встановлено",
+  "preinstalledTools.status.preparing": "Підготовка",
+  "preinstalledTools.status.ready": "Готово",
+  "preinstalledTools.status.failed": "Не вдалося підготувати",
+  "preinstalledTools.phase.verifying": "Перевірка файлів…",
+  "preinstalledTools.phase.extracting": "Розпакування…",
+  "preinstalledTools.phase.checking": "Перевірка, чи може інструмент працювати…",
+  "preinstalledTools.error.network":
+    "Не вдається підключитися до сервера завантаження. Перевірте мережу або налаштування проксі.",
+  "preinstalledTools.error.interrupted": "Завантаження перервано. Спробуйте ще раз.",
+  "preinstalledTools.error.disk-space":
+    "Недостатньо місця на диску. Потрібно близько {size} ГБ вільного місця.",
+  "preinstalledTools.error.checksum": "Завантажений файл пошкоджено. Спробуйте ще раз.",
+  "preinstalledTools.error.extract": "Не вдалося розпакувати. Спробуйте ще раз.",
+  "preinstalledTools.error.runtime":
+    "Інструмент не може працювати на цьому комп'ютері. Повідомте про проблему через Довідка → Експортувати журнали.",
+  "preinstalledTools.error.unsupported": "Ця система поки не підтримується.",
+  "chat.capsule.todo.running": "Виконується",
+  "chat.capsule.todo.completed": "Завершено",
+  "chat.capsule.todo.pending": "Очікує",
+  "chat.capsule.files": "Змінено файлів: {count}",
+  "chat.capsule.activity.completed": "Завершено",
+  "chat.capsule.activity.stopped": "Зупинено",
+  "chat.capsule.activity.failed": "Помилка",
+  "chat.capsule.activity.running": "Активно",
+  "chat.capsule.activityLabel": "Активність",
+  "chat.capsule.staged": "Проіндексовано",
+  "chat.capsule.unstaged": "Не проіндексовано",
+  "chat.capsule.fileChanged": "Змінено",
+  "chat.capsule.goal.failed": "Помилка",
+  "chat.capsule.goal.verified": "Завершено",
+  "chat.capsule.goal.verifying": "Перевірка",
+  "chat.capsule.goal.paused": "Призупинено",
+  "chat.capsule.goal.notSatisfied": "Не досягнуто",
+  "conversationShare.error.rateLimitedWait":
+    "Забагато спроб поділитися. Спробуйте знову через {seconds} с.",
+  "conversationShare.issue.unsupportedContent":
+    "Частина вмісту в ході {turnOrdinal} має формат, який сервіс спільного доступу не підтримує. Оновіть ZCode або зніміть вибір із цього ходу й поділіться знову.",
+  "conversationShare.issue.artifactTypeRejected":
+    "Файлом {artifactDisplayName} ({artifactType}) у ході {turnOrdinal} не можна поділитися. Зніміть вибір із цього ходу й спробуйте ще раз.",
+  "conversationShare.issue.artifactFormatMismatch":
+    "Розширення файлу {artifactDisplayName} у ході {turnOrdinal} не відповідає його справжньому формату. Виправте розширення або експортуйте файл знову, чи зніміть вибір із ходу.",
+  "conversationShare.issue.artifactDimensionsExceeded":
+    "Файл {artifactDisplayName} у ході {turnOrdinal} завеликий (максимум 8192 пікселі на сторону). Зменште його й спробуйте ще раз або зніміть вибір із ходу.",
+  "conversationShare.issue.artifactCorrupted":
+    "Файл {artifactDisplayName} у ході {turnOrdinal} пошкоджений або неповний. Експортуйте його знову й повторіть спробу або зніміть вибір із ходу.",
+  "conversationShare.issue.artifactEncodingInvalid":
+    "Файл {artifactDisplayName} у ході {turnOrdinal} не в кодуванні UTF-8. Перетворіть його й спробуйте ще раз або зніміть вибір із ходу.",
+  "conversationShare.issue.artifactUploadRejected":
+    "Не вдається вивантажити файл {artifactDisplayName} у ході {turnOrdinal}. Зніміть вибір із ходу й спробуйте ще раз. Якщо помилка повториться, скопіюйте ID запиту з деталей помилки й повідомте про неї.",
+  "conversationShare.issue.artifactUploadMissing":
+    "Файл {artifactDisplayName} вивантажено не повністю. Спробуйте ще раз.",
+  "conversationShare.issue.artifactUploadMissingAny":
+    "Деякі файли вивантажено не повністю. Спробуйте ще раз.",
+  "conversationShare.issue.contentBlocksLimit":
+    "Вибране містить блоків вмісту: {actual}, а дозволено не більше {limit}. Виберіть менше ходів.",
+  "conversationShare.issue.preparationStale":
+    "Ця спроба поділитися вже недійсна. Створіть посилання знову.",
+  "conversationShare.issue.conversationSafetyRejected":
+    "Текст розмови не пройшов перевірку безпеки. Виберіть менше ходів або змініть вибір і спробуйте ще раз.",
+  "conversationShare.issue.artifactSafetyRejected":
+    "Файл {artifactDisplayName} у ході {turnOrdinal} не пройшов перевірку безпеки. Зніміть вибір із ходу або видаліть файл і спробуйте ще раз.",
+  "conversationShare.publish.failedFooterNeedsChange":
+    "Зніміть вибір із ходів, що мають проблеми, або змініть вибір, щоб створити посилання знову.",
+  "chat.selections.sentTitle": "Надіслано з вашим повідомленням",
+  "appError.restart": "Перезапустити застосунок",
+  "appError.restartHint":
+    "Перезапуск закриє всі вікна застосунку. Незбережені зміни можуть бути втрачені.",
+  "settings.shortcuts.command.toggleVoiceInput": "Почати або зупинити голосове введення",
+  "settings.totalTokensReminder": "Нагадування про бюджет токенів",
+  "settings.totalTokensReminderDescription":
+    "Повідомляти моделі фіксований бюджет токенів і залишок на кожному ході в нових сеансах і сеансах, відновлених після перезапуску застосунку. Це лише нагадування, воно не обмежує використання. Активні сеанси зберігають поточне налаштування.",
+  "settings.agentAlwaysBackground": "Завжди запускати субагентів у фоні",
+  "settings.agentAlwaysBackgroundDescription":
+    "Субагенти завжди запускаються у фоні, а їхні результати надходять у пізнішому ході, тож ви можете працювати далі. Вимкніть, щоб модель вирішувала сама: тоді субагенти працюють на передньому плані, якщо модель не попросить фон. Діє для нових сеансів і сеансів, відновлених після перезапуску застосунку; активні сеанси зберігають поточне налаштування.",
+  "settings.replyLanguage": "Мова відповідей",
+  "settings.replyLanguageDescription":
+    "Агент відповідає цією мовою. Залиште порожнім, щоб він відповідав мовою розмови.",
+  "settings.replyLanguagePlaceholder": "Наприклад: Українська, English, 日本語",
+  "settings.replyLanguageSaveError": "Не вдалося зберегти мову відповідей",
+  "settings.replyLanguageLocalOnly":
+    "Мову відповідей можна задати лише на локальному комп'ютері. Відкрийте Налаштування → Поведінка та інструменти в застосунку для комп'ютера.",
+  "settings.plugins.store.ui.disabledInWorkspace":
+    "Цей плагін вимкнено в цьому проєкті. Увімкніть його для проєкту в керуванні плагінами, а потім відкрийте.",
+  "settings.plugins.workspaceTrust.pending": "Очікує довіри",
+  "settings.plugins.workspaceTrust.pendingHint":
+    "Цей плагін походить із конфігурації проєкту й не завантажується, доки ви йому не довіритеся. Після цього нові сеанси запускатимуть його хуки, MCP-сервери, навички, команди та агентів.",
+  "settings.plugins.workspaceTrust.trust": "Довіряти",
+  "settings.plugins.workspaceTrust.trusted":
+    "Плагіну {plugin} надано довіру. Він завантажиться в нових сеансах.",
+  "settings.plugins.workspaceTrust.changed":
+    "Оголошення плагіна {plugin} змінилися. Перегляньте їх і надайте довіру знову.",
+  "settings.plugins.workspaceTrust.failed": "Не вдалося надати довіру плагіну {plugin}",
+  "settings.hooks.review.worktreeNotice":
+    "Довіра діє для вихідного репозиторію {path} і його робочих дерев",
+  "settings.hooks.review.scriptUnavailable": "Скрипт відсутній або його не вдається прочитати",
+  "chat.target.status.complete": "Готово",
+  "chat.target.elapsed": "Минуло {duration}",
+  "chat.target.clear": "Очистити ціль",
+  "chat.statusPanel.viewAllChanges": "Переглянути всі зміни",
+  "chat.toolbar.model.clearSearch": "Очистити пошук",
+  "chat.toolbar.model.searchPlaceholder": "Пошук моделей...",
+  "chat.slash.app.plan.label": "Режим плану",
+  "automations.runNowHostMismatch":
+    "Це завдання належить іншому пристрою, тут його не можна запустити",
 };
 
 export default ukUA;

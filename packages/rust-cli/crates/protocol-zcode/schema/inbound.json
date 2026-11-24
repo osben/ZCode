@@ -7709,6 +7709,14 @@
             "off"
           ]
         },
+        "totalTokensReminderEnabled": {
+          "default": false,
+          "type": "boolean"
+        },
+        "agentAlwaysBackgroundEnabled": {
+          "default": true,
+          "type": "boolean"
+        },
         "subagentRuntimeConfigEnabled": {
           "type": "boolean"
         },

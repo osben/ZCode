@@ -4,7 +4,11 @@ A Hook is a local program that runs on session or tool events; it can log events
 
 ## Events and minimal configuration
 
-Supported events: `SessionStart`, `UserPromptSubmit`, `PreToolUse`, `PermissionRequest`, `PostToolUse`, `PostToolUseFailure`, `Stop`. Enable them explicitly in the runtime configuration:
+Supported events: `SessionStart`, `UserPromptSubmit`, `PreToolUse`, `PermissionRequest`, `PostToolUse`, `PostToolUseFailure`, `Stop`.
+
+Each tool call normally runs only one of `PostToolUse` and `PostToolUseFailure` (when a step after the Hook run throws, `PostToolUseFailure` runs once more). `PostToolUseFailure` runs when the tool result is an error, for example a non-zero Bash exit, a timeout, or an MCP `isError` result. The `error` in stdin is then the error text the model sees, and there is no `tool_response`. An exit code of 1 from grep, rg and similar means no match and is not an error, so `PostToolUse` still runs.
+
+Enable them explicitly in the runtime configuration:
 
 ```json
 {

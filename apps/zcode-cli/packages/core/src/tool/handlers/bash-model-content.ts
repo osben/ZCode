@@ -11,6 +11,12 @@ import {
 import { isBashProviderErrorStatus } from "./bash-semantics.js";
 
 const ASSISTANT_BLOCKING_BUDGET_MS = 15_000;
+// 同步子代理的后台命令：子代理结束时封存通知，最终回复之后不会再有通知。
+const SYNC_SUBAGENT_NOTIFICATION =
+  "If it exits while you are still working you will be notified, but it is terminated when you give your final response and no notification can follow that \u2014 so do not end your turn to wait for it; if you need its result, wait for it before giving your final response.";
+// 后台命令改目录时：后台命令结束时不写回会话 cwd。
+const BACKGROUND_CWD_UNCHANGED =
+  "directory changes made by the backgrounded command do not apply to subsequent commands.";
 const READ_TOOL_NAME = "Read";
 
 export function formatBashModelContent(output: unknown): ModelMessageContent {
@@ -63,16 +69,14 @@ export function formatPersistedBashModelContent(input: {
 
 // A failed command's output is not written to disk: use the first 30000 bytes captured inline, keeping this segment's head/tail when overlong; anything past 30000 bytes is invisible.
 // Fix rationale: when output over 30000 bytes was written to disk with only a 2KB head shown, the model could not see the error reason later in the output.
+// A hard timeout also goes through here: the timeout line (stderr) comes before the output, with no interrupt marker.
+// Output keeps leading blank lines (a blank line may be part of the output) and only trailing whitespace is stripped; successful results still drop leading blank lines.
 function formatProviderErrorContent(result: BashOutput): string {
+  const stdout = result.stdout.trimEnd();
+  const stderr = result.stderr.trim();
+  const parts = result.status === "timed_out" ? [stderr, stdout] : [stdout, stderr];
   return truncateMiddleForModel(
-    [
-      `Exit code ${result.exitCode}`,
-      formatStdoutForModel(result.stdout),
-      formatStderrForModel(result),
-    ]
-      .filter(Boolean)
-      .join("\n")
-      .trim(),
+    [`Exit code ${result.exitCode}`, ...parts].filter(Boolean).join("\n").trim(),
   );
 }
 
@@ -133,6 +137,12 @@ export function isBashOutputProviderError(output: unknown): boolean {
 }
 
 function formatBackgroundInfoForModel(result: BashOutput): string {
+  const info = formatBackgroundStartForModel(result);
+  if (!info || !result.backgroundSessionCwd) return info;
+  return `${info}\nSession cwd remains ${result.backgroundSessionCwd}; ${BACKGROUND_CWD_UNCHANGED}`;
+}
+
+function formatBackgroundStartForModel(result: BashOutput): string {
   if (!result.backgroundTaskId) return "";
   const outputText = formatBackgroundOutputPaths(result);
   if (result.assistantAutoBackgrounded) {
@@ -144,11 +154,14 @@ function formatBackgroundInfoForModel(result: BashOutput): string {
   const readHint = outputText
     ? ` To check interim output, use ${READ_TOOL_NAME} on that file path.`
     : "";
+  const notification = result.backgroundInSyncSubagent
+    ? SYNC_SUBAGENT_NOTIFICATION
+    : "You will be notified when it completes.";
   if (result.timedOutAfterMs !== undefined) {
     const timeoutSeconds = Math.max(1, Math.round(result.timedOutAfterMs / 1000));
-    return `Command did not complete within its ${timeoutSeconds}s timeout and was moved to the background (ID: ${result.backgroundTaskId}).${outputText} You will be notified when it completes.${readHint}`;
+    return `Command did not complete within its ${timeoutSeconds}s timeout and was moved to the background (ID: ${result.backgroundTaskId}).${outputText} ${notification}${readHint}`;
   }
-  return `Command running in background with ID: ${result.backgroundTaskId}.${outputText} You will be notified when it completes.${readHint}`;
+  return `Command running in background with ID: ${result.backgroundTaskId}.${outputText} ${notification}${readHint}`;
 }
 
 function formatBackgroundOutputPaths(result: BashOutput): string {

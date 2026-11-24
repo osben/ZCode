@@ -41,6 +41,16 @@ export const REMOTE_AGENT_OFFICIAL_PLUGIN_INCLUDED_TOP_LEVEL_PATHS = [
   "templates",
 ] as const;
 
+const officeInvocationPaths = [
+  "scripts/zcode_libreoffice.py",
+  "scripts/libreoffice-profile/user/registrymodifications.xcu",
+  "scripts/libreoffice-profile/user/basic/script.xlc",
+  "scripts/libreoffice-profile/user/basic/dialog.xlc",
+  "scripts/libreoffice-profile/user/basic/Standard/script.xlb",
+  "scripts/libreoffice-profile/user/basic/Standard/dialog.xlb",
+  "scripts/libreoffice-profile/user/basic/Standard/ZCode.xba",
+] as const;
+
 export const REMOTE_AGENT_OFFICIAL_PLUGIN_REQUIRED_RELATIVE_PATHS = [
   // Workflow skills have moved out of the plugin; remote reuse must still check this required Agent asset set.
   "bundled-skills/skills/dynamic-workflows/SKILL.md",
@@ -93,25 +103,52 @@ export const REMOTE_AGENT_OFFICIAL_PLUGIN_REQUIRED_RELATIVE_PATHS = [
   "browser-use-plugin/skills/web-gui-tester/SKILL.md",
   // Fix rationale: checking only the manifest cannot detect documentation plugins missing skill
   // content.
+  // Since documentation plugin 0.2.0 ships a viewer panel, the remote must also have the server and panel assets built by office-runtime.
   "image-search-plugin/.mcp.json",
+  ...["documents", "pdf", "presentations", "spreadsheets"].flatMap((name) =>
+    officeInvocationPaths.map((path) => `${name}-plugin/${path}`),
+  ),
   "documents-plugin/skills/docx/SKILL.md",
+  "documents-plugin/skills/docx-viewer/SKILL.md",
+  "documents-plugin/dist/server.mjs",
+  "documents-plugin/dist/ui/assets.json",
+  "documents-plugin/dist/ui/panel.html",
   "pdf-plugin/skills/pdf/SKILL.md",
+  "pdf-plugin/skills/pdf-viewer/SKILL.md",
+  "pdf-plugin/dist/server.mjs",
+  "pdf-plugin/dist/ui/assets.json",
+  "pdf-plugin/dist/ui/panel.html",
   "presentations-plugin/skills/pptx/SKILL.md",
+  "presentations-plugin/skills/pptx-viewer/SKILL.md",
+  "presentations-plugin/dist/server.mjs",
+  "presentations-plugin/dist/ui/assets.json",
+  "presentations-plugin/dist/ui/panel.html",
   "spreadsheets-plugin/skills/xlsx/SKILL.md",
+  "spreadsheets-plugin/skills/xlsx-viewer/SKILL.md",
+  "spreadsheets-plugin/dist/server.mjs",
+  "spreadsheets-plugin/dist/ui/assets.json",
+  "spreadsheets-plugin/dist/ui/panel.html",
   // Design's full local seed paths are required (bootstrap OFFICIAL_DESIGN_REQUIRED_SEED_PATHS, mechanically cross-checked by server/test).
   // Unlike other plugins that list only sentinels: when the hook cannot find SKILL.md it exits silently, and the rule and script files are read or executed on demand, so a missing file only fails inside the session.
   "design-plugin/skills/design/SKILL.md",
+  "design-plugin/skills/design/references/app.md",
   "design-plugin/skills/design/references/catalog.md",
   "design-plugin/skills/design/references/check.md",
   "design-plugin/skills/design/references/create.md",
+  "design-plugin/skills/design/references/deck.md",
   "design-plugin/skills/design/references/design-system.md",
+  "design-plugin/skills/design/references/image.md",
   "design-plugin/skills/design/references/interact.md",
-  "design-plugin/skills/design/references/output.md",
+  "design-plugin/skills/design/references/motion.md",
+  "design-plugin/skills/design/references/page.md",
   "design-plugin/skills/design/references/redesign.md",
   "design-plugin/skills/design/scripts/adapt-canvas.mjs",
+  "design-plugin/skills/design/scripts/audit-page.js",
+  "design-plugin/skills/design/scripts/audit.mjs",
   "design-plugin/skills/design/scripts/design-lint.mjs",
   "design-plugin/skills/design/scripts/design-tokens.mjs",
   "design-plugin/skills/design/scripts/import-design-system.mjs",
+  "design-plugin/skills/design/scripts/probe.js",
   "design-plugin/hooks/hooks.json",
   "design-plugin/hooks/run-hook.cmd",
   "design-plugin/hooks/design-rules",

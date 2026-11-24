@@ -94,7 +94,11 @@ export {
 } from "./ipc.js";
 
 // Layer 5: Service proxy
-export { ProxyChannel } from "./proxy-channel.js";
+export {
+  ProxyChannel,
+  isProxyMethodNotFoundError,
+  proxyMethodNotFoundMessage,
+} from "./proxy-channel.js";
 
 // Logging middleware — decorates ChannelServer/ChannelClient to log RPC calls consistently
 export {

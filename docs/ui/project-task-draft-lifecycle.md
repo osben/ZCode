@@ -53,7 +53,10 @@ callers keep their own directory-preparation semantics.
 
 Recent updates only when a real user send is admitted; a finished model reply is not a boundary. Changing a
 menu, warm-up, permission confirmation, reading history, opening settings and a failed send do not update
-Recent. A real send in an existing session also updates the project or unclassified-task scope it belonged
+Recent. The only exception is the server-rule-driven [draft model migration](../chat/draft-model-migration.md):
+it replaces the model by CAS only when the stored value still equals the selection it was judged on, keeps mode
+and order, and a real send receipt still wins by its original order. A real send in an existing session also
+updates the project or unclassified-task scope it belonged
 to at send time, reading ownership from authoritative organization state, never guessing a project from cwd.
 Side chat is not in the main task index: a follow-up queries the Recent project ownership via the owning
 main session recorded in the sidebar while the command is still sent to the side child; ordinary sessions

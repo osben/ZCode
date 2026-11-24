@@ -16,6 +16,13 @@
       "syntheticReason": "固定 Skill/CreateWorkflow、恢复与补全的模型选择以及子代理回答；真实工作流编译、审批、停止、中断收口、恢复重放、留白与通知由产品链路执行。"
     },
     {
+      "id": "dwu-c-agent-completion-gate",
+      "kind": "main",
+      "source": "synthetic",
+      "timingPolicy": "controlled-stream",
+      "syntheticReason": "主轮回复并结束前挂起 Workflow 汇总子任务，显式释放后再验证独立完成通知，避免完成结果在 active-loop 被同轮消费。"
+    },
+    {
       "id": "dwu-a-agent-done",
       "kind": "main",
       "source": "synthetic",
@@ -35,6 +42,13 @@
       "source": "synthetic",
       "timingPolicy": "controlled-stream",
       "syntheticReason": "子代理的回答以门闩挂起：第一次用来让用户在它未完成时停止，第二次让恢复后的运行态可被断言，不依赖固定响应延时。"
+    },
+    {
+      "id": "dwu-c-agent-group",
+      "kind": "main",
+      "source": "synthetic",
+      "timingPolicy": "controlled-stream",
+      "syntheticReason": "补全后脚本的最后一问以门闩挂起，直到补全那一轮收口再放行，好让它的通知自成一轮而不被 steer 进补全轮。"
     },
     {
       "id": "dwu-b-agent-done",

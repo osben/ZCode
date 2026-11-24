@@ -41,7 +41,8 @@ The spec introduces a **Workspace Hook Trust Admission** independent of ordinary
 11. The effective-run toggle of an untrusted declaration stays off and inoperable; showing it or trusting must not rewrite the raw workspace config; after trust succeeds the toggle follows the real `configuredEnabled`.
 12. Desktop uses `desktop-continuous`, mobile Web uses `web-remote-replayable`; both connect to the same Host/Runtime and review commands are submitted through the trusted attachment with owner/stale-run routing.
 
-This design authorizes **the current Hook declaration shown in settings**, not the full transitive code of scripts the Hook command references.
+This design authorizes **the current Hook declaration shown in settings**. If the declaration identifies a direct entry script, the authorization also binds the current content of that script (section 12.9, D24).
+The authorization does not cover code the entry script loads later, nor scripts referenced by a declaration whose entry cannot be identified.
 
 ---
 
@@ -111,9 +112,9 @@ The spec does not auto-open review during draft prewarm. The user may review ear
 - **3.1 Workspace Hook / Project Hook:** a Hook from `zcode.json`, `.zcode/config.json` or an explicit `projectConfigPath` within a workspace's project config discovery scope. Called **Workspace Hook** here; the code source enum uses `project`, consistent with `ConfigScope.Project`.
 - **3.2 Hook Bundle:** the normalized set of all declarations relevant to project Hook execution found by one config discovery of a workspace.
 - **3.3 HookBundleSnapshot:** an immutable in-memory snapshot created before admission. The summary the user sees, the canonical digest and the actual execution all come from the same snapshot.
-- **3.3.1 Hook Declaration Digest:** the digest of the versioned canonical serialization of one `CanonicalWorkspaceHookEntry`'s execution semantics. Persistent Trust and per-item revoke use it as the content boundary. `bundleDigest` still exists but identifies the whole snapshot, detects review/execute inconsistency and aggregates diagnostics; it is no longer the sole V1 persistent Trust granularity.
-- **3.4 Workspace Identity:** the workspace dimension of Trust. Local: the canonical `workspacePath` / `workspaceKey` of the protocol/service layer. Remote: the existing `workspaceIdentity`. A bare path on a remote machine is never an identity. The Trust service treats identity as an opaque string and does not guess or re-assemble it.
-- **3.4a Trust identity (2026-11-03, D23):** the read/write key of Trust records, computed by the single shared resolver `resolveWorkspaceHookTrustIdentity`. For almost all workspaces the Trust identity is the `workspaceKey`. The only exception is a local, strictly validated ZCode managed worktree (see `docs/git/worktree.md`), whose Trust identity is normalized to the corresponding path in the source repository. Review binding, command routing, the Security Revision carrier and remote control still match by `workspaceKey` and must not use the Trust identity instead.
+- **3.3.1 Hook Declaration Digest:** the digest of the versioned canonical serialization of one `CanonicalWorkspaceHookEntry`'s execution semantics. Persistent Trust and per-item revoke use it as the content boundary. If the declaration identifies a direct entry script (section 12.9), the script's relative path and content state are also part of the digest. If the declaration is unchanged and only the script content changes, the Trust of that item is invalidated too. `bundleDigest` still exists but identifies the whole snapshot, detects review/execute inconsistency and aggregates diagnostics; it is no longer the sole V1 persistent Trust granularity.
+- **3.4 Workspace Identity:** the workspace dimension of Trust. Local: the canonical `workspacePath` / `workspaceKey` of the protocol/service layer. Remote: the `workspaceIdentity` host namespace is kept and the path is the execution directory `workspacePath`; a remote identity never falls into the local namespace and never takes part in managed worktree inheritance. A bare path on a remote machine is never an identity. The Trust service treats identity as an opaque string and does not guess or re-assemble it.
+- **3.4a Trust identity (2026-11-03, D23):** the read/write key of Trust records, computed by the shared resolver `resolveWorkspaceHookTrustIdentity`. A remote identity keeps its host namespace and takes the execution directory as the path. A local workspace uses the execution directory, and a local, strictly validated ZCode managed worktree (see `docs/git/worktree.md`) is normalized to the corresponding path in the source repository. A different identity reported by the caller must never be used to look up or write Hook Trust. Review binding, command routing, the Security Revision carrier and remote control still match by `workspaceKey`.
 - **3.5 Trust lifecycle:** Workspace Hook authorization comes only from exact persistent records in the user-owned Trust store. `sessionId`, `taskId`, `runId`, `reviewFlowId` and `interactionId` only bind one review command to the current trusted Runtime snapshot and never widen Trust scope. Whether authorization holds depends only on the exact `workspace identity + hook declaration digest` record and the current policy/snapshot gate. compact, resume, fork, new task and subagent neither generate nor inherit extra authorization; they can only reuse persistent records under the same workspace identity that still match the current declaration digest. A managed worktree using the source repository's records is the result of Trust identity normalization (D23), not a new authorization: the record set and digest are unchanged, and once a declaration changes in the worktree it returns to pending per item. After a Runtime rebuild it must bootstrap from the Trust store and fail closed until the read completes.
 - **3.6 Trust Record:** a persistent record in user-domain secure storage that a `workspace identity + hook declaration digest` was chosen as trusted by the user. The product creates one exact record from a Hook row each time.
 - **3.7 Admission:** the security decision before a project Hook enters the Runtime executable set. Admission is a different dimension from ordinary tool permission and from the Hook's enabled state.
@@ -139,7 +140,7 @@ The spec does not auto-open review during draft prewarm. The user may review ear
 
 ## 5. Non-goals
 
-1. No verification of the supply chain of scripts, binaries, interpreters, dependency packages or network resources a Hook references.
+1. No verification of the full supply chain. Only the content of a recognizable direct entry script is bound (section 12.9). Files the entry script loads later, interpreters, binaries, dependency packages and network resources are out of scope.
 2. No new OS sandbox for project Hooks; Hooks keep the existing Hook executor capability.
 3. Hook Trust is not merged into the ordinary tool permission prompt.
 4. No change to the existing trust policy of workspace MCP.
@@ -149,6 +150,7 @@ The spec does not auto-open review during draft prewarm. The user may review ear
 8. V1 never silently creates persistent Trust through environment variables.
 9. V1 writes no trust token, signature or allowlist into workspace config files.
 10. Revoke does not terminate already started external Hook processes; process cancellation is a later independent capability.
+11. No parsing of general shell syntax to find the script entry. A declaration whose entry cannot be identified keeps the existing declaration-level Trust, with no new approval or block (D24).
 
 ---
 
@@ -159,6 +161,7 @@ The spec does not auto-open review during draft prewarm. The user may review ear
 - An attacker uses a deep link to lure the user into opening a directory with a malicious Hook.
 - After cloning a repo, the first message triggers a `SessionStart` Hook.
 - A project changes its Hook config and keeps reusing old Trust.
+- After Trust the declaration stays the same, but the workspace script the Hook calls directly is replaced, so old Trust runs new code.
 - A remote workspace wrongly reuses another host's Trust only because the path is the same.
 - The renderer/UI is bypassed and the CLI or protocol creates a Runtime directly.
 - Draft prewarm triggers authorization or execution without explicit user intent.
@@ -286,6 +289,8 @@ No empty review flow or meaningless Trust Record is created. Settings may show a
 
 **Adopted:** remote uses `workspaceIdentity`, never a bare remote path. `/repo` on different remote hosts/containers is not the same trust subject; the protocol already provides the remote workspace identity and it is reused instead of inventing a host key; local and remote Trust records are naturally isolated.
 
+Revision (2026-11-13, CR-01): the Trust key is `<host part of the identity>:<execution directory>`, computed by `remoteWorkspaceTrustIdentity`. The path inside the caller's identity plays no part in authorization. If it differs from the execution directory or contains `..`, the key still never falls back to a bare local path, and different hosts never share a record just because the execution directory is the same. The authenticity of the host part stays the job of the connection layer and this rule does not check it. An identity with a `remote:` prefix that cannot be parsed is used as the key as is, and likewise never enters the local or managed worktree branch. The remote target of a session review command must equal the session's workspaceKey and is resolved against the session's execution directory; any other remote key is judged a snapshot mismatch.
+
 ### D9. Trust persistence location
 
 **Adopted:** independent user-domain secure storage, not written to the workspace and not synced with ordinary settings. Logical location `~/.zcode/security/workspace-hook-trust.json`; the real path must come from the existing user data directory / CLI storage root resolver, never a hardcoded `$HOME`. Implemented path: `security/workspace-hook-trust-v1.json` under the trusted user CLI storage root. Reasons: workspace content cannot self-establish Trust; syncing ordinary settings to another machine would widen authorization; an independent schema, file permission, atomic write and migration is easier to audit.
@@ -387,7 +392,9 @@ Prompt-bar dismiss is renderer-local hiding keyed by `sessionId + bundleDigest`;
 
 ```text
 input { workspacePath, workspaceIdentity? }
-  |- has workspaceIdentity (remote)                  -> return as is, no resolution
+  |- valid remote identity                           -> <host of identity>:<workspacePath>, stop here (CR-01)
+  |- identity with a remote: prefix that cannot be parsed -> return as is, stop here (never enters the local namespace)
+  |- any other self-reported identity                -> ignored, use the local rules below
   |- not under managed root <root>/<bucket>/<name>/  -> return workspacePath
   `- all of the following hold -> return <source repo toplevel>/<relative(worktree root, workspacePath)>
        1 <worktree root>/.git is a regular file whose content is gitdir: <common>/worktrees/<id>
@@ -405,12 +412,47 @@ input { workspacePath, workspaceIdentity? }
 **Semantics:**
 
 - The source repository and all its managed worktrees share one set of records. Granting or revoking Trust in a worktree takes effect for the source repository and the other worktrees at once, so the worktree's review row must say: "Trust applies to the source repository <path> and its worktrees".
+- Settings review entry (2026-11-18, ZP-20261110-06): the workspace key of a Settings row is still the project, and the discovery directory follows the Runtime. When the user clicks "Review" from a worktree task, the navigation intent carries the session cwd. The hook settings page then calls `loadHooks({ workspacePath: cwd, workspaceIdentity: project key })` under that project scope, so it gets the same bundle, declaration digest and reviewItemId as the Runtime, and the row's "Trust" button goes through the session review channel. This note sits in the review risk hint above the list (section 16.3) and shows only when discovery is by worktree and there are rows pending review. This mode allows Trust only and offers no config write. It is not switched automatically by the review binding of another project. Switching the scope manually, or re-entering through the sidebar, drops the cwd. See `docs/git/worktree.md` section 7.3.
 - The declaration digest rule is unchanged. The source path is already computed relative to the workspace root (`normalizeRelativeSourcePath` in `packages/shared/src/workspace-hook-digest.ts`), so the same committed config yields the same digest in the source repository and the worktree. An uncommitted Hook change in the source repository does not appear in the worktree, the digests of the two sides differ, and that entry returns to pending in the worktree.
 - Enterprise policy (D10) is also evaluated by Trust identity.
 - A Trust change raises the Security Revision of all runtimes under that Trust identity. The runtime side must register a `Trust identity -> workspaceKey[]` mapping so a change in the source repository reaches the worktree's runtime.
 - The CLI snapshot builder and the Settings path of `hooksService` must call the same resolver. The D20 digest parity test adds a worktree scenario to verify both sides get the same Trust identity.
 
 **Reason:** committed config in a worktree comes from the same source as the source repository. The back-link validation guarantees no arbitrary directory can impersonate a source repository, since an attacker would need to write the source repository's `.git` directory. Without inheritance the user would have to review the same Hooks again for every new worktree.
+
+### D24. Trust 绑定直接入口脚本内容（2026-11-13）
+
+**背景：** 声明 `bash .zcode/hook.sh` 被信任后，只替换 `.zcode/hook.sh` 的内容，declaration digest 不变，
+旧 Trust 继续放行新脚本（ZP-20261110-06）。
+
+**采纳：**
+
+- 能识别直接入口脚本的声明（规则见 §12.9），把入口的相对路径和内容状态加入 declaration digest。
+  内容变化后，下一次 discovery 得到新 digest，该条回到 `stale_digest`，用户在设置页或 CLI 重新信任后恢复。
+- 入口脚本不存在或无法读取完整内容时，没有可供审核的内容：拒绝建立 Trust，也拒绝派发
+  （reason `workspace_hook_script_unavailable`）。文件出现后按实际内容生成 digest，由用户首次信任。
+  “脚本不存在时命令预期会失败”不作为放行依据。
+- 每次 dispatch 前，在实际执行 cwd 下复核同一个入口。已信任的脚本被删除、无法读取或内容变化时，本次
+  `HookRunBlocked`，不创建进程（§14.6）。所以会话进行中替换或删除脚本也不会执行。
+- 无法识别入口的声明保持原有的声明级 Trust：digest 不变，不复核，不阻断，不新增逐次审批。
+  这是已知限制，写在 §12.8 和用户文档中。
+- Runner 的启动方式不变。command Hook 仍交给 shell，process Hook 仍按 argv 执行。识别结果只用于
+  digest 和复核，不改写执行内容。
+- 只绑定入口位置。其他参数（日志、状态、数据文件）不读取，也不进入 digest。Hook 写自己的数据文件不会使 Trust 失效。
+- 能识别入口的现有声明在升级后 digest 改变，需要重新信任一次。不能识别的声明不受影响。
+
+**未采纳：**
+
+| 方案                                  | 理由                                                                                          |
+| ------------------------------------- | --------------------------------------------------------------------------------------------- |
+| 无法识别入口时禁止持久 Trust          | 等于为现有 Hook 新增逐次审批或阻断，超出工单要求（重新授权）；也会迫使实现解析通用 Shell 语法 |
+| Runner 改为按识别出的脚本计划启动     | 改动执行语义和兼容面，曾导致解释器参数、变量展开和路径语义的多轮返工                          |
+| 识别命令中所有像路径的参数            | 会误绑定日志、状态等数据文件，Hook 写文件后 Trust 自行失效                                    |
+| hash 整个 `.zcode/` 目录              | 无关文件变化也要求重新信任；目录外的脚本仍不覆盖                                              |
+| 只在会话开始时绑定，dispatch 时不复核 | 会话中 `git pull` 或 Agent 改写脚本后，后续 Hook 执行新代码                                   |
+
+**剩余风险：** 无法识别入口的声明、入口脚本再加载的文件、工作区外的文件，以及复核完成到子进程打开文件之间的窗口，
+都不在保证范围内。审核行仍只展示声明，用语保持 §12.8。
 
 ---
 
@@ -438,7 +480,7 @@ input { workspacePath, workspaceIdentity? }
 - Persistence. Rejected alternative: Reuse the ordinary settings store with cloud sync; Reason: Authorization may spread to unreviewed machines; security records mixed with preferences; Revisit condition: Device binding, encryption and cross-device authorization design.
 - Digest. Rejected alternative: Hash only the command string; Reason: Ignores event, matcher, timeout, source, order and other execution semantics; Revisit condition: None.
 - Digest. Rejected alternative: Hash raw bytes of the whole config file; Reason: Unrelated formatting or non-Hook setting changes re-prompt; multi-file merge semantics unclear; Revisit condition: Product wants any project byte change to re-review.
-- Digest. Rejected alternative: Hash referenced script content and dependency closure; Reason: The dependency closure cannot be fully enumerated; false sense of security; Revisit condition: Restricted execution model or verifiable dependency graph.
+- Digest. Rejected alternative: Hash the dependency closure of referenced scripts; Reason: The dependency closure cannot be fully enumerated; false sense of security; only the recognizable direct entry script is bound (D24, section 12.9); Revisit condition: Restricted execution model or verifiable dependency graph.
 - Infrastructure. Rejected alternative: Reuse ordinary tool permission types; Reason: Different Trust lifecycle, persistence and digest structure; confuses security concepts; Revisit condition: May reuse broker/queue but not domain event types.
 - Toggle in review. Rejected alternative: Remove configured gates from the bundle digest; Reason: The bundle cannot represent the real executable set; weakens review/execute identity; Revisit condition: Only when the bundle no longer carries snapshot identity.
 - Toggle in review. Rejected alternative: Freeze all toggles during the whole pending period; Reason: Simple but blocks fixing config at the review entry; Revisit condition: If supersede/rebuild cannot land safely in V1.
@@ -602,6 +644,12 @@ interface CanonicalWorkspaceHookEntry {
   // Presentation-only, not in the declaration digest.
   statusMessage?: string;
 
+  // 能识别的直接入口脚本（§12.9）；识别不到时缺省。进入 declaration digest。
+  scriptEntry?: {
+    path: string; // 相对执行 cwd 的 POSIX 路径
+    state: { kind: "file"; sha256: string } | { kind: "missing" } | { kind: "unverifiable" };
+  };
+
   sourceRootEnabled: boolean;
   declarationEnabled: boolean;
   runtimeHooksEnabled: boolean;
@@ -698,7 +746,7 @@ One settings presentation may stay open across generations, but every Trust deci
 
 ### 12.2 Hook Declaration Digest input
 
-Every declaration digest includes: (1) digest schema version; (2) canonical identity of the source file in the workspace namespace; (3) source discovery order; (4) Hook event; (5) matcher and matcherIndex; (6) hookIndex; (7) Hook type; (8) `command`; (9) ordered process `args`; (10) command `async`; (11) command `shell` (`undefined`, `true` and a concrete shell string must be distinguished); (12) `resolvedTimeoutMs` from `resolveHookTimeoutMs()`; (13) the `resolvedMaxOutputBytes` the real runner uses; (14) any future execution field Runtime consumes.
+Every declaration digest includes: (1) digest schema version; (2) canonical identity of the source file in the workspace namespace; (3) source discovery order; (4) Hook event; (5) matcher and matcherIndex; (6) hookIndex; (7) Hook type; (8) `command`; (9) ordered process `args`; (10) command `async`; (11) command `shell` (`undefined`, `true` and a concrete shell string must be distinguished); (12) `resolvedTimeoutMs` from `resolveHookTimeoutMs()`; (13) the `resolvedMaxOutputBytes` the real runner uses; (14) any future execution field Runtime consumes; (15) when a direct entry script is identified, the path and content state of `scriptEntry` (section 12.9). When none is identified nothing is added, and the digest is byte-for-byte the same as before this revision.
 
 Fields that do not exist in the current Hook declaration schema and must not enter the canonical model: `cwd`, `env`, a `process` executable field (process type also uses `command`).
 
@@ -710,7 +758,7 @@ Fields that do not exist in the current Hook declaration schema and must not ent
 
 ### 12.4 Explicit exclusions
 
-The declaration digest excludes `statusMessage`, unknown `.passthrough()` extension fields, and the content of scripts, binaries or dependency packages a Hook references. Before Runtime first consumes any unknown extension field it must: enter the formal Hook schema/contracts; define a canonical rule; raise the digest schema version; add an exhaustive "field change triggers re-review" test. Neither digest includes `discoveredAt`, UI locale/theme, JSON whitespace / key order / formatting, user/plugin/internal Hooks, Trust state, or Hook execution results and logs.
+The declaration digest excludes `statusMessage`, unknown `.passthrough()` extension fields, and file content outside the scope of section 12.9: files that non-entry arguments point to, files the entry script loads later, files referenced by a declaration whose entry cannot be identified, binaries and dependency packages. Before Runtime first consumes any unknown extension field it must: enter the formal Hook schema/contracts; define a canonical rule; raise the digest schema version; add an exhaustive "field change triggers re-review" test. Neither digest includes `discoveredAt`, UI locale/theme, JSON whitespace / key order / formatting, user/plugin/internal Hooks, Trust state, or Hook execution results and logs.
 
 ### 12.5 Canonical serialization
 
@@ -736,9 +784,83 @@ Source file identity enters the declaration digest; local paths use the workspac
 
 Any implementation change that alters canonical semantics must raise the schema version. After a version change old Trust does not hit by default and settings shows that re-review is required.
 
+Exception: a new digest input is appended only when it has a value. When it is absent, the payload is byte-for-byte the same as in the old version, and old Trust never covered what the input expresses anyway.
+The schema version is not raised in this case: a declaration with the new input gets a different digest, so old Trust no longer hits, and a declaration without it keeps its old digest.
+`onError: "deny"` and `scriptEntry` (D24) are both handled by this rule.
+
 ### 12.8 Important limitation
 
-For `{ "type": "command", "command": "./scripts/session-start.sh" }`, a change to the script content does not necessarily change the declaration digest. UI wording must therefore be "Trust / 信任当前 Hook 声明" (trust the current Hook declaration), never "trust all current Hook code" or "script verified unchanged".
+A declaration whose direct entry can be identified already binds the entry script content (section 12.9). For `{ "type": "command", "command": "./scripts/session-start.sh" }`, a change to the content of `./scripts/session-start.sh` changes the declaration digest. These changes still do not change the digest:
+
+- scripts referenced by a declaration whose entry cannot be identified (for example pipes, `&&`, a `cd` prefix, quotes, interpreter start options, or wrapper commands such as `npx` / `npm run`);
+- files the entry script loads later (`source`, `import`, `require` and so on);
+- files that non-entry arguments point to.
+
+So UI wording must still be "Trust / 信任当前 Hook 声明" (trust the current Hook declaration), never "trust all current Hook code" or "script verified unchanged".
+
+### 12.9 直接入口脚本绑定（D24）
+
+识别只看声明本身，不执行 shell，不读取参数指向的文件。识别结果是可选的 `scriptEntry`。
+
+**入口识别：**
+
+| 声明类型                           | 入口                                                                                                                                                      |
+| ---------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `process`                          | `command` 是脚本路径时取 `command`（Windows 上须带扩展名）；`command` 是受支持的解释器且 `args[0]` 是脚本路径时取 `args[0]`                               |
+| `command`（`shell` 缺省或 `true`） | **仅 macOS / Linux**。命令按 ASCII 空格与 tab 切分后，第 1 个 token 是脚本路径时取它；第 1 个 token 是受支持的解释器且第 2 个 token 是脚本路径时取第 2 个 |
+| `command`（自定义 `shell` 字符串） | 不识别                                                                                                                                                    |
+
+- 受支持的解释器按名字精确匹配，不带路径：`sh`、`bash`、`zsh`、`node`、`python`、`python3`、`ruby`、`perl`。
+  解释器后面的第一个参数以 `-` 开头（启动选项、`-c`、`-m`）时不识别。
+- command 字符串中，除下面的目录变量前缀外，只要出现安全字符集 `[A-Za-z0-9_./@+=:,-]` 以外的字符
+  （引号、`$`、`%`、`;`、`|`、`&`、`<`、`>`、反引号、括号、`*`、`?`、`~`、`\`、换行、NBSP 等非 ASCII 空白），整条不识别。
+  只按 shell 默认分词使用的 ASCII 空格与 tab 切分，其余空白字符留在 token 内被拒绝，保证识别结果与 shell 的分词一致。
+- 脚本路径允许以目录变量开头。process 写法用 `${ZCODE_PROJECT_DIR}/`（Runtime 按文本展开为 cwd，作为单个 argv）；
+  command 写法只接受 `"$ZCODE_PROJECT_DIR"/`（由 shell 在引号内展开，cwd 含空格或元字符也不会被拆开）；两者都含对应的
+  `CLAUDE_PROJECT_DIR` 写法。command 中未加引号的 `$VAR/`、文本替换的 `${VAR}/` 与 `"${VAR}"/` 不识别：前者会被 shell
+  按空格拆开，后两者替换进命令后 cwd 中的 `"`、`$`、反引号仍会被 shell 解释。去掉前缀后按相对 cwd 处理。
+- 直接执行位置（第 1 个 token 或 process `command`）的路径必须含 `/` 或带目录变量前缀；裸名字走 PATH 查找，不识别。
+  解释器后面的脚本可以是裸文件名，但必须带扩展名（`bash hook.sh`）；无扩展名的名字可能是子命令（`node inspect x.js`
+  加载的是 `x.js`），不识别。
+- 去掉目录变量前缀后，脚本路径只接受 `[A-Za-z0-9_./-]`，且不能为空、以 `/` 开头或含 `..` 段。`KEY=val cmd` 赋值前缀、
+  Windows 盘符相对路径 `C:x`、NTFS 备用数据流 `x:y` 等写法都在集合外。其后的参数（如 `--log=out.log`）仍按上面的安全字符集检查。
+- **Windows 上 `command` 类型一律不识别入口**，回到声明级信任。`cmd.exe` 把 `/` 当开关、先在 cwd 查找同名 `.cmd`/`.bat`、
+  按 PATHEXT 补扩展名、展开 `%VAR%`、把 `,` `=` 当分隔符，识别结果无法保证与实际执行的文件一致。需要内容绑定时改用 process 写法，
+  例如 `{ "type": "process", "command": "node", "args": [".zcode/hook.js"] }`。Windows 上 process 直接执行的路径须带扩展名，
+  否则同样会按 PATHEXT 补全。判定平台是 Hook 实际执行的机器；远程工作区的 Settings 也在远端计算，两侧一致。
+- **维护约束**：识别规则只能收窄，不能为兼容更多写法而加入新的 shell 语法近似。发现识别结果与实际执行不一致的写法时，
+  把它移出识别范围（回到声明级信任），而不是补充规则。
+- 不识别的声明没有 `scriptEntry`，按原有声明级 Trust 处理（D24）。
+
+**内容状态：** 路径按 `cwd + "/" + path` 打开，不做词法归一，让解析结果与子进程打开文件时一致（符号链接按操作系统语义跟随）。
+
+| 状态           | 条件                                                                 |
+| -------------- | -------------------------------------------------------------------- |
+| `file`         | 普通文件，流式读取完成；记录内容 sha256                              |
+| `missing`      | `ENOENT` / `ENOTDIR`                                                 |
+| `unverifiable` | 目录、FIFO 等非普通文件，读取出错，超过单文件 16 MiB，或超过读取预算 |
+
+- 只有 `file` 状态可以建立 Trust 和派发。`missing` 与 `unverifiable` 的条目称为**入口不可用**：
+  - Admission 固定为 blocked，reason `workspace_hook_script_unavailable`，不进入 pending trust 计数，即使存在匹配 record 也不放行；
+    Trust store 损坏时原因按 store 报告（`workspace_hooks_blocked_untrusted`），store 优先；
+  - 设置页该行开关锁定关闭，不显示“信任”按钮，改为说明“入口脚本不存在或无法读取”（5 种语言）；
+  - Review response、Settings 预信任和 `zcode hooks trust` 选中入口不可用的条目时整条命令拒绝，不写 Trust store；
+    `--all-current` 只要包含入口不可用的条目也整体拒绝，并列出这些条目。
+- `missing` 与 `unverifiable` 仍进入 digest（只记状态类型，不记错误细节），保证它们的 digest 与任何 `file` 状态的 digest 不同。
+- 文件出现或恢复可读后，下一次 discovery 按实际内容生成 `file` 状态和新 digest，该条变为 pending，由用户首次信任。
+- 读取全部使用异步 IO。discovery 阶段所有入口共用 5 秒截止时间；到期时调用方不再等待，未完成的入口记为 `unverifiable`，迟到结果被忽略，迟到打开的文件句柄照常关闭（stat/open 本身不响应取消，只发取消信号不足以结束等待）。
+  同时读取的入口最多 8 个，避免大量 Hook 一次打开过多文件（EMFILE）。`handle.stat()` 这类无法取消的挂起调用
+  会占用句柄直到操作系统返回，数量受同一上限约束。
+- Settings（`hooksService`）、CLI Runtime（`createConfigWithPluginMigrations`）、审核中的 toggle 重建和
+  `zcode hooks trust` 必须调用同一个 shared 函数，在 workspace 根目录下计算 `scriptEntry`，保证 digest parity（D20）。
+  同步的 `createConfig` 不读文件，能识别入口的条目一律记为 `unverifiable`，因此按入口不可用处理，不会退回无 `scriptEntry` 的旧 digest。
+- 受管 worktree（D23）中入口路径相对 cwd 记录。脚本已提交且内容相同时，源仓库与 worktree 得到同一 digest。
+
+**dispatch 复核：** 有 `scriptEntry` 且已通过 admission（因此 snapshot 记录必为 `file`）的项目 Hook，每次 dispatch 前在实际执行 cwd 下按同一规则重新计算内容状态（流程见 §14.6）：
+
+- 重新计算结果为 `file` 且 sha256 与记录相同：继续；
+- 结果为 `file` 但 sha256 不同：阻断，reason `workspace_hook_declaration_changed`；
+- 结果为 `missing` 或 `unverifiable`（脚本被删除、无法读取）：阻断，reason `workspace_hook_script_unavailable`。
 
 ---
 
@@ -834,7 +956,28 @@ so future `clear` / `compact` call sites inherit the gate. Patching only `turn.t
 
 ### 14.6 Other Hook events, security revision and async dispatch
 
-After admission, for the same active snapshot, **each project Hook dispatch** still checks: the declaration belongs to the admitted immutable snapshot; the configured snapshot gate allows it; the workspace security revision matches the Runtime cache; managed policy allows the current grant class. Fast path: same `coordinatorEpoch` + same `counter` + digest in `admittedSet` → O(1) allow; revision mismatch → re-evaluate with in-memory trust/policy indexes and update the cache or block. The hot path must not: read the filesystem or parse the Trust store; make network requests; rediscover project config; recompute the whole bundle digest; create an external process or background Promise for a blocked Hook. The execution gate sits before `HookRunStarted` and before the foreground/background branch; a command Hook with `async:true` that fails the gate yields only `HookRunBlocked` with a stable reason code. Revoke/policy changes intercept only future dispatch; already started async/foreground external processes are not force-killed in V1 and keep closing under their existing invocation/run ID.
+After admission, for the same active snapshot, **each project Hook dispatch** still checks: the declaration belongs to the admitted immutable snapshot; the configured snapshot gate allows it; the workspace security revision matches the Runtime cache; managed policy allows the current grant class. Fast path: same `coordinatorEpoch` + same `counter` + digest in `admittedSet` → O(1) allow; revision mismatch → re-evaluate with in-memory trust/policy indexes and update the cache or block. The hot path must not: read the filesystem (the only exception is the entry script re-check below) or parse the Trust store; make network requests; rediscover project config; recompute the whole bundle digest; create an external process or background Promise for a blocked Hook.
+
+Entry script re-check (D24): it runs only for project Hooks that have a `scriptEntry`. It sits after the synchronous admission and before `HookRunStarted`:
+
+```text
+evaluateDispatch allows
+  -> within the cancel signal and the re-check deadline, recompute the scriptEntry state against the real cwd (section 12.9)
+       |- cancelled or timed out -> HookRunBlocked(workspace_hook_script_unavailable), late result ignored, no process created
+       |- content differs         -> HookRunBlocked(workspace_hook_declaration_changed), no process created
+       |- deleted or unreadable   -> HookRunBlocked(workspace_hook_script_unavailable), no process created
+       `- same -> run evaluateDispatch synchronously again (a revoke, policy tightening or snapshot invalidation may happen while waiting)
+                  |- no longer allowed -> HookRunBlocked(latest reasonCode)
+                  `- still allowed     -> HookRunStarted -> run with the original timeoutMs
+```
+
+- The re-check has its own deadline, equal to the Hook's `timeoutMs`, and does not use up the `timeoutMs` of the execution. Execution timing is therefore the same as before this revision.
+- A failed re-check (user interrupt excluded) is treated as a Hook error: a synchronous `PreToolUse` Hook configured with `onError: "deny"` blocks the tool call, the same result as a missing script causing a non-zero exit before this fix. Other Hooks only skip this run. A second admission failure after a passing re-check (revoke, policy tightening) is not an error.
+- If the entry is already unavailable at the discovery stage, the Hook is skipped as untrusted and is not treated as a Hook error, so `onError: "deny"` has no effect. At discovery there is no reviewable content, and nothing proves the current declaration is the one that was trusted: a repository could change only `onError`, the timeout or the shell, delete the script, and turn a once-trusted ordinary Hook into a guard that denies every tool call (DoS). The cost: if a guard script is deleted before the session starts, the guard is skipped for this session (before this change it would deny because the script errors); deletion during the session is still handled by the previous rule. To restore that behavior, the Trust record must first store a full declaration digest that does not include the script state.
+- A Hook without `scriptEntry` (including user, plugin and internal Hooks) is not re-checked and behaves as before.
+- This session does not hot-swap the snapshot, and every dispatch is re-checked on its own. After the script is restored to the trusted content, the re-check passes again; the next session computes its digest from the content at that time.
+
+The execution gate sits before `HookRunStarted` and before the foreground/background branch; a command Hook with `async:true` that fails the gate yields only `HookRunBlocked` with a stable reason code. Revoke/policy changes intercept only future dispatch; already started async/foreground external processes are not force-killed in V1 and keep closing under their existing invocation/run ID.
 
 ### 14.7 Mixed-source ordering
 
@@ -1018,7 +1161,7 @@ New Runtime + Host domain capability false: project Hooks blocked; new Host + ol
 
 ### 16.1 Single review entry
 
-Runtime never auto-navigates to settings; the bottom prompt bar opens Hooks settings only after the user clicks "去审核". User-level interaction lives in `Settings → Hooks → Workspace` only: no standalone Trust Dialog on the task chat page and no persistent Runtime Inspector, decision flow chart or event log UI. The settings page keeps its visual structure: the left nav selects "钩子" (Hooks); the main area keeps the "用户 / 工作区" (User / Workspace) tabs, search and existing Hook config style; the persistent bottom prompt bar (`WorkspaceHookPendingBanner`) shows "N 个工作区 Hook 待审核，本会话暂未启用" (N workspace Hooks pending review, disabled for this session) + [去审核] + [忽略]; the Hooks list keeps only per-row config and Trust actions, no second review area.
+Runtime never auto-navigates to settings; the bottom prompt bar opens Hooks settings only after the user clicks "去审核". User-level interaction lives in `Settings → Hooks → Workspace` only: no standalone Trust Dialog on the task chat page and no persistent Runtime Inspector, decision flow chart or event log UI. The settings page keeps its visual structure: the left nav selects "钩子" (Hooks); the main area keeps the "用户 / 工作区" (User / Workspace) tabs, search and existing Hook config style; the persistent bottom prompt bar (`WorkspaceHookPendingBanner`) shows "N 个工作区 Hook 待审核，本会话暂未启用" (N workspace Hooks pending review, disabled for this session) + [去审核] + [忽略]; for a managed worktree task, [去审核] pins the settings scope to the task's project and carries the session cwd, and the settings page discovers declarations by that cwd (D23), while [去审核] for an ordinary task behaves as before; the Hooks list keeps only per-row config and Trust actions, no second review area.
 
 ### 16.2 Inline Hook trust
 
@@ -1244,6 +1387,7 @@ workspace_hooks_config_rebuild_failed
 workspace_hooks_revoked
 workspace_hooks_unknown_execution_field
 workspace_hooks_feature_disabled
+workspace_hook_script_unavailable
 ```
 
 ### 23.2 Hook lifecycle / product projection
@@ -1295,6 +1439,17 @@ Each row is `ID: scenario → expected`.
 - CFG23: Settings atomic write success → after temp + flush/close + rename the watcher sees only complete JSON.
 - CFG24: Settings atomic write failure → original file stays parseable; no new review generation installed.
 - CFG25: project candidate merged after admission → inserted back by original scope/discovery/matcher provenance, not appended.
+- CFG30: a trusted `bash ./x.sh`, `./x.sh` (command form on macOS / Linux only) or process `node` + `x.js`, with only the script content changed → declaration digest changes, the entry returns to `stale_digest`; trusting again restores it (D24).
+- CFG31: only a data file pointed to by a non-entry argument changes → digest unchanged, Trust kept.
+- CFG32: pipes, `&&`, a `cd` prefix, quotes, interpreter start options, `npx`, a custom shell → entry not identified; digest is byte-for-byte the same as before this revision, no new block.
+- CFG33: entry contains `..`, is an absolute path or a bare name → entry not identified.
+- CFG34: process `${ZCODE_PROJECT_DIR}/x.sh`, command `"$ZCODE_PROJECT_DIR"/x.sh` (macOS / Linux only); command with an unquoted or `${VAR}` form → the first two identify the entry, handled relative to cwd; the last do not.
+- CFG35: entry does not exist → state `missing`; admission blocked (`workspace_hook_script_unavailable`), not counted as pending; settings does not show "信任"; Review/Settings/CLI authorization is rejected as a whole and writes nothing to the store.
+- CFG36: entry is a directory, FIFO, oversized file, read error or timeout → state `unverifiable`, same behavior as CFG35; discovery is not blocked.
+- CFG38: entry did not exist and is created later → the next discovery produces a new digest from the actual content, the entry becomes pending, and the user trusts it for the first time.
+- CFG39: a trusted entry is deleted or becomes unreadable → the next discovery marks the entry unavailable, and it is not allowed even if the old record exists.
+- CFG40: a Windows command declaration; a Windows process executed directly without an extension; a bare name without an extension after the interpreter (`node inspect x.js`) → entry not identified, digest same as before this revision, declaration-level Trust.
+- CFG37: Settings, CLI Runtime, toggle rebuild and CLI trust computation for the same declaration → `scriptEntry` and digest agree (D20 parity).
 
 ### 24.2 Review generation / Trust evaluation
 
@@ -1360,6 +1515,12 @@ Each row is `ID: scenario → expected`.
 - RT29: queue authority timeout / uncertain commit → reservation stays promoting; no release, auto-replay or second promotion.
 - RT30: same flow, same generation, different interaction → projection and renderer store both ignore the conflicting event and keep the current authority.
 - RT31: review notification and projection commit out of order → converge by canonical `sequenceNumber`; Settled/Resumed not reversed by a late Requested.
+- RT32: replacing the entry script of a trusted Hook during the session → the next dispatch re-check differs, `HookRunBlocked(workspace_hook_declaration_changed)`, no process created.
+- RT33: entry re-check passes → the actual argv, cwd and shell are the same as before this revision; runs with the original timeoutMs.
+- RT34: revoke or policy tightening while the re-check waits → admission is validated again after the re-check returns, and the Hook is blocked.
+- RT35: cancel or timeout during the re-check → `HookRunBlocked(workspace_hook_script_unavailable)`, no process created, late result ignored.
+- RT36: a trusted entry is deleted or made unreadable during the session → the next dispatch gives `HookRunBlocked(workspace_hook_script_unavailable)`, no process created.
+- RT37: project Hooks without `scriptEntry`, and user/plugin Hooks → not re-checked, behavior the same as before this revision.
 
 ### 24.4 Protocol / Desktop continuous
 

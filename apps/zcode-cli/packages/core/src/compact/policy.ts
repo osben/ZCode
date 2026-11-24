@@ -1,12 +1,10 @@
 import {
   AUTOCOMPACT_BUFFER_TOKENS,
+  AUTOCOMPACT_OUTPUT_RESERVE_CONTEXT_WINDOW_RATIO,
   DEFAULT_AUTOCOMPACT_OUTPUT_RESERVE_TOKENS,
   DEFAULT_COMPACT_CONTEXT_WINDOW,
   DEFAULT_ZCODE_MODEL_CONTEXT_BUDGET_STRATEGY as DEFAULT_BUDGET_STRATEGY,
   PREFLIGHT_AUTOCOMPACT_OUTPUT_RESERVE_TOKENS,
-  getAutoCompactOutputReserveTokens as getSharedAutoCompactOutputReserveTokens,
-  getAutoCompactThresholdTokens as getSharedAutoCompactThresholdTokens,
-  getEffectiveContextWindowSize as getSharedEffectiveContextWindowSize,
 } from "@zcode/shared";
 import type { CompactModelMessage } from "./manual.js";
 import { estimateMessageTokens, hasEnoughMessagesToCompact } from "./manual.js";
@@ -16,11 +14,11 @@ import type { LocalMicrocompactPolicyConfig } from "./microcompact.js";
 // context meter); re-exported here so existing core import paths keep working.
 export {
   AUTOCOMPACT_BUFFER_TOKENS,
+  AUTOCOMPACT_OUTPUT_RESERVE_CONTEXT_WINDOW_RATIO,
   DEFAULT_AUTOCOMPACT_OUTPUT_RESERVE_TOKENS,
   DEFAULT_COMPACT_CONTEXT_WINDOW,
   PREFLIGHT_AUTOCOMPACT_OUTPUT_RESERVE_TOKENS,
 };
-export const MAX_OUTPUT_TOKENS_FOR_SUMMARY = 20_000;
 export const DEFAULT_AUTOCOMPACT_THRESHOLD_PERCENT = 100;
 export const MAX_CONSECUTIVE_AUTOCOMPACT_FAILURES = 3;
 
@@ -77,22 +75,32 @@ export interface AutoCompactDecision {
 
 export function getEffectiveContextWindowSize(config: AutoCompactPolicyConfig = {}): number {
   const contextWindow = positiveInt(config.contextWindow) ?? DEFAULT_COMPACT_CONTEXT_WINDOW;
-  return getSharedEffectiveContextWindowSize({
-    contextWindow,
-    maxOutputTokens: config.maxOutputTokens,
-  });
+  // The provider context window is shared by input and output; auto compact can only free the input side,
+  // so the threshold denominator must first subtract the output tokens the current model allows.
+  const reserve = Math.min(getAutoCompactOutputReserveTokens(config), contextWindow);
+  return Math.max(0, contextWindow - reserve);
 }
 
 export function getAutoCompactOutputReserveTokens(config: AutoCompactPolicyConfig = {}): number {
-  return getSharedAutoCompactOutputReserveTokens(config.maxOutputTokens);
+  const maxOutputTokens = positiveInt(config.maxOutputTokens);
+  const contextWindow = positiveInt(config.contextWindow) ?? DEFAULT_COMPACT_CONTEXT_WINDOW;
+  // The old legacy branch reserved the full model output from the window, which compacted too early and
+  // required a remote choice; now at least 21K is reserved.
+  // Fix reason: the reserve used to be a fixed 21K and the summary was capped at a fixed 20K, so a 1M-window
+  // model only compacted at about 960K input, and reasoning plus the summary squeezed into 20K were often
+  // cut off by length. The summary cap now equals the reserve, so large windows grow the reserve by a window
+  // ratio; windows up to 262.5K still reserve 21K.
+  const windowReserve = Math.max(
+    PREFLIGHT_AUTOCOMPACT_OUTPUT_RESERVE_TOKENS,
+    Math.floor(contextWindow * AUTOCOMPACT_OUTPUT_RESERVE_CONTEXT_WINDOW_RATIO),
+  );
+  return Math.min(maxOutputTokens ?? DEFAULT_AUTOCOMPACT_OUTPUT_RESERVE_TOKENS, windowReserve);
 }
 
 export function getAutoCompactThreshold(config: AutoCompactPolicyConfig = {}): number {
-  return getSharedAutoCompactThresholdTokens({
-    contextWindow: positiveInt(config.contextWindow) ?? DEFAULT_COMPACT_CONTEXT_WINDOW,
-    maxOutputTokens: config.maxOutputTokens,
-    bufferTokens: config.bufferTokens,
-  });
+  const effectiveContextWindow = getEffectiveContextWindowSize(config);
+  const buffer = positiveInt(config.bufferTokens) ?? AUTOCOMPACT_BUFFER_TOKENS;
+  return Math.max(0, effectiveContextWindow - buffer);
 }
 
 export function shouldAutoCompact(input: {

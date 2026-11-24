@@ -22,6 +22,7 @@ import type {
   ZCodePluginsSetEnabledResult,
   ZCodeLspPreferences,
   ZCodeLspStatusResult,
+  ZCodePluginsWorkspaceTrustResult,
   ZCodePluginsUninstallResult,
   ZCodePluginsValidateResult,
 } from "@zcode/shared";
@@ -41,6 +42,7 @@ import type {
   ZCodeAgentRemovePluginMarketplaceParams,
   ZCodeAgentRestoreBuiltinPluginParams,
   ZCodeAgentSetPluginEnabledParams,
+  ZCodeAgentSetWorkspacePluginTrustParams,
   ZCodeAgentUninstallPluginParams,
   ZCodeAgentUpdatePluginMarketplaceParams,
   ZCodeAgentUpdatePluginParams,
@@ -94,6 +96,10 @@ export interface IPluginManagementService {
   getLspPreferences(params: ZCodeAgentPluginViewParams): Promise<ZCodeLspPreferences>;
   setLspPreferences(params: ZCodeAgentSetLspPreferencesParams): Promise<ZCodeLspPreferences>;
   getLspStatus(params: ZCodeAgentPluginViewParams): Promise<ZCodeLspStatusResult>;
+  /** Trust project-directory plugins: writes only the user-scope record of the target Host and applies to sessions created afterwards. */
+  setWorkspacePluginTrust(
+    params: ZCodeAgentSetWorkspacePluginTrustParams,
+  ): Promise<ZCodePluginsWorkspaceTrustResult>;
 }
 
 export const IPluginManagementService = createServiceDescriptor<IPluginManagementService>(

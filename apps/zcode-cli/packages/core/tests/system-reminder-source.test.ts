@@ -16,6 +16,7 @@ const EXPECTED_SOURCES = [
   "environment",
   "model",
   "output_style_instructions",
+  "language",
   "date",
   "skills_listing",
   "gen_ui_state",
@@ -31,6 +32,7 @@ const EXPECTED_SOURCES = [
   "tool_result_warning",
   "nested_agents_md",
   "resume_referenced_session_context",
+  "compact_file_reference",
   "plan_file_reference",
   "resume_goal_state",
   "goal_state_change",
@@ -71,6 +73,7 @@ describe("system reminder source descriptors", () => {
       "environment",
       "model",
       "output_style_instructions",
+      "language",
       "date",
       "skills_listing",
       "gen_ui_state",
@@ -86,6 +89,7 @@ describe("system reminder source descriptors", () => {
       "tool_result_warning",
       "nested_agents_md",
       "resume_referenced_session_context",
+      "compact_file_reference",
       "plan_file_reference",
       "resume_goal_state",
       "goal_state_change",
@@ -177,11 +181,26 @@ describe("system reminder source descriptors", () => {
       "tool_result_warning",
       "nested_agents_md",
       "goal_completion_verification",
+      "resume_referenced_session_context",
     ]);
     for (const source of EXPECTED_SOURCES) {
       expect(isMidConversationSystemSource(source)).toBe(
         !nonMidConversationSystemSources.has(source),
       );
+    }
+  });
+
+  it("keeps compaction file restore bodies user-side and the too-large note with the other attachments", () => {
+    // 补回的文件正文在 MCS 开关下都是 user 侧；过大文件的引用提示和其余 compaction 附件一样走 MCS。
+    expect(isMidConversationSystemSource("resume_referenced_session_context")).toBe(false);
+    expect(isMidConversationSystemSource("compact_file_reference")).toBe(true);
+    for (const source of ["resume_referenced_session_context", "compact_file_reference"] as const) {
+      expect(getSystemReminderDescriptor(source)).toMatchObject({
+        channel: "current_turn",
+        isMeta: true,
+        lifecycle: "resume_history",
+        providerVisibility: "provider_visible",
+      });
     }
   });
 

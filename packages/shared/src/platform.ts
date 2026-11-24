@@ -1,3 +1,7 @@
+import type {
+  PreinstalledToolsState,
+  PreinstalledToolsCommand,
+} from "@zcode/shared/preinstalled-tools";
 /* eslint-disable max-lines -- Cross-platform platform contract centralizes renderer capabilities; OAuth and browser lifecycle must keep the desktop/web type contract, so this MR does not split platform boundaries. */
 import type {
   DockerConnectOptions,
@@ -778,6 +782,7 @@ export const DesktopCommandIds = {
   OpenChangelog: "openChangelog",
   CheckForUpdates: "checkForUpdates",
   RelaunchApp: "relaunchApp",
+  RestartAfterCrash: "restartAfterCrash",
   OpenFeedback: "openFeedback",
   OpenCommunity: "openCommunity",
   ExportLogs: "exportLogs",
@@ -820,6 +825,9 @@ export type CuaOsSupport =
  * Business services (files, terminal, credentials, etc.) use the IServiceAccessor RPC channel.
  */
 export interface IPlatformService {
+  getPreinstalledToolsState?(): Promise<PreinstalledToolsState>;
+  executePreinstalledToolsCommand?(command: PreinstalledToolsCommand): Promise<void>;
+  onPreinstalledToolsState?(callback: (state: PreinstalledToolsState) => void): () => void;
   /** Whether default-app and directory operations on the local client's files are supported; Web does not have this capability. */
   canOpenLocalFiles?: boolean;
 
@@ -1439,6 +1447,12 @@ export interface IPlatformService {
 
   /** Sync the app menu language so the main process rebuilds the native menu. */
   setApplicationLocale(locale: Locale): Promise<void>;
+
+  /**
+   * Save the Agent reply language (empty string clears it); Main writes it to disk and pushes it to each window Host.
+   * Implemented on desktop only: Web remote control does not write local settings, and the settings page shows a local-machine hint when the method is missing.
+   */
+  setReplyLanguage?(language: string): Promise<void>;
 
   /** Sync the desktop title-bar light/dark theme to update native window-control button colors. */
   setTitleBarTheme(theme: DesktopTitleBarTheme): Promise<void>;

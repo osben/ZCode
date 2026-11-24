@@ -441,6 +441,7 @@ export const commandStateSummarySchema = z.object({
 export type CommandStateSummary = z.infer<typeof commandStateSummarySchema>;
 
 export const backgroundWorkSummarySchema = z.object({
+  resultSummary: z.string().max(4096).optional(),
   workId: z.string(),
   // workflow = workflow run (CreateWorkflow); dream = background memory consolidation (/dream).
   // **Skew cost of adding a closed-set value**:
@@ -463,7 +464,7 @@ export const backgroundWorkSummarySchema = z.object({
 export type BackgroundWorkSummary = z.infer<typeof backgroundWorkSummarySchema>;
 
 // Subagent runtime state belongs to the authoritative conversation projection, not the renderer query cache.
-// Keep ended details in cursor queries; the snapshot carries only the directory total so live counts do not depend on query timing.
+// The snapshot carries the summaries of subagents that ended in this batch and the total of the history directory; full history details are still fetched through cursor queries.
 export const runningSubagentSummarySchema = z.object({
   childSessionId: z.string(),
   agentId: z.string().optional(),
@@ -480,11 +481,26 @@ export const runningSubagentSummarySchema = z.object({
 });
 export type RunningSubagentSummary = z.infer<typeof runningSubagentSummarySchema>;
 
+export const activitySummaryDismissedSchema = z.object({
+  at: timestampSchema,
+  workIds: z.array(z.string()),
+  subagentIds: z.array(z.string()),
+  workflowRunIds: z.array(z.string()),
+});
+
 export const subagentProjectionStateSchema = z.object({
   revision: z.number().int().nonnegative(),
   childSessionIds: z.array(z.string()),
   running: z.array(runningSubagentSummarySchema),
   endedTotal: z.number().int().nonnegative(),
+  ended: z
+    .array(
+      runningSubagentSummarySchema.omit({ status: true, stopControl: true }).extend({
+        status: z.enum(["success", "failed", "cancelled"]),
+        endedAt: timestampSchema.optional(),
+      }),
+    )
+    .optional(),
 });
 export type SubagentProjectionState = z.infer<typeof subagentProjectionStateSchema>;
 
@@ -504,6 +520,8 @@ export const goalIterationStateSchema = z.object({
 export type GoalIterationState = z.infer<typeof goalIterationStateSchema>;
 
 export const goalStateSchema = z.object({
+  // After completion, the next real input hides the summary; target history is not deleted, and an old client that omits it is treated as visible.
+  summaryHidden: z.boolean().optional(),
   // default is only for compatibility with older snapshots; new projections always include the current target identity and timing facts.
   targetId: z.string().default(""),
   objective: z.string(),
@@ -600,6 +618,9 @@ export const conversationSnapshotSchema = z.object({
   pendingInteractions: z.array(pendingInteractionSchema),
   pendingCommands: z.array(commandStateSummarySchema),
   backgroundWorks: z.array(backgroundWorkSummarySchema),
+  activitySummaryDismissed: activitySummaryDismissedSchema.optional(),
+  // Count of successful standalone children and Workflows in the full history; Bash is excluded. null means reading the full history failed.
+  completedActivityCount: z.number().int().nonnegative().nullable().optional(),
   // Optional only for wire compatibility with older snapshots; new CLI initial state and every projection always include this field.
   subagents: subagentProjectionStateSchema.optional(),
   // Cold snapshots must include workflowRuns. If omitted, active runs silently disappear after refresh/reconnect

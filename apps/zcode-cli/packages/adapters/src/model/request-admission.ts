@@ -27,6 +27,20 @@ export interface AttemptAdmission {
 const NO_ADMISSION: AttemptAdmission = { release() {} };
 
 /**
+ * Retry cooldown (ms) reported by the admission port. 0 when the port does not implement `retryCooldownMs`
+ * (queued admission, no admission) or reports a non-positive or non-finite value.
+ * Read only in the retry backoff, never for the first request: the main agent's (observer's) first request
+ * is still sent immediately.
+ */
+export function readAdmissionRetryCooldownMs(
+  admission: ModelRequestAdmission | undefined,
+  model: ModelRequestTarget,
+): number {
+  const value = admission?.retryCooldownMs?.({ model });
+  return value !== undefined && Number.isFinite(value) && value > 0 ? value : 0;
+}
+
+/**
  * Wait for admission. Try the synchronous fast path `tryAcquire` first; queue through `acquire` only
  * if it misses, and invoke `onQueued` / `onAdmitted` at the two transitions (the runner emits
  * `model_request_queued` / `model_request_admitted` from these). A port without a fast path cannot

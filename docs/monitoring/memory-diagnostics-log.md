@@ -26,8 +26,20 @@ scheduling, recovery or model behaviour.
 - At most one collect/write operation per round; when busy the round is dropped, not queued. If one synchronous
   sampling/projection exceeds 25 ms or the node count exceeds the limit, this process permanently degrades to
   metrics only. A sampling exception degrades the same way and must never throw into a task. Startup and exit do
-  not wait for disk collection. After degrading, the record keeps the last valid hotspot and its collection time,
-  so metrics-only rotation does not overwrite existing evidence. Past 80% of the heap-usage limit it also
+  not wait for disk collection. The Inspector adapter times each call at the synchronous boundary; the recorder only
+  adds up the adapter's synchronous time and the round's metrics/projection time, so other business work that runs
+  between an `await` and its resumption does not count against the diagnostic budget. The 25 ms limit is a
+  trip condition checked after the work completes; it cannot interrupt a V8 operation already running and makes no
+  hard real-time promise. The threshold, sampling frequency and permanent degradation policy are unchanged.
+  After degrading, the record keeps the last valid hotspot and its collection time,
+  so metrics-only rotation does not overwrite existing evidence. When a round has finished a bounded projection
+  but took longer than the budget, that valid result is saved first and then the circuit trips; evidence that
+  already cost time is not thrown away and no further collection is added. When a node-limit or heap-pressure
+  round produced no valid projection, only the earlier result is kept. The sampler may carry an optional
+  `degradation` object holding the first degradation's `reason`, `at` and `durationMs`. The reason is one of
+  `start-budget`, `start-failed`, `profile-budget`, `profile-node-limit`, `heap-pressure`,
+  `write-backpressure`, `profile-error`. Later metrics-only rounds must not overwrite these fields. Older
+  records without the field can still be exported. Past 80% of the heap-usage limit it also
   degrades, never materializing a profile near OOM. If a write is still in flight when the sampling window
   expires, the profiler is released; a slow disk must not let sampling state accumulate without bound.
 - All CLI processes share `~/.zcode/cli/memory-diagnostics`: at most 2 completed files per instance, at most 16
@@ -43,6 +55,10 @@ scheduling, recovery or model behaviour.
   attaching logs, this directory is not packaged or uploaded.
 - A remote CLI records on the remote side; local feedback does not auto-download remote diagnostics. Mobile still
   reuses the Host and adds no duplicate collector.
+- This fix does not change process exit, restart, signals, protocol close, stderr drain, process tree recovery or
+  ownership. It adds no exit listener, exit-time sampling, flush wait, forced GC or heap snapshot. Stop only
+  stops the existing collection resources and does not wait for an in-flight write; a failed or busy write drops
+  the round. Verification uses an isolated directory and does not touch real sessions.
 
 ```text
 app-server ready -> adapter allocation sampling + 15s metrics -> bounded files (directory lock is the sole writer)
@@ -68,6 +84,13 @@ performance guarantee for all real tasks. After 8 processes competed to write 40
 totalling 10,164 bytes remained, with no leftover locks or temporary files. A real feedback archive kept the
 allocation locations and removed injected body and environment-variable fields; Windows/Linux runtimes are not
 verified yet.
+
+Diagnostic evidence regression: `node packages/desktop/scripts/cli-diagnostic-evidence-smoke.mjs` uses the real
+Inspector, file saving and ZIP archiving. It checks that busy scheduling does not stop collection by mistake, real
+allocation sites, limited-heap OOM and uncaught exceptions, large log tails and crash-safe projection, normal and
+abnormal exits, and diagnostic failures. The script reports the platform it ran on and the raw artifacts. A
+synthetic fault is not the same as reproducing a user's incident, and one platform's result does not extend to
+other platforms.
 
 ## Problem
 

@@ -1,0 +1,12 @@
+{
+  "version": 1,
+  "caseName": "conversation-session-acp-agent-resume",
+  "spec": "./test/e2e/conversation-session/conversation-session-acp-agent-resume.test.ts",
+  "providerFixtures": [
+    "./test/e2e/fixtures/upstream/conversation-session/conversation-session-acp-agent-resume.json"
+  ],
+  "fileFixtures": [],
+  "providerRequestPolicy": "none",
+  "noProviderRequests": true,
+  "requests": []
+}

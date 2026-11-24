@@ -1,16 +1,27 @@
-import { ZCODE_PROVIDER_CONFIG_NETWORK_ERROR, type RequestVerificationReason } from "@zcode/shared";
+import {
+  ZCODE_PROVIDER_CONFIG_NETWORK_ERROR,
+  ZCODE_PROVIDER_PROJECT_TOKEN_NETWORK_ERROR,
+  type RequestVerificationReason,
+} from "@zcode/shared";
 import type { ModelRequestAuth } from "@zcode/contracts";
 import { ModelErrorCode, ModelProtocolError } from "@zcode/contracts";
 import type { AiSdkModelTextRequest, ResolvedAiSdkModel } from "./runner-runtime.js";
 
 export class RuntimeHeadersRefreshError extends Error {
   readonly retryable: boolean;
+  /** 请求校验配置读取失败有专属重试文案；项目 Token 传输失败按普通网络错误展示。 */
+  readonly configNetwork: boolean;
   constructor(cause: unknown) {
     super(cause instanceof Error ? cause.message : String(cause), { cause });
     this.name = "RuntimeHeadersRefreshError";
     // Trust the Host's structured classification only; legacy text may also come from an invalid config, so do not widen retries by matching text.
-    this.retryable = typeof cause === "object" && cause !== null &&
-      "code" in cause && cause.code === ZCODE_PROVIDER_CONFIG_NETWORK_ERROR;
+    const code =
+      typeof cause === "object" && cause !== null && "code" in cause ? cause.code : undefined;
+    this.configNetwork = code === ZCODE_PROVIDER_CONFIG_NETWORK_ERROR;
+    // Bug cause (ZCT-2122890271808978944 etc.): project token network drops/timeouts had no structured code,
+    // so a failed token exchange on a cold cache ended the whole turn. The Host now flags these two transport
+    // failures with -32033, and they join the same network_error budget.
+    this.retryable = this.configNetwork || code === ZCODE_PROVIDER_PROJECT_TOKEN_NETWORK_ERROR;
   }
 }
 

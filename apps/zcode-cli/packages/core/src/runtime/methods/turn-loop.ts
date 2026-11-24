@@ -8,6 +8,7 @@ import { getTurnTools } from "./turn-tool-visibility.js";
 import { refreshOffPeakTurnAfterTakeover } from "../off-peak/turn.js";
 import { appendRuntimeAgentListing } from "../helpers/agent-listing.js";
 import { beginLocalTurnPreparation } from "@zcode/contracts";
+import { createLiveToolSearchContext, latchMcpServerWait } from "./mcp.js";
 import { buildToolSearchAnnouncement } from "../../tool/search/exposure.js";
 import {
   CompactPhase,
@@ -22,7 +23,6 @@ import {
   buildRuntimeOutputStyleReminderBody,
   buildTodoReminderBody,
   buildSilentTurnReminderBody,
-  buildRuntimeProviderRequestMessages,
   prepareRuntimeProviderRequest,
   createCompactRapidRefillError,
   throwIfTurnAborted,
@@ -48,6 +48,8 @@ import {
 import { formatTotalTokensReminder } from "../../context/total-tokens.js";
 import {
   evaluateRapidRefill,
+  isAutomationMutationRestrictedTurn,
+  isOffPeakCreateRestrictedTurn,
   MAX_CONSECUTIVE_RAPID_REFILLS,
   RAPID_REFILL_TOOL_TURN_THRESHOLD,
   recordCompactHistoryRound,
@@ -60,7 +62,6 @@ import { ACTIVE_PROJECT_MEMORY_RETRIEVAL_BRANCH } from "../../memory/project-mem
 import {
   appendTurnRequestEntries,
   commitTurnRequestEntries,
-  filterOutputTokenContinuationEntries,
 } from "./turn-output-token-continuation.js";
 import { recordSessionFeatureFromToolSearchExposure } from "../session-features/contract.js";
 import { recordPromptSnapshot } from "../helpers/prompt-snapshot.js";
@@ -83,7 +84,7 @@ export async function runRegularTurnLoop(
     // Fix reason: draining on every iteration also injected notifications into requests that resend the same input
     // (Stop hook continuation, stream retry, fallback); otherwise they stay queued and start a new turn after this one.
     if (
-      state.inputAttachmentCollectionPending &&
+      state.normalInputPreparationPending &&
       state.modelStepCount > 0 &&
       !outputTokenRecoveryActive
     ) {
@@ -100,9 +101,27 @@ export async function runRegularTurnLoop(
     }
 
     const finishMcp = beginLocalTurnPreparation(state.turnTraceContext, "mcp");
-    await this.initializeMcp(state.turnTraceContext);
-    // Apply tools/list_changed only before a turn starts.
-    await this.refreshMcpToolsIfChanged(state.turnTraceContext);
+    // Only a normal new request applies the latest MCP list; recovery requests (stream-break retry, admission retry, continuation) keep the original request's tool list.
+    const mcpToolListRefreshed = state.normalInputPreparationPending;
+    // Automated tasks (automation / off-peak) have no one interacting, so they wait for startup to finish even if the session policy is background.
+    const mcpBackground =
+      this.mcpStartupPolicy === "background" &&
+      !isAutomationMutationRestrictedTurn(state) &&
+      !isOffPeakCreateRestrictedTurn(state);
+    if (mcpToolListRefreshed) {
+      const view = await this.initializeMcp(state.turnTraceContext, { background: mcpBackground });
+      if (state.pluginReferenceInput !== undefined) {
+        const input = state.pluginReferenceInput;
+        state.pluginReferenceInput = undefined;
+        await this.injectPluginReferenceReminderFromTurn(
+          input,
+          state.turnTraceContext,
+          state.turnRequestState,
+          view,
+          state.toolDisallowlist,
+        );
+      }
+    }
     finishMcp();
     throwIfTurnAborted(state.turnAbortSignal);
     const finishTools = beginLocalTurnPreparation(state.turnTraceContext, "tools");
@@ -117,9 +136,9 @@ export async function runRegularTurnLoop(
     // 新轮通知的首个请求跳过。
     // Stop hook 续跑、模型降级、流恢复、Start Plan 排队重试、上下文超限恢复、闲时换票
     // 都重发同一份输入，不收集：每次收集都会多出一条 output_style 等不去重的附件。
-    const collectionReason = state.inputAttachmentCollectionPending;
+    const collectionReason = state.normalInputPreparationPending;
     if (collectionReason) {
-      state.inputAttachmentCollectionPending = false;
+      state.normalInputPreparationPending = false;
       // 收集只追加附件，最新的非附件 entry 在收集期间不变；只查一次，跳过规则和预算提醒共用。
       const latestMessage = state.turnRequestState.entries.findLast(
         (entry) => !isRuntimeAttachmentEntry(entry),
@@ -208,6 +227,11 @@ export async function runRegularTurnLoop(
       entries: requestEntries,
       traceContext: state.turnTraceContext,
     });
+    Object.assign(
+      prepared.toolSearch,
+      createLiveToolSearchContext(this, state, prepared.toolSearch),
+    );
+    latchMcpServerWait(this, prepared.request.tools);
     this.logger?.debug("ToolSearch request exposure", {
       event: "tool.search.exposure",
       enabled: prepared.toolSearch.enabled,
@@ -228,20 +252,10 @@ export async function runRegularTurnLoop(
     // cache-control 必须在 projection 后统一设置，避免 raw synthetic entry 抢占缓存锚点。
     const providerProjection = prepared.projection;
     const { messages } = prepared.request;
-    const recordableEntries = filterOutputTokenContinuationEntries(prepared.entries);
-    const recordableProjection =
-      recordableEntries === prepared.entries
-        ? providerProjection
-        : buildRuntimeProviderRequestMessages(this, {
-            entries: recordableEntries,
-            loadedToolCallIds: prepared.loadedToolCallIds,
-            applyCacheControl: true,
-            model: state.model,
-          });
     state.turnMachine = new TurnMachineImpl(
       state.turnMachine.startModelRequest(
         `${state.model.providerId}/${state.model.modelId}`,
-        recordableProjection.messages,
+        messages,
       ),
     );
 
@@ -256,6 +270,7 @@ export async function runRegularTurnLoop(
       iteration: state.toolCallCount === 0 ? 0 : Math.ceil(state.toolCallCount / 10),
     });
 
+    state.turnRequestState.toolSearchDelivery = prepared.delivery;
     const result = await runModelBackedTurnStep.call(this, state, {
       drainedSteerForNextRequest,
       latestRealUserMessageIndex: providerProjection.diagnostics.latestRealUserMessageIndex,
@@ -263,7 +278,6 @@ export async function runRegularTurnLoop(
       sourceEntries: providerProjection.sourceEntries,
       originEntries: providerProjection.originEntries,
       requestEntries,
-      recordedMessages: recordableProjection.messages,
       tools: prepared.request.tools,
       toolSearch: prepared.toolSearch,
     });
@@ -307,7 +321,12 @@ async function collectInputAttachments(
   // The ToolSearch announcement (deferred tools delta) comes after the model and before the agent listing.
   await appendToolSearchAnnouncement(runtime, state, tools);
   await appendRuntimeAgentListing(runtime, state.turnRequestState, tools, state.turnTraceContext);
-  await appendRuntimeSkillsAnnouncement(runtime, state.turnRequestState, state.turnTraceContext);
+  await appendRuntimeSkillsAnnouncement(
+    runtime,
+    state.turnRequestState,
+    tools,
+    state.turnTraceContext,
+  );
   // Only runtimes with a language-server service pay for this step; others keep the exact previous microtask sequence.
   if (runtime.lspService) {
     // Post-edit LSP diagnostics: returns at once unless a file was mutated since the previous request (spec §6).
@@ -384,10 +403,11 @@ async function collectInputAttachments(
   }
   const silentReminderBody =
     state.modelStepCount > 0 && querySourceForTask(runtime.config.taskType) === "main_turn"
-      ? buildSilentTurnReminderBody(state.turnRequestState.entries)
+      ? buildSilentTurnReminderBody(state.turnRequestState.entries, runtime.now().getTime())
       : null;
   if (silentReminderBody) {
-    // History is the only source of the count; persist before committing so a failure leaves no false "already reminded" mark.
+    // History is the only source of the decision; persist before committing so a failure leaves no false "already reminded" mark.
+    // The entry and the persisted row share the same time, so after cold recovery the next timer starts from the same point.
     await persistAnnouncements(
       runtime,
       state.turnRequestState,
@@ -439,7 +459,7 @@ async function collectInputAttachments(
 
 /**
  * token 预算倒数：数值来自 runtime 计数器与最近一条带 usage 的 assistant。
- * 先写库再提交并更新计数器；写库失败时计数器保持原值，错误向上冒泡。
+ * 先写库再提交并更新计数器；写库失败时计数器保持原值，错误向上冒泡。开关关闭时不产出。
  */
 async function appendTotalTokensReminder(
   runtime: AgentRuntimeInternal,
@@ -447,6 +467,7 @@ async function appendTotalTokensReminder(
   reason: InputAttachmentCollectionReason,
   fromUser: boolean,
 ): Promise<void> {
+  if (runtime.config.totalTokensReminder?.enabled !== true) return;
   const entries = state.turnRequestState.entries;
   const decision = decideTotalTokensReminder({
     reason,
@@ -484,6 +505,7 @@ async function appendToolSearchAnnouncement(
     tools,
     registry: runtime.getToolRegistry(),
     entries: state.turnRequestState.entries,
+    mcp: runtime.mcpServerStatusFacts,
   });
   // The announcement body and its delta facts must be persisted together first; otherwise fork/resume treats already
   // announced tools as appearing for the first time.

@@ -1,821 +1,311 @@
-# MCP async initialization and tool catalog cache
+# MCP dynamic catalog and async connection
 
-## Status
+## Contract
 
-- Stage: planning
-- Scope: agent runtime, MCP adapter, tool registry / executor, bootstrap process-level dependencies
-- Goal: a process-scoped tool catalog cache so that a new session with a cache hit can issue its first model request before live MCP initialization completes
-- Non-goals: no live MCP server/client LRU; no reduction in the number of MCP servers each active session actually starts
+An interactive session starts MCP in the background, and the first request only reads the published in-memory snapshot. Headless, automation and idle tasks keep the first-send wait. A server becoming ready does not start a model request by itself. When ToolSearch is on, servers that are still connecting are listed in the announcement. When ToolSearch is off there is no announcement, and the `WaitForMcpServers` tool plus the executor wait tell the model (see "Request and search").
 
-This design therefore addresses MCP initialization blocking the first model request, not the persistent growth of live MCP processes and memory caused by unreleased sessions/runtimes. If that remains, debug it separately via session ownership / close lifecycle — the tool catalog cache is not a resource-reclamation mechanism.
+```mermaid
+flowchart LR
+ A[Config and plugin file changes] --> B[Async parse of the full config]
+ B --> C[MCP session reconcile]
+ C --> D[Pool lease and adapter connection record]
+ D --> E[Normal step pins a snapshot]
+ E --> F[Tool projection and deferred_tools_delta]
+ D --> G[ToolSearch live read and bounded wait]
+```
 
-## Background
+## Configuration
 
-ZCode already schedules MCP initialization early at session/runtime creation, but before the first provider request it still runs:
+There is one rule for config identity: `mcpConfigKey` (`@zcode/contracts`) sorts the keys, drops undefined fields and serializes the result. The pool connection key, the adapter reuse check, the MCP App connection summary and the session config-change check all use it. `{ timeoutMs: undefined }` and `{}` are the same config and do not rebuild the shared connection.
+
+The CLI in the execution environment watches the user and project configs, the plugin install record `installed_plugins.json`, the bundled shards of official plugins, and the manifest and MCP declaration files of inline plugins (user config `plugins.dirs`). A desktop session reads the config from disk. The settings page and plugin operations run in other CLI processes, so file watching is the only way a change reaches this process.
+
+Only commit points are watched, not the directory contents of cached plugins and official plugins:
+
+- A cached plugin directory is written only by the install and update flow (`activateDirectoryAtomically`, with `installed_plugins.json` as the authoritative state), and the flow ends by writing the install record. Uninstall deletes the install record. Enable and disable write the user config. The official plugin directory is released at app start and the release ends by writing the bundled shard. So every effective change to these directories comes with a change to a watched file, and the loader then re-reads everything and sees the new directory.
+- A plugin directory read while a transaction is uncommitted is unstable, and the loader keeps the last stable execution config. The install record written at commit triggers the next re-read, and the result converges to the new generation.
+- An inline plugin has no commit point. Developers edit its files directly, so its manifest, its MCP declaration files and its transaction record stay watched.
+- Constraint: any new flow that writes a cached plugin directory or the official plugin directory must end by writing `installed_plugins.json` or a bundled shard. Otherwise open sessions do not see the change. Hand-editing a file inside the cache directory does not take effect live.
+- The number of watchers does not depend on the number of installed plugins. Before the fix each plugin used about 3 directory anchors (parent of the version directory, plugin root, manifest directory), which meant about 84 watchers for 26 plugins. A new session waited serially for those watchers to become ready when it acquired the config source, and sessions in different workspaces each built their own copy.
+
+Watch rules:
+
+- The anchor is the existing directory that holds the file. If the directory does not exist, walk up only inside the known root that contains the file (working directory, user config directory, plugin store root) to find an existing directory. Nothing outside those roots is watched, so large directories such as the home directory are never watched. The parent of an inline plugin root is watched because of the transaction record file (`.<name>.transaction.json`), which is how an atomic rename is noticed. No other anchor watches its parent directory.
+- A file event only invalidates the config. After 300 ms with no new event (trailing debounce, no maximum wait) a serial drain re-reads the full config. A series of atomic replacements ends by publishing the last write. When a native event has no filename, the anchor is invalidated. The debounce only decides when to read, not the state: every read is a full re-read compared by content, so removing the timer leaves the final state unchanged.
+- When a watcher errors after it was ready, one drain is scheduled immediately (no debounce) and the drain rebinds. An error during binding does not schedule anything and waits for the next disk read to rebind. A failed binding does not count as covered. The config is never polled.
+- When a watcher for the same anchor and the same identity fails twice (failures before and after ready both count), watching stops and a warn is logged, with no further rebinding. A stable file event resets the count. A changed identity or a rebuilt entry tries again. After watching stops, new sessions still read the latest config. The rule is in [Skill live catalog, watch scope](./skills-live-catalog.md#监听范围). Before the fix, rebinding after a ready-time error had no limit, so with a persistent failure the drain never finished and new session creation was held up.
+- Establishing the watch has a total timeout of 1 second. Within one binding, the stat of each anchor and the wait for the watcher to become ready or fail share one deadline. An anchor that times out is cut off, its watching stops and one warn is logged (`MCP configuration watcher bind timed out`). No rebind is scheduled. The cut-off follows the entry, and after watching stops new sessions still read the full latest config. The timeout only decides whether to keep watching, not the config content. The rule is in [Skill live catalog, watch scope](./skills-live-catalog.md#监听范围). Before the fix, a slow network drive could leave stat hanging or leave the watcher neither ready nor failed, binding had no limit, and new sessions waited forever.
+- Anchors, binding, debounce, drain and the process-level registry are generic watch primitives. The [Skill live catalog](./skills-live-catalog.md) reuses the same primitives, with its own entries and loader. The primitives also support directory entries (watching only the add and remove of direct subdirectories). MCP does not use them, and the MCP watch set, boundaries and behavior are unchanged.
+
+Within one CLI process, sessions whose loader inputs are equal share one config source (the process-level registry is created and injected by the entry point, it is not a module-global singleton):
+
+- The shared key contains all loader inputs by value: config file paths, user config path, fallback paths, plugin store root, official plugin roots (order kept), the explicit server map (via `mcpConfigKey`), working directory, environment variables, and the default-enabled plugins (as an ordered array). The key includes environment variables, and only their hash is recorded.
+- Each session holds one view. Built-in servers, computerUse, explicit enabled and broker injection are computed inside the view. All views share the same raw load result, so the identity check of the official CUA server does not change. A view notifies its session only when its own computed result changes by content. An error while computing one view only skips that view and does not affect other views. If the computation fails at acquire time, the reference registered for it is released.
+- Acquiring a view first registers the reference, then skips the debounce timer and reads from disk right away until no read is pending, and then reads the snapshot and subscribes in the same synchronous step. So a new session always sees the latest disk state.
+- Closing a view is an idempotent release. When the last view is released, the watcher and the timers are closed. A failed first load only deletes that entry, all waiters receive the same error, and the next acquire loads again. The registry is force-closed on process exit cleanup. Entry points without an injected registry (TUI, headless) build one private config source per app, with the same rules.
+- Each step of a model request only reads the snapshot in session memory and does no file IO.
+
+The first load and a hot update call the same async loader, and the first snapshot of the config source is the first-load result. Loader rules:
+
+- A warning on a single MCP server skips only that item. Only a file read, JSON or overall schema error keeps the last valid result of that source. The last valid result and the stable plugin config are committed only when the load result is adopted (becomes the current snapshot, even if the content is unchanged). A read that is superseded by a new event in the middle of a drain does not change the fallback base for the next one.
+- For a plugin manifest, the first existing file in a fixed order is used. If that file is invalid, the plugin is skipped, the same as the plugin discovery rule at startup.
+- The plugin install directory and `installed_plugins.json` share one atomic-transaction check. During a transaction a committed source can be recognized from the backup, but the backup execution path is not published. An existing source only keeps its last stable execution config while the transaction is incomplete.
+- The data directory is created only when the MCP feature is on, the plugin is enabled and it declares an MCP server. When an optional filesystem workspace directory cannot be read, only that directory is skipped and a warn is logged.
+- A failure in variable expansion or data directory preparation for one plugin removes only that plugin's result. The startup plugin loader also isolates errors per plugin, so one bad plugin cannot make session creation fail.
+- These rules are extracted into a shared config and plugin manifest reader: reading config files (with fallback to the last valid result), parsing and merging config by the startup rules, plugin candidate and enable checks, and watching only inline plugin files. The Skill live catalog uses the same rules to decide plugin enable state and skill roots.
+- Load warns (config read failure, invalid manifest, plugin MCP diagnostics and preparation failure, unreadable filesystem directory) are logged when the result is adopted, and only entries that were not in the last adopted result are logged. Saving the config again with unchanged warns does not log them again.
+- Project files (config paths other than the user config) are parsed with the same project allowlist as the startup config ([project config trust boundary](./security/deep-link-project-trust-boundary.md)). Only extension declarations and enable state are accepted. Runtime parameters such as `features`, `plugins.enabled` and `plugins.suppressedBuiltins` have no effect, and an invalid value in a runtime parameter does not invalidate the MCP declarations in the same file. After that the result goes through the same shaping rule as the startup config: Hook declarations and `plugins.dirs` are removed, and a relative `cwd` of a stdio server is resolved against the project root. Project config cannot introduce a plugin root directory.
+- Each config file is merged as a whole by scope priority (project over user), the same as `createConfig`: a top-level field that a file does not declare does not override a lower-priority file. For example, if the user config turns off `features.mcp` and the project config only writes `plugins.enabledPlugins`, MCP stays off. The merge rules for nested objects are also the same as `createConfig` (see [config merge legacy issue](./issues/config-merge-legacy/01-nested-fields-replaced-by-higher-layer.md)).
+- When a config file has no server, the fallback file registered for it is read: `<workdir>/.zcode/config.json` falls back to `<workdir>/.agents/mcp.json`, and the user config falls back to `~/.agents/mcp.json`.
+- Each server is marked with a source by the file it comes from: project files and their fallbacks are marked `workspace`, and the user config and its fallback are marked `user`. Plugin and built-in servers keep their own source, and an explicitly passed map keeps the caller's marks. The workspace guard decides only from this mark and its own project declarations: a server marked `workspace` without a matching project declaration is always rejected and shown as untrusted. For example, when another project file already declares servers, an empty `.zcode/config.json` whose fallback `.agents/mcp.json` supplies entries is such a case.
+
+When no server map is passed explicitly, the disk config of the execution environment is read. An explicitly passed map keeps the original override semantics. Apart from the source mark, the first-load result of the loader equals the result of `createConfig` + plugins + built-in servers (locked by a consistency test).
+
+## Ownership
 
 ```text
-startMcpStartup()
-  -> connectConfiguredServers()
-  -> initializeMcp() await startup
-  -> registerMcpTools(live tools)
-  -> provider request
+session (owner) -- config subscription / reconcile --> pool lease --> adapter connection record
+fork (owner)    -- own connection
+subagent / workflow child -- borrows the parent port (the port carries a borrow mark, scope frozen at creation)
 ```
 
-So today's "async" only parallelizes MCP initialization with context, skills, memory preparation; the first model request is still blocked by the slowest server's `initialize + tools/list`.
+Ownership is decided by the port itself. A borrowed port carries an unforgeable mark, and the runtime uses it to skip config subscription, cache publication and lifecycle calls, so no ownership parameter is passed. A borrowed port reads a frozen scope only. It does not subscribe to config and cannot converge or close the parent connection.
 
-The optimization focus is not sharing a live MCP runtime; it is separating two facts:
+When a new child is created, it waits only for the servers it needs that are still pending, for at most 30 seconds, and it ends early when a server fails. It does not wait for slow servers it has no use for. The "needed servers" are the union of the servers referenced in `mcpServers` and in `tools` (`mcp__x__y`, `mcp__x`, `mcp__x__*`). A model-visible name is mapped back to the config name by the whole name. There is no substring matching (`mcp__git__x` does not wait for github) and no case sensitivity (the same as the MCP capability check of subagents). `mcp__*` and `*` do not trigger a wait. The borrowed scope is still decided by `mcpServers` alone and is frozen at creation: a server that connects after the wait ends is not in the scope. A workflow child without a scope does not wait for MCP, and a server that is still pending at creation is not in its borrowed scope. The read path of a borrowed port keeps the source consistency filter: when the parent connection has confirmed a source change, tools from the old scope are removed from the borrowed catalog.
+
+## Connection record
 
 ```text
-provider-visible tool catalog
-  can come from a process-scoped, short-lived, sanitized schema cache
-
-live tool execution
-  must wait for the current session's live client, and re-confirm tools, schema, and permission metadata
+records[name]: a new record per connection; generation only serves MCP App invalidation notices and dropping late tasks
+  connecting --(only committer: end of startConnection)--> connected / failed / disabled / untrusted
+     ^  recovery (remote unexpected disconnect, built-in stdio process unexpected exit): the new record keeps the old tools, at most 5 times, 1/2/4/8 s apart, no interactive authorization
+     |                                    onerror classification:
+     +---- invalidate <------------------- + HTTP session expired -> invalidate
+           other stdio: failed (unexpected_disconnect) + HTTP GET open-stream failure -> log only
+                                          + SSE stream error -> invalidate
+                                          + 3 network errors in a row -> invalidate
 ```
 
-This design uses that dual-channel semantics.
+- The connection phase, the effective catalog and the current connection task are held by the same server record. Ready is published in one step after discovery succeeds, the lifecycle handlers are installed and the record is still the current one. A failure is committed only once at the end of the connection task, so subscribers see only one terminal notification.
+- A new connection registers a connecting record synchronously and then closes the old record object. The close task and late results only handle the old object. Each new record adds one to generation, and several attempts within one recovery share that generation. A record invalidation (stdio unexpected disconnect entering failed, explicit disconnect, adapter close) also adds one to generation. Every increment notifies MCP App connection invalidation.
+- After an unexpected HTTP/SSE disconnect, up to 5 attempts run in the background. While pending, the last valid catalog is kept, and only when the attempts run out is failed published and the catalog cleared. If an error that needs interactive authorization appears during recovery, recovery ends at once with result failed and `failureKind` set to `oauth_authorization_failed`, which the model sees as needs-auth.
+- When a stdio server with runtime source `builtin` exits unexpectedly or fails a ping, the same background recovery runs. Source `builtin` includes the host-injected `node_repl` and the MCP servers declared by plugins of the official marketplace (`zcode-plugins-official`). An http server of an official plugin uses the HTTP recovery above and is not subject to the restart limit below. Recovery method: keep the catalog, restart at once, at most 5 times. The same server is automatically restarted at most 5 times within 10 minutes. After that there is no automatic restart, the server enters failed (`unexpected_disconnect`) but keeps its catalog: the tools stay in the session view, and the next execution admission (or MCP App open) restarts it once as a normal connection, with the catalog unchanged during the reconnect. If this restart fails, the catalog is cleared as for a normal failure. A non-recovery connection (config change, explicit reconnect, execution-admission reconnect) starts counting again. `node_repl` is not listed on the settings page, so the user cannot trigger a reconnect by hand. For stdio servers of other sources (user, workspace, third-party plugin), an unexpected exit still goes straight to failed and clears the catalog.
+- Other stdio disconnects or ping failures go straight to failed (`unexpected_disconnect`) with no background self-healing, and the catalog is cleared. The tools leave the session view on the next normal step. Until then, the registry of the current step still holds its tools, and when the model calls one, execution admission reconnects once as a normal connection (a `disconnected` record from an explicit disconnect is handled the same way). If it connects, the call runs normally. Otherwise the model gets a "disconnected" text. After the tools have left the session view, recovery comes from a config change (a toggle on the settings page), an explicit reconnect (TUI `/mcp connect`, opening an MCP App) or a newly created connection. A shared `isolation: "workspace"` connection reuses this failed record in a new session and does not reconnect because of it.
+- Only two kinds of failure keep the last valid catalog: an authorization failure (`oauth_authorization_failed`), and an unexpected disconnect of a stdio server with source `builtin` that went over the automatic restart limit (see the `builtin` item above). On an authorization failure the tools stay in the list, a call returns the needs-auth text, and no revoke or restore announcement is produced. At the next tool execution admission it reconnects as a normal connection (an MCP App read does not trigger it): first with the latest credentials (another process, such as the settings page, may have completed authorization), and if authorization is still needed it starts one round of interactive authorization. Other failures clear the catalog as usual. A server that never connected since the session started has no catalog to keep and can only be reconnected explicitly.
+- For Streamable HTTP, onerror is classified by structured error. A POST 404 when the call began with a session ID, or a 400 whose body says the session does not exist, counts as session expiry. A failure to open the GET event stream (any status code, including 404/405) only writes a debug log, and a GET stream drop is reopened by the SDK itself without rebuilding the client. For SSE, onerror receiving `SseError` (event stream disconnected) invalidates, because the SDK does not dispatch onclose for an SSE stream drop. Three network errors in a row at the fetch layer (structured error codes) or in the event stream body count as the server being unreachable, and any HTTP response resets the count. The count lives in the fetch wrapper and is shared by HTTP and SSE.
+- Interactive authorization is allowed only on first connect, explicit reconnect (settings page validation) and tool execution (a call that hits 401/insufficient_scope, or the execution-admission reconnect after an authorization failure).
+- `tools/list_changed` only marks dirty during discovery, and after ready is committed the same refresh entry continues. Refresh is single-flight with bounded retries (at most 3, 1 and 2 seconds apart), and on failure the old list and dirty are kept. Reading the snapshot triggers no I/O, and `listTools()` only reads the current snapshot.
 
-## Design trade-offs
+Explicit validation (settings page refresh) is decided by the adapter:
 
-| Capability                      | Semantics                                                                                                                    | ZCode plan                                               |
-| ------------------------------- | ---------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------- |
-| process-scoped tool catalog LRU | 32 entries, 30-minute TTL; read only while startup is pending                                                                | adopted in Phase 1/2                                     |
-| transport identity              | stdio command/args/env/cwd/environment/client capability; HTTP skipped because auth identity is unstable                     | adopted, plus workspace identity boundaries              |
-| payload sanitization            | strip connection instructions and tool annotations before publish                                                            | adopted; cache plays no role in permissions              |
-| concurrent publish              | entry-local generation; an older fetch cannot overwrite a newer snapshot                                                     | adopted                                                  |
-| cold miss                       | tool listing waits for the live client; MCP is never silently hidden for speed                                               | aggregate complete-hit adopted                           |
-| live execution                  | wait for the current client before the call, then re-resolve tool/visibility/annotations from live inventory before approval | adopted, adapted to ZCode's schema-validation order      |
-| lifecycle                       | per-server startup future, startup cancellation, manager shutdown, stdio cleanup                                             | keep existing session ownership, add regressions         |
-| status / auth / elicitation     | per-server startup update, auth state, ready wait, elicitation routing                                                       | not taken over by the catalog                            |
-| connector-specific cache        | long-term cache use after failure, background reconnect, hard refresh — semantics differ from ordinary MCP                   | not generalized to ordinary MCP                          |
-| required server                 | marking some servers required and blocking until ready                                                                       | no matching ZCode product semantics; not introduced here |
-| resources / templates           | keep querying the live client; no ordinary tool-catalog cache                                                                | out of scope                                             |
-| `tools/list_changed`            | the ordinary catalog cache has no full dynamic invalidation yet                                                              | Phase 3 may mark dirty on notification                   |
+- When connected, ping. A ping failure and a disconnect share the invalidation entry: HTTP/SSE and `builtin` stdio that has not gone over the restart limit enter background recovery with no interactive authorization, and this refresh only reports the current state of the recovery record. It does not replace the recovery and does not wait for it to end. Other stdio servers enter failed, and this refresh reconnects as a normal connection, with interactive authorization allowed.
+- When the record is not connected (failed, disconnected), reconnect, with interactive authorization allowed. So when background recovery ended because it needed authorization (failed, `oauth_authorization_failed`), the user has to refresh once more before interactive authorization starts.
+- Connecting, disabled and untrusted only return the current state.
 
-The core trade-off: build only the "startup advertisement fast path" — no connector-style long-term stale fallback, and the cache never grows into a second MCP runtime.
+The pool only manages leases and forwards explicit validation.
 
-## Confirmed boundaries
+## Tool calls
 
-1. Every session keeps its own `NodeMcpAdapter` and its own MCP servers/clients.
-2. No live server LRU, idle eviction, or cross-session client sharing.
-3. The cache stores only the tool catalog — never clients, transports, OAuth sessions, or process handles.
-4. A cache hit does not mean the server is connected; the settings page still reflects only live control-plane status.
-5. The cache only shortens the wait for provider tool declarations; session create/resume, conversation projection, desktop continuous, and mobile replayable semantics are unchanged.
-6. A tool call must switch to the live descriptor before input validation and permission decisions.
+A model tool call has no connection fence, and it binds the current client late at execution time. Before the call it only checks that the lease still points to this connection, `mcpConfigKey` has not changed, the state is connected and the tool name exists. After a permission or hook wait, the handler checks again with the same conditions that the target is still valid.
 
-## Impact brief
+The workspace trust guard runs config changes serially, and each change has two phases: first the admission check (reading the trust record), then waiting for the connection to complete. Tool calls, resource requests and pings wait only for the admission check in progress to end, and then run against the current admission result:
 
-### Feature summary
+- They do not wait for the connections of other servers. A call to a connected A does not wait because B is still in handshake.
+- They do not fail because of a queued config change. If a change has not started, the call uses the current connection. If a change alters the config of the target server, the old connection is closed when it takes effect, and in-flight calls follow the connection-close rule below. A queued change does not start a new-config process that has not been admitted.
+- A call that arrives during the admission check (the record of the same server is first set to pending review and then released) waits for that check to end and never reads the intermediate state.
+- A full reconcile first releases workspace servers, waits for the other servers' handshakes, and then checks admission again and reconnects. During this time a call to a workspace server waits for the reconnect and then runs. It does not land on the released connection. User and plugin servers are not affected.
 
-| Item      | Content                                                                                                              |
-| --------- | -------------------------------------------------------------------------------------------------------------------- |
-| Goal      | on a warm catalog hit, the first provider request does not wait for this session's live MCP startup                  |
-| Value     | new/resumed sessions get a faster first response while real MCP calls still use this session's live servers          |
-| Boundary  | the catalog handles capability advertisement only; the live adapter owns connection, permission facts, and execution |
-| Not doing | live MCP LRU, cross-session client/process sharing, HTTP/SSE catalog cache, long-term stale fallback                 |
+```mermaid
+sequenceDiagram
+ participant C as Caller
+ participant A as adapter
+ participant S as HTTP server
+ C->>A: callTool (current client, note whether a session ID exists)
+ A->>S: POST tools/call
+ S-->>A: 404 (session expired)
+ A->>A: onerror invalidates first, builds a new record
+ A->>A: wait for the current record connection task (shares the deadline with the call)
+ A->>A: check adapter not closed, same config key, connected, tool exists, lease still valid
+ A->>S: retry once on the new client
+ S-->>C: result
+```
 
-### UI surface matrix
+Automatic retry happens at most once per call and only for Streamable HTTP, under either of two conditions:
 
-| Surface                     | UI change | Behavioral impact                                                                | Evidence/regression                |
-| --------------------------- | --------- | -------------------------------------------------------------------------------- | ---------------------------------- |
-| Conversation first sampling | no        | on complete-hit, the provider request goes out early                             | core/bootstrap deterministic tests |
-| MCP settings page           | no        | keeps showing control-plane live status; cache hit is not "connected"            | `MO01-MO03` + status unit tests    |
-| MCP tool call / approval    | no        | waits for and resolves the live descriptor before permission                     | `Y01/Y02` + tool executor tests    |
-| Subagent                    | no        | keeps borrowing the parent live snapshot; never inherits the advertisement cache | borrowed port tests                |
-| Desktop / mobile remote     | no        | shares agent facts; continuous / replayable delivery unchanged                   | invariant regression               |
+1. Session expiry: a POST 404 when the call began with a session ID, or a 400 whose body matches `Server not initialized`, `No valid session ID` or `Mcp-Session-Id header is required` (case-insensitive). The server expresses session loss only in text, so these two text checks are an exception to the rule "do not use error text for control flow".
+2. Connection closed: a local ConnectionClosed, or JSON-RPC `-32000` with a message containing `Connection closed`.
 
-### Shared vs. divergent behavior
+Repeated execution is a known consequence. One session expiry closes the old client, all in-flight calls on that client receive ConnectionClosed, and each retries once, so a long call may run twice. The third network failure in a row also closes the old client synchronously: the call that triggered it and the other in-flight calls all receive ConnectionClosed and each retries once.
 
-- Shared: all session runtimes use the same catalog lookup, sanitization, generation, and live preflight rules.
-- Divergent: a warm complete-hit may sample first; cold/partial/unsupported misses keep waiting for live startup.
-- Divergent: the control plane may seed the catalog only after an explicit successful live connect; status-only queries never seed.
-- Divergent: a subagent consumes only the parent's live connected snapshot, never cached advertisements.
-- Unchanged: desktop continuous and mobile replayable only deliver messages; they own no catalog or MCP runtime.
+No retry for: a server JSON-RPC error (including `-32000 Not connected`), a lost response, HTTP 500, a 404 without an assigned session ID, a timeout, and a connection close on SSE or stdio. The reconnect wait time is `min(reconnect wait cap, remaining call budget)`. If during the wait the config is replaced, this lease no longer holds the server or the adapter closes, the original error is returned directly. When the whole lease closes (session close), the call is cancelled together with its caller. If the reconnect wait cap is reached without a connection, the original error is also returned, and a tool timeout is reported only when the call's own budget runs out first.
 
-### State owners
+When a tool call hits 401/insufficient_scope, an HTTP/SSE server that uses authorization-code OAuth (including a server configured with only a URL whose OAuth is declared by the server) runs interactive authorization through the same reconnect path (step-up merges the scope) and retries once on success. Servers with official authentication, `client_credentials`, or a static Authorization header do not start interactive authorization and return the original error. The conditions are the same as for interactive authorization at connect time. Concurrent 401s share one connection task. When authorization enters the waiting-for-user state (the authorization link is published), the call that triggered it ends at once with a needs-auth text and does not wait until timeout. Authorization continues in the background for up to 5 minutes, and the user can open the same link on the settings page to finish it. A caller cancel or timeout only ends this wait. It does not cancel the shared task and produces no unhandled rejection.
 
-| State                                           | Owner                                                               | Lifecycle                   |
-| ----------------------------------------------- | ------------------------------------------------------------------- | --------------------------- |
-| sanitized tool catalog LRU                      | the `McpToolCatalogPort` implementation injected by agent/bootstrap | agent process               |
-| live MCP client/process/status                  | each session's `McpPort` / `NodeMcpAdapter`                         | session                     |
-| startup Promise / AbortController / coordinator | the `AgentRuntime` session runtime                                  | session                     |
-| cached/live MCP `ToolEntry` set                 | the session `ToolRegistry`                                          | session                     |
-| control-plane MCP status                        | control-plane adapter                                               | agent process control plane |
+An MCP App call keeps the connection fence: it pins the connection identity and generation from when the App was opened, rejects after a generation change, does not retry automatically and does no authorization recovery during the call.
 
-`AgentRuntime` owns only startup coordination; `SessionFacade.closeSessionResources()` keeps owning the actual `McpPort.close()` scheduling and process cleanup. The two owners must not merge into one async finally, or shutdown ordering becomes implicit again.
+## Resource subscriptions
 
-## Recommended first-version product semantics
-
-The following are recommended defaults for v1; change this document first if they must change before implementation.
-
-| Condition                                                                             | First provider tools                                 | Tool call                                                                       | Later model steps                                                  |
-| ------------------------------------------------------------------------------------- | ---------------------------------------------------- | ------------------------------------------------------------------------------- | ------------------------------------------------------------------ |
-| all cacheable servers hit a fresh catalog, live startup pending                       | use the cached catalog immediately                   | wait on the same startup promise; validate and approve with the live descriptor | use the live catalog after startup success                         |
-| a legal empty catalog exists in cache                                                 | use the empty MCP tool set immediately               | no callable MCP tool exists                                                     | use the live catalog after startup success                         |
-| any enabled server cold-misses, is expired, or its transport does not support caching | wait for live startup                                | use the live descriptor                                                         | use the live catalog                                               |
-| warm hit, then live startup succeeds                                                  | the in-flight request keeps cached contracts         | executes after live revalidation                                                | atomically swap to live contracts                                  |
-| warm hit, then ordinary MCP startup fails                                             | the in-flight request may still contain cached tools | returns structured unavailable/startup failure                                  | no longer advertised; an execution-only tombstone serves old calls |
-| warm hit, then startup cancelled by session shutdown                                  | the current waiter gets cancellation                 | not executed                                                                    | session closes                                                     |
-| a cached tool was deleted or hidden by the live server                                | the model may produce an old tool call               | rejected as unavailable before permission                                       | the live catalog no longer contains the tool                       |
-| cached schema differs from live schema                                                | the model may produce old-schema arguments           | re-validate with the live schema; errors return as recoverable tool results     | the live catalog replaces the old schema                           |
-
-On a true cold miss, keep waiting for MCP. v1 does not adopt the more aggressive "silently omit MCP tools in round one, add them in round two", to avoid the model misjudging capability absence when the user explicitly asked for MCP.
-
-## Overall architecture
+The only source of subscription intent is the live MCP App instances on the host. The adapter only records "subscriptions confirmed on the current client". On a connection generation change the host closes the instances and unsubscribes by instance prefix, and the adapter does not replay old subscriptions on the new connection.
 
 ```text
-ZCode Protocol / Agent process
-│
-├─ McpToolCatalogPort                        process scoped
-│    ├─ stdio identity A -> sanitized tools
-│    ├─ stdio identity B -> sanitized tools
-│    └─ LRU capacity=32, TTL=30m
-│
-├─ control-plane NodeMcpAdapter              live, settings mcp/list
-│    └─ a successful tools/list may publish the catalog
-│
-├─ Session A NodeMcpAdapter                  live, session scoped
-│    ├─ startup shared Promise
-│    └─ a successful tools/list may publish the catalog
-│
-└─ Session B NodeMcpAdapter                  live, session scoped
-     ├─ startup shared Promise
-     └─ on a catalog hit, the provider does not wait for startup
+connection G1 drops -> adapter builds connection G2, generation +1
+   +-> onAppConnectionInvalidated(G1)
+   |      +- host: close the App instance on G1 -> unsubscribe by instance prefix -> desktop shows an error card
+user clicks "Retry" -> host opens a new instance
+   +- connection available: subscribe on G2, confirmed state belongs to G2
+   +- connection unavailable: first wait for the existing connection task (so a session restored before the handshake finished is not judged failed);
+      if still unavailable (for example failed after a stdio crash), reconnect once more and wait within the budget; only then report -32001
 ```
 
-The catalog port's in-memory implementation may live in the adapter layer, but not inside `NodeMcpAdapter`, and it must not extend the existing live `McpPort`. Bootstrap injects the lifecycle explicitly:
+The connection summary is read once before and once after issuing. If the session was closed or replaced, or the connection identity or generation changed, issuing is rejected. The open request has no cancel channel (the protocol parameters have no operationId), so the wait is bounded only by the reconnect budget.
+
+- The registry separates, by subscriberKey, registrations that succeeded from requests that are not complete yet. A cancel or failure only withdraws this request. A repeated or concurrent request with the same key cannot delete other requests or earlier successful registrations. An explicit unsubscribe or a scope cleanup invalidates old requests, and a late completion must not revive them.
+- The current connection record stores the remote confirmation (subscribed, unsubscribed, unknown) and a serial task per URI. An error the server has explicitly answered keeps the original confirmation state. After any other RPC failure the confirmation becomes unknown, and the next request confirms again. Unsubscribe completion is recorded only after the unsubscribe request was really sent.
+- A lease records the (uri, subscriberKey) pairs it registered itself. When a lease is released or switches to another connection, it unsubscribes only those keys and does not clean by session prefix: when the same session reopens, the old and new leases may briefly coexist, and the new lease's subscriptions must not be taken away by the old lease.
+
+## State classification and model reminder
+
+`classifyServer(config, name, row)` is the only availability check. Catalog reads, status facts, execution admission, error text and revoke reasons all read only from it:
+
+| Result           | Condition                                                                                   | Model-visible                                       |
+| ---------------- | ------------------------------------------------------------------------------------------- | --------------------------------------------------- |
+| `not_configured` | The server is not in the config                                                             | Revoke reason                                       |
+| `disabled`       | The MCP master switch or the server switch is off, or the state is disabled                 | Revoke reason                                       |
+| `absent`         | The server is in the config but has no connection record (lease released or not started)    | Not reported; call errors use the disconnected text |
+| `pending`        | State is connecting and there is no authorization wait                                      | pending section                                     |
+| `needs_auth`     | There is an authorization wait (authorization), or failed with `oauth_authorization_failed` | needs-auth section                                  |
+| `failed`         | failed, disconnected, untrusted, `official_origin_untrusted`                                | failed line (delivered definitions are not revoked) |
+| `connected`      | connected                                                                                   | Tool catalog                                        |
+
+The status facts are `{ pending, needsAuth, failed }`. pending is sorted by code unit, and needsAuth is sorted by code unit. failed lists ASCII names first (compared with localeCompare among themselves), and non-ASCII names are sorted among themselves by code unit. The source index and permission denials compute revokes only in memory and are not persisted. Diagnostics are redacted once at the facts boundary.
+
+The needs-auth section goes before the failed section:
 
 ```text
-bootstrap creates one McpToolCatalogPort
-  -> inject the agent protocol control plane
-  -> inject every createZCodeApp / session runtime
+The following MCP servers require authentication before their tools can be used:
+<names>
 
-each session still creates its own NodeMcpAdapter
-  -> existing connectConfiguredServers()
-  -> existing listTools() / callTool() / close()
+The authorization cannot be completed from this conversation. If the user's request depends on one of these servers (even if they didn't name it explicitly), or they ask about it, tell them that it needs to be authorized - via the MCP server settings in ZCode - and that the capability is unavailable until they do. Otherwise carry on with the request and do not mention these servers. Do not ask the user for authorization codes, tokens, or callback URLs.
 ```
 
-Module-level implicit singletons are forbidden. Tests, multiple agent instances in one process, and future runtime environments must be able to get independent caches through dependency injection.
+With more than 30 names, the names are joined with `, ` and `…and N more` is appended. When a ToolSearch has no match, only the pending and failed facts are attached.
 
-## Initialization sequences
+Announcement rules:
 
-### Warm catalog hit
+- An announcement is generated only when the ToolSearch mode of the request is not off and the control tool is available. An already generated announcement is hidden from the projection only when the request mode is off. State changes while ToolSearch is temporarily unavailable do not generate an announcement, and the bytes already sent do not change after it recovers.
+- A state change with unchanged names also produces an announcement, and the same state is deduplicated. The announcement body carries the current pending, needs-auth and failed facts.
+- A compact rebuild compares tool names only: it does not write MCP state keys, does not compute revoke and restore, and does not render the state sections. After a compact, the next normal collection compares against the last state in the retained history.
+- The old strict schema of `toolSearchAnnouncement` still contains only three name arrays. The MCP state is stored under the `toolSearchMcpDelta` key in the loose metadata, and unknown fields are dropped on read.
+- `toolSearchAnnouncement` is written only when a tool name changed. An announcement with only state, revoke or restore changes does not write this key and writes only `toolSearchMcpDelta`. A reader recognizes an announcement by "either of the two keys": hiding in off mode, re-rendering by mode, filtering an empty body, cold restore and state accumulation all share the same check. Reason for the fix: an old version re-renders the body from the three name arrays, and when all three arrays are empty it gets an empty body and then fails with `System reminder body cannot be empty` (observed on v3.16.3), so after a downgrade the session cannot continue. When this key is not written, an old version restores the record as plain synthetic text with no error. The cost is that the old version sends the body as user text without the system-reminder wrapper, and it is not hidden in off mode either (observed on v3.16.3).
+
+Unavailability at execution time has two paths:
+
+- The tool is not in the registry of this step and the name is `mcp__<server>__...`:
+  - The latest view already has the tool (the server connected after this step): it runs at once on the normal path, with permissions and Hooks as usual. The selection rules (allow/deny, official CUA, model visibility) are the same as at the registration of the next step, and the registry of this step does not change.
+  - The server it belongs to is on its first connection (connecting, no tool list yet, not in authorization), and this session has not already waited a full time for this connection: wait for it to leave the connecting state. Calls in the same assistant reply share a 10 second budget, and if the tool appears it runs. If the full 10 second wait ends and the tool still has not appeared (judged by the wait result, not by wall clock), this connection is recorded and the session does not wait for it again. A server that is recovering keeps its tool list and does not take this wait.
+  - In other cases, or if the tool is still missing after the wait: `<tool_use_error>Error: No such tool available: <name><suffix></tool_use_error>`. When the tools of this main-agent request include `WaitForMcpServers` and the server is still connecting, the suffix is `. The MCP server '<server>' is still connecting. Call WaitForMcpServers to wait for it, then try again.`. Otherwise only MCP tools that this session announced or delivered get a reason suffix, and the suffix is a fixed text chosen by the `classifyServer` result.
+- The tool is no longer in the registry and the name is not an MCP tool: the same error, with no suffix.
+- The tool is still in the registry but the connection is unavailable at execution time: one fixed text is returned, chosen by the `classifyServer` result.
+
+## History definitions and request projection
+
+A native request separates delivered definitions from history references that still need replay:
+
+- Deferred tools: only definitions that were referenced and sent with defer_loading are recorded.
+- Resident MCP tools: recorded and frozen when they first appear, and the recorded definition is sent afterwards. An MCP record with no reference is a resident record, and the record order is the order of first appearance.
+- A resident tool that leaves the catalog (including revoked ones) is re-declared as non-deferred, with the same bytes as the definition sent before, except for tools that are still in the registry and only filtered out in this round. Position: in record order, after the previous resident tool that is still in the request. If there is none before it, before the first MCP tool. If the request has no MCP tools, at the end. When a tool leaves, the tool order changes once (the cache is invalidated that once) and stays unchanged after that. When the model calls these tools, it gets a "does not exist" error with the reason of the server they belong to.
+- Revoke eligibility: retained names that were referenced, plus names in resident records. When only the announcement names exist and no definition was delivered, no "ignore the earlier definition" revoke instruction is generated.
+- Input validation still follows the live definition. The model sees the frozen definition, and at execution the live definition may be stricter. When they disagree, the server or local validation returns the error.
+- Compact carries the deferred records that correspond to retained-segment references, plus the resident records that have left and were not revoked (`not_configured` is carried as well). Resident records that are still in the catalog are not carried, and the first request after compact records them again from the live definition.
+
+Request preparation is a pure projection and also returns the definition delivery delta for this request. When a valid assistant message or a retained partial is committed, it is written to the existing internal history metadata. Estimates, unsent requests and failed requests with no valid response are not committed. For delivery records, the MCP source is written only as `serverName` and `toolName`.
+
+Persistent reads are not strict: on read, delivery records, state and revoke deltas drop unknown fields. A revoke reason accepts any string, an unknown reason is treated as "revoked", and compact does not carry it. This way, when a new version adds a field or reason, a downgraded read does not lose the whole record. The writer writes only the fields above. Cold restore, rewind and fork rebuild from the current history branch, and no new database table is added. Local keeps the existing schema expansion and the wrapped-call protocol.
+
+## Request and search
+
+A single normalInputPreparationPending controls the preparation after new input, a guide and a complete tool batch: consume the snapshot, generate the tool set, collect attachments. Retry, model downgrade, continuation and reactive compact keep the original snapshot.
+
+ToolSearch is available even when only pending servers exist. At execution it reads the latest scoped catalog. A keyword match returns at once, including tools retained for pending servers. When there is no match or a select item is missing, it refreshes first. If the relevant server is still pending, it waits up to 5 seconds and then searches again. An explicit target does not wait for unrelated servers. The wait reuses the connection task, starts no connection or authorization, and a cancel only ends this wait. ToolSearch treats only a full server name or an explicit `mcp__` prefix as naming a server.
+
+A cached description is explicitly marked as display only, and it is scheduled as non-read-only, non-concurrent and possibly destructive. Argument and permission checks run after the live definition is first obtained. A real tightening in a known live definition still rejects the calls of this batch.
+
+### When ToolSearch is off: WaitForMcpServers
+
+When the ToolSearch mode resolved for the request is off there is no announcement, and `WaitForMcpServers` is the only hint that servers are still connecting:
 
 ```text
-session/runtime create
-  -> catalogPort.context(scope) for each enabled server
-       ├─ synchronously read the complete cached catalog
-       └─ allocate a fetch generation ticket per cacheable server
-  -> immediately call the existing mcpPort.connectConfiguredServers()
-       └─ save the same Promise as the session shared startup
-  -> register advertisement-only cached ToolEntry
-  -> the provider request uses cached contracts
-
-background startup completes
-  -> connected server publishIfNewest()
-  -> replace cached ToolEntry with live ToolEntry
-  -> cached ToolEntry absent from live inventory becomes a provider-invisible tombstone
-  -> invalidate the provider tool contract cache
+The status facts of this step have pending, or this session's main-agent request already sent it --> added to the tool list (latched, kept afterwards)
+The model calls WaitForMcpServers({servers?}) --> wait for the targets to leave the connecting state (<= 5 s) --> report the state line by line
+The model calls a tool of a server on its first connection --> the executor waits <= 10 s (see "Unavailability at execution time")
 ```
 
-### Cold catalog miss
-
-```text
-session/runtime create
-  -> catalogPort lookup yields incomplete coverage
-  -> immediately call the existing mcpPort.connectConfiguredServers()
-       └─ save the same Promise as the session shared startup
-  -> first-round sampling awaits live startup
-  -> register live ToolEntry
-  -> provider request
-```
-
-### New and resumed sessions
-
-- New sessions and cold-resumed sessions follow the same lookup rules; "old session" alone is not a cache hit.
-- A still-alive session whose runtime and live adapter survive keeps using its own live state and never re-enters the catalog fast path.
-- Resuming a closed session creates a new live adapter; if a matching catalog still exists in the same agent process, warm sampling is allowed, but tool calls still wait on the new adapter.
-- The catalog is never written into rollouts, task snapshots, or replayable events; after an agent process restart the ordinary catalog is a cold miss — also preventing the schema cache from being mistaken for persisted session permissions.
-
-### Cached tool call
-
-```text
-provider returns a cached MCP tool call
-  -> registry finds the advertisement-only cached ToolEntry
-  -> resolveForExecution(signal)
-       ├─ await the current session's shared startup Promise
-       ├─ look up serverName + toolName in the current live adapter
-       ├─ missing / invisible / current provider name changed -> structured unavailable
-       └─ present -> build the live ToolEntry
-  -> validate with the live input schema
-  -> run PreToolUse / permission policy
-  -> decide readOnly/destructive/risk from live annotations
-  -> live callTool()
-```
-
-`resolveForExecution` must happen before initial input validation, the PreToolUse hook, and permission. Waiting for startup only inside the cached handler is unsafe: the executor already makes permission decisions from `ToolEntry.metadata` before the handler runs.
-
-## Port and runtime interfaces
-
-The existing `McpPort` is unchanged. It keeps expressing only the current session's live connection and execution capability:
-
-```text
-McpPort
-  connectConfiguredServers / connectServer / disconnectServer
-  status / listTools / callTool / close
-```
-
-A new, independently injectable `McpToolCatalogPort` expresses the cross-session read-only schema cache. The runtime synchronously obtains the lookup context and generation ticket before calling the existing `connectConfiguredServers()`:
-
-```ts
-type McpToolCatalogWorkspaceScope =
-  | {
-      kind: "local";
-      workspaceIdentity?: string;
-      workspacePath: string;
-    }
-  | {
-      kind: "remote";
-      workspaceIdentity?: string;
-      workspacePath: string;
-      remoteSessionId?: string;
-    };
-
-interface McpToolCatalogScope {
-  workspace: McpToolCatalogWorkspaceScope;
-  serverName: string;
-  serverConfig: McpServerConfig;
-  clientCapabilityFingerprint: string;
-}
-
-interface McpToolCatalogFetchTicket {
-  generation: number;
-}
-
-interface McpToolCatalogContext {
-  current():
-    | { kind: "hit"; tools: McpCatalogToolDescriptor[] }
-    | { kind: "miss"; reason: "absent" | "expired" | "dirty" | "oversize" };
-
-  beginFetch(): McpToolCatalogFetchTicket;
-
-  publishIfNewest(ticket: McpToolCatalogFetchTicket, tools: McpToolDescriptor[]): void;
-
-  invalidate(): void;
-}
-
-interface McpToolCatalogPort {
-  context(scope: McpToolCatalogScope): McpToolCatalogContext | undefined;
-}
-```
-
-`context()` returns `undefined` for HTTP/SSE unsupported in v1, which makes aggregate coverage `incomplete`. Cache-identity normalization, sensitive-field digests, TTL, LRU, and generation are encapsulated in the port implementation; core runtime never assembles keys.
-
-`McpCatalogToolDescriptor` should exclude at the type level fields that cannot be trusted cross-session, preventing misuse:
-
-```ts
-type McpCatalogToolDescriptor = Pick<
-  McpToolDescriptor,
-  "serverName" | "toolName" | "name" | "description" | "inputSchema" | "outputSchema"
->;
-```
-
-A legal empty array must be a cache hit; it must not share `undefined` with a cache miss.
-
-`startMcpStartup()`'s coordination duties:
-
-```text
-1. obtain catalog contexts, read snapshots, allocate fetch tickets for enabled servers
-2. unconditionally start the existing mcpPort.connectConfiguredServers() immediately
-3. save and reuse one startup Promise
-4. complete-hit: register advertisement entries first; cold/incomplete: first round awaits startup
-5. startup success: publishIfNewest() per server, including a successful zero-tool catalog
-6. reconcile this session's live registry; missing items become provider-invisible tombstones
-7. startup failure/cancel: do not publish; stop advertising cached entries, keeping tombstones that old responses can still resolve
-```
-
-This split lets the catalog optimization be disabled or replaced alone, and keeps control-plane, subagents, and live adapters from having to understand warm/cold sampling semantics.
-
-### Session startup coordinator
-
-Today's `mcpInitialized` / `mcpToolsRegistered` booleans cannot distinguish "cached entries advertised" from "live entries settled". Implement with one session-scoped coordinator owning the Promise, catalog contexts, and registry names, so multiple turns, compactions, or tool calls never each assemble their own state:
-
-```text
-                         complete-hit
-IDLE ── start ──> STARTING_CACHED ──────> provider sampling allowed
-                    │   │
-                    │   ├─ live snapshot settled ──> LIVE_SETTLED
-                    │   └─ session close ──────────> CLOSED
-                    │
-                    └─ tool call ── wait same Promise ── live resolve
-
-                         incomplete
-IDLE ── start ──> STARTING_BLOCKED ─────> provider waits same Promise
-                         │
-                         ├─ live snapshot settled ──> LIVE_SETTLED
-                         └─ session close ──────────> CLOSED
-```
-
-`LIVE_SETTLED` is per-server: connected servers use live entries; failed/disabled servers stop advertising the cached entries but keep execution-only tombstones. Aggregate throw and session cancellation must also produce terminal outcomes readable by preflight — never just swallow errors and leave a "registered" boolean.
-
-## Tool registry and executor
-
-### Advertisement entry
-
-A cached descriptor can only produce a provider advertisement entry:
-
-- Supplies name, description, input/output schema to `ToolRegistry.toContracts()`.
-- Re-filtered by the current session's tool allowlist / denylist.
-- Provides no annotations, risk, approval, or session instructions the permission system could trust.
-- Carries `resolveForExecution`, resolving to the live `ToolEntry` at the execution boundary.
-- Required permission/metadata fields on the existing `ToolEntry` use fixed conservative placeholders (high risk, needs approval), never derived from cache; the executor must assert a deferred entry was resolved first, and placeholders must never enter the real permission flow.
-
-Suggested optional preflight on `ToolEntry`:
-
-```ts
-type ToolExecutionEntryResolution =
-  | { kind: "ready"; entry: ToolEntry }
-  | { kind: "unavailable"; message: string; recoverable: true }
-  | { kind: "cancelled"; message: string };
-
-interface ToolEntry {
-  resolveForExecution?: (context: {
-    input: unknown;
-    signal?: AbortSignal;
-  }) => Promise<ToolExecutionEntryResolution>;
-}
-```
-
-`call-runner` runs preflight exactly once after registry lookup, before canonicalize / normalize / validation; `ready.entry` becomes the sole entry afterwards. `unavailable` yields a stable, recoverable MCP tool result; `cancelled` yields the existing cancellation result; neither enters hooks, permission, or handler, and both must publish the corresponding tool error event — a UI row must never be stuck forever in input streaming.
-
-Preflight awaits the same session shared startup Promise while racing the tool caller signal and the session shutdown signal. The shared startup stays under the existing MCP connect / initialize / auth timeout configuration; if some transport currently has no bounded startup timeout, enabling it in Phase 2 requires adding the timeout first — a cached tool call must never wait unboundedly. A startup terminal failure maps to `unavailable`; a caller abort maps to the existing `ToolCancelled` plus a terminal tool event.
-
-This startup wait does not count against the live tool handler's execution timeout — same semantics as a permission wait: only after preflight has the live entry, live schema validation, and permission does the existing handler's `executeWithTimeout` start. Log `mcp.tool.live_preflight.waitMs` separately to distinguish slow initialization from slow execution.
-
-### Registry reconcile
-
-Today's `registerMcpTools()` only overwrites same-named entries and never removes tools gone from the live inventory. The async catalog must explicitly manage the MCP tool names registered in this session:
-
-```text
-cached names = {A, B, C}
-live names   = {A, C, D}
-
-reconcile:
-  replace A/C with live entries
-  replace B with a provider-invisible unavailable tombstone
-  register D
-  invalidate the provider tool cache
-```
-
-An already-issued provider request owns its tool contract array and is not rewritten by later reconciles. So B cannot be unregistered immediately: when the old response arrives, registry lookup would produce an unrecoverable `ToolNotFound` before live preflight is ever reached.
-
-v1 adds an advertisement flag on registry entries ("participates in `toContracts()`"). Tombstones leave later provider contracts but registry lookup still resolves old responses, stably returning recoverable unavailable. Because session MCP config does not hot-switch today, tombstones can live until session close; if a runtime refresh is introduced later, reclaim safely via provider contract generation/ref-count — never guess that old responses are done by unregistering immediately.
-
-## Tool catalog cache
-
-### Scope
-
-v1 caches ordinary stdio MCP only.
-
-HTTP/SSE is not cached yet because there is no stable, normalized resolved auth principal identity. Sharing by URL, headers, or server name alone could mix tool catalogs across different accounts, OAuth tokens, or permission scopes.
-
-### Default capacity and TTL
-
-- LRU capacity: 32 server catalog identities
-- Per-entry sanitized JSON cap: 2 MiB
-- Process cache total sanitized JSON budget: 16 MiB, evicted by weighted LRU
-- TTL: 30 minutes
-- Lifetime: in-process only, never on disk
-- Snapshot: `tools + publishedAt`
-- Entry: `nextFetchGeneration + lastAcceptedGeneration`
-
-Beyond the entry-count cap, ZCode adds a byte budget so a few abnormally large schemas cannot create a new memory problem. A successfully fetched catalog exceeding the per-entry cap is marked `oversize`, clears that identity's old snapshot, and later runs take the cold path — never keep advertising an old value because "the new one does not fit".
-
-Parameters stay internal injectable options for fake clocks and capacity tests; no user-facing config. A lookup hit may bump LRU recency, but the TTL counts from the last successful publish — repeated reads never extend it unboundedly.
-
-### Identity
-
-The identity must express "should this connection get the same tool schema". Minimum ingredients:
-
-```text
-local workspaceKey = workspaceIdentity?.trim() || workspacePath
-remote workspaceKey = workspaceIdentity.trim() (required)
-+ remoteSessionId (required for remote scope)
-+ serverName
-+ normalized stdio command
-+ ordered args
-+ explicit cwd / effective fallback cwd
-+ effective environment digest
-+ client capability fingerprint
-+ tool catalog schema version
-```
-
-Requirements:
-
-- `workspacePath` is for execution cwd only; isolation uses `workspaceKey`.
-- Same path with different remote identity must miss.
-- Local allows `workspaceIdentity` to default to the path; SSH/WSL/Docker without the required `workspaceIdentity` / `remoteSessionId` return unsupported/cold miss in v1 — never degrade to sharing by remote path alone.
-- Env values only enter a process-salted cryptographic digest held by the cache instance, never a serializable raw key; they must never appear in logs, errors, or telemetry.
-- The port computes a normalized fingerprint only from `serverConfig`; no raw config is kept in cache entries.
-- Key logging may only output an opaque fingerprint and hit/miss reason.
-- Client-capability or catalog payload schema changes must make old entries miss.
-- Cwd resolution, base env, network env, and server env merging must reuse the live adapter's pure functions — never write a second "approximate key"; Windows env names normalize case-insensitively, paths use current-platform semantics.
-- Session-specific browser broker, temp sockets, and temp tokens that reach the effective config must join the fingerprint; hence the built-in `node_repl` may not hit across sessions in v1 — an expected, safety-first result.
-
-### Payload sanitization
-
-Allowed in cache:
-
-- server/tool stable identity
-- model-visible name
-- description
-- input schema
-- output schema
-
-Forbidden to cache or to trust from cache:
-
-- `annotations`
-- readOnly / destructive / idempotent / openWorld inference
-- permission / approval / risk level
-- session-specific initialize instructions
-- OAuth/auth availability
-- runtime scope, sandbox, cwd execution state
-- plugin/session provenance
-- clients, transports, process handles
-
-### Generation
-
-Every live fetch obtains an entry-local generation ticket before actually connecting:
-
-```text
-ticket.generation <= lastAcceptedGeneration
-  -> discard the publish
-
-ticket.generation > lastAcceptedGeneration
-  -> sanitize
-  -> save snapshot
-  -> update lastAcceptedGeneration
-```
-
-After LRU eviction, an in-flight fetch holding an old entry context may complete, but must not implicitly reinsert the evicted identity into the LRU. A new lookup creates a new entry governed by a new generation independently.
-
-### Aggregate coverage
-
-v1 uses complete-coverage semantics:
-
-- `complete-hit` only when every enabled, cacheable server has a fresh entry.
-- Any server miss, expiry, or unsupported transport makes the whole result `incomplete`; the first round waits for live startup.
-- Disabled/untrusted servers need no cache entry and contribute no provider tools.
-
-No progressive "some servers first, the rest later" tool sets, so the first-round model never sees incomplete capability.
-
-## Failure, cancellation, and refresh
-
-### Startup failure
-
-- A failed result must not overwrite an existing successful catalog.
-- After the failed session's startup turns terminal, cached tools must no longer be exposed to later model steps.
-- An already-issued model request calling a cached tool gets unavailable/startup failure via live preflight.
-- The registry does not immediately unregister advertised cached names; it switches them to provider-invisible tombstones that serve already-issued provider requests.
-- A new session may again use the in-TTL catalog during its startup-pending window; if it also fails, it likewise stops exposing after terminal.
-
-"Keep using the cache long-term after startup failure with background reconnect" is connector-specific semantics — not generalized to ordinary MCP in v1.
-
-### Cancellation
-
-```text
-turn/tool waiter abort
-  -> cancels only the current waiter
-  -> does not cancel the session shared startup
-
-AgentRuntime.beginShutdown()
-  -> synchronously moves the startup coordinator to CLOSED
-  -> abort the session-owned startup controller
-  -> the completion handler checks CLOSED + generation; no publish / reconcile
-
-SessionFacade.closeSessionResources()
-  -> still owns calling mcpPort.close()
-  -> runs the existing adapter / stdio process-tree cleanup
-  -> does not publish cancelled fetches
-```
-
-Today's `callTool()` directly awaits `record.connecting` without being bound to this tool call's `AbortSignal`. The implementation needs a per-waiter abort race, but one waiter stopping must never cancel the session-held startup. `AgentRuntime.beginShutdown()` is the coordinator's synchronous close point, blocking late async completion write-backs; it does not take over adapter close ownership. Actual MCP process cleanup stays with `SessionFacade.closeSessionResources()`'s existing concurrent close chain, avoiding double or missed closes between runtime and facade.
-
-To preserve the existing `McpPort` contract, the session-owned controller may first cancel the coordinator-exposed shared startup wrapper; the underlying raw connect promise is interrupted/cleaned by the concurrently following `mcpPort.close()`. Whether the raw promise later resolves or rejects, completion must check CLOSED first and never re-publish or mutate the registry.
-
-### Config refresh
-
-Session MCP config is still startup-time config; this design adds no runtime hot-switch.
-
-If a refresh is added later:
-
-- Publish only after a new generation succeeds.
-- Already-issued model steps keep their own contracts.
-- In-flight live tool calls are not interrupted by the new catalog.
-
-### `tools/list_changed`
-
-Phase 2 may defer full dynamic refresh behind a feature flag; Phase 3 closes the notification loop:
-
-- Cache reads do not refresh `publishedAt`.
-- Once the adapter recognizes `tools/list_changed`, it marks the entry dirty / invalidates it; the notification payload is never treated as a new catalog directly.
-- If the adapter does not consume the notification yet, the risk note must state reliance on TTL + live revalidation — never claim the catalog is forever in sync with the server.
-
-## Control plane and settings page
-
-The process-scoped control-plane protocol handler may inject the same `McpToolCatalogPort`, so a successful settings-triggered `connect + tools/list` can pre-seed the schema for new sessions in Phase 3; live adapters themselves hold no cache.
-
-Boundaries kept:
-
-- `mcp/list` status still comes from the control-plane adapter's live status.
-- A catalog hit is never projected as `connected` and never changes tool-count/status UI.
-- Status-only requests neither connect nor publish a catalog.
-- A connect replace publishes only when live tools were successfully obtained.
-- OAuth pending, workspace epoch, config readiness, and sensitive-information isolation keep following `docs/mcp-oauth-client-auth.md`.
-
-## Subagents
-
-Today a subagent borrows the parent `McpPort` and consumes the parent's exact startup snapshot; the child owns no connection lifecycle.
-
-v1 keeps that contract:
-
-- The parent's main model may sample early with the cached catalog.
-- When the model actually starts the `Agent` tool and the child needs MCP, the subagent bridge keeps waiting for the parent's live startup.
-- The child receives only the exact, scope-filtered snapshot of currently live connected servers.
-- The child may not use the parent's advertisement-only cached snapshot and may not publish/close the parent's catalog or connections.
-
-If "children that don't use MCP also wait for parent startup" needs optimizing later, design scoped/profile-based server trimming separately — never treat cached metadata as child execution permission in this feature.
-
-## Desktop, web, mobile, and remote boundaries
-
-```text
-desktop-continuous ─┐
-                    ├─ shared Host / Agent session -> session MCP adapter
-mobile replayable ──┘
-```
-
-- The cache exists only in the actual agent process.
-- Mobile `/remote` keeps attaching to the desktop's existing Host/Agent; no independent MCP runtime or cache authority.
-- Relay, desktop main, and renderer hold no tool-catalog business state.
-- Desktop continuous and mobile replayable only affect how events reach the UI; provider tool-catalog and live-execution facts are unchanged.
-- Remote workspace identity must be part of the cache key; never share by remote `workspacePath` alone.
-- The current `ZCodeWorkspaceRef` has only `workspaceIdentity` / `workspaceKey` / `workspacePath` — no `remoteSessionId`. Phase 2 only uses the unified remote identity parser to decide "this is a remote workspace", never inferring or assembling a session id from the identity string; once deemed remote, the catalog context returns unsupported and the first round stays on the cold live path.
-- Phase 3, to enable remote catalogs, must first thread the real `remoteSessionId` from the existing host/workspace session resolver into internal workspace/session context and the catalog scope, and key it together with `workspaceIdentity`. With either field missing, stay disabled — never share by path, and never sink that state into main/relay.
-
-This design does not modify `getTaskSnapshot`, dynamic task events, owner lease, queue, or replay-gap recovery.
-
-## Logging and metrics
-
-Service-layer logs use `createServiceLogger(scope)`; agent/bootstrap keeps the existing logger. Never log env, headers, OAuth secrets, tokens, or full tool schemas.
-
-Suggested events:
-
-| Event                           | Level | Key fields                                             |
-| ------------------------------- | ----- | ------------------------------------------------------ |
-| `mcp.catalog.lookup`            | debug | fingerprint, hit/miss/expired/unsupported, serverCount |
-| `mcp.catalog.published`         | debug | fingerprint, toolCount, generation                     |
-| `mcp.catalog.publish_discarded` | debug | fingerprint, generation, lastAcceptedGeneration        |
-| `mcp.startup.sampling_ready`    | info  | source=cache/live, waitMs, serverCount, toolCount      |
-| `mcp.tool.live_preflight`       | debug | serverName, toolName, waitMs, outcome                  |
-| `mcp.startup.failed`            | warn  | existing failure summary, no sensitive config          |
-
-Suggested aggregate metrics:
-
-- catalog complete-hit / incomplete / expired / unsupported ratios
-- pre-provider MCP wait on warm hits
-- pre-provider MCP wait on cold misses
-- cached tool calls' wait for live startup
-- live preflight unavailable / schema drift counts
-- LRU entry count and eviction count
-
-High-frequency tool-call detail stays debug; production lifecycle keeps only one sampling-ready per session plus exceptions.
-
-## Phased implementation
-
-### Phase 1: cache write-only
-
-Goal: no provider-wait semantics change yet; validate identity, sanitization, and publish generation first.
-
-Main changes:
-
-- Add the `McpToolCatalogPort` contract and the adapter-layer in-memory implementation.
-- Bootstrap creates the process-scoped port and injects it into every session runtime.
-- Session runtimes publish after a successful `tools/list`; `NodeMcpAdapter` untouched.
-- Add cache hit/miss/publish metrics; the runtime does not read the cache yet.
-- Control-plane seeding stays off, avoiding coupling status and cache authority in the first stage.
-
-Acceptance:
-
-- No change to existing MCP runtime, permissions, settings page, or E2E behavior.
-- Two concurrent sessions finishing out of order: the older generation never overwrites the newer snapshot.
-- No sensitive config in logs.
-
-### Phase 2: async provider catalog
-
-Goal: for local workspaces, let a complete-hit's first provider request skip waiting for live MCP, with execution and lifecycle safety as the enablement gate.
-
-Main changes:
-
-- The runtime reads the catalog context before calling the existing `McpPort.connectConfiguredServers()` and saves the one shared startup Promise.
-- The runtime registers cached advertisement entries.
-- After startup completion, reconcile live entries; missing/failed items become provider-invisible tombstones.
-- The executor gains a live `resolveForExecution` before permission.
-- Tool waiters support independent AbortSignals without cancelling the shared startup.
-- `AgentRuntime.beginShutdown()` synchronously closes the coordinator and aborts the session startup; the facade keeps `mcpPort.close()`.
-- Local workspaces may read the cache; SSH/WSL/Docker-style remote workspaces return unsupported/cold miss until `remoteSessionId` is threaded end-to-end into the runtime.
-- Subagents keep waiting for the parent's live startup, borrowing only the live connected snapshot; never read the advertisement cache.
-
-Acceptance:
-
-- A warm session's provider request arrives before the MCP barrier releases.
-- A tool call keeps waiting before the barrier and, after release, calls this session's live process.
-- Cached tool deletion, schema change, and destructive-annotation change are all adjudicated by live preflight.
-- Reconcile after contracts were issued: stale tool calls still reach tombstone preflight, never `ToolNotFound`.
-- Shutdown racing startup completion: no publish, no reconcile; existing process-tree cleanup still runs.
-- Remote workspaces degrade safely to the cold live path; subagents stay live-only. Both are Phase 2 enablement gates, not deferred to the default-on stage.
-
-### Phase 3: boundary completion and default-on
-
-Goal: control-plane seeding, notifications, observability, and — once identity threading completes — optionally remote catalogs.
-
-Main changes:
-
-- Settings-page successful live connects seed the catalog.
-- `tools/list_changed` dirty/invalidations.
-- Optional: thread the real `remoteSessionId` into the runtime catalog scope, then enable SSH/WSL/Docker caching with representative no-cross-identity tests; until threading completes, keep Phase 2's remote-unsupported behavior.
-- Confirm default-on from metrics; keep an internal cache mode for emergency rollback.
-
-## Estimated code impact
-
-| Rank           | Area                                                                              | Expected change                                                              |
-| -------------- | --------------------------------------------------------------------------------- | ---------------------------------------------------------------------------- |
-| invariant-only | `apps/zcode-cli/packages/contracts/src/interfaces/mcp.port.ts`                    | existing live port interface unchanged                                       |
-| must-inspect   | `apps/zcode-cli/packages/contracts/src/interfaces/`                               | new catalog port, scope, sanitized descriptor types                          |
-| must-inspect   | `apps/zcode-cli/packages/adapters/src/mcp-tool-catalog/`                          | in-memory LRU, identity, TTL, generation, sanitization                       |
-| must-inspect   | `apps/zcode-cli/packages/bootstrap/src/zcode-protocol-entrypoint.ts`              | process-scoped cache owner                                                   |
-| must-inspect   | `apps/zcode-cli/packages/bootstrap/src/zcode-protocol/server-types.ts`            | catalog port enters the protocol process context                             |
-| must-inspect   | `apps/zcode-cli/packages/bootstrap/src/zcode-protocol/server-operations.ts`       | local scope and remote classification; Phase 3 optional session id threading |
-| must-inspect   | `apps/zcode-cli/packages/bootstrap/src/zcode-protocol/workspace-model-catalog.ts` | pass the same port to every workspace session app                            |
-| must-inspect   | `apps/zcode-cli/packages/bootstrap/src/app/create-app.ts`                         | catalog port dependency injection into the session runtime                   |
-| must-inspect   | `apps/zcode-cli/packages/bootstrap/src/app/session-facade.ts`                     | keep actual MCP close ownership and cleanup                                  |
-| must-inspect   | `apps/zcode-cli/packages/core/src/runtime/agent-runtime.ts`                       | shutdown synchronously closes coordinator, aborts startup                    |
-| must-inspect   | `apps/zcode-cli/packages/core/src/runtime/methods/mcp.ts`                         | cached/live startup state and reconcile                                      |
-| must-inspect   | `apps/zcode-cli/packages/core/src/runtime/methods/turn-loop.ts`                   | warm/cold selection before sampling                                          |
-| must-inspect   | `apps/zcode-cli/packages/core/src/mcp/index.ts`                                   | advertisement entry and live entry construction                              |
-| must-inspect   | `apps/zcode-cli/packages/core/src/tool/executor/call-runner.ts`                   | live preflight before permission; waiter abort                               |
-| should-inspect | `apps/zcode-cli/packages/core/src/tool/registry.ts`                               | reconcile / provider-invisible tombstone                                     |
-| should-inspect | `apps/zcode-cli/packages/core/src/runtime/methods/subagent.ts`                    | parent startup and borrowed snapshot                                         |
-| should-inspect | `apps/zcode-cli/packages/core/src/subagent/borrowed-mcp-port.ts`                  | keep live-only, scope-filtered                                               |
-| conditional    | `apps/zcode-cli/packages/bootstrap/src/zcode-protocol/mcp.ts`                     | control-plane successful results seed the cache                              |
-| conditional    | `apps/zcode-cli/packages/bootstrap/src/zcode-protocol/workspace.ts`               | Phase 3 threads the real remoteSessionId                                     |
-| conditional    | `packages/shared/src/zcode-protocol/index.ts`                                     | strict schema if cross-process interfaces expand                             |
-| invariant-only | `packages/ui/src/settings/McpSettingsSection.tsx`                                 | status UI never reads the catalog                                            |
-| invariant-only | web remote / relay / desktop main                                                 | no new cache authority or runtime state                                      |
-
-## Test plan
-
-### Adapter unit
-
-1. Miss, fresh hit, legal empty hit, TTL expiry, count/weighted-byte eviction.
-2. Any change in server/config/cwd/env digest/workspace identity/client capability produces a miss.
-3. Same path with different `workspaceIdentity` / `remoteSessionId` does not share.
-4. Windows env-key casing and path resolution use Windows semantics; macOS/Linux are not mis-applied Windows rules.
-5. HTTP/SSE returns unsupported, creating no ordinary catalog entry.
-6. Annotations, timeout, session instructions, and sensitive fields never enter the payload.
-7. Out-of-order generation completion: newest wins.
-8. An in-flight entry evicted by LRU is not reinserted after completing.
-9. Cache reads may update LRU recency but never extend the `publishedAt`-based TTL.
-10. An oversize live catalog clears the old snapshot and takes the cold path, keeping no stale advertisement.
-
-### Core runtime
-
-1. Complete-hit: the provider request does not wait for startup.
-2. Cold miss: the first round still waits, preserving current semantics.
-3. Cached empty: sent immediately, no MCP tools exposed.
-4. Startup success: the next model step uses the live descriptor.
-5. Startup failure: later steps stop advertising cached tools; issued requests still get unavailable from tombstones.
-6. Cached tool deleted live: unavailable before permission, never a registry `ToolNotFound`.
-7. Cached safe / live destructive: live metadata used; correctly rejected by Plan mode or permission policy.
-8. Cached schema v1 / live schema v2: validated with v2; the error enters the tool result and the session continues.
-9. Allowlist/denylist re-applied to the cached catalog per session.
-10. Multiple callers waiting on one startup Promise; no duplicate connects.
-11. A caller abort cancels only its own startup waiter, not the session shared startup.
-12. Caller abort produces a terminal `ToolCancelled` event; startup failure produces a recoverable unavailable event.
-13. Preflight startup wait does not consume the live handler execution timeout and records its own waitMs.
-14. `beginShutdown()` before startup completion: synchronously CLOSED; late completions neither publish nor reconcile.
-
-### Bootstrap / integration
-
-1. Session A initializes successfully and fills the catalog.
-2. Session B uses its own MCP PID; the provider already received A's cached schema before B's initialize barrier released.
-3. Session B's tool call waits for the barrier and then confirms calling B's PID, not A's.
-4. Control-plane successful connects may seed later sessions; status-only does not.
-5. Session close still cleans its own stdio process tree without affecting the process catalog.
-6. Subagents wait for the parent's live startup and receive only the connected, scope-filtered snapshot.
-7. Phase 2: local catalog hits; SSH/WSL/Docker always unsupported/cold, never sharing catalogs by path.
-8. Phase 3: only after the real `remoteSessionId` is threaded, verify representative remote identities do not cross catalogs.
-9. Adapter close, startup failure, and timeout keep running the existing cross-platform process-tree cleanup.
-10. Shutdown racing completion: the facade still calls the actual `mcpPort.close()` exactly once; the coordinator never duplicates cleanup ownership.
-
-### Existing regressions
-
-- `mcp-runtime.test.ts`
-- `mcp-tool-bridge.test.ts`
-- `mcp.test.ts`
-- `mcp-process-lifecycle.test.ts`
-- `subagent-borrowed-mcp-port.test.ts`
-- Plan mode MCP permission `Y01/Y02`
-- MCP OAuth/status isolation `MO01-MO03`
-
-v1 relies on adapter/core/bootstrap deterministic tests; no new GUI E2E required. If conversation E2E is added later, first write accepted cases back into `docs/conversation-session-case-catalog.md` and `docs/testing/conversation-session-e2e-coverage-matrix.md`, then enter manual-review/capture.
-
-## State combinations and pruning
-
-| Case ID | Status   | Representative combination                       | Expected                                                                 |
-| ------- | -------- | ------------------------------------------------ | ------------------------------------------------------------------------ |
-| `MCA01` | accepted | warm complete-hit + startup pending              | provider samples immediately; tool call waits for live                   |
-| `MCA02` | accepted | cold / expired / partial / unsupported           | first round waits for live; capability completeness kept                 |
-| `MCA03` | accepted | legal cached empty                               | sample immediately; no MCP tools exposed                                 |
-| `MCA04` | accepted | startup success / partial failure / cancellation | successful items publish + live reconcile; failure/cancel do not publish |
-| `MCA05` | accepted | cached present + live missing/hidden             | tombstone returns recoverable unavailable before permission              |
-| `MCA06` | accepted | cached schema / annotations differ from live     | live schema validation, live metadata approval                           |
-| `MCA07` | accepted | concurrent generation + LRU eviction             | newest wins; an evicted old fetch never revives an entry                 |
-| `MCA08` | accepted | control-plane connect / status-only              | Phase 3 seeds only on successful connect; status-only never seeds        |
-| `MCA09` | accepted | parent / subagent                                | Phase 2 gate: child borrows only the live connected snapshot             |
-| `MCA10` | accepted | local / SSH / WSL / Docker                       | Phase 2 remote cold; Phase 3 may hit only on full identity               |
-| `MCA11` | ignored  | HTTP/SSE/OAuth catalog                           | v1 lacks a normalized auth principal identity                            |
-| `MCA12` | ignored  | live server LRU / sharing                        | user confirmed not doing it                                              |
-| `MCA13` | accepted | shutdown / late startup completion               | after CLOSED no publish/reconcile; the facade still completes close      |
-
-Pruning notes:
-
-- Desktop continuous vs mobile replayable: pruned to invariant + a representative regression set, since both share the agent runtime and this feature does not change delivery facts.
-- Provider/model/thought, queue/goal/compact/fork/edit: pruned; MCP startup owner and execution authority unchanged.
-- Theme/locale/responsive: pruned; no UI change.
-- Individual MCP tools: pruned to four representative classes — safe, destructive, missing, schema-drift.
-
-## Must-preserve invariants
-
-1. Every session's live MCP clients/servers stay independent.
-2. A cached tool catalog cannot authorize execution or influence readOnly/destructive/approval decisions.
-3. Actual calls go only to the current session's live adapter.
-4. A cache hit is never projected as UI connected.
-5. Cache keys never leak env, headers, OAuth secrets, or tokens.
-6. Local isolation uses `workspaceIdentity?.trim() || workspacePath`; remote requires both `workspaceIdentity` and `remoteSessionId`; `workspacePath` is for execution cwd only.
-7. Mobile `/remote` creates no independent Agent, Host, or MCP runtime.
-8. Desktop continuous and web remote replayable share no delivery state.
-9. Subagents own no parent MCP lifecycle and gain no execution rights from the advertisement cache.
-10. Session close, connect failure, and timeout keep running the existing cross-platform stdio process-tree cleanup.
-11. Stale tools in already-issued provider contracts still reach recoverable preflight after reconcile — never premature `ToolNotFound`.
-12. After the coordinator is CLOSED, no late startup completion may publish a catalog or mutate the registry.
-
-## Risks and rollback
-
-| Risk                                                        | Handling                                                                                       |
-| ----------------------------------------------------------- | ---------------------------------------------------------------------------------------------- |
-| model calls a stale tool                                    | live preflight; recoverable unavailable when absent                                            |
-| stale schema generates wrong arguments                      | re-validate with the live schema; errors return to the model                                   |
-| stale annotation causes wrong approval                      | annotations never cached; resolve the live entry before permission                             |
-| old initialization overwrites new                           | entry generation newest-wins                                                                   |
-| remote workspaces cross-share the cache                     | disabled in Phase 2; Phase 3 enables only with full identity + cwd/env                         |
-| env/token leaks                                             | store digests only; logs record only opaque fingerprints                                       |
-| dynamic descriptions go stale/leak across sessions          | limited to the same workspace identity; ephemeral config in the key; internal bypass available |
-| unsafe HTTP sharing                                         | v1 never caches HTTP/SSE                                                                       |
-| a few huge schemas inflate cache memory                     | 2 MiB/entry + 16 MiB/process byte guard; oversize clears old values                            |
-| long-term advertising after a warm-hit server keeps failing | stops entering contracts after terminal; tombstone serves old responses only                   |
-| reconcile turns old responses into ToolNotFound             | missing items keep provider-invisible tombstones until session close                           |
-| late completion writes back after shutdown                  | beginShutdown synchronously CLOSED + abort; completion checks state/generation                 |
-| regressions from the cache path                             | write-only shadow first, then enable reads; internal mode allows rollback                      |
-
-## First-version default decisions
-
-This plan adopts these defaults; if implementation review overturns any, update this document and the matching case first:
-
-1. Cold/partial misses keep blocking the first provider request.
-2. Only aggregate complete-hit may sample early; no progressive partial tool set.
-3. In-process cache only: capacity 32, TTL 30 minutes, plus 2 MiB/entry and 16 MiB/process serialized byte guards.
-4. HTTP/SSE entirely uncached until auth principal identity is designed separately.
-5. No new user-visible startup state in v1 — only logs, metrics, and the existing live settings-page status.
-
-## Planning handoff
-
-| Deliverable               | Status            | Notes                                                                                                |
-| ------------------------- | ----------------- | ---------------------------------------------------------------------------------------------------- |
-| Feature spec              | complete          | this document defines warm/cold, execution safety, ownership, remote, and rollback                   |
-| Feature graph             | updated           | `capability.mcp-async-tool-catalog` and its cache/live/status/subagent/identity relations registered |
-| Case catalog              | planned           | currently core/adapter/bootstrap tests; register `MCA*` first if GUI conversation E2E is needed      |
-| Coverage matrix           | planned           | sync with the case catalog before manual-review/capture                                              |
-| Fixture / replay / Docker | not-needed for v1 | deterministic fake MCP servers and barriers suffice                                                  |
-
-No product-semantics blocker before implementation. Two items tracked separately, not blocking this plan:
-
-- Not building a live LRU means this feature does not fix process/memory growth from unclosed sessions/runtimes.
-- If ordinary MCP today consumes `tools/list_changed` insufficiently, v1 relies on TTL + per-execution live revalidation; notification invalidation lands in Phase 3.
-
-## References
-
-- `docs/mcp-platform-boundary.md`
-- `docs/runtime-tools/mcp-status-list-control-plane.md`
-- `docs/design/v2/mcp-stdio-process-lifecycle.md`
-- `docs/mcp-oauth-client-auth.md`
-- `docs/plugin-mcp-session-runtime-merge.md`
+- Visibility: decided by the status facts of this step, and a retry or a continuation sees the same list. It does not appear when ToolSearch is available (native, local). The latch is set only in a normal request of the main agent, is kept in memory and is not kept across cold restore: after a restore with no pending server, the tool disappears once. A subagent decides only by its own pending servers. A tool list without a model (persisted records, subagent inheritance) includes it only when there is a pending server or it is already latched. A session without MCP never shows it, and the bytes of the tools section do not change. When the tool allowlist excludes it, it does not appear either, and the suffix of an execution error does not point to it.
+- Position: it goes into the tool list sorted by name.
+- Definition (fixed bytes). description:
+
+  ```text
+  Wait for MCP servers that are still connecting and whose tools are not
+  yet in your tool list. Pass `servers` to wait for specific ones, or omit
+  it to wait for all pending servers (once none is pending, a call without
+  `servers` reports any server that failed to connect or is not configured).
+
+  If the user's request needs tools from a still-connecting server, call this
+  tool to wait for it. Once it connects, its tools will be added to your tool
+  list and you can use them directly. Returns ready=true when servers are
+  ready, ready=false if they failed to connect, need authentication, or are
+  disabled.
+
+  You do not need to ask the user for confirmation to use this tool.
+  ```
+
+  input schema: `{"$schema":"https://json-schema.org/draft/2020-12/schema","type":"object","properties":{"servers":{"description":"Server names to wait for (default: all pending)","type":"array","items":{"type":"string"}}},"additionalProperties":false}`. Read-only, non-concurrent (not run during the streaming phase), no approval needed, no side effects.
+
+- Targets: when `servers` is passed, targets are matched by config name or model-visible name. When it is not passed, all pending servers are the targets if there is any pending server, and all failed servers if there is none. The official Computer Use tools are provided as `mcp__computer-use__*`, and the connection record name carries the plugin namespace. In name matching and when the executor finds a server by tool name, `computer-use` also maps to this official server.
+- Wait: if any target is still pending, wait up to 5 seconds. The wait ends when the server leaves the connecting state or publishes an authorization link. It starts no connection or authorization, and a cancel only ends this wait.
+- Result: grouped by the current classification of the targets, one line per group, and empty groups are omitted:
+
+  ```text
+  ready: <true|false>
+  Connected (their tools are now available - call them directly): <names>
+  Failed to connect: <names>
+  Still connecting (try again or proceed without): <names>
+  Needs authentication (ask the user to authorize them in the ZCode MCP settings): <names>
+  Disabled (ask the user to enable them in the ZCode MCP settings): <names>
+  Unknown (no MCP server with this name is configured): <names>
+  ```
+
+  A configured server with no connection record goes into Failed. `ready: true` only when all targets are connected. Otherwise the same text is returned as an error result (`is_error`).
+
+## Cache
+
+The protocol entry (the CLI that the app starts through the ZCode Protocol) creates the shared connection pool when the MCP feature is on and turns on the in-process stdio cache by default, and after a hit it still connects actively in the background. TUI and headless do not use this cache. The cache only fills in catalogs that the current effective pending connection does not know yet. With no connection record, a released lease, a final failure or a valid empty list, it cannot fall back to the cache. Capacity is 32 entries, TTL 30 minutes, 2 MiB per entry and 16 MiB in total. Remote does not use the local catalog cache. The cache holds no client and is not a fact source for execution and permissions.
+
+## Acceptance and deferral
+
+Write the failing test first, then implement. Core regressions:
+
+- Connection: a stateful HTTP server that returns 404/405 for GET still connects. The same config with different serialization initializes only once. A 401 during recovery does not open an authorization page. Each failure notifies only once. A stdio ping failure enters failed. After an unexpected exit of a stdio process with source `builtin`, the catalog is kept and it restarts. After 5 failures it enters failed. A 6th exit within 10 minutes does not restart automatically but keeps the catalog, and the next execution restarts it. 3 network errors in a row trigger recovery, and a response in between resets the count.
+- Calls: after a session 404 the call succeeds transparently. A 400 session body, ConnectionClosed and `-32000 Connection closed` retry once. While a long call is in flight, another request triggers a 404 and the long call runs twice. A JSON-RPC error, a lost response, a 500 and a 404 without a session ID do not retry. Replacing the config, releasing the lease or closing the adapter during the wait does not retry. When the reconnect wait reaches its cap, the original error is returned. Concurrent 401s share one authorization. After the authorization link is published, the call that triggered it returns needs-auth at once. After an authorization failure the catalog is kept, and the next execution reconnects with the latest credentials.
+- App: after a generation change the App call is rejected and not retried. After a stdio crash, opening an instance can reconnect.
+- Subscriptions: a server-answered error keeps the confirmation state. A lease release unsubscribes only the keys registered by that lease. Completion is recorded only after a real unsubscribe.
+- Model-visible text: the two error paths for unregistered and registered tools, the needs-auth section, sorting, deduplication, and no state replay after compact.
+- Delivery: resident definition bytes are frozen across a schema change. A resident tool that leaves is re-declared in place. Compact carries resident records.
+- Config: no watcher is built above the root directory. The cached plugin directory is not watched, the new directory is read after the install record changes, and the inline plugin directory is still watched. A watcher rebinds after an error. The two atomic-transaction entries give the same result. First-load consistency. One write loads only once. Sessions with the same key share a watcher. Acquire reads the latest disk state. Repeated close releases only once. `features` and global plugin switches in project config have no effect, and when a runtime parameter is invalid the servers in the same file still load. A field that project config does not declare does not override the user config.
+- Subagent: a subagent that writes only `tools` waits for the pending servers it references. `mcp__*` does not wait for unrelated servers. Names map exactly.
+- Connecting (ToolSearch off): `WaitForMcpServers` appears only when there is a pending server and is latched after it is sent. Definition bytes and ordering are fixed. Result group text and `is_error`. An unregistered tool waits for the first connection, calls in the same reply share 10 seconds, after a full wait there is no further wait for the same connection, and there is no wait while recovering. The timeout suffix points to `WaitForMcpServers`. When a server connects after a step, the call runs directly.
+- Trust guard: a call does not wait for the connections of other servers. A queued config change does not make a call fail. A call that arrives during the admission check waits for the check to end. During reconcile, a call to a workspace server waits for it to reconnect.
+- Downgrade: a state-only announcement does not write `toolSearchAnnouncement`. Off hiding, re-rendering, empty-body filtering, cold restore and state deduplication are unchanged for such announcements. v3.16.3 reading such a record does not fail.
+
+MCPW01-10 use real controlled stdio/HTTP/SSE servers to verify the final provider content in Native and Local, desktop and mobile events, and the plugin UI. They stay manual-review/pending and are not promoted automatically.
+
+Deferred:
+
+- A 30 second wall-clock timeout (a total budget that resets on progress).
+- A subagent inheriting the main agent's `WaitForMcpServers` latch.
+- The resident tool latch and the `tool_addition` surfacing; DeferredToolPlaceholder.
+- Config priority and same-name deduplication; adjusting cache defaults; refreshing the remaining plugin components on reload (Hooks, plugin Agent definitions). Plugin skills already take effect through the live catalog, see [Skill live catalog](./skills-live-catalog.md).
+- Background self-healing for third-party stdio (stdio servers with source `builtin` are already restarted automatically); history bytes in Local mode.
+- A server that never connected since the session started and stopped at needs-auth because of an authorization failure: it has no catalog to keep, so the model cannot call it and it can only be reconnected explicitly.
+- A workflow child without a scope does not wait for MCP.
+- Server instructions; a generic capability framework or database tables.

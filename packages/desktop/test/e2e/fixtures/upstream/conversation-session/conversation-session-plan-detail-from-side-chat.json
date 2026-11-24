@@ -1,7 +1,7 @@
 {
   "version": 1,
   "caseName": "conversation-session-plan-detail-from-side-chat",
-  "spec": "./test/e2e/conversation-session/conversation-session-plan-detail-from-side-chat.test.ts",
+  "spec": "./test/e2e/conversation-session/branching/conversation-session-plan-detail-from-side-chat.test.ts",
   "fixtures": [
     {
       "id": "upstream-plan-side-chat-root",

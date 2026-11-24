@@ -69,12 +69,14 @@ Core implementation:
 
 ## Background tasks and permissions
 
-`Agent` with `run_in_background` returns `async_launched`; background task tracking treats `Task` as the same subagent task:
+When the "subagents always run in the background" switch (runtime `subagents.alwaysBackground`) is on (the default), `Agent` / `Task` always run in the background and return `async_launched` at launch. When it is off, `Agent` / `Task` return `async_launched` when `run_in_background` requests background execution. Background task tracking treats `Task` as the same subagent task:
 
 - `Task` async launches restore their snapshot via `subagentPort.getTask`.
 - `Task` does not go through normal execution background cancel; like `Agent`, its lifecycle is managed by the subagent lifecycle.
 - The permission service / scheduler class `Task` as a read-only, low-risk session-scope subagent tool; the permission declaration still comes from the shared `agentToolEntry.permission`.
-- `run_in_background` is a fixed capability of `Agent` / `Task`: requesting background execution returns `async_launched` directly and enters the background snapshot lifecycle; foreground execution can auto-switch into the same background path after `subagents.autoBackgroundMs` times out.
+- Switch on (2026-11-18): the model-visible input has no `run_in_background`; if a plugin instruction or the model still passes it, the runtime schema drops the field without an error. Every call returns `async_launched` directly and enters the background snapshot lifecycle; an execution that forbids background (`modelOverride.background: "deny"`) runs in the foreground instead, without an error.
+- Switch off: `run_in_background` is a fixed capability of `Agent` / `Task`: requesting background execution returns `async_launched` directly and enters the background snapshot lifecycle; foreground execution can auto-switch into the same background path after `subagents.autoBackgroundMs` times out; when the user sends a message right away during foreground execution, the waiting foreground execution also switches into the same background path; executions in the startup phase, in the wrap-up phase (the child has finished, failed or timed out idle) and executions that forbid background are cancelled as before (2026-10-29, see "foreground subagent to background" in `apps/zcode-cli/docs/design/v2/loop/turn-steering.md`).
+- For the switch rules see "ZCode current implementation" in `apps/zcode-cli/docs/design/v2/tool/07-subagent.md`.
 
 Core implementation:
 

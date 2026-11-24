@@ -271,6 +271,24 @@ const compactionTerminalFactSchema = z
   .strict();
 
 /**
+ * Business facts of the Agent plugin recommendation flow, converted by the desktop Host at a single point into plugin_discovery / plugin_lifecycle.
+ * Carries only aggregatable dimensions; query words, recommendation reasons and tool output bodies must not enter.
+ */
+const pluginDiscoveryFactSchema = z
+  .object({
+    ...factBaseFields,
+    kind: z.literal("plugin.discovery"),
+    phase: z.enum(["searched", "card_shown", "card_resolved", "install_settled"]),
+    pluginId: z.string().min(1).max(256).optional(),
+    action: z.enum(["install", "enable"]).optional(),
+    result: z.enum(["success", "failure", "cancelled", "noop"]).optional(),
+    decision: z.enum(["install", "skip", "cancel"]).optional(),
+    resultCount: z.number().int().nonnegative().optional(),
+    durationMs: z.number().int().nonnegative().optional(),
+  })
+  .strict();
+
+/**
  * Live session facts sent by the CLI through `v4/telemetry/event`, consumed by desktop telemetry and
  * in-progress session statistics. Every branch is strict so new runtime fields cannot accidentally
  * expose prompts, tool inputs, or provider URLs.
@@ -287,6 +305,7 @@ const conversationTelemetryFactRuntimeSchema = z
     workflowLifecycleFactSchema,
     turnTerminalFactSchema,
     compactionTerminalFactSchema,
+    pluginDiscoveryFactSchema,
   ])
   .superRefine((fact, context) => {
     if (fact.kind === "turn.started" && fact.automationId && fact.offPeakTaskId) {
@@ -367,3 +386,20 @@ export const modelRequestMetricsFactSchema = z
   })
   .strict();
 export type ModelRequestMetricsFact = z.infer<typeof modelRequestMetricsFactSchema>;
+
+/** 独立的接纳归属通知；绝不能扩展旧 strict turn.started 分支。 */
+export const turnAdmissionTelemetrySchema = z
+  .object({
+    ...factBaseFields,
+    kind: z.literal("turn.admission"),
+    isFirstMessage: z.boolean().optional(),
+    sendMode: z.enum(["direct", "queued"]).optional(),
+  })
+  .strict();
+export type TurnAdmissionTelemetry = z.infer<typeof turnAdmissionTelemetrySchema>;
+
+/** App 内部合流类型，不是 conversationTelemetryFact 的 wire union。 */
+export type ConversationTelemetryInput =
+  | ConversationTelemetryFact
+  | ModelRequestMetricsFact
+  | TurnAdmissionTelemetry;

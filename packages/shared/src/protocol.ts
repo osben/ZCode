@@ -329,6 +329,10 @@ export interface AppSettings {
   httpProxyNoProxy?: string;
   /** Custom PEM root certificate path; used for renderer validation and agent NODE_EXTRA_CA_CERTS on the next app/agent startup. */
   httpProxyCaCertPath?: string;
+  /** 本机预装工具的自动准备偏好；由预装工具进程写入。 */
+  preinstalledToolsAutoInstall?: boolean;
+  /** Agent 禁用预装版本的工具；缺省全部开启，仅由本机预装进程写入。 */
+  preinstalledToolsAgentDisabled?: string[];
   /**
    * Ignore HTTPS certificate validation errors (self-signed, expired, hostname mismatch, etc.) in the built-in browser for internal test sites.
    * Affects only built-in browser traffic, not ZCode's own backend or model API requests. Disabled by default; applies after restart.
@@ -419,6 +423,10 @@ export interface AppSettings {
   nativeSearchEnhancementsEnabled?: boolean;
   /** Read on creation or cold restore; existing runtimes keep their current policy. */
   toolSearchMode?: AppToolSearchMode;
+  /** Token budget reminder; read on new creation or cold restore, an existing Runtime keeps its value. Off by default. */
+  totalTokensReminderEnabled?: boolean;
+  /** Whether the Agent always runs in the background; read on new creation or cold restore, an existing Runtime keeps its value. On by default. */
+  agentAlwaysBackgroundEnabled?: boolean;
   /** Whether Memory is enabled for newly created or cold-restored Sessions; off by default. */
   memoryEnabled?: boolean;
   /** Inject the project memory index as a standalone background-context block instead of inside
@@ -433,6 +441,8 @@ export interface AppSettings {
   /** Agent conversation runtime (specs/fork-agent-runtime-selection.md). Fork-only: stored in
    *  fork-settings.json. Default "node"; read once at app start. */
   agentRuntime?: "node" | "rust";
+  /** Agent reply language (free text; follows the conversation language when unset); written by Main only, see docs/i18n/agent-reply-language.md. */
+  replyLanguage?: string;
   onboardingOccupation?:
     | "office"
     | "developer"

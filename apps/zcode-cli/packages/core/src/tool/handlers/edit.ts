@@ -31,6 +31,7 @@ import { createStructuredPatch } from "../diff.js";
 import { publishFileMutation } from "../file-mutation.js";
 import { changedRangeFromHunks } from "../../lsp/results.js";
 import { stampMemoryOriginSessionId } from "../../memory/origin-session.js";
+import { isWorkflowDraftPath } from "../../permission/workflow-draft-path.js";
 import {
   findEditMatch,
   normalizeLineEndings,
@@ -38,9 +39,11 @@ import {
   preserveQuoteStyle,
 } from "../edit-matchers.js";
 import { resolveWorkspacePath } from "../path-policy.js";
+import { formatFileSize } from "./read-pdf.js";
 import {
   findLatestReadFileState,
   normalizeReadFileStateMtimeMs,
+  readFileStateContentMatches,
   requestedPathField,
   setReadFileStateEntry,
 } from "../read-file-state.js";
@@ -66,6 +69,16 @@ const EDIT_NOT_READ_MESSAGE = "File has not been read yet. Read it first before 
 const EDIT_STALE_MESSAGE =
   "File has been modified since read, either by the user or by a linter. Read it again before attempting to write it.";
 const EDIT_FRESHNESS_SUFFIX = " (file state is current in your context — no need to Read it back)";
+// 修复原因：原来提到 ZCode 没有的 NotebookEdit 工具，模型会去调用一个不存在的工具。
+const EDIT_NOTEBOOK_MESSAGE =
+  "File is a Jupyter Notebook. Edit does not change .ipynb files; change the notebook JSON with a shell command or script instead.";
+// 修复原因：编码读不出来时原来抛出文件系统层的 `Unsupported or binary text encoding: <path>`，不带标签，
+// 也没说模型该怎么办。ZCode 支持 GB 系列编码，所以文字列出这些编码，不说“只支持 UTF-8”。
+const EDIT_UNSUPPORTED_ENCODING_MESSAGE =
+  "File is not valid UTF-8 or a supported legacy encoding (GB2312, GBK, GB18030), or it is binary. Edit and Write never convert a file's encoding on their own, so nothing was written. If the file is text, make the change with a shell command that reads and writes it in its own encoding (iconv, or PowerShell Get-Content/Set-Content -Encoding), or ask the user whether to convert it to UTF-8 first. To replace the whole file with new UTF-8 text anyway, delete it first, then Write it.";
+const EDIT_ESCAPE_NOTE =
+  "\n(note: Edit also tried swapping \\uXXXX escapes and their characters; neither form matched, so the mismatch is likely elsewhere in old_string. Re-read the file and copy the exact surrounding text.)";
+const UNICODE_ESCAPE_PATTERN = /\\u[0-9a-fA-F]{4}/u;
 
 function formatEditModelContent(output: unknown): string {
   const filePath =
@@ -85,9 +98,13 @@ function formatEditModelContent(output: unknown): string {
 }
 
 export const editHandler: ToolHandler = async (input, context) => {
-  const { file_path, old_string, new_string, replace_all } = EditInputSchema.parse(
-    input,
-  ) as EditInput;
+  // replace_all 是 `.default(false).optional()`：parse 结果一定带值，`= false` 只用来收窄类型。
+  const {
+    file_path,
+    old_string,
+    new_string,
+    replace_all = false,
+  } = EditInputSchema.parse(input) as EditInput;
   const fileSystemPort = context.fileSystemPort;
 
   if (!fileSystemPort) {
@@ -149,20 +166,32 @@ export const editHandler: ToolHandler = async (input, context) => {
   }
 
   if (stat.sizeBytes > MAX_EDIT_FILE_SIZE_BYTES) {
+    // 修复原因：括号里原来写死 "1GB"，不是文件的实际大小。只比上限大一点时格式化后也是 "1GB"，
+    // 读起来像没超限，这时改写字节数。
+    const maxSize = formatFileSize(MAX_EDIT_FILE_SIZE_BYTES);
+    const size = formatFileSize(stat.sizeBytes);
     return editFailure(
       EditErrorCode.FILE_TOO_LARGE,
-      "File is too large to edit (1GB). Maximum editable file size is 1GB.",
+      `File is too large to edit (${size === maxSize ? `${stat.sizeBytes} bytes` : size}). Maximum editable file size is ${maxSize}.`,
     );
   }
 
   const readStartedAt = Date.now();
-  const read = await fileSystemPort.readTextFile(
-    {
-      path: filePath,
-      trace: createEditTrace(context),
-    },
-    { signal: context.abortSignal },
-  );
+  let read: FileSystemReadTextResult;
+  try {
+    read = await fileSystemPort.readTextFile(
+      {
+        path: filePath,
+        trace: createEditTrace(context),
+      },
+      { signal: context.abortSignal },
+    );
+  } catch (error) {
+    if (isFileSystemPortError(error) && error.code === "unsupported") {
+      return editFailure(EditErrorCode.UNSUPPORTED_ENCODING, EDIT_UNSUPPORTED_ENCODING_MESSAGE);
+    }
+    throw error;
+  }
   const fsReadMs = elapsedMsSince(readStartedAt);
   const content = normalizeLineEndings(read.content);
   const oldString = normalizeLineEndings(old_string);
@@ -194,10 +223,7 @@ export const editHandler: ToolHandler = async (input, context) => {
   }
 
   if (filePath.endsWith(".ipynb")) {
-    return editFailure(
-      EditErrorCode.NOTEBOOK_FILE,
-      "Edit does not support Jupyter Notebook (.ipynb) files. No notebook editing tool is available; read the notebook and rewrite its JSON with Write if a change is required.",
-    );
+    return editFailure(EditErrorCode.NOTEBOOK_FILE, EDIT_NOTEBOOK_MESSAGE);
   }
 
   const readStateFailure = getEditableReadStateFailure(filePath, read, context.readFileState);
@@ -211,9 +237,12 @@ export const editHandler: ToolHandler = async (input, context) => {
   });
   const patchMatchMs = elapsedMsSince(patchMatchStartedAt);
   if (match.status === "not_found") {
+    // 匹配器只把 old_string 里的 \uXXXX 换成字符再找（unicode_escape_normalized），不把字符换成转义，
+    // 所以只在 old_string 含转义时加这句说明；只有非 ASCII 字符时这句话不成立。
+    const escapeNote = UNICODE_ESCAPE_PATTERN.test(old_string) ? EDIT_ESCAPE_NOTE : "";
     return editFailure(
       EditErrorCode.OLD_STRING_NOT_FOUND,
-      `String to replace not found in file.\nString: ${old_string}`,
+      `String to replace not found in file.\nString: ${old_string}${escapeNote}`,
     );
   }
   if (match.status === "ambiguous") {
@@ -434,7 +463,9 @@ function getEditableReadStateFailure(
   }
 
   if (!hasReadStateChanged(lastRead, currentRead)) return undefined;
-  if (isStrictFullRead(lastRead) && lastRead.content === currentRead.content) return undefined;
+  if (isStrictFullRead(lastRead) && readFileStateContentMatches(lastRead, currentRead.content)) {
+    return undefined;
+  }
 
   return editFailure(EditErrorCode.STALE_FILE, EDIT_STALE_MESSAGE);
 }
@@ -508,6 +539,13 @@ async function writeEditResult(input: {
     sessionId: input.context.sessionId,
   });
   const writeStartedAt = Date.now();
+  // 草稿目录内的 Edit 与 Write 同理：写入执行点核验真实落点（ZP-20261110-04）。
+  const symlinkFreeBase = isWorkflowDraftPath({
+    filePath: input.filePath,
+    workingDirectory: input.context.workingDirectory,
+  })
+    ? input.context.workingDirectory
+    : undefined;
   const writeResult = await fileSystemPort.writeTextFile(
     {
       path: input.filePath,
@@ -517,6 +555,7 @@ async function writeEditResult(input: {
       createParents: true,
       atomic: true,
       expectedRevision: input.read?.revision,
+      ...(symlinkFreeBase === undefined ? {} : { symlinkFreeBase }),
       trace: createEditTrace(input.context),
     },
     { signal: input.context.abortSignal },

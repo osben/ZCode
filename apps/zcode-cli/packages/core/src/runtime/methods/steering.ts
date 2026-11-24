@@ -1480,13 +1480,19 @@ async function drainPendingInputUnlocked(
     // Fix rationale: when the in-memory history came first, a guide whose write failed stayed
     // in the queue while the next request already carried it; after the user resumed the queue,
     // the model saw it twice, and after cold recovery only once.
-    const entry = attachGenUiContext(runtimeEntry, pendingInput.intent?.genUiContext);
+    // Fix rationale: history stamps the time only on its own copy, so the copy handed to this turn's request had no time; a Guide
+    // without a display marker anchors the quiet-segment reminder, and with no time this turn would never send the quiet reminder
+    // again while cold recovery would. Stamp the time first so both sides share the same copy.
+    const entry = {
+      ...attachGenUiContext(runtimeEntry, pendingInput.intent?.genUiContext),
+      time: this.now().getTime(),
+    };
     this.messageHistory.addEntries([entry]);
     runtimeEntries.push(entry);
     // Judge by the original source; attachments omit the presentation marker, so a synthetic
     // message must not be mistaken for user input.
     if (
-      this.mcpToolsRegistered &&
+      this.mcpTrustAdmissionRead &&
       runtimeInputMetadata(pendingInput.inputPresentation)?.source !== "legacy_synthetic"
     ) {
       await refreshWorkspaceTrustAdmission(this, inputTraceContext);

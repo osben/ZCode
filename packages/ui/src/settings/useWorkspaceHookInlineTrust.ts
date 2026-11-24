@@ -24,14 +24,24 @@ export function useWorkspaceHookInlineTrust(input: {
   authorityKey?: string;
   hooksService?: IHooksService;
   rpcReady?: boolean;
+  /**
+   * 列表的加载目标，缺省等于 workspacePath/workspaceIdentity。受管 worktree 审核时发现路径是
+   * worktree、identity 是项目 key（D23）：review/command binding 仍按项目匹配，刷新与无会话
+   * 授权必须按 worktree 发现，否则会写入源仓库的摘要（ZP-20261110-06）。
+   */
+  hooksTarget?: { workspacePath: string; workspaceIdentity?: string };
 }) {
   const { intl } = useZCodeIntl();
   const contextServices = useServices();
+  const loadWorkspacePath = input.hooksTarget?.workspacePath ?? input.workspacePath;
+  const loadWorkspaceIdentity = input.hooksTarget
+    ? input.hooksTarget.workspaceIdentity
+    : input.workspaceIdentity;
   // Settings' PluginScopeMenu can select a workspace (including remote) that is not currently active.
   // If post-trust list refresh or the settings pre-trust fallback uses the context service from useServices() (which points to the active
   // tab's host), the RPC goes to the wrong host; while remote-waiting, the fallback may send an out-of-scope RPC to a
   // disconnected proxy. Therefore hooksService must be supplied by the caller, resolved for the target workspace, and
-  // when rpcReady=false both fallback and refresh must be disabled — the trust path may be unavailable, but must not target the wrong host.
+  // when rpcReady=false both fallback and refresh must be disabled (the trust path may be unavailable, but must not target the wrong host).
   const hooksService =
     input.rpcReady === false
       ? undefined
@@ -71,12 +81,12 @@ export function useWorkspaceHookInlineTrust(input: {
       currentInteractionId: activeReviewInteractionId,
     });
     previousReviewInteractionId.current = activeReviewInteractionId;
-    if (!settled || !input.workspacePath || !canUseHooksService) return;
+    if (!settled || !loadWorkspacePath || !canUseHooksService) return;
     // Capture the tuple and service at the same time to avoid contaminating a new workspace if scope changes while refresh is pending.
     const service = hooksService!;
     const target = {
-      workspacePath: input.workspacePath,
-      workspaceIdentity: input.workspaceIdentity,
+      workspacePath: loadWorkspacePath,
+      workspaceIdentity: loadWorkspaceIdentity,
       authorityKey: input.authorityKey,
     };
     void refreshHooks(service, target);
@@ -85,8 +95,8 @@ export function useWorkspaceHookInlineTrust(input: {
     canUseHooksService,
     hooksService,
     input.authorityKey,
-    input.workspaceIdentity,
-    input.workspacePath,
+    loadWorkspaceIdentity,
+    loadWorkspacePath,
     refreshHooks,
   ]);
 
@@ -100,6 +110,7 @@ export function useWorkspaceHookInlineTrust(input: {
           hook,
           workspacePath: input.workspacePath,
           workspaceIdentity: input.workspaceIdentity,
+          grantWorkspacePath: loadWorkspacePath,
           ...(service.grantWorkspaceHookTrust
             ? {
                 grantWithoutSession: (target) => service.grantWorkspaceHookTrust!(target),
@@ -129,8 +140,8 @@ export function useWorkspaceHookInlineTrust(input: {
         }
         // After success, refresh atomically for the target captured at invocation; if scope changed while waiting, the store guard discards it.
         await refreshHooks(service, {
-          workspacePath: input.workspacePath,
-          workspaceIdentity: input.workspaceIdentity,
+          workspacePath: loadWorkspacePath,
+          workspaceIdentity: loadWorkspaceIdentity,
           authorityKey: input.authorityKey,
         });
       } catch (cause) {
@@ -147,6 +158,8 @@ export function useWorkspaceHookInlineTrust(input: {
       input.workspaceIdentity,
       input.workspacePath,
       intl,
+      loadWorkspaceIdentity,
+      loadWorkspacePath,
       refreshHooks,
     ],
   );

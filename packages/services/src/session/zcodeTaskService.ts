@@ -1,5 +1,6 @@
 import type {
   V4SessionDeletionPreview,
+  V4SessionDeletionPreviewBatchResult,
   V4SessionDeletionResult,
 } from "@zcode/shared/zcode-protocol-v4";
 /* eslint-disable max-lines -- Keep the ZCode task wrapper service's app/runtime API together so it remains easier to trace during replacement. */
@@ -898,6 +899,10 @@ export interface IZCodeTaskService {
     workspacePath: string;
     workspaceIdentity?: string;
   }): Promise<V4SessionDeletionPreview>;
+  /** 批量预检，结果按 tasks 顺序；未归档判定与单项 previewArchivedTaskDeletion 一致。 */
+  previewArchivedTaskDeletions(params: {
+    tasks: Array<{ taskId: string; workspacePath: string; workspaceIdentity?: string }>;
+  }): Promise<V4SessionDeletionPreviewBatchResult>;
   permanentlyDeleteArchivedTask(params: {
     taskId: string;
     workspacePath: string;

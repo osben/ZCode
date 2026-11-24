@@ -30,16 +30,16 @@ Location: `packages/adapters/src/model/*`
 
 Responsibilities:
 
-- When the provider returns `toolCall.input` / `toolCall.args` as a string, try to parse it as JSON.
+- When the provider returns `toolCall.input` / `toolCall.args` as a string, try to parse it as JSON. An empty string or a whitespace-only string is treated as `{}` (no arguments given) and does not count as a parse failure.
 - If parsing succeeds, pass the parsed value downstream as the tool call input.
-- If parsing fails, keep the original string and record minimal diagnostics, such as tool name, source stage and string length.
+- If parsing fails, return `{}` carrying a parse-failure marker: the marker is a symbol key whose value is a preview of the first 200 code units of the original string plus the original length (root `docs/model-tool-call-validation.md`, "Malformed tool input JSON"), and record minimal diagnostics, such as tool name, source stage and string length.
 - The diagnostics must not contain the full original input, to avoid leaking user content in logs.
 
 Failure semantics:
 
 - Must not throw.
-- The adapter layer must not forge a failed input into a valid business object.
-- After a failure the original value is still handed to layer 2 / the executor, so later schema validation returns a structured error.
+- The adapter layer must not forge a failed input into a valid business object: the `{}` carries the marker, and the executor uses it to return a "cannot parse JSON" error without running the tool.
+- The original string is not passed down as the input: the tool_use input enters the provider history and the persisted tool part, a string is not a valid tool_use input under some provider protocols, and on cold resume it would be written as `{ value: <string> }`, which differs from the live request. A symbol key does not enter JSON, so history, persistence and model-io all see `{}`.
 
 Coverage:
 
@@ -63,11 +63,13 @@ Responsibilities:
 - Each tool's runtime schema decides defaults, field pruning, strictness and extra constraints.
 - The executor does not hardcode the internal rules of Bash / Read / Edit; it only consumes the explicit `runtimeInputSchema` contract.
 - If a tool later needs legacy field mapping or more complex compatibility, it must be extended in the same layer, not scattered inside handlers.
+- The runtime schema of `Read` uses a preprocess step to fix `offset` / `limit` / `length` (including renaming `length` to `limit`), then validates the fields (rules in [01-read.md "Input correction"](./01-read.md#输入修正)). The preprocess belongs to the runtime schema only; the provider-visible JSON Schema is still generated from the unwrapped field schema, so the bytes of the tools section do not change.
 
 Failure semantics:
 
 - A `safeParse` failure must not throw.
 - A failure must degrade to the normal schema validation / permission error path.
+- Raw model input (initial): when the JSON Schema passes but the runtime schema fails with readable issues, the executor returns `InputValidationError` before `validateInput` (rules in the root `docs/model-tool-call-validation.md`). Semantic checks that need friendly text go in `validateInput`, not in the runtime schema.
 - After a hook or permission broker returns `modifiedInput`, layer 2 normalization must run again.
 
 ## Execution order
@@ -76,12 +78,13 @@ The tool runtime scheduling order:
 
 1. The adapter layer normalizes the raw tool input returned by the provider
 2. Executor-layer tool-aware normalization
-3. `validateInput`
-4. `PreToolUse` hook
-5. If the hook updated the input, run layer 2 normalization again
-6. permission check / broker
-7. If the broker modified the input, run layer 2 normalization again
-8. handler execution
+3. JSON Schema validation; a JSON Schema or runtime schema failure returns `InputValidationError`
+4. `validateInput`
+5. `PreToolUse` hook
+6. If the hook updated the input, run layer 2 normalization again
+7. permission check / broker
+8. If the broker modified the input, run layer 2 normalization again
+9. handler execution
 
 ## Non-goals
 
@@ -94,10 +97,11 @@ The tool runtime scheduling order:
 Cover at least these scenarios:
 
 1. The adapter layer successfully restores a stringified object to an object.
-2. The adapter layer does not throw on an invalid JSON string and keeps the original value.
+2. The adapter layer does not throw on an invalid JSON string; it returns `{}` carrying the parse-failure marker, and the executor does not run the tool and returns a "cannot parse JSON" error.
 3. The stream `tool_call` event uses the same normalization strategy.
 4. The executor layer can still restore a stringified object to an object when the adapter did not handle it.
 5. The executor layer consumes defaults or the standardized result of `runtimeInputSchema.safeParse()`.
 6. The executor layer does not throw on an invalid JSON string and returns the existing recoverable input error.
 7. When a `PreToolUse` hook returns `updatedInput`, the executor must run layer 2 normalization again.
 8. When the permission broker returns `modifiedInput`, the executor must run layer 2 normalization again.
+9. The `offset` / `limit` / `length` correction of `Read` takes effect before JSON Schema validation, and the corrected input reaches the handler.

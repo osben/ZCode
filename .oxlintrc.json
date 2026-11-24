@@ -126,7 +126,8 @@
       "files": [
         // Marketplace keeps the upstream large-file shape and only adds directory field projection.
         "**/apps/zcode-cli/packages/adapters/src/plugins/marketplace.ts",
-        // MCP connection entry keeps the upstream implementation; the connection barrier fix does not reflow the adapter.
+        // MCP connection entry keeps the upstream implementation; the connection barrier fix and async startup only add
+        // the snapshot and per-server waits, and do not reflow the adapter for line count.
         "**/apps/zcode-cli/packages/adapters/src/mcp/index.ts",
         // The streaming runner keeps the upstream large-file shape; the workflow unknown-business-code retry limit only passes
         // the attempt count to the policy table, and the attempt loop is not split to satisfy line counts.
@@ -164,12 +165,20 @@
         "**/apps/zcode-cli/packages/core/src/runtime/methods/steering.ts",
         "**/apps/zcode-cli/packages/core/src/runtime/methods/turn.ts",
         "**/apps/zcode-cli/packages/core/src/runtime/methods/turn-model-step.ts",
+        // After the dynamic MCP branch was rebased onto staging, the lines both sides added sum to more than 800 (neither
+        // side alone exceeds it): runtime construction, tool execution and compact keep their duties, no mechanical split.
+        "**/apps/zcode-cli/packages/core/src/runtime/agent-runtime.ts",
+        "**/apps/zcode-cli/packages/core/src/tool/executor/call-runner.ts",
+        "**/apps/zcode-cli/packages/core/src/runtime/methods/compact-active.ts",
         // Inside the core package, oxlint runs with --no-ignore and matches the same files by cwd-relative paths.
         "src/runtime/methods/session-fork.ts",
         "src/runtime/methods/steering.ts",
         "src/runtime/methods/turn.ts",
         "src/runtime/methods/turn-model-step.ts",
         "src/tool/executor/background-tasks.ts",
+        "src/runtime/agent-runtime.ts",
+        "src/tool/executor/call-runner.ts",
+        "src/runtime/methods/compact-active.ts",
         "**/packages/ui/src/remote-connection-flow/index.ts"
       ],
       "rules": {

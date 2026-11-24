@@ -1,5 +1,6 @@
 import type {
   ExecutableToolCall,
+  ExecutionShellSelection,
   Model,
   ModelToolContract,
   ToolCall,
@@ -27,6 +28,8 @@ import { createRuntimeModel, withModelInvocationContext } from "../methods/runti
 import { recordModelUsageFact } from "../methods/usage-observability.js";
 
 export interface ProjectMemoryAgentContext {
+  /** Memory executor 执行 Bash 的 shell；工具策略按同一份判定，两边不能各读一次。 */
+  bashShellSelection: ExecutionShellSelection | undefined;
   causation?: AgentTelemetryCausation;
   memoryRoot: string;
   providerEntries: readonly RuntimeMessageEntry[];
@@ -74,6 +77,7 @@ export function captureProjectMemoryAgentContext(
     traceContext: input.traceContext,
   }));
   return {
+    bashShellSelection: getSessionShellSelectionFromConfig(runtime.config),
     causation: runtime.agentTelemetry.captureCausation(),
     memoryRoot: input.memoryRoot,
     // Extraction consumes this shallow member snapshot across async boundaries and relies on RuntimeMessageEntry
@@ -153,7 +157,7 @@ function createProjectMemoryAgentToolExecutor(
     emitEvent: async () => {},
     executionPort: runtime.executionPort,
     fileSystemPort: runtime.fileSystemPort,
-    getBashShellSelection: () => getSessionShellSelectionFromConfig(runtime.config),
+    getBashShellSelection: () => context.bashShellSelection,
     getMode: () => "yolo",
     getMemoryRoot: () => context.memoryRoot,
     getWorkingDirectory: () => context.workingDirectory,

@@ -133,7 +133,7 @@ async function verifyTargetCompletion(
     modelTraceContext,
   );
   // Like every model step in the turn, the verifier re-projects the prefix with this request's model.
-  // Fix reason: rebuilding after the turn ended (language, output style changes, …) carried no model
+  // Fix reason: rebuilding after the turn ended (output style changes, ...) carried no model
   // and defaulted to MCS wording; models without MCS support got Harness wording contradicting the
   // actual delivery, and the prefix cache went stale.
   rebuildContextPrefix(this, { model });

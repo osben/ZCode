@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import type { RemoteConnectionRuntimeLog } from "@zcode/shared";
+import { getRemoteTransferProgressKey, type RemoteConnectionRuntimeLog } from "@zcode/shared";
 import { usePlatform } from "@/hooks/usePlatform.js";
 
 export interface RemoteConnectionLogEntry {
@@ -18,24 +18,6 @@ export function normalizeRemoteConnectionLogMessage(message: string): string {
       .replace(/^(?:\[(?!source-server:)[^\]]+\]\s*)+/u, "")
       .trim()
   );
-}
-
-function isRemoteDownloadProgressLog(message: string): boolean {
-  return /^download progress:/iu.test(message);
-}
-
-function getRemoteTransferProgressKey(message: string): string | null {
-  const progressMessage = message.replace(/^\[source-server:[^\]]+\]\s*/u, "");
-  if (isRemoteDownloadProgressLog(progressMessage)) {
-    return "download";
-  }
-
-  const uploadMatch = /^upload progress(?: \[([^\]]+)\])?(?: \((.+)\))?:/iu.exec(progressMessage);
-  if (!uploadMatch) {
-    return null;
-  }
-
-  return `upload:${uploadMatch[1]?.trim() ?? ""}:${uploadMatch[2]?.trim() ?? ""}`;
 }
 
 export function appendRemoteConnectionRuntimeLog(

@@ -4,7 +4,6 @@
 // new sections never mount it on their own. Local desktop-continuous only; mobile remote is covered by unit tests.
 import { readFile, rm } from "node:fs/promises";
 import { join } from "node:path";
-import { TID_CHAT_SUMMARY_PANEL } from "@zcode/shared/test-ids";
 import { clearAppData, DEFAULT_WORKSPACE, waitForTestIdByDom } from "../helpers/desktop-app.js";
 import {
   prepareV4ConversationE2E,
@@ -14,6 +13,9 @@ import {
   waitForV4TimelineContaining,
 } from "../helpers/v4-conversation.js";
 
+// Removed from @zcode/shared/test-ids by upstream 4.0.0; kept local for the skipped suite.
+const TID_CHAT_SUMMARY_PANEL = "chat-summary-panel";
+
 const CASE_ROOT = join(DEFAULT_WORKSPACE, "status-panel-last-turn-e2e");
 const RELATIVE_PATH = "status-panel-last-turn-e2e/notes.txt";
 const REQUEST_MARKER = "E2E_STATUS_PANEL_LAST_TURN";
@@ -21,7 +23,10 @@ const FINAL_MARKER = "E2E_STATUS_PANEL_LAST_TURN_OK";
 const EXPAND_LABELS = ["Expand status", "展开状态"];
 const PANEL = `[data-testid="${TID_CHAT_SUMMARY_PANEL}"]`;
 
-describe("Status panel Last turn and Context sections", () => {
+// Fork: the 4.0.0 sync (specs/upstream-sync-4.0.0.md) took upstream's composer status capsules, which
+// replace the status panel. The fork's Last turn and Context sections are hidden until a follow-up re-homes them in the capsules,
+// so this suite is skipped (not deleted).
+describe.skip("Status panel Last turn and Context sections", () => {
   afterEach(async () => {
     await rm(CASE_ROOT, { force: true, recursive: true });
   });

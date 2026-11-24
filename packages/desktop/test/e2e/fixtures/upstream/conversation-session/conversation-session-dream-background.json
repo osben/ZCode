@@ -1,7 +1,7 @@
 {
   "version": 1,
   "caseName": "conversation-session-dream-background",
-  "spec": "./test/e2e/conversation-session/conversation-session-dream-background.test.ts",
+  "spec": "./test/e2e/conversation-session/background/conversation-session-dream-background.test.ts",
   "fixtures": [
     {
       "id": "dream-title",

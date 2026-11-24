@@ -119,8 +119,8 @@ describe("plugin lspServers loading", () => {
     fixture: { storage: string; workspace: string },
     roots: string[],
     enabledPlugins: Record<string, boolean> = {},
-  ): PluginLoadOutcome {
-    return createNodePluginAdapter({ storageRoot: fixture.storage }).discoverPluginsSync({
+  ): Promise<PluginLoadOutcome> {
+    return createNodePluginAdapter({ storageRoot: fixture.storage }).discoverPlugins({
       config: { dirs: roots, enabled: true, enabledPlugins, options: {}, suppressedBuiltins: [] },
       env: {},
       storageRoot: fixture.storage,
@@ -142,7 +142,7 @@ describe("plugin lspServers loading", () => {
       },
     });
 
-    const outcome = discover(fixture, [root]);
+    const outcome = await discover(fixture, [root]);
 
     // A replaced server keeps the position of the declaration it replaces, so compare as a set.
     expect(outcome.lspServers.map((server) => server.id).sort()).toEqual([
@@ -175,7 +175,7 @@ describe("plugin lspServers loading", () => {
       ],
     });
 
-    const outcome = discover(fixture, [root]);
+    const outcome = await discover(fixture, [root]);
 
     expect(outcome.lspServers.map((server) => server.serverName).sort()).toEqual([
       "fromArray",
@@ -197,7 +197,7 @@ describe("plugin lspServers loading", () => {
       },
     });
 
-    const outcome = discover(fixture, [root], { "strict-lsp@inline": true });
+    const outcome = await discover(fixture, [root], { "strict-lsp@inline": true });
 
     expect(outcome.lspServers.map((server) => server.serverName)).toEqual(["good"]);
     expect(outcome.plugins[0]?.enabled).toBe(true);
@@ -226,7 +226,7 @@ describe("plugin lspServers loading", () => {
       },
     });
 
-    const outcome = discover(fixture, [root]);
+    const outcome = await discover(fixture, [root]);
     const dataPath = outcome.plugins[0]?.dataPath ?? "";
     const server = outcome.lspServers[0];
 
@@ -268,7 +268,7 @@ describe("plugin lspServers loading", () => {
       userConfig: { token: { sensitive: true, default: "secret" } },
     });
 
-    const outcome = discover(fixture, [root]);
+    const outcome = await discover(fixture, [root]);
 
     expect(outcome.lspServers.map((server) => server.serverName)).toEqual(["fine"]);
     expect(outcome.diagnostics).toContainEqual(
@@ -282,7 +282,7 @@ describe("plugin lspServers loading", () => {
       lspServers: { off: { command: "off", extensionToLanguage: { ".o": "o" } } },
     });
 
-    const outcome = discover(fixture, [root], { "off-lsp@inline": false });
+    const outcome = await discover(fixture, [root], { "off-lsp@inline": false });
 
     expect(outcome.lspServers).toEqual([]);
     expect(outcome.plugins[0]).toMatchObject({ enabled: false, lspServerNames: ["off"] });
@@ -311,7 +311,7 @@ describe("plugin lspServers loading", () => {
       },
     });
 
-    const outcome = discover(fixture, [first, second]);
+    const outcome = await discover(fixture, [first, second]);
 
     const byId = Object.fromEntries(outcome.lspServers.map((server) => [server.id, server]));
     expect(Object.keys(byId).sort()).toEqual(["first-lsp@inline/ts", "second-lsp@inline/mixed"]);
@@ -331,7 +331,7 @@ describe("plugin lspServers loading", () => {
     const declared = OFFICIAL_LSP_FIXTURES;
     const root = await writePlugin(fixture.dir, "official-lsp", { lspServers: declared });
 
-    const outcome = discover(fixture, [root], { "official-lsp@inline": true });
+    const outcome = await discover(fixture, [root], { "official-lsp@inline": true });
 
     expect(outcome.diagnostics.filter((d) => d.code === LSP_CONFIG_INVALID)).toEqual([]);
     expect(outcome.lspServers.map((server) => server.serverName).sort()).toEqual(

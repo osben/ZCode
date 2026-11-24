@@ -96,10 +96,14 @@ Not yet landed (remaining scope):
 
 ZCode skills use two-layer loading:
 
-1. **metadata discovery**: at startup/turn init, scan skill roots and put only lightweight information
-   (name, description, source, scope, path, policy) into context.
-2. **content load**: only after the model explicitly calls the `Skill` tool is the matching `SKILL.md`
-   body read and injected into the session.
+1. **metadata discovery**: a process-level live skill catalog scans the skill roots and puts only
+   lightweight information (name, description, source, scope, path, policy) into context. A file
+   watcher updates the in-memory snapshot, each ordinary input preparation only reads the snapshot,
+   and the listing appends only new or changed lines. The rules are in the root
+   `docs/skills-live-catalog.md`.
+2. **content load**: only after the model explicitly calls the `Skill` tool is the name resolved
+   against the session snapshot, then the matching `SKILL.md` body is read and injected into the
+   session.
 
 This gives token control, permission visibility, trace and a single cross-platform I/O boundary.
 
@@ -112,8 +116,9 @@ This gives token control, permission visibility, trace and a single cross-platfo
 handle symlinks, permission errors, path normalization, case differences and max bytes, and return
 structured diagnostics.
 
-`core` adds a skill registry / manager: holds the session's skill metadata snapshot, lets the context
-builder render the available-skills section, registers the `Skill` tool contract. The `Skill` tool loads
+`core` adds a skill registry / manager: holds the session's skill metadata snapshot, lets the
+`skills_listing` collector render the list of available skills (ContextBuilder no longer renders it,
+see the root `docs/skills-live-catalog.md`), registers the `Skill` tool contract. The `Skill` tool loads
 bodies only through `SkillPort`, never by reading files.
 
 `bootstrap` assembles: generates skill roots from config, injects `SkillPort` into the runtime/tool
@@ -213,6 +218,8 @@ namespace is introduced later, `plugin:skill-name` can be supported.
 
 ## Context Injection
 
+Current implementation: the list enters the session as a `skills_listing` attachment (not in the system prompt). The first send is the full list; afterwards only new or changed lines are appended, and deletions are not announced. Format, fingerprints and persistence are in the root `docs/skills-live-catalog.md`. The text below is the originally planned format.
+
 ContextBuilder adds a `Skills` section after the user/project context. Tool descriptions are not a
 ContextBuilder section; they come with the model request's `tools` array.
 
@@ -265,6 +272,8 @@ Base directory for this skill: /abs/path/to/my-skill
 Relative paths in this skill are relative to this base directory.
 </skill_content>
 ```
+
+Exception: when the dynamic workflow mode is onDemand and the tool surface is not yet active, the result of loading `dynamic-workflows` carries one fixed extra hint before `<skill_content>`, asking the model to have the user send `/workflow`. For child runtimes (Agent sub-agents, `/expert` child sessions) the hint instead tells them to report the limit to the parent agent (see [Tool Change Chain](tool/00-tool-change-chain.md), "Skill result hint when workflow tools are not active").
 
 Tool metadata:
 
@@ -443,9 +452,11 @@ invalid YAML; no core dependency.
 
 ### Phase 3: Core context and registry (completed for P0)
 
-`SkillRegistry` / `SkillManager` in core, ContextBuilder renders the Skills section as an independent
-`meta_user` section, context diagnostics record budget and truncation; the registry omits the `Skill` tool when
-there is no `SkillPort`. Not implemented: session-level loaded-skill snapshot and compact restore.
+`SkillRegistry` / `SkillManager` in core; context diagnostics record budget and truncation; the registry
+omits the `Skill` tool when there is no `SkillPort`. ContextBuilder once rendered the available skills as an
+independent `meta_user` section; now the list is rendered only by the `skills_listing` collector, and
+ContextBuilder only decides the skill guidance text from the catalog at session start. Not implemented:
+session-level loaded-skill snapshot and compact restore.
 
 Acceptance: a fake skill snapshot renders into the system prompt; over budget does not drop all skill names;
 core still imports no Node I/O.

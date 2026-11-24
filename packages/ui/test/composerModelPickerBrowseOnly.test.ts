@@ -33,7 +33,13 @@ const spies = {
   setEffort: vi.fn(),
 };
 
-function Harness({ withProviderMenu = true }: { withProviderMenu?: boolean }) {
+function Harness({
+  withProviderMenu = true,
+  withRecent = false,
+}: {
+  withProviderMenu?: boolean;
+  withRecent?: boolean;
+}) {
   const [model, setModel] = useState("a/flash");
   const [effort, setEffort] = useState("disabled");
   return createElement(
@@ -44,6 +50,9 @@ function Harness({ withProviderMenu = true }: { withProviderMenu?: boolean }) {
       null,
       createElement(ModelConfigSelect, {
         modelGroups: groups,
+        leadingItems: withRecent
+          ? [{ key: "recent-pro", value: "a/pro", name: "Recent Pro" }]
+          : undefined,
         normalizedValue: model,
         triggerLabel: model,
         tooltipTitle: model,
@@ -97,8 +106,12 @@ function Harness({ withProviderMenu = true }: { withProviderMenu?: boolean }) {
 function openProviders() {
   fireEvent.keyDown(screen.getByTestId("composer-provider-trigger"), { key: "ArrowRight" });
 }
-const providerRow = (name: string) => screen.getByRole("menuitemradio", { name });
-const modelRow = (name: string) => screen.getByRole("menuitemradio", { name, exact: true });
+const providerRow = (name: string) => screen.getByRole("option", { name });
+const modelRow = (name: string) => screen.getByRole("option", { name, exact: true });
+const shownModels = () =>
+  Array.from(document.querySelectorAll("[data-composer-model-list] [role=option]")).map(
+    (row) => row.textContent,
+  );
 const expectNoWrites = () => {
   expect(spies.pickInGroup).not.toHaveBeenCalled();
   expect(spies.pickModel).not.toHaveBeenCalled();
@@ -123,26 +136,62 @@ describe.each([true, false])("browse-only provider rows (providerMenu=%s)", (wit
     expect(screen.getByTestId("chat-model-select-trigger").dataset.modelCurrentValue).toBe(
       "a/flash",
     );
-    expect(modelRow("Local model").getAttribute("aria-checked")).toBe("false");
+    expect(modelRow("Local model").getAttribute("aria-selected")).toBe("false");
     // A browsed, non-selected provider shows no effort instead of a reset one.
     expect(screen.getByRole("slider").getAttribute("aria-valuetext")).toBe("—");
 
     openProviders();
     // The check mark stays on the selected provider, not the browsed one.
-    expect(providerRow("Provider A API").getAttribute("aria-checked")).toBe("true");
-    expect(providerRow("Provider B Local").getAttribute("aria-checked")).toBe("false");
+    expect(providerRow("Provider A API").getAttribute("aria-selected")).toBe("true");
+    expect(providerRow("Provider B Local").getAttribute("aria-selected")).toBe("false");
     fireEvent.click(providerRow("Provider A API"));
-    await waitFor(() => expect(modelRow("Flash").getAttribute("aria-checked")).toBe("true"));
+    await waitFor(() => expect(modelRow("Flash").getAttribute("aria-selected")).toBe("true"));
     expectNoWrites();
     expect(screen.getByRole("slider").getAttribute("aria-valuetext")).toBe("Off");
   });
 
-  it("hovering (focusing) a provider row shows its models and writes nothing", async () => {
+  it("hovering or arrowing over provider rows changes nothing", async () => {
     render(createElement(Harness, { withProviderMenu }));
     openProviders();
-    fireEvent.focus(providerRow("Provider B Local"));
-    await waitFor(() => expect(modelRow("Local model")).toBeTruthy());
+    const row = providerRow("Provider B Local");
+    fireEvent.pointerEnter(row, { pointerType: "mouse" });
+    fireEvent.pointerMove(row, { pointerType: "mouse" });
+    fireEvent.focus(row);
+    fireEvent.keyDown(providerRow("Provider A API"), { key: "ArrowDown" });
+    expect(shownModels()).toEqual(["Flash", "Pro"]);
+    expect(screen.getByTestId("composer-provider-trigger").textContent).toContain("Provider A");
     expectNoWrites();
+  });
+
+  it("choosing a provider closes the provider list", async () => {
+    render(createElement(Harness, { withProviderMenu }));
+    openProviders();
+    fireEvent.click(providerRow("Provider B Local"));
+    await waitFor(() =>
+      expect(screen.queryByRole("option", { name: "Provider A API" })).toBeNull(),
+    );
+    expect(shownModels()).toEqual(["Local model"]);
+  });
+
+  it("picking a model row closes the provider flyout", async () => {
+    render(createElement(Harness, { withProviderMenu }));
+    openProviders();
+    await waitFor(() => expect(providerRow("Provider A API")).toBeTruthy());
+    fireEvent.click(modelRow("Pro"));
+    await waitFor(() =>
+      expect(screen.queryByRole("option", { name: "Provider A API" })).toBeNull(),
+    );
+  });
+
+  it("a selection change from a row outside the Models list closes the provider flyout", async () => {
+    render(createElement(Harness, { withProviderMenu, withRecent: true }));
+    openProviders();
+    await waitFor(() => expect(providerRow("Provider A API")).toBeTruthy());
+    fireEvent.click(modelRow("Recent Pro"));
+    expect(spies.pickModel).toHaveBeenCalledWith("a/pro");
+    await waitFor(() =>
+      expect(screen.queryByRole("option", { name: "Provider A API" })).toBeNull(),
+    );
   });
 
   it("a model change ends the browse so the old provider does not come back", async () => {
@@ -150,20 +199,39 @@ describe.each([true, false])("browse-only provider rows (providerMenu=%s)", (wit
     openProviders();
     fireEvent.click(providerRow("Provider B Local"));
     fireEvent.click(await waitFor(() => modelRow("Local model")));
-    await waitFor(() => expect(modelRow("Local model").getAttribute("aria-checked")).toBe("true"));
+    await waitFor(() => expect(modelRow("Local model").getAttribute("aria-selected")).toBe("true"));
     openProviders();
     fireEvent.click(providerRow("Provider A API"));
     fireEvent.click(await waitFor(() => modelRow("Flash")));
     // Back on a/flash, the menu shows the selected provider A, not the earlier browse of B.
-    await waitFor(() => expect(modelRow("Flash").getAttribute("aria-checked")).toBe("true"));
+    await waitFor(() => expect(modelRow("Flash").getAttribute("aria-selected")).toBe("true"));
     expect(screen.getByTestId("composer-provider-trigger").textContent).toContain("Provider A");
   });
 
-  it("keyboard Enter on a provider row behaves the same", async () => {
+  it("provider and model rows are native buttons, so Enter and Space activate them", () => {
     render(createElement(Harness, { withProviderMenu }));
     openProviders();
-    fireEvent.keyDown(providerRow("Provider B Local"), { key: "Enter" });
-    await waitFor(() => expect(modelRow("Local model")).toBeTruthy());
+    for (const row of [providerRow("Provider B Local"), modelRow("Flash")]) {
+      expect(row.tagName).toBe("BUTTON");
+      expect(row.getAttribute("type")).toBe("button");
+    }
+  });
+
+  it("search filters the shown provider's models and resets on browse", async () => {
+    render(createElement(Harness, { withProviderMenu }));
+    const search = screen.getByTestId("composer-model-search");
+    fireEvent.change(search, { target: { value: " PRO " } });
+    expect(shownModels()).toEqual(["Pro"]);
+    fireEvent.change(search, { target: { value: "zzz" } });
+    expect(shownModels()).toEqual([]);
+    expect(screen.getByText("No models found")).toBeTruthy();
+    fireEvent.click(screen.getByTestId("composer-model-search-clear"));
+    expect(shownModels()).toEqual(["Flash", "Pro"]);
+    fireEvent.change(search, { target: { value: "flash" } });
+    openProviders();
+    fireEvent.click(providerRow("Provider B Local"));
+    await waitFor(() => expect(shownModels()).toEqual(["Local model"]));
+    expect((screen.getByTestId("composer-model-search") as HTMLInputElement).value).toBe("");
     expectNoWrites();
   });
 
@@ -252,7 +320,7 @@ it("routes a pick in the display fallback group through the connection owner whe
       ),
     ),
   );
-  fireEvent.click(screen.getByRole("menuitemradio", { name: "Flash", exact: true }));
+  fireEvent.click(screen.getByRole("option", { name: "Flash", exact: true }));
   expect(pick).toHaveBeenCalledWith("a", "a/flash");
   expect(direct).not.toHaveBeenCalled();
 });

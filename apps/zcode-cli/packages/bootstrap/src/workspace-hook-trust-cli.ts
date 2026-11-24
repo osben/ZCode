@@ -8,12 +8,14 @@ import {
 import {
   DefaultRuntimeConfig,
   createWorkspaceHookBundleSnapshot,
+  isWorkspaceHookScriptUnavailable,
   type WorkspaceHookBundleSnapshot,
   type WorkspaceHookTrustRecord,
 } from "@zcode/contracts";
 import {
   buildWorkspaceHookBundleSnapshot,
   readWorkspaceHookProjectSources,
+  readWorkspaceHookScriptStates,
   resolveWorkspaceHookRuntimeRoot,
   workspaceHooksConfigSchema,
   type WorkspaceHooksConfig,
@@ -35,7 +37,8 @@ export interface WorkspaceHookTrustCliItem {
   sourcePath: string;
   configuredEnabled: boolean;
   hookDeclarationDigest: string;
-  trustState: "trusted_persistent" | "pending_trust";
+  /** blocked_untrusted：入口脚本不存在或无法读取，不能授权（D24）。 */
+  trustState: "trusted_persistent" | "pending_trust" | "blocked_untrusted";
 }
 
 export interface WorkspaceHookTrustCliStatus {
@@ -51,7 +54,8 @@ export interface WorkspaceHookTrustCliStatus {
     | "workspace_hooks_require_trust_capable_host"
     // Status must use the same failure semantics as grant/revoke. If a corrupt store is presented as
     // pending_trust, following the prompt to grant will only hit trust_store_corrupt, contradicting the recovery guidance.
-    | "workspace_hooks_trust_store_corrupt";
+    | "workspace_hooks_trust_store_corrupt"
+    | "workspace_hook_script_unavailable";
   items: WorkspaceHookTrustCliItem[];
 }
 
@@ -110,9 +114,11 @@ export async function inspectWorkspaceHookTrust(
     sourcePath: entry.sourceRelativePath,
     configuredEnabled: entry.configuredEnabled,
     hookDeclarationDigest: entry.hookDeclarationDigest,
-    trustState: trusted.has(entry.hookDeclarationDigest)
-      ? ("trusted_persistent" as const)
-      : ("pending_trust" as const),
+    trustState: isWorkspaceHookScriptUnavailable(entry)
+      ? ("blocked_untrusted" as const)
+      : trusted.has(entry.hookDeclarationDigest)
+        ? ("trusted_persistent" as const)
+        : ("pending_trust" as const),
   }));
   const enabled = items.filter((item) => item.configuredEnabled);
   const reasonCode =
@@ -120,7 +126,9 @@ export async function inspectWorkspaceHookTrust(
       ? "workspace_hooks_no_enabled_hooks"
       : enabled.every((item) => item.trustState === "trusted_persistent")
         ? "workspace_hooks_trusted_persistent"
-        : "workspace_hooks_pending_trust";
+        : enabled.some((item) => item.trustState === "pending_trust")
+          ? "workspace_hooks_pending_trust"
+          : "workspace_hook_script_unavailable";
   return {
     workspacePath: target.workspacePath,
     workspaceIdentity: target.workspaceIdentity,
@@ -141,6 +149,16 @@ export async function grantWorkspaceHookTrust(
   const target = await normalizeTarget(input);
   const snapshot = await requireSnapshot(target);
   const selected = selectGrantEntries(snapshot, input);
+  // 入口脚本不存在或无法读取时没有可审核的内容（D24）：整条命令拒绝，不写 store。
+  // message 保持公开 reason code（协议侧按它收敛）；被拒条目放在 unavailableItems 供 CLI 列出（第二轮 SG-02）。
+  const unavailable = selected.filter(isWorkspaceHookScriptUnavailable);
+  if (unavailable.length > 0) {
+    throw Object.assign(new Error("workspace_hook_script_unavailable"), {
+      unavailableItems: unavailable.map(
+        (entry) => `${entry.event} ${formatCommand(entry)} (${entry.sourceRelativePath})`,
+      ),
+    });
+  }
   const grantedAt = new Date().toISOString();
   const records: WorkspaceHookTrustRecord[] = selected.map((entry) => ({
     workspaceIdentity: snapshot.workspaceIdentity,
@@ -217,6 +235,10 @@ async function discoverSnapshot(
     workspacePath: target.workspacePath,
     sources: discovery.sources,
     runtimeRoot,
+    scriptStates: await readWorkspaceHookScriptStates({
+      workspacePath: target.workspacePath,
+      sources: discovery.sources,
+    }),
   });
   return data ? createWorkspaceHookBundleSnapshot(data) : undefined;
 }

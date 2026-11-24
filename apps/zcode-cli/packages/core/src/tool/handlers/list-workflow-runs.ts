@@ -8,6 +8,7 @@
 // to this session's working directory, and projects results to the contract shape.
 
 import {
+  LIST_WORKFLOW_RUNS_DEFAULT_LIMIT,
   LIST_WORKFLOW_RUNS_TOOL_NAME,
   ListWorkflowRunsInputJsonSchema,
   ListWorkflowRunsInputSchema,
@@ -57,7 +58,8 @@ const listWorkflowRunsHandler: ToolHandler = async (input, context) => {
     // Match paths literally without normalization; submit stores them as-is and reads query them as-is, so normalizing would make the two sides disagree.
     cwd: context.workingDirectory,
     // Input schema preprocessing clamps the limit to [1, 50], so the port never sees an unbounded enumeration.
-    limit: parsed.limit,
+    // limit is `.default(...).optional()`: the parse result always carries a value, and `??` only narrows the type.
+    limit: parsed.limit ?? LIST_WORKFLOW_RUNS_DEFAULT_LIMIT,
     ...(parsed.statuses === undefined ? {} : { statuses: parsed.statuses }),
   });
 

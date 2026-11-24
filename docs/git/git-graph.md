@@ -9,6 +9,7 @@ Git Graph is the read-only commit graph entry in the Git operation dropdown menu
 - `layoutGitGraph(commits)` is a pure function: input is topo/date sorted commits; output is row coordinates, lane, edge path and truncation status.
 - The SVG renderer only displays nodes, lines, hover, selected and ref chips; a dashed edge to a parent outside the window indicates truncation.
 - UI uses semantic tokens from `DESIGN.md`, adds no graphics library, and is compatible with desktop and Web themes.
+- The dialog keeps a fixed height. With few commits, the background and right divider of the left graph-lane column extend to the bottom of the visible list area; nodes and lines are not stretched. With many commits the list scrolls as one, and the graph lane stays aligned with the commit rows.
 
 ## Current Limitations
 

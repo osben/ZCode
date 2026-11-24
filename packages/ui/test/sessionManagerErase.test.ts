@@ -1,15 +1,22 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { IZCodeTaskService, ZCodeTaskEraseResult } from "@zcode/services";
 import { eraseHiddenRows } from "@/session-manager/sessionManagerErase.js";
+import { clearBrowserRecentVisitsForTask } from "@/store/browserRecentVisitsStore.js";
 import type { SessionManagerRow } from "@/session-manager/sessionManagerModel.js";
 
 // specs/session-deletion-cascade.md §4: file-cleanup failures are reported even when no session stays retained.
 
 const toast = vi.hoisted(() => vi.fn());
 vi.mock("@/components/ui/toast.js", () => ({ toast }));
+vi.mock("@/store/browserRecentVisitsStore.js", () => ({
+  clearBrowserRecentVisitsForTask: vi.fn(),
+}));
 vi.mock("@/logger.js", () => ({ logger: { debug: vi.fn(), error: vi.fn(), warn: vi.fn() } }));
 
-beforeEach(() => toast.mockClear());
+beforeEach(() => {
+  toast.mockClear();
+  vi.mocked(clearBrowserRecentVisitsForTask).mockClear();
+});
 
 const row = (taskId: string): SessionManagerRow =>
   ({
@@ -38,6 +45,12 @@ function run(eraseResult: ZCodeTaskEraseResult | null) {
 }
 
 describe("eraseHiddenRows", () => {
+  it("clears browser history only for erased sessions", async () => {
+    await run(result({ erasedTaskIds: ["a"], skippedTaskIds: ["b"] }));
+    expect(clearBrowserRecentVisitsForTask).toHaveBeenCalledTimes(1);
+    expect(clearBrowserRecentVisitsForTask).toHaveBeenCalledWith("/project", "a");
+  });
+
   it("stays quiet when everything was erased cleanly", async () => {
     await run(result({ erasedTaskIds: ["a", "b"] }));
     expect(toast).not.toHaveBeenCalled();

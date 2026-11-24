@@ -6,10 +6,9 @@ import { z } from "zod";
 import { toToolJsonSchema } from "./json-schema.js";
 
 const nonEmptyString = z.string().trim().min(1);
-// Contracts still uses Zod 3 while the shared protocol uses Zod 4; schema instances from
-// different versions cannot be composed.
-// Keep the field contract in sync with shared ModelSelection leaf by leaf. Remove this local
-// declaration after the Zod versions are unified.
+// Keep the field contract in sync with shared ModelSelection leaf by leaf. The local declaration dates from when contracts used zod 3; both
+// sides are now the same zod 4, and reusing the shared schema directly would change the tools section bytes, so it is left for later.
+
 const cronModelSelectionSchema = z
   .object({
     providerId: nonEmptyString,
@@ -257,12 +256,10 @@ export type CronDeleteInput = z.infer<typeof CronDeleteInputSchema>;
 export const CronDeleteInputJsonSchema = toToolJsonSchema(CronDeleteInputSchema);
 
 /**
- * Contract-layer mirror schema for custom repeat rules (zod v3).
- * Keep its structure in sync with @zcode/shared's ZCodeAutomationScheduleRule. Do not import
- * shared here, to avoid coupling agent contracts' zod v3 to shared's zod v4 (same mirror
- * convention as browser-control).
- * Retain cronExpr for compatibility display; this field is authoritative for scheduling. The
- * session-side long-interval carrier is normalized into this field.
+ * Contract-layer mirror schema for custom repeat rules.
+ * Keep its structure in sync with @zcode/shared's ZCodeAutomationScheduleRule (the mirror dates from when contracts used zod 3; both sides are now
+ * the same zod 4, and reusing it directly would change the tools section bytes, so it is left for later).
+ * Retain cronExpr for compatibility display; this field is authoritative for scheduling. The session-side long-interval carrier is normalized into this field.
  */
 export const CronAutomationScheduleRuleSchema = z
   .object({

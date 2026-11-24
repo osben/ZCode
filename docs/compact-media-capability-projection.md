@@ -10,7 +10,7 @@ Normal model requests project history messages against the executing model's inp
 RuntimeMessageEntry history
         |
         v
-buildCompactSummaryRequestMessages
+prepareRuntimeProviderRequest (called with the compact prompt)
   - attachment / reminder ordering
   - MCS or <system-reminder> projection
   - compact prompt and cache control

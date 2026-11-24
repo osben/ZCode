@@ -11,7 +11,7 @@ import {
 import {
   clearAppData,
   clickTestIdByDom,
-  seedSettings,
+  pinE2ELocale,
   waitForTestIdByDom,
 } from "#e2e/helpers/desktop-app";
 import { expandAssistantHistoriesWithContent } from "#e2e/helpers/conversation-session-tool-diagnostics";
@@ -43,8 +43,9 @@ describe("会话内相对时间一次性定时任务 E2E", () => {
   it("delayMinutes 创建一次性任务 → 详情与列表显示自定义而非重复频率", async function () {
     this.timeout(150000);
 
-    await seedSettings({ locale: "en-US", localePreference: "en-US" });
     await prepareV4ConversationE2E({ resetDraftBeforeProvider: true });
+    // The first frame follows the host language; seedSettings has no effect on an already started renderer, so use pinE2ELocale.
+    await pinE2ELocale("en-US");
 
     // 1) 触发回放的相对时间 CronCreate 并批准副作用权限，等待工具真实执行落库。
     await sendV4Prompt(`${MARKER} remind me to drink water in 5 minutes`);

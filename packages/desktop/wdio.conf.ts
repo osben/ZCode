@@ -1,6 +1,18 @@
+import {
+  bindPrelaunchedElectronSession,
+  PrelaunchedElectronOwner,
+} from "#e2e/helpers/e2e-prelaunched-electron";
+import { startPreinstalledToolsRealFixture } from "#e2e/helpers/preinstalled-tools-real-fixture";
+import { startPreinstalledToolsRewriteFixture } from "#e2e/helpers/preinstalled-tools-rewrite-fixture";
+import { startPreinstalledToolsFaultFixture } from "#e2e/helpers/preinstalled-tools-fault-fixture";
+import {
+  startPreinstalledToolsFixture,
+  writeEmptyPreinstalledToolsCatalog,
+} from "#e2e/helpers/preinstalled-tools-fixture";
 import { seedSidebarRichContentFixture } from "./test/e2e/helpers/sidebar-rich-content-fixture.js";
 import { createConversationShareMockRoute } from "./test/e2e/helpers/conversation-share-mock-route.js";
 import { prepareTtftOtlpFixture } from "./test/e2e/helpers/ttft-otlp-fixture.js";
+import { resolveWindowsE2EMobileBrowserExecutable } from "./test/e2e/helpers/e2e-mobile-browser-executable.js";
 import {
   loadToolSearchResponses,
   toolSearchResponseStage,
@@ -45,6 +57,7 @@ import {
   buildProviderResponsiveStartBalance,
 } from "./test/e2e/fixtures/provider-family-responsive.js";
 import {
+  findFixtureIndex,
   startUpstreamReplayServer,
   type UpstreamReplayServer,
 } from "./test/e2e/helpers/upstream-replay-server.js";
@@ -82,6 +95,7 @@ import {
   CODING_PLAN_UPGRADE_MOCK_BASE_URL_ENV,
   applyCodingPlanTeamMockEnv,
   applyCodingPlanUpgradeMockEnv,
+  applyZaiBusinessTeamMockEnv,
   clearCodingPlanTeamMockEnv,
   clearCodingPlanUpgradeMockEnv,
   shouldPrepareCodingPlanTeamMock,
@@ -94,6 +108,7 @@ import {
 } from "./test/e2e/helpers/start-plan-cn-unlinked-fixture.js";
 import {
   createCodingPlanDataPlaneResponse,
+  dataPlaneResponseHeaders,
   type DataPlaneTurnFixture,
 } from "./test/e2e/helpers/coding-plan-data-plane-response.js";
 import {
@@ -103,6 +118,7 @@ import {
 import { createE2ERendererBridgeRootHooks } from "./test/e2e/helpers/e2e-renderer-bridge-root-hook.js";
 import { resetDraftRegenerationResend } from "#e2e/helpers/draft-regeneration-resend";
 import { installHookTrustFixture } from "./test/e2e/helpers/hook-trust-fixture.js";
+import { installHookTrustWorktreeFixture } from "./test/e2e/helpers/hook-trust-worktree-fixture.js";
 import { resolveUpstreamModels } from "./test/e2e/helpers/upstream-recorded-models.js";
 import { runMeasuredE2ELifecyclePhase } from "./test/e2e/helpers/e2e-lifecycle-measurement.js";
 import { createE2ERunnerFinalizationGuard } from "./test/e2e/helpers/e2e-runner-finalization-guard.js";
@@ -132,12 +148,22 @@ import { prepareOfficialMcpAuthRoutingFixture } from "#e2e/helpers/mcp-official-
 import { prepareMcpFailureGuidanceFixture } from "#e2e/helpers/mcp-failure-guidance-fixture";
 import { createE2EReplayFixtureVariables } from "./test/e2e/helpers/e2e-runtime-paths.js";
 import { stageE2EAppOutput } from "./test/e2e/helpers/e2e-app-output-stage.js";
+import {
+  ensureSharedSnapshot,
+  fileSignature,
+  stageE2EAppOutputWithSharedRenderer,
+} from "./test/e2e/helpers/e2e-shared-stage-cache.js";
 import { withE2EDesktopBuildLock } from "./scripts/ensure-e2e-desktop-build.mjs";
 import { applyForkE2ETelemetryReportEndpoint } from "./scripts/fork-e2e-telemetry-endpoint.mjs";
+import { PREINSTALLED_ENTRY_SHIM_PROCESS_TIMEOUT_MS } from "./scripts/build-windows-preinstalled-entry-shim.mjs";
 import {
   ensureSshRemoteReleaseAssets,
   resolveSshRemoteReleaseScope,
 } from "./test/e2e/helpers/e2e-ssh-remote-release-assets.js";
+import {
+  listSpecsRequiringRemoteRelease,
+  REMOTE_RELEASE_DIR_ENV,
+} from "./test/e2e/helpers/e2e-remote-release-requirement.js";
 import {
   ASK_USER_QUESTION_E2E_CLOCK_SCALE_ENV,
   BUILTIN_MODEL_PROVIDER_IDS,
@@ -161,6 +187,10 @@ import {
   startCodingPlanUpgradeMockServer,
   type CodingPlanUpgradeMockServer,
 } from "./test/e2e/helpers/coding-plan-upgrade-mock-server.js";
+import {
+  resolveE2EMaxInstances,
+  resolveE2EScheduledSpecFiles,
+} from "./test/e2e/helpers/e2e-spec-resolution.js";
 import {
   MANUAL_REVIEW_SPEC_GLOB,
   hasRequiredSshE2EEnvironment,
@@ -200,7 +230,12 @@ import {
   type PluginCdnZipFixtureServer,
 } from "./test/e2e/helpers/plugin-cdn-zip-marketplace.js";
 import { E2EFailureArtifactCollector } from "./test/e2e/reporting/e2e-failure-artifacts.js";
-import { classifyError, createE2EReporter } from "./test/e2e/reporting/e2e-reporting.js";
+import {
+  classifyError,
+  createE2EReporter,
+  isSkippedWdioStatus,
+  resolveWdioTestStatus,
+} from "./test/e2e/reporting/e2e-reporting.js";
 import type { E2ELifecyclePhase } from "./test/e2e/reporting/e2e-reporting-types.js";
 import {
   DEFAULT_E2E_ELECTRON_INSTALL_TIMEOUT_MS,
@@ -241,6 +276,7 @@ const E2E_LOCAL_ENV_FILES = [
 // Bug cause: the Electron binary preflight ran before local E2E env was loaded, so the missing-package fix bypassed mirror,
 // proxy, certificate and cache config. Every runner init that reads process.env must run after that call.
 loadE2ELocalEnv();
+let preinstalledToolsFixture: Awaited<ReturnType<typeof startPreinstalledToolsFixture>> | undefined;
 const BUILD_DESKTOP_AGENT_SCRIPT = resolve(REPO_ROOT, "scripts/build-desktop-agent-cli.mjs");
 const ZCODE_CLI_ENTRYPOINT = resolve(REPO_ROOT, "apps/zcode-cli/packages/cli/dist/zcode.cjs");
 const E2E_HOME_DIR = resolve(
@@ -332,6 +368,7 @@ const PLUGIN_NO_GIT_GITHUB_ARCHIVE_SPEC = "plugin-no-git-github-archive.test.ts"
 const GIT_COMMIT_DIALOG_UI_FLOW_SPEC = "git-commit-dialog-ui-flow.test.ts";
 const OAUTH_CREDENTIAL_RECOVERY_SPEC = "oauth-credential-recovery.test.ts";
 const JWT_EXPIRY_REAUTHENTICATION_SPEC = "jwt-expiry-reauthentication.test.ts";
+const AGENT_ALWAYS_BACKGROUND_SPEC = "conversation-session-agent-always-background.test.ts";
 const SUBAGENT_CODING_PLAN_LOGIN_CATALOG_STALE_SPEC =
   "subagent-coding-plan-login-catalog-stale.test.ts";
 const SUBAGENT_CODING_PLAN_LOGIN_CATALOG_STALE_MODE = "subagent-login-catalog-stale";
@@ -351,6 +388,9 @@ const BROWSER_CROSS_WORKSPACE_ATTACHMENT_SPEC =
   "browser-tab-attachment-restore-cross-workspace.test.ts";
 const WORKSPACE_REMOVAL_RUNTIME_RELEASE_SPEC = "workspace-removal-runtime-release.test.ts";
 const WORKSPACE_SIDEBAR_PROJECT_CONTROLS_SPEC = "workspace-sidebar-project-controls.test.ts";
+// Agent Browser Use conversation plus two restored workspaces: verify that after a tab closes, the residual shell of another workspace leaves no audible guest.
+const BROWSER_USE_AGENT_TAB_CLOSED_RESIDUAL_GUEST_SPEC =
+  "conversation-session-browser-use-agent-tab-closed-residual-guest.test.ts";
 const AGENT_WARMUP_FIXTURE_SPECS = [
   PASSIVE_AGENT_STARTUP_SPEC,
   AGENT_WARMUP_LIFECYCLE_SPEC,
@@ -359,6 +399,7 @@ const AGENT_WARMUP_FIXTURE_SPECS = [
   WORKSPACE_SIDEBAR_PROJECT_CONTROLS_SPEC,
   BROWSER_CROSS_WORKSPACE_CLOSE_SPEC,
   BROWSER_CROSS_WORKSPACE_ATTACHMENT_SPEC,
+  BROWSER_USE_AGENT_TAB_CLOSED_RESIDUAL_GUEST_SPEC,
   WORKSPACE_REMOVAL_RUNTIME_RELEASE_SPEC,
   MODEL_PROVIDER_REGRESSION_GAPS_SPEC,
 ] as const;
@@ -368,6 +409,7 @@ const SMALL_AGENT_WARMUP_SPECS = [
   WORKSPACE_SIDEBAR_PROJECT_CONTROLS_SPEC,
   BROWSER_CROSS_WORKSPACE_CLOSE_SPEC,
   BROWSER_CROSS_WORKSPACE_ATTACHMENT_SPEC,
+  BROWSER_USE_AGENT_TAB_CLOSED_RESIDUAL_GUEST_SPEC,
   WORKSPACE_REMOVAL_RUNTIME_RELEASE_SPEC,
   MODEL_PROVIDER_REGRESSION_GAPS_SPEC,
 ] as const;
@@ -379,6 +421,7 @@ const WORKTREE_CHAT_FIRST_SPEC = "conversation-session-worktree-chat-first.test.
 const WINDOWS_AGENT_METRIC_PROBE_ABSENCE_SPEC = "windows-agent-metric-probe-absence.test.ts";
 const HOOKS_LIFECYCLE_SPEC = "conversation-session-hooks-lifecycle.test.ts";
 const HOOK_TRUST_SPEC = "conversation-session-hook-trust.test.ts";
+const HOOK_TRUST_WORKTREE_SPEC = "conversation-session-hook-trust-worktree.test.ts";
 const E2E_PROVIDER_ID = "e2e-upstream";
 const E2E_PROVIDER_ALTERNATE_PROVIDER_ID = "e2e-upstream-alt";
 const E2E_PROVIDER_ALTERNATE_PROVIDER_NAME = "Upstream E2E Alt";
@@ -589,11 +632,10 @@ const configuredE2ESpecs =
       : upstreamProviderSpecRequested
         ? [UPSTREAM_PROVIDER_SPEC]
         : ["./test/e2e/**/*.test.ts"];
+// 调度前校验：worker 共用 .e2e-home 与账号 mock，只支持串行（见 resolveE2EMaxInstances）。
+const e2eMaxInstances = resolveE2EMaxInstances(process.env);
 const pluginNoGitGitHubArchiveE2E = configuredE2ESpecs.some((spec) =>
   spec.includes(PLUGIN_NO_GIT_GITHUB_ARCHIVE_SPEC),
-);
-const workspacePluginRemoteExplicitSyncE2E = configuredE2ESpecs.some((spec) =>
-  spec.includes("conversation-session-plugin-remote-explicit-sync-workspace.test.ts"),
 );
 const e2eReporter = createE2EReporter({
   repoRoot: REPO_ROOT,
@@ -611,10 +653,22 @@ if (!E2E_RUN_ID) {
 }
 const E2E_RUN_CACHE_DIR = resolve(DESKTOP_DIR, ".e2e-cache", E2E_RUN_ID);
 const E2E_APP_OUTPUT_DIR = resolve(E2E_RUN_CACHE_DIR, "app");
-const E2E_OFFICIAL_PLUGIN_CACHE_TEMPLATE_HOME = resolve(
-  E2E_RUN_CACHE_DIR,
-  "official-plugin-cache-home",
-);
+// 复用构建（测试池、CI 子 shard）时桌面产物和 CLI 整轮不变：renderer 和官方插件缓存模板按内容签名
+// 只准备一次，之后的批次直接用（见 test/e2e/helpers/e2e-shared-stage-cache.ts）。现场构建、源码证据、
+// 正式包和 ZCODE_E2E_SHARED_STAGE=0 时维持按 runId 各备一份。
+const E2E_SHARED_STAGE_DIR = resolve(DESKTOP_DIR, ".e2e-cache", "shared");
+// 只看 launcher 和 worker 进程一定相同的环境变量：worker 也要算出同一个模板路径。
+// 不用 shouldReuseDesktopE2EBuild：它还看 onPrepare 才下发给 worker 的 mock 端口，两边会算得不一样。
+const E2E_SHARED_STAGE =
+  process.env.ZCODE_E2E_SKIP_BUILD === "1" &&
+  process.env.ZCODE_E2E_SKIP_AGENT_BUILD === "1" &&
+  process.env.ZCODE_E2E_SOURCE_EVIDENCE !== "1" &&
+  process.env.ZCODE_E2E_SHARED_STAGE !== "0" &&
+  !E2E_PACKAGED_APP_BINARY_PATH;
+const E2E_SHARED_PLUGIN_CACHE_KEY = E2E_SHARED_STAGE ? fileSignature(ZCODE_CLI_ENTRYPOINT) : null;
+const E2E_OFFICIAL_PLUGIN_CACHE_TEMPLATE_HOME = E2E_SHARED_PLUGIN_CACHE_KEY
+  ? resolve(E2E_SHARED_STAGE_DIR, "official-plugin-cache", E2E_SHARED_PLUGIN_CACHE_KEY)
+  : resolve(E2E_RUN_CACHE_DIR, "official-plugin-cache-home");
 const E2E_APP_ENTRY_POINT = resolve(E2E_APP_OUTPUT_DIR, "main/index.js");
 const E2E_APP_RENDERER_ASSETS_DIR = resolve(E2E_APP_OUTPUT_DIR, "renderer/assets");
 const E2E_REMOTE_ASSET_VERSION = String(
@@ -667,6 +721,14 @@ applyForkE2ETelemetryReportEndpoint(process.env);
 // Bugfix: the e2e session's debug port is managed by Chromedriver; disable the main process's fixed 9229 used in dev mode,
 // to avoid colliding with an already-open ZCode Dev on this machine, which causes a blank window and a stall during session creation.
 process.env.ZCODE_DISABLE_FIXED_REMOTE_DEBUGGING_PORT = "1";
+// 修复原因：Windows CI runner 未安装 Chrome，手机 Web 用例的 `channel: "chrome"` 启动失败；
+// 未显式配置时回退到本机 Chrome/Edge，worker 继承该变量后各 spec 无需单独处理。
+if (process.platform === "win32" && !process.env.ZCODE_E2E_MOBILE_BROWSER_EXECUTABLE?.trim()) {
+  const mobileBrowserExecutable = resolveWindowsE2EMobileBrowserExecutable();
+  if (mobileBrowserExecutable) {
+    process.env.ZCODE_E2E_MOBILE_BROWSER_EXECUTABLE = mobileBrowserExecutable;
+  }
+}
 
 let upstreamCaptureProxy: E2ENetworkCaptureProxy | null = null;
 let upstreamReplayServer: UpstreamReplayServer | null = null;
@@ -688,6 +750,12 @@ let pluginCdnZipFixtureServer: PluginCdnZipFixtureServer | null = null;
 let upstreamE2EBaseUrl: string = e2eProviderPreset.baseUrl;
 let e2eRunnerExitWatchdog: ReturnType<typeof setTimeout> | null = null;
 let currentE2EElectronAppPid: number | null = null;
+let prelaunchedElectronOwner: PrelaunchedElectronOwner | undefined;
+async function disposeOwnedElectron() {
+  const current = prelaunchedElectronOwner;
+  prelaunchedElectronOwner = undefined;
+  await current?.dispose();
+}
 let currentE2EWorkerSpecs: string[] = [];
 let currentE2EBeforeSessionError: unknown = null;
 let e2eFailureArtifacts: E2EFailureArtifactCollector | null = null;
@@ -984,6 +1052,9 @@ function prepareDesktopAppBuild() {
   // so every Windows CI case reports "runtime host missing" and empty slash directories.
   // Reused builds (ZCODE_E2E_SKIP_BUILD) must check this too, since the artifacts are not protected by the out stamp.
   ensureWindowsRuntimeHost();
+  // Bug cause: the lightweight build does not produce the preinstalled-entry shim, so Windows only fails at the install-to-run check.
+  // Prepare it before the reuse decision, so a case is not entered when an old out exists but the local native resource is missing.
+  ensureWindowsPreinstalledEntryShim();
   // Fix reason: the WDIO config is parsed by esbuild first; CI-executed strings must keep ASCII quotes.
   // The shard's mock port is allocated after the parent build; when a web mock is present, the compile-time origin must be rebuilt with the current port.
   if (shouldReuseDesktopE2EBuild(process.env)) {
@@ -1005,6 +1076,29 @@ function ensureWindowsRuntimeHost() {
     process.execPath,
     [resolve(REPO_ROOT, "scripts/build-windows-runtime-host.mjs"), "--if-windows", "--ensure"],
     { cwd: REPO_ROOT, env: createPnpmChildEnv(), stdio: "inherit" },
+  );
+}
+
+function ensureWindowsPreinstalledEntryShim() {
+  if (process.platform !== "win32") return;
+  const targetArch = (process.env.ZCODE_TARGET_ARCH ?? process.arch).toLowerCase();
+  // 分片父进程已准备缓存；child 只校验并取得独立副本，不能再次编译共享产物。
+  const mode = shouldReuseDesktopE2EBuild(process.env) ? "--check" : "--ensure";
+  execFileSync(
+    process.execPath,
+    [
+      resolve(REPO_ROOT, "packages/desktop/scripts/build-windows-preinstalled-entry-shim.mjs"),
+      mode,
+      "--stage-dir",
+      resolve(E2E_RUN_CACHE_DIR, "bundled-tools", `win32-${targetArch}`, "preinstalled-entry-shim"),
+    ],
+    {
+      cwd: REPO_ROOT,
+      env: createPnpmChildEnv(),
+      stdio: "inherit",
+      timeout: PREINSTALLED_ENTRY_SHIM_PROCESS_TIMEOUT_MS,
+      killSignal: "SIGKILL",
+    },
   );
 }
 
@@ -1046,40 +1140,19 @@ async function stageDesktopE2EAppOutput() {
   // copy the immutable app artifacts by runId, so E2E is fully isolated from parallel dev processes.
   // Use copy-on-write to lower preparation cost across shards; do not use hard links that share an inode, since a type check
   // that overwrites out/host in place would break the already-running isolated copies at the same time.
-  await stageE2EAppOutput(DESKTOP_BUILD_OUTPUT_DIR, E2E_APP_OUTPUT_DIR);
-  if (
-    hasRequiredSshE2EEnvironment(process.env) ||
-    process.env.ZCODE_E2E_SSH_HOST?.trim() ||
-    process.env.ZCODE_E2E_SSH_A_HOST?.trim() ||
-    process.env.ZCODE_E2E_SSH_B_HOST?.trim()
-  ) {
-    // Bug cause: CI only has the build:remote:assets job produce mock-cdn/releases/<version>, and it runs on the generic
-    // macos runner slot; the conversation e2e runs on a dedicated runner, and the persistent mock-cdn workspace directories are not shared
-    // with each other. After a version bump the dedicated runner always lacks the new release; a direct fatal would turn every upgrade into a
-    // CI-only failure. Instead, when the directory is missing, run prepare:remote-assets automatically (idempotent) and fail only if it is still missing afterwards.
-    // fail-closed。
-    // Bug cause: packages/desktop's prepare:remote-assets was removed with the legacy asset pipeline,
-    // `pnpm --filter @zcode/desktop prepare:remote-assets` fails with ERR_PNPM_RECURSIVE_RUN_NO_SCRIPT,
-    // making all SSH E2E fatal during onPrepare; it must call the root package.json's prepare:remote-assets
-    // prepare:remote-assets（→ @zcode/server-cli stage:remote-assets）。runPnpmWorkspaceCommand
-    // the cwd is fixed to REPO_ROOT, so passing just the script name hits the root script.
-    // When the local Docker runner declares "Linux only", the helper reads the descriptor to judge the two Linux targets,
-    // and only calls `ZCODE_ENV=test pnpm prepare:remote-assets:linux`; when undeclared, behavior is unchanged.
-    await ensureSshRemoteReleaseAssets({
-      releaseDir: E2E_REMOTE_RELEASE_SOURCE_DIR,
-      scope: resolveSshRemoteReleaseScope(process.env),
-      prepareReleaseAssets: (request) =>
-        runPnpmWorkspaceCommand([request.script], {
-          // Anti-hang cap: a cold-cache full prepare takes about 10 minutes; 30 minutes only pays off in a complete hang, so
-          // onPrepare fails and exits; the normal slow path is unaffected.
-          timeoutMs: 30 * 60 * 1000,
-          env: request.env,
-        }),
+  if (E2E_SHARED_STAGE && process.platform === "win32") {
+    // Windows has no copy-on-write and copying all of out takes 11s; the renderer (6650 files, 141MB) is read-only at runtime,
+    // so one copy is shared by signature, while small directories such as main are still copied (cases write startup files into main).
+    const staged = await stageE2EAppOutputWithSharedRenderer({
+      sourceDir: DESKTOP_BUILD_OUTPUT_DIR,
+      destinationDir: E2E_APP_OUTPUT_DIR,
+      cacheRoot: resolve(E2E_SHARED_STAGE_DIR, "renderer"),
     });
-    // Bug cause: dual-SSH cases only configure A/B targets; if only the common host is recognized here, the remote release built
-    // from the current source is not placed in the runId-isolated directory, and the remote keeps reusing the old server bundle of the same version,
-    // rejecting new fields such as enabledSource with the old protocol schema.
-    await stageE2EAppOutput(E2E_REMOTE_RELEASE_SOURCE_DIR, E2E_REMOTE_RELEASE_OUTPUT_DIR);
+    console.log(
+      `[e2e] renderer ${staged.reused ? "reused" : "created"} shared snapshot ${staged.renderer}`,
+    );
+  } else {
+    await stageE2EAppOutput(DESKTOP_BUILD_OUTPUT_DIR, E2E_APP_OUTPUT_DIR);
   }
   if (!existsSync(E2E_APP_ENTRY_POINT)) {
     throw new Error(`[e2e] staged desktop main entrypoint missing: ${E2E_APP_ENTRY_POINT}`);
@@ -1087,6 +1160,86 @@ async function stageDesktopE2EAppOutput() {
   if (!isRendererE2EStoreBridgeCompiled(E2E_APP_RENDERER_ASSETS_DIR)) {
     throw new Error("[e2e] staged renderer is missing VITE_ZCODE_E2E_STORE_BRIDGE=1");
   }
+}
+
+/**
+ * 按本轮调度的 spec 准备并 stage SSH remote release；不需要时跳过，也不记录计时阶段。
+ * 规格见 docs/testing/conversation-session-automatic-e2e-ci.md「SSH remote assets 自动准备」。
+ */
+async function prepareSshRemoteReleaseForRun(
+  specs: string[],
+  agentBundleBuiltThisRun: boolean,
+): Promise<void> {
+  if (
+    !hasRequiredSshE2EEnvironment(process.env) &&
+    !process.env.ZCODE_E2E_SSH_HOST?.trim() &&
+    !process.env.ZCODE_E2E_SSH_A_HOST?.trim() &&
+    !process.env.ZCODE_E2E_SSH_B_HOST?.trim()
+  ) {
+    return;
+  }
+  // Bug 根因：过去只要 runner 配置了 SSH 环境变量就准备。CI 的 SSH 凭据是项目级变量，
+  // 只改普通 spec 的 MR（2026-11-17 job 1143279，6 个 spec 均不用 SSH）也会因提交回执不匹配
+  // 重建全部平台的远端包并多构建一轮 agent。改为只看本轮调度 spec 的 import 关系；
+  // 判定漏掉的用例由 ssh-remote-p0 的配置入口兜底失败。
+  const requiredSpecs = await listSpecsRequiringRemoteRelease({
+    desktopDir: DESKTOP_DIR,
+    specFiles: resolveE2EScheduledSpecFiles({
+      baseDir: DESKTOP_DIR,
+      exclude: config.exclude ?? [],
+      specs,
+    }),
+  });
+  if (requiredSpecs.length === 0) {
+    console.log("[e2e] no scheduled spec needs the SSH remote release; skipping remote assets");
+    return;
+  }
+  console.log(
+    `[e2e] ${requiredSpecs.length} scheduled spec(s) need the SSH remote release, e.g. ${requiredSpecs[0]}`,
+  );
+  // 与桌面构建同一把锁：mock-cdn/releases/<version> 是工作区共享目录，并行 runner 不能同时重建。
+  await measureE2ELifecyclePhase("prepare:remote-release", { specs: requiredSpecs }, () =>
+    withE2EDesktopBuildLock({}, async () => {
+      // Bug 根因：CI 只有 build:remote:assets job 产出 mock-cdn/releases/<version>，且跑在通用
+      // macos runner 槽位；conversation e2e 在专用 runner 上，mock-cdn 工作区持久化目录互不
+      // 相通，版本 bump 后专用 runner 必然缺新版本 release，直接 fatal 会把每次升级变成
+      // CI-only 失败。改为缺目录时自动跑 prepare:remote-assets（幂等），产出后仍缺失才
+      // fail-closed。
+      // Bug 根因：packages/desktop 的 prepare:remote-assets 已随 legacy asset pipeline 一并删除，
+      // `pnpm --filter @zcode/desktop prepare:remote-assets` 会以 ERR_PNPM_RECURSIVE_RUN_NO_SCRIPT
+      // 失败并让所有 SSH E2E 在 onPrepare 阶段 fatal；必须调用根 package.json 的
+      // prepare:remote-assets（→ @zcode/server-cli stage:remote-assets）。runPnpmWorkspaceCommand
+      // 的 cwd 固定为 REPO_ROOT，直接传脚本名即可命中根脚本。
+      // 本机 Docker runner 声明「只需 Linux」时，helper 改读 descriptor 判断两个 Linux 目标，
+      // 并只调用 `ZCODE_ENV=test pnpm prepare:remote-assets:linux`；未声明时行为不变。
+      await ensureSshRemoteReleaseAssets({
+        releaseDir: E2E_REMOTE_RELEASE_SOURCE_DIR,
+        buildRevision: process.env.CI_COMMIT_SHA,
+        scope: resolveSshRemoteReleaseScope(process.env),
+        // Bug 根因：stage:remote-assets 第一个 target 会再跑一次 build-desktop-agent-cli.mjs，
+        // 与 prepareZCodeAgentServer 的构建脚本、环境完全相同，一次运行构建两轮 agent。
+        // 只有本轮 onPrepare 真实构建过 agent 才让打包器复用（评审 CR-01 第二轮）：
+        // ZCODE_E2E_SKIP_AGENT_BUILD=1 只检查入口存在，bundle 可能来自旧构建，必须由打包器重建。
+        agentBundleBuiltThisRun,
+        prepareReleaseAssets: (request) =>
+          runPnpmWorkspaceCommand([request.script, ...request.args], {
+            // 防挂死上限：冷缓存全量 prepare 约 10 分钟，给到 30 分钟只兑现在「彻底卡死」时
+            // 让 onPrepare 失败退出，正常慢路径不受影响。
+            timeoutMs: 30 * 60 * 1000,
+            env: request.env,
+          }),
+      });
+      // Bug 根因：dual-SSH case 只配置 A/B target；若这里只识别 common host，就不会把
+      // 当前源码构建的 remote release 放进 runId 隔离目录，远端会继续复用同版本的旧
+      // server bundle，并用旧协议 schema 拒绝 enabledSource 等新字段。
+      await stageE2EAppOutput(E2E_REMOTE_RELEASE_SOURCE_DIR, E2E_REMOTE_RELEASE_OUTPUT_DIR);
+    }),
+  );
+  // worker 的兜底检查只认 onPrepare 下发的目录：runnerEnv 是传给 worker 的唯一可靠通道。
+  if (!config.runnerEnv) {
+    throw new Error("wdio config 缺少 runnerEnv，remote release 目录无法透传给 worker");
+  }
+  Object.assign(config.runnerEnv, { [REMOTE_RELEASE_DIR_ENV]: E2E_REMOTE_RELEASE_OUTPUT_DIR });
 }
 
 function isRendererE2EStoreBridgeCompiled(rendererAssetsDir: string) {
@@ -1127,11 +1280,12 @@ function createPnpmChildEnv() {
   };
 }
 
-function prepareZCodeAgentServer() {
+/** 返回本轮是否真实构建了 agent bundle；只检查入口存在的分支返回 false（见 prepareSshRemoteReleaseForRun）。 */
+function prepareZCodeAgentServer(): boolean {
   if (E2E_PACKAGED_APP_BINARY_PATH) {
     // The real Preview package must use the bundled Agent; test runners must not inject a source entry point to hide missing packaging.
     configureZCodeAgentServerEnv();
-    return;
+    return false;
   }
   if (process.env.ZCODE_E2E_SKIP_AGENT_BUILD === "1") {
     // Fix reason: in Windows full-E2E shards the parent runner builds the agent once; if each child WDIO builds again,
@@ -1141,7 +1295,7 @@ function prepareZCodeAgentServer() {
       throw new Error(`ZCode CLI entrypoint not found: ${ZCODE_CLI_ENTRYPOINT}`);
     }
     configureZCodeAgentServerEnv();
-    return;
+    return false;
   }
 
   // Bugfix: e2e was still looking for an old native zcode-agent binary outside the repo and calling the deleted
@@ -1159,6 +1313,7 @@ function prepareZCodeAgentServer() {
   }
 
   configureZCodeAgentServerEnv();
+  return true;
 }
 
 function configureZCodeAgentServerEnv() {
@@ -1261,12 +1416,14 @@ async function startCodingPlanTeamMockIfNeeded(specs: string[] = []) {
     if (await isCodingPlanTeamMockAlive(preparedBaseUrl)) {
       codingPlanTeamMockBaseUrl = preparedBaseUrl;
       applyCodingPlanTeamMockEnv(process.env, preparedBaseUrl);
+      applyZaiBusinessTeamMockEnv(process.env, preparedBaseUrl, specs);
       return;
     }
     delete process.env[CODING_PLAN_TEAM_MOCK_BASE_URL_ENV];
   }
   if (codingPlanTeamMockServer) {
     applyCodingPlanTeamMockEnv(process.env, codingPlanTeamMockBaseUrl);
+    applyZaiBusinessTeamMockEnv(process.env, codingPlanTeamMockBaseUrl, specs);
     return;
   }
   if (process.env.WDIO_WORKER_ID !== undefined) {
@@ -1284,17 +1441,27 @@ async function startCodingPlanTeamMockIfNeeded(specs: string[] = []) {
     | "model-provider-plan-surface" = "default";
   let subagentOAuthTokenIssued = false;
   let modelProviderCatalogMode: "full" | "partial" | "unavailable" = "full";
+  // 项目 Token 断网恢复（PTN）：短寿命 PAT 让模型请求必须重新签发；断网时直接断开连接，
+  // Host fetch 得到无 HTTP 响应的传输失败（project_token_network_error），与真实断网同类。
+  let projectTokenLifetimeSeconds = 600;
+  let projectTokenNetworkDown = false;
+  let projectTokenIssueAttempts = 0;
+  let projectTokenDroppedAttempts = 0;
+  let projectTokenLatestExpiresAtMs = 0;
+  // 用例经 /__e2e/coding-plan/client-configs 追加的公开配置（如草稿模型迁移规则）；
+  // case-mode 重置时清空，不跨用例残留。
+  let extraClientConfigs: Record<string, unknown> = {};
   let presentation: EntitlementPresentation | undefined;
   let scenario: "personalOnly" | "teamOnly" | "both" = "both";
-  // Bug regression: the Start Plan standalone case needs billing/balance to return Start Plan entitlements and models,
-  // so the trial plan and Coding Plan coexist for real from first launch; the mock is created only once in onPrepare,
-  // so this mode must be fixed at creation time; later workers share the same server state.
-  const startIndependent = workerSpecsContain(
-    specs,
-    "conversation-session-start-plan-independent.test.ts",
-  );
-  const offPeakTeam = isOffPeakTeamPlanSpec(specs);
-  if (offPeakTeam) {
+  // The specs the launcher receives may be globs, so the expanded files must be used.
+  // Bugfix (mac conversation job, 2026-11-16): ZCODE_E2E_SPEC is often a directory glob, so judging by file name is always false.
+  // The gateway can only be held by the launcher (it cannot outlive a worker exit), so whether to start it is decided from the whole expanded batch;
+  // whether the Team off-peak rollout is sent to the current worker is set per worker by case-mode (offPeakTeamConfig).
+  if (
+    isOffPeakTeamPlanSpec(
+      resolveE2EScheduledSpecFiles({ baseDir: DESKTOP_DIR, exclude: [], specs: [...specs] }),
+    )
+  ) {
     // The generic product mock replaces it with personal fake credentials, which cannot verify Team. Only the test process substitutes the HTTP server.
     const { startOffPeakMockGateway, createServiceLogger } = await import("@zcode/services/node");
     offPeakTeamGateway = await startOffPeakMockGateway(
@@ -1314,7 +1481,12 @@ async function startCodingPlanTeamMockIfNeeded(specs: string[] = []) {
     );
     process.env.ZCODE_OFFPEAK_MOCK_PORT = String(offPeakTeamGateway.port);
   }
-  let providerResponsive = startIndependent;
+  // Start Plan 独立 case 需要 billing/balance 从首启就返回 Start Plan 权益与模型；
+  // 由每个 worker 在 Electron 启动前经 case-mode 设置，见 configureCodingPlanTeamMockForSpecs。
+  let providerResponsive = false;
+  // Bugfix（评审 CR-01）：灰度原先取 launcher 的整批判定，同批非 Team 用例也会收到
+  // offPeak.enable_offpeak_task=true，单跑与批跑配置不同。改为每个 worker 经 case-mode 重置。
+  let offPeakTeamConfig = false;
   let faultMode:
     | "none"
     | "optionalActivity"
@@ -1364,7 +1536,7 @@ async function startCodingPlanTeamMockIfNeeded(specs: string[] = []) {
     path: string;
     query: Record<string, string>;
   }> = [];
-  const shareMockRoute = createConversationShareMockRoute();
+  const shareMockRoute = await createConversationShareMockRoute();
   codingPlanTeamMockServer = createServer(async (request, response) => {
     if (await shareMockRoute(request, response)) return;
     const url = new URL(request.url ?? "/", "http://127.0.0.1");
@@ -1389,7 +1561,12 @@ async function startCodingPlanTeamMockIfNeeded(specs: string[] = []) {
     }
     if (url.pathname === "/__e2e/coding-plan/case-mode" && request.method === "POST") {
       presentation = undefined;
-      const body = await readRequestJson<{ mode?: typeof caseMode }>(request);
+      const body = await readRequestJson<{
+        mode?: typeof caseMode;
+        offPeakTeam?: boolean;
+        providerResponsive?: boolean;
+        projectTokenLifetimeSeconds?: unknown;
+      }>(request);
       caseMode =
         body.mode === SUBAGENT_CODING_PLAN_LOGIN_CATALOG_STALE_MODE
           ? SUBAGENT_CODING_PLAN_LOGIN_CATALOG_STALE_MODE
@@ -1397,10 +1574,23 @@ async function startCodingPlanTeamMockIfNeeded(specs: string[] = []) {
             ? "model-provider-plan-surface"
             : "default";
       subagentOAuthTokenIssued = false;
+      // Bugfix（mac conversation job，2026-11-16）：原先只在 onPrepare 按 launcher 的 specs 判断，
+      // glob 运行时恒为 false，推荐弹窗不出现；用例经 scenario 改过的值也会漏到后续 worker。
+      providerResponsive = body.providerResponsive === true;
+      offPeakTeamConfig = body.offPeakTeam === true;
       modelProviderCatalogMode = "full";
+      extraClientConfigs = {};
       scenario =
         caseMode === SUBAGENT_CODING_PLAN_LOGIN_CATALOG_STALE_MODE ? "personalOnly" : "both";
       faultMode = "none";
+      projectTokenLifetimeSeconds =
+        typeof body.projectTokenLifetimeSeconds === "number" && body.projectTokenLifetimeSeconds > 0
+          ? body.projectTokenLifetimeSeconds
+          : 600;
+      projectTokenNetworkDown = false;
+      projectTokenIssueAttempts = 0;
+      projectTokenDroppedAttempts = 0;
+      projectTokenLatestExpiresAtMs = 0;
       resetScenario = "none";
       resetScenarioStartedAt = Date.now();
       resetOpportunityGranted = false;
@@ -1412,6 +1602,35 @@ async function startCodingPlanTeamMockIfNeeded(specs: string[] = []) {
       resetMultiLag = null;
       requests.length = 0;
       writeJson(response, { mode: caseMode, ok: true });
+      return;
+    }
+    if (url.pathname === "/__e2e/coding-plan/client-configs" && request.method === "POST") {
+      const body = await readRequestJson<{ configs?: unknown }>(request);
+      if (!body.configs || typeof body.configs !== "object" || Array.isArray(body.configs)) {
+        writeJson(response, { code: 400, msg: "configs must be an object" }, 400);
+        return;
+      }
+      extraClientConfigs = body.configs as Record<string, unknown>;
+      writeJson(response, { ok: true });
+      return;
+    }
+    if (url.pathname === "/__e2e/coding-plan/project-token") {
+      if (request.method === "POST") {
+        const body = await readRequestJson<{ lifetimeSeconds?: unknown; networkDown?: unknown }>(
+          request,
+        );
+        if (typeof body.lifetimeSeconds === "number" && body.lifetimeSeconds > 0)
+          projectTokenLifetimeSeconds = body.lifetimeSeconds;
+        if (typeof body.networkDown === "boolean") projectTokenNetworkDown = body.networkDown;
+      }
+      writeJson(response, {
+        ok: true,
+        lifetimeSeconds: projectTokenLifetimeSeconds,
+        networkDown: projectTokenNetworkDown,
+        issueAttempts: projectTokenIssueAttempts,
+        droppedAttempts: projectTokenDroppedAttempts,
+        latestExpiresAtMs: projectTokenLatestExpiresAtMs,
+      });
       return;
     }
     if (url.pathname === "/__e2e/coding-plan/team-health" && request.method === "GET") {
@@ -1695,7 +1914,7 @@ async function startCodingPlanTeamMockIfNeeded(specs: string[] = []) {
       writeJson(
         response,
         // Recommendation depends on the target model's real quota; keep it consistent with the current model used by SIP.
-        buildProviderResponsiveStartBalance(startIndependent ? "GLM-5.3" : undefined),
+        buildProviderResponsiveStartBalance("GLM-5.3"),
       );
       return;
     }
@@ -1839,7 +2058,8 @@ async function startCodingPlanTeamMockIfNeeded(specs: string[] = []) {
         data: {
           configs: {
             ...requestSecurityClientConfig(),
-            ...(offPeakTeam ? { offPeak: { enable_offpeak_task: true } } : {}),
+            ...(offPeakTeamConfig ? { offPeak: { enable_offpeak_task: true } } : {}),
+            ...extraClientConfigs,
           },
         },
       });
@@ -1944,13 +2164,21 @@ async function startCodingPlanTeamMockIfNeeded(specs: string[] = []) {
     }
 
     if (request.method === "POST" && url.pathname.endsWith("/access_tokens")) {
+      projectTokenIssueAttempts++;
+      if (projectTokenNetworkDown) {
+        projectTokenDroppedAttempts++;
+        request.socket.destroy();
+        return;
+      }
       // Reason: the account Provider has switched to project tokens; the old fixture returned only a long-lived Key, so personal entitlements stayed unknown.
       const encode = (value: unknown) => Buffer.from(JSON.stringify(value)).toString("base64url");
-      const expiresAt = Math.floor(Date.now() / 1000) + 600;
+      const expiresIn = projectTokenLifetimeSeconds;
+      const expiresAt = Math.floor(Date.now() / 1000) + expiresIn;
+      projectTokenLatestExpiresAtMs = Math.max(projectTokenLatestExpiresAtMs, expiresAt * 1000);
       const token = `${encode({ alg: "HS256", typ: "JWT", sign_type: "SIGN" })}.${encode({ token_use: "project_access", api_key: "e2e-key", exp: expiresAt })}.e2e-signature`;
       writeJson(response, {
         code: 200,
-        data: { enable: true, accessToken: token, tokenType: "Bearer", expiresIn: 600, expiresAt },
+        data: { enable: true, accessToken: token, tokenType: "Bearer", expiresIn, expiresAt },
       });
       return;
     }
@@ -2274,6 +2502,7 @@ async function startCodingPlanTeamMockIfNeeded(specs: string[] = []) {
   const address = codingPlanTeamMockServer.address() as AddressInfo;
   codingPlanTeamMockBaseUrl = `http://127.0.0.1:${address.port}`;
   applyCodingPlanTeamMockEnv(process.env, codingPlanTeamMockBaseUrl);
+  applyZaiBusinessTeamMockEnv(process.env, codingPlanTeamMockBaseUrl, specs);
 }
 
 async function isCodingPlanTeamMockAlive(baseUrl: string): Promise<boolean> {
@@ -2301,8 +2530,25 @@ async function configureCodingPlanTeamMockForSpecs(specs: string[]) {
     : isModelProviderPlanSurfaceSpec(specs)
       ? "model-provider-plan-surface"
       : "default";
+  const providerResponsive = workerSpecsContain(
+    specs,
+    "conversation-session-start-plan-independent.test.ts",
+  );
+  // PTN 用例需要从 Electron 首启就签发短寿命 PAT；用例内重启会再次经 case-mode 重置，
+  // 只能随 spec 下发，否则启动期缓存的长寿命 PAT 会让断网走旧 PAT 降级。
+  const projectTokenLifetimeSeconds = workerSpecsContain(
+    specs,
+    "conversation-session-project-token-network-retry.test.ts",
+  )
+    ? 3
+    : undefined;
   const response = await fetch(`${baseUrl}/__e2e/coding-plan/case-mode`, {
-    body: JSON.stringify({ mode }),
+    body: JSON.stringify({
+      mode,
+      offPeakTeam: isOffPeakTeamPlanSpec(specs),
+      providerResponsive,
+      projectTokenLifetimeSeconds,
+    }),
     headers: { "content-type": "application/json" },
     method: "POST",
     signal: AbortSignal.timeout(2_000),
@@ -2354,7 +2600,16 @@ async function readDataPlaneTurnFixtures(path: string): Promise<DataPlaneTurnFix
   ).fixtures;
 }
 
+/** MCP 回放的命中次数按 session 计；修复前复用代理时沿用上一 session 的次数，重试时 fixture 被提前耗尽。 */
+const mcpFixtureCounts = new Map<string, number>();
+/** 回放未命中时返回的 SSE 错误；修复前在请求 end 监听器里 throw，异常落在 runner 进程而不是用例里。 */
+const MCP_FIXTURE_MISS_BODY = `event: error\ndata: ${JSON.stringify({
+  type: "error",
+  error: { type: "invalid_request_error", message: "No matching MCP data-plane fixture" },
+})}\n\n`;
+
 async function startCodingPlanDataPlaneProxy(specs: readonly string[]) {
+  mcpFixtureCounts.clear();
   // The data plane starts per current worker; a ToolSearch in a mixed batch does not affect other account cases.
   if (!shouldPrepareCodingPlanTeamMock(specs)) return;
   // ToolSearch's multi-round replies use the main capture proxy, so two proxies do not overwrite the same network settings.
@@ -2385,6 +2640,34 @@ async function startCodingPlanDataPlaneProxy(specs: readonly string[]) {
         )
       ).flat()
     : null;
+  const mcpFixtures = specs.some((spec) =>
+    spec.includes("conversation-session-mcp-async-startup-wait.test.ts"),
+  )
+    ? await readDataPlaneTurnFixtures(
+        "test/e2e/fixtures/upstream/conversation-session/conversation-session-mcp-async-startup-wait.json",
+      )
+    : null;
+  // Local 仍走主 replay；Native 使用现有 Account HTTPS 捕获链路及同一份 case fixture。
+  const mcpResponse = mcpFixtures
+    ? (body: string) => {
+        const request = JSON.parse(body) as ToolSearchRequest;
+        // 历史会永久保留旧 marker；复用回放规则和次数约束，不能另按全文推断阶段。
+        const index = findFixtureIndex(
+          mcpFixtures,
+          { method: "POST", path: "/api/anthropic/v1/messages" },
+          body,
+          request,
+          mcpFixtureCounts,
+        );
+        const fixture = mcpFixtures[index];
+        if (!fixture) {
+          console.error("[e2e] No matching MCP data-plane fixture");
+          return MCP_FIXTURE_MISS_BODY;
+        }
+        mcpFixtureCounts.set(fixture.id, (mcpFixtureCounts.get(fixture.id) ?? 0) + 1);
+        return fixture.response.body;
+      }
+    : undefined;
   codingPlanDataPlaneProxy = await startE2ENetworkCaptureProxy({
     artifactPath: CODING_PLAN_DATA_PLANE_ARTIFACT_PATH,
     caDir: E2E_CODING_PLAN_DATA_PLANE_CA_DIR,
@@ -2424,12 +2707,14 @@ async function startCodingPlanDataPlaneProxy(specs: readonly string[]) {
           ]
         : []),
       {
-        ...(highspeedFixtures
-          ? createCodingPlanDataPlaneResponse(highspeedFixtures, {
-              fallbackBody: CODING_PLAN_MODEL_SSE_BODY,
-              title: { id: "highspeed-title", text: '{"title":"Highspeed draw"}' },
-            })
-          : codingPlanDefaultDataPlaneResponse),
+        ...(mcpResponse
+          ? { body: mcpResponse, headers: dataPlaneResponseHeaders }
+          : highspeedFixtures
+            ? createCodingPlanDataPlaneResponse(highspeedFixtures, {
+                fallbackBody: CODING_PLAN_MODEL_SSE_BODY,
+                title: { id: "highspeed-title", text: '{"title":"Highspeed draw"}' },
+              })
+            : codingPlanDefaultDataPlaneResponse),
         host: "open.bigmodel.cn",
         method: "POST",
         path: "/api/anthropic/v1/messages",
@@ -3436,6 +3721,10 @@ async function resetE2EHome(specs: string[] = []) {
     // otherwise the SessionStart soft gate would not take effect in the first turn (the pending banner precondition for HK05).
     await installHookTrustFixture();
   }
+  if (specs.some((spec) => spec.includes(HOOK_TRUST_WORKTREE_SPEC))) {
+    // 同上：源仓库任务的 SessionStart 软门禁依赖冷启动前已提交的 Hook 与未提交的脚本修改。
+    await installHookTrustWorktreeFixture();
+  }
 }
 
 async function removeE2EHomeWithRetry() {
@@ -3580,14 +3869,16 @@ function seedE2EStartupState(specs: string[] = []) {
   )
     ? SMALL_AGENT_WARMUP_SCENARIO
     : PASSIVE_AGENT_STARTUP_SCENARIO;
-  const modelProviderRegressionFixture = workerSpecsContain(
-    specs,
+  // 默认工作区 + dormant workspace 并存的启动态：模型回归缺口 spec 与 Agent tab 残留 guest spec
+  // 都需要在 legacy 默认工作区里跑对话，再经侧栏切到另一个已恢复的 workspace。
+  const defaultPlusDormantWorkspacesFixture = [
     MODEL_PROVIDER_REGRESSION_GAPS_SPEC,
-  );
+    BROWSER_USE_AGENT_TAB_CLOSED_RESIDUAL_GUEST_SPEC,
+  ].some((marker) => workerSpecsContain(specs, marker));
   const passiveWorkspacePaths = agentWarmupFixture
     ? seedPassiveAgentStartupWorkspaces(E2E_HOME_DIR, agentWarmupScenario.workspaceCount)
     : [];
-  if (modelProviderRegressionFixture) {
+  if (defaultPlusDormantWorkspacesFixture) {
     // The model regression gap spec needs both dormant workspace switching and the legacy default workspace
     // for provider/replay helpers to initialize; both go into the same lastWorkspaceSession, to avoid
     // the test injecting a workspace directly and bypassing the user-visible sidebar entry.
@@ -3615,7 +3906,7 @@ function seedE2EStartupState(specs: string[] = []) {
         providerFamilyDomain: shouldUseBigmodelAuth ? "bigmodel" : "zai",
         providerFamilyDomainMigrated: true,
         providerFamilyDomainUpdatedAt: now,
-        ...(modelProviderRegressionFixture
+        ...(defaultPlusDormantWorkspacesFixture
           ? {
               recentProjects: [legacyDefaultProjectPath, ...passiveWorkspacePaths],
               lastWorkspaceSession: [legacyDefaultProjectPath, ...passiveWorkspacePaths].map(
@@ -3656,6 +3947,11 @@ function seedE2EStartupState(specs: string[] = []) {
               zcodeInteractionBehavior: "guide",
             }
           : {}),
+        // 「子智能体总在后台运行」产品缺省开启。既有用例的回放按旧形态录制（Agent 可前台、
+        // tools 段带 run_in_background），这里统一关闭；开启形态由专门用例保留产品缺省。
+        ...(workerSpecsContain(specs, AGENT_ALWAYS_BACKGROUND_SPEC)
+          ? {}
+          : { agentAlwaysBackgroundEnabled: false }),
         providerFamilyConnectionSelections: shouldUseBigmodelAuth
           ? { bigmodel: { kind: "individual-coding-plan" } }
           : {},
@@ -3870,7 +4166,11 @@ function resolvePluginMcpSkillState(
     return envState as Exclude<ReturnType<typeof resolvePluginMcpSkillState>, null>;
   }
   for (const arg of specs) {
-    if (arg.includes("conversation-session-plugin-resident-freeze-cold-resume.test.ts")) {
+    // 实时 skill 目录用例与 WPL-008 同一前置：插件已安装，用户与工作区配置都启用。
+    if (
+      arg.includes("conversation-session-plugin-resident-freeze-cold-resume.test.ts") ||
+      arg.includes("conversation-session-plugin-skill-live-catalog.test.ts")
+    ) {
       return "workspace-freeze";
     }
     const match = arg.match(PLUGIN_MCP_SKILL_SPEC_PATTERN);
@@ -4301,8 +4601,15 @@ function seedE2EBuiltInSubagentModelOverrides(specs: string[] = []) {
 }
 
 function seedE2ESubagentProfiles(specs: string[] = []) {
-  if (specs.some((spec) => spec.includes("conversation-session-subagent-cross-host.test.ts"))) {
-    // The built-in document plugin has been split out with a pinned model; the override/clear-override scenarios use their own inherited model fixture.
+  if (
+    specs.some((spec) =>
+      /(?:conversation-session-subagent-cross-host|settings-subagent-create-edit-persistence|plugin-subagent-override-cold)\.test\.ts$/.test(
+        spec,
+      ),
+    )
+  ) {
+    // The built-in document plugin no longer provides subagents (visual-judge was removed); the plugin subagent
+    // override/clear-override scenarios all use their own inherited-model fixture plugin.
     const pluginDir = resolve(E2E_STORAGE_ROOT, "cli/plugins");
     mkdirSync(pluginDir, { recursive: true });
     writeFileSync(
@@ -4702,6 +5009,218 @@ function buildUpstreamE2EAnthropicBaseUrl() {
   return baseURL.endsWith("/anthropic") ? baseURL : `${baseURL}/anthropic`;
 }
 
+// launcher 和 worker 共用同一份文件预算规则，避免 glob 与显式文件走出两套上限。
+function resolveMochaTimeout(specs: string[]): number {
+  const pluginNoGitGitHubArchiveE2E = specs.some((spec) =>
+    spec.includes(PLUGIN_NO_GIT_GITHUB_ARCHIVE_SPEC),
+  );
+  const workspacePluginRemoteExplicitSyncE2E = specs.some((spec) =>
+    spec.includes("conversation-session-plugin-remote-explicit-sync-workspace.test.ts"),
+  );
+  return (
+    Math.max(
+      requestSecuritySpecTimeout(specs, 120000),
+      ...[
+        {
+          // 独立 SSH 用例要等真实首装；WDIO 外层不能先于用例声明的预算截断。
+          matched: specs.some((spec) => spec.endsWith("settings-ui-polish-ssh.test.ts")),
+          ms: 10 * 60_000,
+        },
+        {
+          // 此用例包含真实 SSH 首装、目录复用、设置定位、16 张截图和原目录重连；
+          // 探测校验与残留 daemon 恢复同样经过真实首装和故障恢复，不能在状态断言前被截断。
+          // Mocha 外层须与用例的 15 分钟预算一致，不能在首装解压时被默认 120 秒截断。
+          // 五工具真实资源候选同样包含串行解压及文档处理；首轮已在 LO 解压时被外层截断。
+          // 其余预装候选也在用例内声明了 3～15 分钟预算，但用例内 this.timeout 无法改变外层计时，
+          // 原先只放行 real-loopback，其他候选实际仍按 120 秒截断。
+          matched: specs.some(
+            (spec) =>
+              spec.endsWith("conversation-session-remote-sidebar-menus.test.ts") ||
+              spec.endsWith("conversation-session-ssh-probe-validation.test.ts") ||
+              spec.endsWith("conversation-session-remote-restart-stale-daemon-ssh.test.ts") ||
+              spec.endsWith("conversation-session-web-remote-project-directory.test.ts") ||
+              spec.endsWith("conversation-session-web-remote-unread.test.ts") ||
+              spec.endsWith("conversation-session-web-remote-unread-ssh.test.ts") ||
+              spec.endsWith("conversation-session-r3-ui-pairwise.test.ts") ||
+              spec.endsWith("conversation-session-remote-accessibility.test.ts") ||
+              spec.endsWith("conversation-session-project-settings-return.test.ts") ||
+              spec.endsWith("conversation-session-remote-settings-safeguards.test.ts") ||
+              spec.endsWith(
+                "conversation-session-remote-workspace-folder-unresponsive-ssh.test.ts",
+              ) ||
+              spec.endsWith("conversation-session-ssh-unsupported-target-errors.test.ts") ||
+              spec.endsWith("conversation-session-remote-shared-root-peer-host-ssh.test.ts") ||
+              spec.endsWith("conversation-session-remote-server-root-replaced-ssh.test.ts") ||
+              spec.endsWith("conversation-session-web-remote-terminal.test.ts") ||
+              spec.endsWith("conversation-session-web-remote-terminal-ssh.test.ts") ||
+              spec.endsWith(
+                "conversation-session-rpn-18-concurrent-remote-task-navigation.test.ts",
+              ) ||
+              // 草稿模型迁移与 Built-in 刷新节奏都要等服务端下发的 60 秒间隔到期，前者还含多次重启。
+              spec.endsWith("conversation-session-draft-model-migration.test.ts") ||
+              spec.endsWith("provider-builtin-refresh-cadence.test.ts") ||
+              /conversation-session-preinstalled-tools-[a-z-]+\.test\.ts$/.test(spec),
+          ),
+          ms: 15 * 60_000,
+        },
+        {
+          // 此回归故意阻塞文件系统线程并等待多次目录期限；须保留原 25 分钟总预算，
+          // 各目录操作自身的失败期限不变，不能在进入恢复断言前被通用 120 秒截断。
+          // real-loopback 在 Windows 上 Defender 逐个扫描解包文件，用例实测 14 分 11 秒，
+          // 15 分钟余量不足 1 分钟；单独放宽到 25 分钟，与用例内预算一致。
+          matched: specs.some(
+            (spec) =>
+              spec.endsWith(
+                "conversation-session-remote-workspace-folder-thread-exhaustion-ssh.test.ts",
+              ) ||
+              spec.endsWith("conversation-session-preinstalled-tools-real-loopback.test.ts") ||
+              // Bug 原因：转正后的远程用例由 runner 去掉 manual-review 等待预算，外层退回 120 秒，
+              // 真实 SSH 首装加连接就会用完，RPR-01 在 Composer 断言前被截断。与用例内 25 分钟一致。
+              spec.endsWith("conversation-session-remote-composer-plan-reselect.test.ts") ||
+              spec.endsWith(
+                "conversation-session-remote-composer-plan-switch-wait-provisioning.test.ts",
+              ),
+          ),
+          ms: 25 * 60_000,
+        },
+        {
+          matched: specs.some((spec) =>
+            spec.endsWith("conversation-session-preinstalled-tools-builtin-cdn.test.ts"),
+          ),
+          ms: 60 * 60_000,
+        },
+        {
+          // 用例不稳定原因：RDUX15 串行走 SSH、Docker 四个入口的后台连接，用例内声明 20 分钟预算，
+          // 但 this.timeout 无法覆盖外层，负载高时在 Docker 段被 120 秒截断（Error: Timeout）。
+          // 远端草稿串行覆盖首装、桌面/手机恢复及本地首发，同样声明 20 分钟预算。
+          // 安装环境专项也沿用原定 20 分钟，包含真实首装和受限目标检查。
+          matched: specs.some(
+            (spec) =>
+              spec.endsWith("conversation-session-background-connection.test.ts") ||
+              spec.endsWith("conversation-session-remote-draft-prewarm.test.ts") ||
+              spec.endsWith("conversation-session-r3-install-environment.test.ts") ||
+              spec.endsWith("conversation-session-project-device-visibility-ssh.test.ts"),
+          ),
+          ms: 20 * 60_000,
+        },
+        {
+          // 走查用例串行完成真实首装、失败/取消/后台、设置页与停容器掉线恢复，并全程录屏；
+          // 与用例内 30 分钟预算一致。
+          // OS 服务回退与真实双版本升级同样保留各自原定的 30 分钟预算。
+          matched: specs.some(
+            (spec) =>
+              spec.endsWith("conversation-session-remote-ui-walkthrough.test.ts") ||
+              spec.endsWith("conversation-session-r3-daemon-service-fallback.test.ts") ||
+              spec.endsWith("conversation-session-release-3163-upgrade.test.ts"),
+          ),
+          ms: 30 * 60_000,
+        },
+        {
+          // Bug 原因：完整数据同步演示按章节录制并验证六类配置，原有 90 分钟预算只写在
+          // test body；WDIO 外层仍在 120 秒截断，导致正常章节尚未完成便退出且没有最终事实。
+          matched: specs.some((spec) =>
+            spec.endsWith("conversation-session-remote-data-sync-demo-walkthrough.test.ts"),
+          ),
+          ms: 90 * 60_000,
+        },
+        {
+          // 同版本异 SHA 更新要先触发 running-task guard，再取消/确认和重连；
+          // 外层 120 秒曾在 guard 等待期间截断，须沿用用例原有 35 分钟预算。
+          matched: specs.some((spec) =>
+            spec.endsWith("conversation-session-r3-server-update.test.ts"),
+          ),
+          ms: 35 * 60_000,
+        },
+        {
+          // 手机用例串行完成真实 SSH 安装、relay 配对和断网恢复；同步其原定预算，
+          // 避免 WDIO 在手机离线期间按默认 120 秒截断，this.timeout 无法覆盖外层。
+          // DSYNC-18 的本机六类配置验证同样声明 40 分钟；外层提前截断后异步步骤
+          // 仍会继续执行，并与下一条 case 争抢输入框，须在进入 test body 前应用预算。
+          matched: specs.some(
+            (spec) =>
+              spec.endsWith("conversation-session-r3-mobile.test.ts") ||
+              spec.endsWith("conversation-session-r3-mobile-permission.test.ts") ||
+              spec.endsWith("conversation-session-local-config-runtime-usage.test.ts"),
+          ),
+          ms: 40 * 60_000,
+        },
+        {
+          matched:
+            pluginNoGitGitHubArchiveE2E ||
+            workspacePluginRemoteExplicitSyncE2E ||
+            specs.some((spec) => spec.endsWith("conversation-session-subagent-cross-host.test.ts")),
+          ms: 600000,
+        },
+        {
+          // SHR14/SHR17 串行跑两个 workspace、四轮父子请求与设置保存，用例声明
+          // this.timeout(240000)，但外层 Mocha 包裹先按 120 秒截断（Windows 上实测约 130 秒）。
+          matched: specs.some((spec) =>
+            spec.endsWith("conversation-session-subagent-multi-workspace.test.ts"),
+          ),
+          ms: 240000,
+        },
+        {
+          // HK20 含建 worktree、两次进设置页与 8 组布局截图，用例声明 180 秒；
+          // 用例内 this.timeout 突破不了外层 120 秒，须在此登记同一预算。
+          // 写字面量：e2eSpecAdmission.test.ts 只提取本函数体求值，模块常量在那里未定义。
+          matched: specs.some((spec) =>
+            spec.endsWith("conversation-session-hook-trust-worktree.test.ts"),
+          ),
+          ms: 180000,
+        },
+        {
+          // 修复原因：以下用例内 this.timeout 无法突破外层 120 秒，Windows 上实测都会被截断：
+          // SIP 串行验证多入口推荐并在多宽度、双主题截图（约 10 分钟）；插件市场 17 个评审步骤
+          // 全程录屏（约 5 分钟）；Highspeed 抽卡含两次重启（约 5 分钟）；VP13 串行完成桌面项目
+          // 操作、手机配对与草稿恢复。预算与用例内声明一致。
+          matched: specs.some((spec) =>
+            spec.endsWith("conversation-session-start-plan-independent.test.ts"),
+          ),
+          ms: 900000,
+        },
+        {
+          matched: specs.some(
+            (spec) =>
+              spec.endsWith("plugin-management-ui-market.test.ts") ||
+              spec.endsWith("conversation-session-virtual-project-mobile.test.ts"),
+          ),
+          ms: 600000,
+        },
+        {
+          matched: specs.some((spec) =>
+            spec.endsWith("conversation-session-highspeed-card.test.ts"),
+          ),
+          ms: 420000,
+        },
+        {
+          // 后台 Bash 冷恢复回归等待真实 child 结束、120s publisher grace 及 60s 清理节拍。
+          matched: specs.some((spec) =>
+            spec.endsWith("conversation-session-background-bash-output.test.ts"),
+          ),
+          ms: 360000,
+        },
+        {
+          // 长稳用例按既有轮数运行；外层不得在第一轮后按普通用例的两分钟预算退出。
+          matched: specs.some((spec) =>
+            spec.endsWith("conversation-session-r3-soak-reconnect.test.ts"),
+          ),
+          ms: 150 * 60_000,
+        },
+        {
+          matched: specs.some((spec) => spec.endsWith("conversation-session-r3-soak-dual.test.ts")),
+          ms: (() => {
+            const minutes = Number(process.env.R3_SOAK2_MINUTES || "25");
+            // 非法值仍由用例自身明确报错；这里只提供与原用例一致的有效预算。
+            return ((Number.isFinite(minutes) && minutes > 0 ? minutes : 25) + 20) * 60_000;
+          })(),
+        },
+      ]
+        .filter((budget) => budget.matched)
+        .map((budget) => budget.ms),
+    ) + manualReviewHoldMs
+  );
+}
+
 export const config: WebdriverIO.Config = {
   runner: "local",
   // Fix reason: waitUntil's timeout cannot interrupt a WebDriver HTTP request already sent internally;
@@ -4734,13 +5253,6 @@ export const config: WebdriverIO.Config = {
     // PLM-LC-010 uses a non-ZCODE_ prefix to verify Claude-compatible env expansion for plugin MCP.
     // The value is used only for hash comparison by the fixture; neither tool results nor screenshots may echo the original value.
     E2E_PLUGIN_RUNTIME_SECRET: "e2e-plugin-runtime-secret-fixture-20260718",
-    ...(pluginNoGitGitHubArchiveE2E
-      ? {
-          // The real public-network smoke must prove the Agent did not silently fall back to the developer machine's Git; a non-existent absolute path makes
-          // any Git call reliably get ENOENT, without affecting the WDIO runner's own process-cleanup commands.
-          ZCODE_GIT_BINARY: resolve(E2E_HOME_DIR, "missing-bin", "git"),
-        }
-      : {}),
     // session-pr-status spec seam: POSIX-only fake gh at a fixed path. The spec writes the script
     // itself before the first worktree task triggers gh resolution; other specs only see a candidate
     // that fails the --version probe and fall through to a real gh lookup. Windows keeps the seam
@@ -4783,8 +5295,8 @@ export const config: WebdriverIO.Config = {
   },
   framework: "mocha",
   reporters: ["spec"],
-  maxInstances: Number(process.env.ZCODE_E2E_MAX_INSTANCES ?? "1"),
-  maxInstancesPerCapability: Number(process.env.ZCODE_E2E_MAX_INSTANCES ?? "1"),
+  maxInstances: e2eMaxInstances,
+  maxInstancesPerCapability: e2eMaxInstances,
   ...(containerE2E
     ? {
         autoXvfb: true,
@@ -4822,6 +5334,12 @@ export const config: WebdriverIO.Config = {
           // letting cross-platform cleanup prefer hits for the current run and keep a path-level fallback for Windows shards.
           buildE2ERunIdArg(E2E_RUN_ID),
           createWindowsE2EHomeMarkerArg(E2E_HOME_DIR),
+          // 修复原因：Windows CI runner 以 LocalSystem 服务运行在无鼠标设备的 session 0，
+          // Chromium 据此上报 `(hover: none)`；Tailwind v4 的 hover:/group-hover: 变体都包在
+          // `@media (hover:hover)` 内，导致 fork/反馈等悬停操作栏永远不显示（本地用
+          // primaryHoverType=1 可稳定复现“v4 fork 按钮没有出现”）。E2E 模拟的是带鼠标的桌面用户，
+          // 这里显式声明 hover/fine pointer，让各平台 runner 的媒体特性一致。
+          "--blink-settings=primaryHoverType=2,availableHoverTypes=2,primaryPointerType=4,availablePointerTypes=4",
         ],
         appBinaryPath: ELECTRON_APP_BINARY_PATH,
       },
@@ -4868,16 +5386,14 @@ export const config: WebdriverIO.Config = {
           { specs: currentE2EWorkerSpecs },
           async () => {
             await runE2ERendererBridgePreflight(currentE2EWorkerSpecs);
+            await bindPrelaunchedElectronSession(browser, prelaunchedElectronOwner);
           },
         );
       },
       () => currentE2EBeforeSessionError,
     ),
     ui: "bdd",
-    // The remote e2e queue has a formal spec containing only one remote case (settings-ui-polish's
-    // MP-UI-05-remote): running the whole spec would pull the same spec's local cases into the remote results, and failures
-    // unrelated to remote would be counted against the remote account (measured: MP-UI-06 dragged MP-UI-05-remote's pass conclusion down).
-    // When unset, keep the full run, which does not affect local regression.
+    // The untargeted tasks of the remote queue can verify the local counterpart in a targeted way (such as MP-UI-05). The default desktop regression does not filter.
     ...(process.env.ZCODE_E2E_MOCHA_GREP?.trim()
       ? { grep: process.env.ZCODE_E2E_MOCHA_GREP.trim() }
       : {}),
@@ -4892,73 +5408,7 @@ export const config: WebdriverIO.Config = {
     // Fix reason: the old nested ternary took the first matching branch in source order; when one shard held several long-budget specs,
     // an earlier, smaller budget truncated a later, longer case (for example a 240s budget cutting off background-bash's 360s).
     // Now the largest matching budget wins, so new branches do not depend on order.
-    timeout:
-      Math.max(
-        requestSecuritySpecTimeout(configuredE2ESpecs, 120000),
-        ...[
-          {
-            // This case includes a real SSH first install, directory reuse, settings location, 16 screenshots and reconnection to the original directory;
-            // the probe-validation case likewise goes through a real first install and recovery from existing device faults, so it cannot be truncated before the state assertions.
-            // The Mocha outer timeout must match the case's 15-minute budget, so it is not truncated at the default 120 seconds during first-install extraction.
-            matched: configuredE2ESpecs.some(
-              (spec) =>
-                spec.endsWith("conversation-session-remote-sidebar-menus.test.ts") ||
-                spec.endsWith("conversation-session-ssh-probe-validation.test.ts"),
-            ),
-            ms: 15 * 60_000,
-          },
-          {
-            // Flake cause: RDUX15 serially goes through background connections for SSH and four Docker entry points; the case declares a 20-minute budget,
-            // but this.timeout cannot cover the outer layer, so under heavy load it is cut off at 120 seconds in the Docker stage (Error: Timeout).
-            matched: configuredE2ESpecs.some((spec) =>
-              spec.endsWith("conversation-session-background-connection.test.ts"),
-            ),
-            ms: 20 * 60_000,
-          },
-          {
-            // The walkthrough case serially completes a real first install, failure/cancel/background, the settings page and container-stop disconnection recovery, recording the whole run;
-            // it matches the 30-minute budget inside the case.
-            matched: configuredE2ESpecs.some((spec) =>
-              spec.endsWith("conversation-session-remote-ui-walkthrough.test.ts"),
-            ),
-            ms: 30 * 60_000,
-          },
-          {
-            // This case serially completes a real SSH install, two relay pairings and network-disconnect recovery; its original budget is kept in sync,
-            // avoiding WDIO truncation at the default 120 seconds while the phone is offline; this.timeout cannot cover the outer layer.
-            matched: configuredE2ESpecs.some((spec) =>
-              spec.endsWith("conversation-session-r3-mobile.test.ts"),
-            ),
-            ms: 40 * 60_000,
-          },
-          {
-            matched:
-              pluginNoGitGitHubArchiveE2E ||
-              workspacePluginRemoteExplicitSyncE2E ||
-              configuredE2ESpecs.some((spec) =>
-                spec.endsWith("conversation-session-subagent-cross-host.test.ts"),
-              ),
-            ms: 600000,
-          },
-          {
-            // SHR14/SHR17 serially run two workspaces, four rounds of parent-child requests and settings saves; the case declares
-            // this.timeout(240000), but the outer Mocha wrapper truncates at 120 seconds first (about 130 seconds measured on Windows).
-            matched: configuredE2ESpecs.some((spec) =>
-              spec.endsWith("conversation-session-subagent-multi-workspace.test.ts"),
-            ),
-            ms: 240000,
-          },
-          {
-            // The background Bash cold-recovery regression waits for the real child to finish, the 120s publisher grace and the 60s cleanup cadence.
-            matched: configuredE2ESpecs.some((spec) =>
-              spec.endsWith("conversation-session-background-bash-output.test.ts"),
-            ),
-            ms: 360000,
-          },
-        ]
-          .filter((budget) => budget.matched)
-          .map((budget) => budget.ms),
-      ) + manualReviewHoldMs,
+    timeout: resolveMochaTimeout(configuredE2ESpecs),
   },
   async onPrepare() {
     try {
@@ -5015,23 +5465,57 @@ export const config: WebdriverIO.Config = {
             prepareDesktopAppBuild();
             if (!E2E_PACKAGED_APP_BINARY_PATH) await stageDesktopE2EAppOutput();
           });
-        // The old coverage report only has paths and cannot prove the source version; a reused build must not certify the current working tree.
-        if (process.env.ZCODE_E2E_SOURCE_EVIDENCE === "1") {
-          await withE2ESourceEvidence({
-            freshBuild: !E2E_PACKAGED_APP_BINARY_PATH && !shouldReuseDesktopE2EBuild(process.env),
-            captureSources: () => captureWorkspaceSources(REPO_ROOT),
-            build: buildAndStage,
-            appOutputDir: E2E_APP_OUTPUT_DIR,
-            artifactDir: e2eReporter.artifactDir,
-          });
-        } else await buildAndStage();
-        prepareZCodeAgentServer();
+        // Sub-step timings are written to lifecycle-events.ndjson and summary.md, to locate where preparation time goes.
+        await measureE2ELifecyclePhase(
+          "prepare:desktop-build",
+          { specs: configuredE2ESpecs },
+          async () => {
+            // The old coverage report only has paths and cannot prove the source version; a reused build must not certify the current working tree.
+            if (process.env.ZCODE_E2E_SOURCE_EVIDENCE === "1") {
+              await withE2ESourceEvidence({
+                freshBuild:
+                  !E2E_PACKAGED_APP_BINARY_PATH && !shouldReuseDesktopE2EBuild(process.env),
+                captureSources: () => captureWorkspaceSources(REPO_ROOT),
+                build: buildAndStage,
+                appOutputDir: E2E_APP_OUTPUT_DIR,
+                artifactDir: e2eReporter.artifactDir,
+              });
+            } else await buildAndStage();
+          },
+        );
+        // The agent must be built before the remote release: each target of the remote release reuses this run's single bundle.
+        const agentBundleBuiltThisRun = await measureE2ELifecyclePhase(
+          "prepare:agent-build",
+          { specs: configuredE2ESpecs },
+          () => prepareZCodeAgentServer(),
+        );
+        if (!E2E_PACKAGED_APP_BINARY_PATH)
+          await prepareSshRemoteReleaseForRun(configuredE2ESpecs, agentBundleBuiltThisRun);
         // 正式包使用随包 CLI，模板 seed 源不同，不预热；缺模板时各 HOME 照常冷 seed。
         if (!E2E_PACKAGED_APP_BINARY_PATH) {
-          await prepareOfficialPluginCacheTemplate({
-            cliEntryPoint: ZCODE_CLI_ENTRYPOINT,
-            templateHome: E2E_OFFICIAL_PLUGIN_CACHE_TEMPLATE_HOME,
-          });
+          await measureE2ELifecyclePhase(
+            "prepare:plugin-cache",
+            { specs: configuredE2ESpecs },
+            async () => {
+              if (E2E_SHARED_PLUGIN_CACHE_KEY) {
+                // 同一个 CLI 只 seed 一次；模板建好后只读，各 HOME 照旧从模板拷入
+                await ensureSharedSnapshot({
+                  cacheRoot: resolve(E2E_SHARED_STAGE_DIR, "official-plugin-cache"),
+                  key: E2E_SHARED_PLUGIN_CACHE_KEY,
+                  build: (templateHome) =>
+                    prepareOfficialPluginCacheTemplate({
+                      cliEntryPoint: ZCODE_CLI_ENTRYPOINT,
+                      templateHome,
+                    }),
+                });
+                return;
+              }
+              await prepareOfficialPluginCacheTemplate({
+                cliEntryPoint: ZCODE_CLI_ENTRYPOINT,
+                templateHome: E2E_OFFICIAL_PLUGIN_CACHE_TEMPLATE_HOME,
+              });
+            },
+          );
         }
       });
     } catch (error) {
@@ -5049,6 +5533,21 @@ export const config: WebdriverIO.Config = {
     });
   },
   async beforeSession(_config, capabilities, specs, cid) {
+    // A glob cannot match the per-file budgets in the launcher; they must be filled in from the worker's actual files before Mocha initializes.
+    // Keep an explicitly larger setting or a disabled timer; the outer timer that already started cannot be corrected inside a case.
+    _config.mochaOpts = {
+      ..._config.mochaOpts,
+      timeout:
+        _config.mochaOpts?.timeout === 0
+          ? 0
+          : Math.max(_config.mochaOpts?.timeout ?? 0, resolveMochaTimeout(specs)),
+    };
+    console.log(`[e2e] worker ${cid} Mocha timeout: ${_config.mochaOpts.timeout}ms`);
+    // Likewise: the WebDriver HTTP cap of the public-network Archive case (see connectionRetryTimeout) is relaxed per the worker's actual files;
+    // in a full glob run this hard boundary must not be relaxed for every spec.
+    if (specs.some((spec) => spec.includes(PLUGIN_NO_GIT_GITHUB_ARCHIVE_SPEC))) {
+      _config.connectionRetryTimeout = Math.max(_config.connectionRetryTimeout ?? 0, 300_000);
+    }
     // Bugfix: existing e2e reads and writes ~/.zcode/v2; if multiple specs reuse the real HOME,
     // credentials, recent projects and localStorage from the previous spec leak into the next one,
     // polluting the developer's local data and making "first launch" assertions random.
@@ -5077,6 +5576,18 @@ export const config: WebdriverIO.Config = {
       chromeOptions.args ?? [],
       currentE2EChromiumUserDataDir,
     );
+    if (
+      process.platform === "win32" &&
+      specs.some((spec) =>
+        spec.replaceAll("\\", "/").endsWith("/settings/general/settings-ui-polish.test.ts"),
+      )
+    ) {
+      // Windows 服务会话可能没有鼠标；WebDriver 仍能注入鼠标事件，但 CSS 不会启用 hover。
+      // 只给本 spec 的 Electron 声明桌面鼠标能力，保留真实输入与产品样式断言。
+      chromeOptions.args.push(
+        "--blink-settings=primaryPointerType=4,availablePointerTypes=4,primaryHoverType=2,availableHoverTypes=2",
+      );
+    }
     const storageDiagnostics =
       process.env.ZCODE_E2E_STORAGE_WORKER_DIAGNOSTICS === "1" &&
       specs.some((spec) =>
@@ -5148,6 +5659,13 @@ export const config: WebdriverIO.Config = {
         );
         if (fixtureCredentialSecret) process.env.ZCODE_CREDENTIAL_SECRET = fixtureCredentialSecret;
         else delete process.env.ZCODE_CREDENTIAL_SECRET;
+        // 真实公网 smoke 必须证明 Agent 没有偷偷回退开发机 Git；不存在的绝对路径会让任意 Git
+        // 调用稳定得到 ENOENT。Bugfix（mac conversation job，2026-11-16）：原先写在 launcher
+        // 计算的 runnerEnv 里，glob 运行时按文件名判断恒为 false；runnerEnv 又对全部 worker
+        // 生效，所以改为只在本 worker 跑这个 spec 时设置（每个 spec 独占一个 worker 进程）。
+        if (specs.some((spec) => spec.includes(PLUGIN_NO_GIT_GITHUB_ARCHIVE_SPEC))) {
+          process.env.ZCODE_GIT_BINARY = resolve(E2E_HOME_DIR, "missing-bin", "git");
+        }
         await runE2EBeforeSessionSetup({
           cid,
           specs,
@@ -5162,6 +5680,71 @@ export const config: WebdriverIO.Config = {
           startPluginCdnZipFixtureIfNeeded,
           startOffPeakMockIfNeeded: startOffPeakE2EMock,
         });
+        // 内置清单已有真实资源；普通用例显式使用空资源，避免无关测试启动时下载大包。
+        delete process.env.ZCODE_E2E_PREINSTALLED_TOOLS_CATALOG;
+        delete process.env.ZCODE_PREINSTALLED_TOOLS_CDN_BASE_URL;
+        delete process.env.ZCODE_E2E_PREINSTALLED_TOOLS_EXIT_BEFORE_INIT;
+        // PT-30/31：仅该用例让预装进程在初始化前退出，其余用例的进程正常启动。
+        if (specs.some((spec) => spec.endsWith("preinstalled-tools-worker-start-failure.test.ts")))
+          process.env.ZCODE_E2E_PREINSTALLED_TOOLS_EXIT_BEFORE_INIT = "1";
+        if (!specs.some((spec) => spec.endsWith("preinstalled-tools-builtin-cdn.test.ts"))) {
+          process.env.ZCODE_E2E_PREINSTALLED_TOOLS_CATALOG =
+            await writeEmptyPreinstalledToolsCatalog(
+              resolve(e2eReporter.artifactDir, "preinstall-fixture", cid),
+            );
+        }
+        // 根因：预装资源夹具原先在本 try 之外启动；WDIO 会吞掉 beforeSession 的 rejection，
+        // 夹具缺输入或启动失败时用例仍在残缺环境里继续。放进同一失败通道，由 root hook 拦截。
+        if (
+          specs.some((spec) =>
+            /conversation-session-preinstalled-tools-(?:tracer|controls|agent-switch|remote-context|faults|proxy|delete|release-isolation|clear-data|startup|real-loopback|rewrite|upgrade|python-resource)\.test\.ts$/.test(
+              spec,
+            ),
+          )
+        ) {
+          preinstalledToolsFixture = await (
+            specs.some((spec) => spec.endsWith("preinstalled-tools-python-resource.test.ts"))
+              ? (directory: string) => {
+                  const artifact = process.env.ZCODE_E2E_PYTHON_ARTIFACT;
+                  if (!artifact)
+                    throw new Error("ZCODE_E2E_PYTHON_ARTIFACT must name the real Python artifact");
+                  return startPreinstalledToolsRealFixture(directory, artifact);
+                }
+              : specs.some((spec) => spec.endsWith("preinstalled-tools-rewrite.test.ts"))
+                ? startPreinstalledToolsRewriteFixture
+                : specs.some((spec) => spec.endsWith("preinstalled-tools-real-loopback.test.ts"))
+                  ? async (directory: string) => {
+                      const inputs = process.env.ZCODE_E2E_PREINSTALL_ARTIFACTS;
+                      const upgrade = process.env.ZCODE_E2E_PREINSTALL_UPGRADE_ARTIFACT;
+                      if (!inputs || !upgrade)
+                        throw new Error(
+                          "Real loopback requires five artifacts and an upgrade artifact",
+                        );
+                      const paths = JSON.parse(await readFile(inputs, "utf8")) as string[];
+                      return startPreinstalledToolsRealFixture(directory, paths, upgrade);
+                    }
+                  : specs.some((spec) => spec.endsWith("preinstalled-tools-faults.test.ts"))
+                    ? startPreinstalledToolsFaultFixture
+                    : specs.some((spec) => spec.endsWith("preinstalled-tools-proxy.test.ts"))
+                      ? (directory: string) =>
+                          startPreinstalledToolsFaultFixture(directory, { proxy: true })
+                      : (directory: string) =>
+                          startPreinstalledToolsFixture(
+                            directory,
+                            specs.some((spec) =>
+                              /preinstalled-tools-(?:tracer|upgrade|agent-switch)\.test\.ts$/.test(
+                                spec,
+                              ),
+                            )
+                              ? ["qpdf", "libreoffice"]
+                              : ["libreoffice"],
+                          )
+          )(resolve(e2eReporter.artifactDir, "preinstall-fixture"));
+          process.env.ZCODE_E2E_PREINSTALLED_TOOLS_CATALOG = preinstalledToolsFixture.catalogPath;
+          process.env.ZCODE_E2E_PREINSTALL_FIXTURE_URL = preinstalledToolsFixture.url;
+          // 与 catalog 变量同一时机写入；App 启动时读取基址，同一用例内不变。
+          process.env.ZCODE_PREINSTALLED_TOOLS_CDN_BASE_URL = preinstalledToolsFixture.cdnBaseUrl;
+        }
         if (process.platform === "darwin" && specs.some(isNativeKeychainCredentialSpec)) {
           // Main first touches the keychain before the UI is ready, so the native suite must first prepare the system-library entry for the isolated HOME.
           await mkdir(resolve(E2E_HOME_DIR, "Library"), { recursive: true });
@@ -5218,15 +5801,39 @@ export const config: WebdriverIO.Config = {
             hostname: e2eChromedriverServer.hostname,
             port: e2eChromedriverServer.port,
           });
+          if (
+            specs.some((spec) =>
+              /conversation-session-preinstalled-tools-(?:real-loopback|builtin-cdn)\.test\.ts$/.test(
+                spec,
+              ),
+            )
+          ) {
+            // 本机driver启动上下文会改变资源首次加载；独立App先启动，driver只连接。
+            // 不移除安全属性、不预热资源；下载屏障仍由用例在连接后放行。
+            prelaunchedElectronOwner = new PrelaunchedElectronOwner({
+              binary: ELECTRON_APP_BINARY_PATH,
+              args: chromeOptions.args ?? [],
+              cwd: DESKTOP_DIR,
+              environment: process.env,
+              profileDirectory: currentE2EChromiumUserDataDir!,
+              logDirectory: resolve(e2eReporter.artifactDir, "direct-app"),
+            });
+            const app = await prelaunchedElectronOwner.start();
+            Object.assign(chromeOptions, { debuggerAddress: app.debuggerAddress });
+          }
         } catch (error) {
           // WDIO swallows beforeSession exceptions and continues starting; here the worker is ended directly, forbidding fallback to a second driver.
-          console.error("[e2e] ChromeDriver startup failed", error);
+          console.error("[e2e] ChromeDriver or owned App startup failed", error);
+          await disposeOwnedElectron();
+          await cleanupE2EElectronProcesses("direct-app-startup-failed", { requireExit: true });
+          await e2eChromedriverServer?.stop();
           process.exit(1);
         }
       });
     } catch (error) {
       // Bug cause: WDIO executeHooksWithArgs swallows the beforeSession rejection; the original
       // failure is saved and handed to the Mocha root hook to throw, ensuring the product test body does not run in a broken environment.
+      await disposeOwnedElectron();
       currentE2EBeforeSessionError =
         error ?? new Error("beforeSession setup rejected without an error value");
     }
@@ -5280,11 +5887,18 @@ export const config: WebdriverIO.Config = {
     });
   },
   async afterSession() {
+    await preinstalledToolsFixture?.stop();
+    preinstalledToolsFixture = undefined;
+    delete process.env.ZCODE_E2E_PREINSTALLED_TOOLS_CATALOG;
+    delete process.env.ZCODE_PREINSTALLED_TOOLS_CDN_BASE_URL;
+    delete process.env.ZCODE_E2E_PREINSTALL_FIXTURE_URL;
+    delete process.env.ZCODE_E2E_PREINSTALLED_TOOLS_EXIT_BEFORE_INIT;
     await measureE2ELifecyclePhase(
       "after-session",
       { specs: currentE2EWorkerSessionSpecs },
       async () => {
         try {
+          await disposeOwnedElectron();
           await cleanupE2EElectronProcesses("afterSession", {
             requireExit: true,
             waitForGracefulExit: true,
@@ -5342,6 +5956,7 @@ export const config: WebdriverIO.Config = {
     });
   },
   async afterTest(test, _context, result) {
+    const status = resolveWdioTestStatus(result);
     let failureArtifacts;
     const collectionErrors: string[] = [];
     try {
@@ -5359,11 +5974,15 @@ export const config: WebdriverIO.Config = {
         async () =>
           e2eFailureArtifacts?.complete(test, {
             ...result,
-            errorCategory: result.passed
-              ? undefined
-              : classifyError(
-                  result.error instanceof Error ? result.error.message : String(result.error ?? ""),
-                ),
+            status,
+            errorCategory:
+              result.passed || isSkippedWdioStatus(status)
+                ? undefined
+                : classifyError(
+                    result.error instanceof Error
+                      ? result.error.message
+                      : String(result.error ?? ""),
+                  ),
           }),
         E2E_FAILURE_ARTIFACT_COLLECTION_TIMEOUT_MS,
         "E2E failure artifact collection",

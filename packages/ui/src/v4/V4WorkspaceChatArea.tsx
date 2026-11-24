@@ -44,7 +44,6 @@ import { WorkbenchSplitDivider } from "@/v4/WorkbenchSplitDivider.js";
 import { type RegisterConversationDropTarget } from "@/v4/composer/conversationDropTarget.js";
 import type {
   ChatSearchResultHighlightRequest,
-  ChatViewSummaryPanelVariant,
   ConversationFindMatchState,
 } from "@/v4/legacyChatViewTypes.js";
 import {
@@ -89,8 +88,6 @@ export interface V4WorkspaceChatAreaProps {
   gitWorktreeReviewSourceId?: GitChangeSourceId | null;
   gitWorktreeChangeSummary?: { added: number; removed: number } | null;
   activeTaskChangeSummary?: ZCodeTaskChangeSummary | null;
-  summaryPanelVariantOverride?: ChatViewSummaryPanelVariant | null;
-  onSummaryPanelVariantOverrideChange?: (variant: ChatViewSummaryPanelVariant | null) => void;
   onRefreshGit?: () => void;
   onOpenGitReview?: (
     sourceId?: GitChangeSourceId,
@@ -170,8 +167,6 @@ export function V4WorkspaceChatArea({
   gitWorktreeReviewSourceId,
   gitWorktreeChangeSummary,
   activeTaskChangeSummary,
-  summaryPanelVariantOverride,
-  onSummaryPanelVariantOverrideChange,
   onRefreshGit,
   onOpenGitReview,
   onPaneActiveSessionChange,
@@ -317,8 +312,6 @@ export function V4WorkspaceChatArea({
       gitWorktreeReviewSourceId,
       gitWorktreeChangeSummary,
       activeTaskChangeSummary: primaryPaneSessionId ? activeTaskChangeSummary : null,
-      summaryPanelVariantOverride,
-      onSummaryPanelVariantOverrideChange,
       onRefreshGit,
       onOpenGitReview,
       onOpenBrowserUrl,
@@ -367,8 +360,6 @@ export function V4WorkspaceChatArea({
       gitWorktreeReviewSourceId,
       gitWorktreeChangeSummary,
       activeTaskChangeSummary,
-      summaryPanelVariantOverride,
-      onSummaryPanelVariantOverrideChange,
       onRefreshGit,
       onOpenGitReview,
       onOpenBrowserUrl,

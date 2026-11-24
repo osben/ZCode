@@ -1,7 +1,8 @@
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   createModelId,
   createModelProviderId,
+  type ExecutionShellSelection,
   type Model,
   type ModelInputMessage,
   type ModelRequest,
@@ -14,6 +15,7 @@ import {
   runMemoryAgentLoop,
   type MemoryAgentModelRequest,
 } from "../src/memory/memory-agent-loop.js";
+import { setCmdReadonlyHostForTest } from "../src/tool/handlers/bash-cmd-readonly-policy.js";
 import {
   isRuntimeAttachmentEntry,
   type RuntimeMessageEntry,
@@ -128,6 +130,7 @@ describe("runMemoryAgentLoop", () => {
 
     const result = await runMemoryAgentLoop({
       abortSignal: new AbortController().signal,
+      bashShellSelection: undefined,
       entries: messageEntries(initialMessages),
       executeToolCalls,
       maxTurns: 5,
@@ -214,6 +217,7 @@ describe("runMemoryAgentLoop", () => {
     );
 
     await runMemoryAgentLoop({
+      bashShellSelection: undefined,
       entries: messageEntries([
         {
           role: "user",
@@ -268,6 +272,7 @@ describe("runMemoryAgentLoop", () => {
     });
 
     const result = await runMemoryAgentLoop({
+      bashShellSelection: undefined,
       entries: messageEntries([{ role: "user", content: "extract" }]),
       executeToolCalls,
       maxTurns: 2,
@@ -323,6 +328,7 @@ describe("runMemoryAgentLoop", () => {
     });
 
     await runMemoryAgentLoop({
+      bashShellSelection: undefined,
       entries: messageEntries([{ role: "user", content: "extract" }]),
       executeToolCalls,
       maxTurns: 2,
@@ -375,6 +381,7 @@ describe("runMemoryAgentLoop", () => {
     });
 
     const result = await runMemoryAgentLoop({
+      bashShellSelection: undefined,
       entries: messageEntries([{ role: "user", content: "dream" }]),
       executeToolCalls,
       maxTurns: 50,
@@ -415,6 +422,7 @@ describe("runMemoryAgentLoop", () => {
     });
 
     await runMemoryAgentLoop({
+      bashShellSelection: undefined,
       entries: messageEntries([{ role: "user", content: "extract" }]),
       executeToolCalls,
       maxTurns: 2,
@@ -451,6 +459,7 @@ describe("runMemoryAgentLoop", () => {
     );
 
     const result = await runMemoryAgentLoop({
+      bashShellSelection: undefined,
       entries: messageEntries([{ role: "user", content: "extract" }]),
       executeToolCalls,
       maxTurns: 2,
@@ -634,7 +643,93 @@ describe("evaluateMemoryAgentToolPolicy", () => {
       decide("Bash", { command: `rm ${memoryRoot}/release-notes.md` }, registeredTools),
     ).toMatchObject({ allowed: true });
   });
+
+  describe("by session shell", () => {
+    afterEach(() => setCmdReadonlyHostForTest(undefined));
+
+    it.each([
+      ["posix", POSIX_SELECTION],
+      ["git-bash", GIT_BASH_SELECTION],
+    ])("keeps read-only Bash and Memory rm allowed in a %s session", (_label, selection) => {
+      for (const command of ["head -n 5 /workspace/notes.txt", `rm -f ${memoryRoot}/old.md`]) {
+        expect(decide("Bash", { command }, registeredTools, selection)).toMatchObject({
+          allowed: true,
+        });
+      }
+    });
+
+    // The Bash AST treats everything after # as a comment, but cmd.exe still runs the command after &.
+    it.each([
+      ["a command chained after #", String.raw`type # & python G:\temp\hello.py`],
+      ["Memory rm with a command chained after #", `rm -f ${memoryRoot}/old.md # & python x.py`],
+      ["Memory rm that only Bash AST can prove", `rm -f ${memoryRoot}/old.md`],
+    ])("denies %s when Bash runs through cmd.exe", (_label, command) => {
+      setCmdReadonlyHostForTest(WINDOWS_CMD_HOST);
+      for (const selection of [CMD_SELECTION, LEGACY_SHELL_SELECTION]) {
+        expect(decide("Bash", { command }, registeredTools, selection)).toMatchObject({
+          allowed: false,
+        });
+      }
+    });
+
+    // `DIR /b` is allowed only by the CMD rules (the Bash AST is case-sensitive and does not recognize DIR), which shows that both shells
+    // that may run through cmd.exe follow the CMD rules, rather than everything being denied or falling back to the Bash AST.
+    it("allows what the foreground CMD read-only policy allows", () => {
+      setCmdReadonlyHostForTest(WINDOWS_CMD_HOST);
+      for (const selection of [CMD_SELECTION, LEGACY_SHELL_SELECTION]) {
+        for (const command of ["dir /b", "DIR /b"]) {
+          expect(decide("Bash", { command }, registeredTools, selection)).toMatchObject({
+            allowed: true,
+          });
+        }
+      }
+    });
+
+    // On POSIX a legacy-shell falls back to /bin/sh, where # is also a comment, so the CMD bypass does not apply; keep the pre-fix Bash AST decision.
+    it.each(["darwin", "linux"])(
+      "keeps read-only Bash and Memory rm allowed in a %s legacy-shell session",
+      (platform) => {
+        setCmdReadonlyHostForTest({ platform, env: {} });
+        for (const command of ["head -n 5 /workspace/notes.txt", `rm -f ${memoryRoot}/old.md`]) {
+          expect(
+            decide("Bash", { command }, registeredTools, LEGACY_SHELL_SELECTION),
+          ).toMatchObject({ allowed: true });
+        }
+      },
+    );
+  });
 });
+
+const POSIX_SELECTION: ExecutionShellSelection = {
+  dialect: "posix",
+  display: { name: "bash" },
+  path: "/bin/bash",
+  source: "auto-detected",
+};
+const GIT_BASH_SELECTION: ExecutionShellSelection = {
+  dialect: "git-bash",
+  display: { name: "Git Bash" },
+  path: "C:/Program Files/Git/bin/bash.exe",
+  source: "auto-detected",
+};
+const WINDOWS_CMD_PATH = String.raw`C:\Windows\System32\cmd.exe`;
+const WINDOWS_CMD_HOST = {
+  platform: "win32",
+  env: { ComSpec: WINDOWS_CMD_PATH, SystemRoot: String.raw`C:\Windows`, PATH: "" },
+  realpath: (path: string) => path,
+};
+const CMD_SELECTION: ExecutionShellSelection = {
+  dialect: "cmd",
+  display: { name: "CMD" },
+  id: "cmd",
+  path: WINDOWS_CMD_PATH,
+  source: "user-config",
+};
+const LEGACY_SHELL_SELECTION: ExecutionShellSelection = {
+  dialect: "legacy-shell",
+  display: { name: "system shell" },
+  source: "legacy-fallback",
+};
 
 const noBatchNoticeRegistry = { get: () => undefined };
 
@@ -659,8 +754,14 @@ function passthroughRender(tools: readonly ModelToolContract[]) {
   });
 }
 
-function decide(name: string, input: unknown, tools: readonly ModelToolContract[]) {
+function decide(
+  name: string,
+  input: unknown,
+  tools: readonly ModelToolContract[],
+  bashShellSelection?: ExecutionShellSelection,
+) {
   return evaluateMemoryAgentToolPolicy({
+    bashShellSelection,
     rootDir: memoryRoot,
     toolCall: { id: "call", name, input },
     tools,

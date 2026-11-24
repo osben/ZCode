@@ -19,7 +19,7 @@ import {
   clearAppData,
   clickTestIdByDom,
   clickTestIdByWebDriver,
-  seedSettings,
+  pinE2ELocale,
   setInputValueByTestIdDom,
   waitForDefaultWorkspaceReady,
 } from "#e2e/helpers/desktop-app";
@@ -54,8 +54,9 @@ describe("automation run keeps the first-input session title", () => {
   it("UI 手动任务立即运行完成后不发起 session_title，标题保持原 prompt", async function () {
     this.timeout(150000);
     await waitForDefaultWorkspaceReady(90_000);
-    await seedSettings({ locale: "en-US", localePreference: "en-US" });
     await prepareV4ConversationE2E({ resetDraftBeforeProvider: true });
+    // The first frame follows the host language; seedSettings has no effect on an already started renderer, so use pinE2ELocale.
+    await pinE2ELocale("en-US");
     const telemetryFetch = await browser.electron.mock("net", "fetch");
     await telemetryFetch.mockResolvedValue({ ok: true, status: 204 });
     await clickTestIdByDom(TID_AUTOMATIONS_OPEN, {

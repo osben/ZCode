@@ -59,7 +59,8 @@ Host task-index origin (`resyncTaskIndexRowFromAgent`: `phase.completed/error`, 
 
 ```text
 task-index syncer ──session/read {runtimePolicy: existing-only, contentProfile: "index"}──▶ CLI
-                                                          │ first build complete snapshot (semantics unchanged)
+                                                          │ read all message/part rows by index and parse them one by one
+                                                          │ SQLite first trims display content that is not needed, then computes the original snapshot
                                                           │ then strip only large payload fields (do not add/remove messages/part)
 task-index syncer ◀── same-structure snapshot (tens of KB~hundreds of KB, not 15 MB)──┘
    └─ buildMetaFromSnapshot / searchableText / hasUserVisibleContent: byte-identical to full
@@ -69,6 +70,23 @@ task-index syncer ◀── same-structure snapshot (tens of KB~hundreds of KB, 
 - Why not `messageLimit`: it keeps the tail N messages, while searchable text takes the first 200K characters, title fallback takes the first real user message, and visibility checks all messages; truncation would change index results.
 - Reason for the change: the old implementation read the full snapshot per turn completion; long sessions had single-line NDJSON up to 15 MB (mainly 3 MB tool output) and the Host did a 15 MB JSON/zod parse per turn, though the index only uses text, info and part structure.
 - This is a read view for the task index only: other `session/read` callers must not pass `index`, and snapshots obtained must not be written back to UI/conversation state. Default or `full` behavior is unchanged.
+
+#### 读取内存约束（2026-11-11）
+
+- `SessionStorePort.messages` 的 `contentProfile: "index"` 是构建索引快照的中间读取视图：
+  SQLite 仅提前清空 reasoning 的 `text`、pending tool 的 `state.raw`、completed tool 的
+  `state.output`、error tool 的 `state.error`。最终仍由 `elideSessionSnapshotForIndex` 执行完整裁剪。
+- 工具 `input`、两层 `metadata`、时间、状态、message info、text/file/compaction/timeline 等数据
+  均保留；`TodoWrite` 分组与来源判定依赖 input/metadata，不能提前按最终索引形状裁剪。
+- 消息和 part 不限条数、不改变既有排序及 active-branch 选择；不新增缓存、数据库写入或恢复动作。
+  缺省/full 仍读完整内容。两种读取都逐条解析 part，避免同时保留全量原始 JSON 行数组。
+- 同一持久化输入下，新 index 响应必须等于旧 full 响应经最终 index 裁剪后的结果，包括标题、
+  正文、可见性、运行态、用量、goal stats 与 todo groups；index 读取不能影响后续 full 读取。
+- 此优化不限制正文、工具输入、元数据或图片附件总大小；它降低读取峰值，不构成整个 CLI 的固定内存上限。
+- 回归检查覆盖索引与 full 后裁剪的整份响应等价、goal/用量/待办派生、读取后 full 内容不变、
+  工具各状态与跨会话隔离。macOS arm64、Electron 44.7.0 / Node 24.21.0 的合成回放中，
+  11,136 条消息、每段助手内容约 32 KiB，阶段采样的 JS 堆峰值由 999 MiB 降至 464 MiB，
+  索引响应 SHA-256 相同；该结果不代表已复现或修复某个用户的具体崩溃。
 
 ## Task Status Projection
 

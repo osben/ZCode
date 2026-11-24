@@ -30,7 +30,7 @@ Electron process sampling calls `app.getAppMetrics()` through the WDIO Electron 
 ## Artifacts
 
 - `manifest.json`: environment, spec, sampling interval
-- `test-results.ndjson`: per-case title, status, duration and error summary
+- `test-results.ndjson`: per-case title, status, duration and error summary. `status` is written on every line and is `passed`, `failed` or `skipped` (a Mocha `pending` test also counts as skipped). For `this.skip()`, the WDIO 9 `afterTest` hook gives only `skipped=true` and `passed=false` and no `status`, so `resolveWdioTestStatus` converts it in one place. Downstream consumers (`tests.results` in `summary.json`, the test pool) must decide by `status` and not by `passed` alone, otherwise a platform-specific case would be counted as failed on the other platform. A skipped case writes no `errorCategory` and keeps no failure evidence (video, log delta, `case.json`)
 - `summary.json`: machine-readable report summary
 - `summary.md`: human-readable report summary
 - `workers.ndjson`: cid/spec of workers that completed environment registration; fewer entries than `before-session` means the pre-registration transaction failed

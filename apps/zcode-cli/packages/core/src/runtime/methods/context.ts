@@ -115,15 +115,23 @@ export async function ensureContextInitialized(
   this.contextInitialized = true;
 }
 
+/**
+ * 本会话可用 skill 的唯一事实：端口有实时目录时读它的当前快照（只读内存，不做 IO），
+ * 否则用 context 初始化时的发现结果（workflow child、测试注入的端口）。
+ * context 初始化时的结果另外只决定 system prompt 里的 skill 引导语，会话开始后不变。
+ */
+export function currentSkillCatalog(runtime: AgentRuntimeInternal): SkillLoadOutcome | undefined {
+  return runtime.skillPort?.currentCatalog?.() ?? runtime.skillLoadOutcome;
+}
+
 export async function getSkillCatalog(
   this: AgentRuntimeInternal,
   traceContext: TraceContext,
 ): Promise<SkillLoadOutcome> {
-  // Composer previously scanned disk independently, so a running Session could see new Skills not yet loaded by AgentRuntime.
-  // Pass through the runtime's sole context-initialization gate first, then return a defensive copy,
-  // keeping the UI's Skills in the same snapshot as those actually available to this Session; a new runtime naturally rediscovers them.
+  // Composer previously scanned disk independently, which did not match the Skills actually available to the Session. Pass through the runtime's sole
+  // context-initialization gate first, then return a defensive copy of the same catalog used by the listing announcement and the Skill tool.
   await this.ensureContextInitialized(traceContext);
-  const outcome = this.skillLoadOutcome ?? {
+  const outcome = currentSkillCatalog(this) ?? {
     skills: [],
     diagnostics: [],
     totalDiscovered: 0,
@@ -173,6 +181,7 @@ export function createContextBuilderFromSnapshot(
   const skillListing = incognitoExcludes(this.config.incognito, "skills")
     ? undefined
     : this.skillLoadOutcome;
+  const totalTokensReminder = this.config.totalTokensReminder?.enabled === true;
   if (this.config.subagentContext) {
     return createSubagentContextBuilder({
       agentPrompt: this.config.subagentContext.agentPrompt,
@@ -181,10 +190,9 @@ export function createContextBuilderFromSnapshot(
       model: options.model,
       // Subagents run in the same (worktree) cwd and must carry the same isolation notice.
       executionWorktree: this.config.executionWorktree,
-      skillMetadataBudget: this.config.skillMetadataBudget,
-      skills: skillListing,
       userInstructions: this.config.subagentContext.userInstructions,
       incognito: this.config.incognito,
+      totalTokensReminder,
     });
   }
 
@@ -208,15 +216,14 @@ export function createContextBuilderFromSnapshot(
     skills: skillListing,
     agentProfiles: this.config.subagents?.profiles,
     embeddedSearchEnabled: resolveRuntimeEmbeddedSearchEnabled(this),
-    skillMetadataBudget: this.config.skillMetadataBudget,
     customSystemPrompt: this.config.systemPrompt,
     workflowActor: this.config.workflowActor,
-    language: this.config.language,
     outputStyle: this.config.outputStyle,
     systemPromptOverrides: resolveMainAgentSystemPromptOverrides(this.config),
     compact: this.config.compact,
     guidanceToolNames: this.getTools(options.model).map((tool) => tool.name),
     incognito: this.config.incognito,
+    totalTokensReminder,
   };
 
   return createContextBuilder(contextConfig).setToolRegistry(this.registry);

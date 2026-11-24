@@ -134,6 +134,7 @@ Rules:
 | zoomIn               | menu    | `CmdOrCtrl+=` (the menu keeps the dual-entry mode of a visible Plus item + a hidden `=` item) |
 | zoomOut              | menu    | `CmdOrCtrl+-`                                                                                 |
 | resetZoom            | menu    | `CmdOrCtrl+0`                                                                                 |
+| toggleVoiceInput     | window  | none in the fork (upstream: `CmdOrCtrl+Shift+D`, desktop only; see §12.7)                     |
 
 - The `window` channel is dispatched by `useAppKeyboard` inside the renderer and works the same on all three
   ends.
@@ -160,12 +161,20 @@ Rules:
   is valid) is tolerantly done at effective-table resolve time: unknown command IDs or invalid binding entries
   are ignored with a warn log and the rest take effect normally, so hand-editing setting.json with invalid
   entries cannot break shortcuts as a whole.
-- **Compatibility constraint of release state and default keys of new commands:** the shortcut customization
-  feature has not been released and there is no existing user configuration, so new commands just get default
-  keys (for example `CmdOrCtrl+,` of openSettings). **After first release**, when adding a command whose default
-  key may conflict with a user's saved explicit binding (same scope, physically equivalent, e.g. win `Ctrl+,` ≡
-  `CmdOrCtrl+,`), an upgrade compatibility of "the new default key yields to the explicit override" is required,
-  so a user's existing binding is not silently preempted and the settings page display matches actual execution.
+- **Default keys yield to explicit overrides (released, saved user configuration exists):** the default key of a
+  new command may already be bound explicitly by the user to another command. The rule lives in effective-table
+  resolve; it writes nothing to disk, migrates nothing and shows no prompt:
+  - A command without an override takes its default keys, minus any default key physically equivalent (equal
+    canonical key, e.g. win `Ctrl+,` ≡ `CmdOrCtrl+,`) to another same-scope command's explicit override. When all
+    default keys are removed, the settings page shows the command as unassigned, the tooltip shows no key, and
+    the keypress triggers only the command the user bound.
+  - It applies only to default keys of window-channel commands. Menu-channel defaults are resolved separately by
+    main's `resolveMenuAccelerator` and do not yield, so both sides stay consistent.
+  - The result is derived purely from `shortcutBindings`: once the user clears or changes that override, the
+    default key returns to its original command.
+  - Conflict detection, takeover and the restore-default pre-check all read the same effective table and need no
+    extra handling. When recording-state `Backspace` restores a default whose key is occupied, SG-03 names the
+    occupier and nothing is persisted.
 
 ## 6. Effective chain (sequence)
 
@@ -426,6 +435,9 @@ E2E (packages/desktop/test/e2e/; app interaction requires E2E by repo rule):
   platform primary modifier + K filters to the command with that default binding (openCommandCenter) and other
   command rows disappear → clearing restores the full list; a combination with no hit (CmdOrCtrl+Shift+9) shows
   the empty state → clear, re-arm, Escape exit (aria-pressed resets, list unchanged).
+- Default-key yielding (upstream VI-19, `ui-shell/composer/composer-voice-input.test.ts`): `shortcutBindings`
+  binds `CmdOrCtrl+Shift+d` explicitly to findInTask → the key opens only in-task find and voice input does not
+  start; the settings page shows the voice input row as unassigned. The fork skips that suite (see §12.7).
 
 ## 11. Implementation steps
 
@@ -594,3 +606,20 @@ Review conclusions (SG-03 / SG-09):
   viewport `enterSubmits` gate (accidental soft-keyboard sending concerns only the Enter physical key), and has
   no intersection with reversed delivery (which responds only to Ctrl/Meta+Enter), so it needs no yielding. The
   pure function `resolveComposerKeyAction` is shared by both dispatch paths.
+
+### 12.7 Voice input shortcut (toggleVoiceInput)
+
+| Command            | Default binding                                  | Description                        |
+| ------------------ | ------------------------------------------------ | ---------------------------------- |
+| `toggleVoiceInput` | none in the fork (upstream: `CmdOrCtrl+Shift+d`) | Start or stop composer voice input |
+
+- Behavior: see "Shortcut" in `docs/chat/composer-voice-input.md`. Dispatch lives in the voice-input module's own
+  window capture listener, matching reads the effective table; `useAppKeyboard` registers no handler and never calls
+  `preventDefault` first.
+- Registered on desktop only. Web and mobile remote control have no voice input, so the settings page hides this row
+  (handled like `toggleSidePaneFullView`).
+- It was added after shortcut customization shipped, so its default key follows §5 "default keys yield to explicit
+  overrides".
+- Fork: `CmdOrCtrl+Shift+d` stays the default of the fork's `voiceDictation` (hold to record, local Whisper), so
+  `toggleVoiceInput` ships with no default binding and users can assign one in settings
+  (`specs/upstream-sync-4.0.0.md`).

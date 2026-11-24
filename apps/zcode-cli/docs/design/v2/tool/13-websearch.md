@@ -39,7 +39,7 @@ public input:
 | `blocked_domains` | Optional, exclude results from these domains                                        |
 | `maxUses`         | Optional, upper limit of internal provider-native searches, default `8`             |
 
-`allowed_domains` and `blocked_domains` cannot be passed together. A domain accepts only a hostname, not a protocol, path or wildcard.
+`allowed_domains` and `blocked_domains` cannot be passed together: when both arrays are non-empty, `validateInput` returns `errorCode=2` before the PreToolUse Hook and permission, and the model receives `<tool_use_error>Error: Cannot specify both allowed_domains and blocked_domains in the same request</tool_use_error>`. This check is not written into the runtime schema, otherwise an InputValidationError would be returned first (root `docs/model-tool-call-validation.md`). Input rewritten by a hook no longer goes through `validateInput`, so the handler rejects it once more at the start with the same check. Reason for the fix: only a refine in the runtime schema expressed this rule, the handler did not parse the input, and the request went to the provider unchanged without any local error. A domain accepts only a hostname, not a protocol, path or wildcard.
 
 模型可见描述是固定文本。月份一行写作
 `The current month is (provided in the conversation below)`，不写入真实月份：模型从会话中的

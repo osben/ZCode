@@ -1,18 +1,23 @@
 import type { ModelToolContract } from "@zcode/contracts";
+import { SEND_MESSAGE_TOOL_NAME } from "@zcode/contracts";
 import { buildToolSearchAnnouncement } from "../../tool/search/exposure.js";
+import { buildCompactTaskStatusEntries } from "../helpers/compact-task-status.js";
+import { canReadBackgroundOutputFile } from "../../tool/executor/background-task-output.js";
 import {
   prepareRuntimeProviderRequest,
-  requestCapabilityProjectionOptions,
   shouldUseMidConversationSystem,
 } from "../helpers/runtime-provider-request-messages.js";
-import { collectDiscoveredTools, compactDiscoveryMetadata } from "../../tool/search/history.js";
+import {
+  collectDiscoveredTools,
+  compactDiscoveryMetadata,
+  compactToolSearchDelivery,
+} from "../../tool/search/history.js";
 import { collectRuntimeAgentListing } from "../helpers/agent-listing.js";
 import {
   CompactPhase,
   CompactReason,
   CompactTrigger,
   CompactTimelineStatus,
-  MAX_OUTPUT_TOKENS_FOR_SUMMARY,
   SessionEventType,
   createChildTraceContext,
   isCoreError,
@@ -23,6 +28,7 @@ import {
   buildCompactSummaryMessage,
   buildManualCompactBoundary,
   createCompactBoundaryId,
+  getAutoCompactOutputReserveTokens,
   getUsageTotalTokens,
 } from "../deps.js";
 import type { SessionEvent, TraceContext } from "../deps.js";
@@ -72,23 +78,20 @@ import {
 } from "../../agent/message-history.js";
 import { selectPersistedCompactTail } from "../helpers/compact-preservation.js";
 import {
-  buildCompactSummaryRequestMessages,
   createCompactContextExceededFinishError,
   createCompactPromptTooLongError,
   formatCompactSummaryOrThrow,
   persistCompactTimelineEvent,
+  warnCompactSummaryOutputLimit,
 } from "./compact-active-helpers.js";
 import { runCompactSummaryModelRequest } from "./compact-summary-model-request.js";
-import { resolveNormalRequestMaxOutputTokens } from "./model-token-limits.js";
+import { resolveAutoCompactPolicyConfig } from "./model-token-limits.js";
 import { createRefreshRuntimeHeadersBeforeModelAttempt } from "./model-runtime-headers.js";
 import { recordModelUsageFact } from "./usage-observability.js";
 import { resetProjectMemoryRecall } from "../helpers/project-memory-recall.js";
 import { createRuntimeModel } from "./runtime-model.js";
 import { supersedeContextComposition } from "../context-composition/state.js";
-import {
-  filterOutputTokenContinuationEntries,
-  preserveCanonicalContextPrefix,
-} from "./turn-output-token-continuation.js";
+import { preserveCanonicalContextPrefix } from "./turn-output-token-continuation.js";
 import {
   applyRereadInstructionSources,
   buildRereadInstructionContext,
@@ -208,10 +211,9 @@ async function compactActiveConversationImpl(
     createRuntimeModel(this, {
       selection: this.getSessionModelSelection(),
     });
-  const executionMaxOutputTokens = compactModel.optionSpecs.maxOutputTokens.max;
   // Active compact holds this shallow member snapshot across multiple awaits; it relies on the
   // RuntimeMessageEntry immutability contract. Selection, provider render, and the final replace
-  // create their own copies — never mutate the shared entry/message/content inside activeEntries
+  // create their own copies; never mutate the shared entry/message/content inside activeEntries
   // in place during compact.
   const activeEntries = [
     ...(options.activeEntries ?? this.messageHistory.borrowReadOnlyRuntimeEntries()),
@@ -299,7 +301,8 @@ async function compactActiveConversationImpl(
     turnTraceContext,
     events,
   );
-  await this.initializeMcp(turnTraceContext);
+  // 自动/超窗压缩重发已有输入，不能消费后台已更新的能力快照。
+  if (trigger === CompactTrigger.Manual) await this.initializeMcp(turnTraceContext);
   throwIfTurnAborted(options.abortSignal);
   // Same tool catalog as the main loop (including this turn's disable rules), projected by the same request-preparation entry.
   // Fix reason: when the summary request picked different tools (only ToolSearch-related ones, or an
@@ -369,15 +372,6 @@ async function compactActiveConversationImpl(
           skipCacheWrite: true,
         });
         const requestMessages = prepared.request.messages;
-        const recordableEntries = filterOutputTokenContinuationEntries(prepared.entries);
-        const recordableRequestMessages =
-          recordableEntries === prepared.entries
-            ? requestMessages
-            : buildCompactSummaryRequestMessages(recordableEntries, compactPrompt, {
-                useMidConversationSystem,
-                ...requestCapabilityProjectionOptions(compactModel),
-                loadedToolCallIds: prepared.loadedToolCallIds,
-              });
         // Compact used to run only capability projection, missing the aggregate media budget shared
         // with plain turns; route uniformly through the model media policy so the summary request
         // cannot bypass the global request cap.
@@ -405,31 +399,17 @@ async function compactActiveConversationImpl(
           },
         );
         let projectedRequestMessages = mediaPolicyProjection.messages;
-        let projectedRecordableMessages =
-          recordableRequestMessages === requestMessages
-            ? projectedRequestMessages
-            : projectMessagesForModelMediaPolicy(
-                recordableRequestMessages,
-                compactModel.properties.inputFormat,
-              ).messages;
         if (stripMediaForSummary) {
           // Reusing the generic media-budget wording would pollute the summary's provider-visible content.
           const mediaProjection = projectCompactMediaForRetry(projectedRequestMessages);
           projectedRequestMessages = mediaProjection.messages;
-          projectedRecordableMessages =
-            recordableRequestMessages === requestMessages
-              ? projectedRequestMessages
-              : projectCompactMediaForRetry(projectedRecordableMessages).messages;
           logCompactMediaRetryProjection(this.logger, modelTraceContext, mediaProjection);
         }
 
         const modelRequestEvent = this.createEvent(
           SessionEventType.ModelRequest,
           {
-            // The event mistakenly used the actual request array including Continue, letting
-            // query-local hints into the persisted trajectory. Consistent with v0.16.6: the event
-            // records the filtered projection while the provider request below still uses the full context.
-            messages: projectedRecordableMessages,
+            messages: projectedRequestMessages,
             providerId: String(compactModel.providerId),
             modelId: String(compactModel.modelId),
             querySource: "compact",
@@ -442,7 +422,7 @@ async function compactActiveConversationImpl(
         events.push(modelRequestEvent);
         const modelStartedAt = Date.now();
         const networkEventStartIndex = events.length;
-        const compactSummaryMaxOutputTokens = capCompactSummaryMaxOutputTokens(compactModel);
+        const compactSummaryMaxOutputTokens = capCompactSummaryMaxOutputTokens(this, compactModel);
         using statusSink = this.createModelStatusSink(modelTraceContext, events);
         const compactModelRequest = {
           abortSignal: options.abortSignal,
@@ -542,10 +522,15 @@ async function compactActiveConversationImpl(
             preCompactTokenCount,
           });
         }
+        warnCompactSummaryOutputLimit(this, result, {
+          maxOutputTokens: compactSummaryMaxOutputTokens,
+          traceContext: modelTraceContext,
+          trigger,
+        });
         break;
       }
 
-      const summary = formatCompactSummaryOrThrow(this, result);
+      const summary = formatCompactSummaryOrThrow(this, result, modelTraceContext);
       const persistedSummary = summary;
       // 修复原因：文件恢复曾用读取状态里缓存的视图，补回的可能是旧内容或片段；现在重读当前文件。
       // plan 文件、补回文件和指令文件互不依赖，并行读取。
@@ -581,13 +566,23 @@ async function compactActiveConversationImpl(
         preCompactDiscoveredTools: [...preCompactDiscoveredTools],
       });
       // The new discovery checkpoint is not committed yet; the announcement uses the same candidate classification so tools about to be promoted are not re-announced as to-load.
+      const toolSearchDelivery = compactToolSearchDelivery(
+        activeEntries,
+        preservedEntries,
+        (name) => registry.get(name) !== undefined,
+      );
+      const deliveryCarrier = {
+        message: { role: "user" as const, content: "" },
+        toolSearchDelivery,
+      };
       const toolAnnouncement = buildToolSearchAnnouncement(
         {
           model: compactModel,
           mode: this.config.toolSearch?.mode,
           tools: options.getContinuationTools?.() ?? this.getTools(compactModel),
           registry,
-          entries: preservedEntries,
+          entries: [...preservedEntries, deliveryCarrier],
+          mcp: this.mcpServerStatusFacts,
         },
         preCompactDiscoveredTools,
       );
@@ -596,7 +591,11 @@ async function compactActiveConversationImpl(
         preservedEntries,
         options.agentListingTools ?? this.getTools(options.model ?? compactModel),
       );
-      const skillsListingEntry = collectSkillsListing(this, preservedEntries);
+      const skillsListingEntry = collectSkillsListing(
+        this,
+        preservedEntries,
+        options.agentListingTools ?? this.getTools(options.model ?? compactModel),
+      );
       // With a non-empty kept tail, the request-time announcement goes before the summary (minus
       // sources already in the kept tail) and Git is re-read for the current directory; with an
       // empty kept tail, the next request's request-time announcement appends at the end, and Git
@@ -641,11 +640,23 @@ async function compactActiveConversationImpl(
       // hook runner 把取消当作单个 hook 失败，不会抛错；hook 返回后要再检查一次取消，
       // 否则 hook 运行期间点停止，compaction 仍会提交。
       throwIfTurnAborted(options.abortSignal);
-      // compaction 附件顺序：文件恢复 → plan 文件 → plan 提醒 → ToolSearch 公告
-      // → agent listing → skill 列表 → 环境 → 模型 → 输出风格 → compact SessionStart 上下文。
+      // 后台任务状态：summary 返回后读一次本 runtime 的注册表，之后结束的任务由通知队列送达。
+      const continuationToolNames = (
+        options.agentListingTools ?? this.getTools(options.model ?? compactModel)
+      ).map((tool) => tool.name);
+      const taskStatusEntries = buildCompactTaskStatusEntries({
+        branchGeneration: this.branchGeneration,
+        canContinueAgent: continuationToolNames.includes(SEND_MESSAGE_TOOL_NAME),
+        canReadOutputFile: canReadBackgroundOutputFile(continuationToolNames),
+        now: this.now(),
+        tasks: Object.values(this.runtimeTaskRegistry.all()),
+      });
+      // compaction 附件顺序：文件恢复 → 任务状态 → plan 文件 → plan 提醒 → ToolSearch 公告
+      // → agent listing → skill 列表 → 环境 → 模型 → 输出风格 → 回复语言 → compact SessionStart 上下文。
       // 修复原因：agent listing 排在文件恢复之前，顺序错误。
       const postCompactReminderEntries = [
         ...fileRestore.entries,
+        ...taskStatusEntries,
         ...(planFileReferenceEntry ? [planFileReferenceEntry] : []),
         ...(planModeReminderBody
           ? [systemReminderAttachmentEntry("runtime_mode", planModeReminderBody)]
@@ -677,8 +688,6 @@ async function compactActiveConversationImpl(
         preservedMessagesKept: preservedEntries.length > 0,
         suppressFollowup: true,
       });
-      // Continue has no corresponding Session message; store-less statistics must not count it as a preserved record either.
-      const recordablePreservedEntries = filterOutputTokenContinuationEntries(preservedEntries);
       const preservation = this.sessionStore
         ? await selectPersistedCompactTail({
             sessionStore: this.sessionStore,
@@ -686,14 +695,23 @@ async function compactActiveConversationImpl(
             groupsPreserved: currentSelection.groupsPreserved,
             summaryMessageId,
           })
-        : { keptMessageCount: countCompactPreservedRuntimeMessages(recordablePreservedEntries) };
+        : { keptMessageCount: countCompactPreservedRuntimeMessages(preservedEntries) };
+      // 新写入的记录（请求前公告、summary、compaction 附件）与它们的 live 条目用同一个时间；
+      // 保留段条目带着原时间。静默提醒按条目时间计时，冷恢复读回的时间与 live 相同。
+      const compactCreated = this.now().getTime();
+      const withCompactTime = (entries: readonly RuntimeMessageEntry[]) =>
+        entries.map((entry) => ({ ...entry, time: compactCreated }));
+      const leadingEntries = withCompactTime(leadingReminderEntries);
+      const postCompactAttachmentEntries = withCompactTime(postCompactReminderEntries);
       const summaryEntry = {
         message: { role: "user" as const, content: summaryMessageContent },
         metadata: { ...legacySyntheticRuntimeMetadata(), compactBoundary: discovery },
+        ...(toolSearchDelivery ? { toolSearchDelivery } : {}),
+        time: compactCreated,
       };
       const postCompactEntries = buildPostCompactRuntimeEntries(activeEntries, summaryEntry, {
-        leadingReminderEntries,
-        postCompactReminderEntries,
+        leadingReminderEntries: leadingEntries,
+        postCompactReminderEntries: postCompactAttachmentEntries,
         preservedEntries,
       });
       const truePostCompactTokenCount = estimateRuntimeEntryTokens(postCompactEntries, {
@@ -734,10 +752,12 @@ async function compactActiveConversationImpl(
         compactBoundary,
         modelTraceContext,
         {
+          created: compactCreated,
           model: compactModel,
           operationId: compactTimeline.operationId,
-          leadingReminderEntries,
-          postCompactReminderEntries,
+          leadingReminderEntries: leadingEntries,
+          postCompactReminderEntries: postCompactAttachmentEntries,
+          toolSearchDelivery,
         },
       );
 
@@ -771,14 +791,13 @@ async function compactActiveConversationImpl(
       // compaction 已提交：compact 有结果时替换还没提交的 startup / resume 结果；没有结果时保留，下一轮照常提交。
       if (compactSessionStart.hasContext) discardPendingSessionStartContext(this);
       this.latestConversationMessageId = summaryMessageId;
-      const recordablePostCompactEntries = filterOutputTokenContinuationEntries(postCompactEntries);
       this.messageHistory.replaceMessages(
         options.activeEntries
           ? preserveCanonicalContextPrefix(
               this.messageHistory.borrowReadOnlyRuntimeEntries(),
-              recordablePostCompactEntries,
+              postCompactEntries,
             )
-          : recordablePostCompactEntries,
+          : postCompactEntries,
       );
       replaceReadFileStateAfterCompact(this.readFileState, fileRestore.readFileStateEntries);
       if (instructionReread) {
@@ -902,13 +921,9 @@ function selectInitialCompactEntriesForActiveConversation(input: {
   );
 }
 
-function capCompactSummaryMaxOutputTokens(model: Model): number {
-  // Compact is an independent execution chain; explicitly take the smaller of the model cap and the 20K summary cap here.
-  const desired = Math.min(
-    resolveNormalRequestMaxOutputTokens({
-      modelMaxOutputTokens: model.optionSpecs.maxOutputTokens.max,
-    }),
-    MAX_OUTPUT_TOKENS_FOR_SUMMARY,
-  );
-  return Math.min(desired, model.optionSpecs.maxOutputTokens.max);
+function capCompactSummaryMaxOutputTokens(runtime: AgentRuntimeInternal, model: Model): number {
+  // Fix reason: the summary used to be capped at a fixed 20K with reasoning and <analysis> squeezed into it, so large-window sessions were often cut off by length.
+  // It now takes the Auto Compact reserve directly: when compaction triggers, that part of the window is left for the summary, and large windows grow it by window ratio.
+  // The remaining window is not estimated from usage: after truncating old turns or stripping media and retrying, the leftover old usage is stale and would give a wrong cap.
+  return getAutoCompactOutputReserveTokens(resolveAutoCompactPolicyConfig(runtime, model));
 }

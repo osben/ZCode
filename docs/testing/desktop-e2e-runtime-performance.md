@@ -212,6 +212,24 @@ in-spec real restart
 - The official scoped v10 migration is not a premise since the current environment cannot fetch the new dependency; the local wrapper keeps the existing launcher/capability contract and promotes initialization failures swallowed by the old service into one bounded reconnect or an explicit failure.
 - The change affects only the Desktop E2E runner; product process responsibilities, desktop continuous, mobile replayable and workspace identity semantics are unchanged.
 
+Windows restart failure diagnostics contract: the original error of the exit barrier must go into the top-level
+error message and not only into `Error.cause`. The WDIO case report keeps only the top-level message and stack, so
+the leftover PID of a timeout, and any scan or cleanup error, must be visible in that report. A barrier failure
+still must not create a new session, must not extend the timeout, and must not ignore leftover processes. The
+engineering regression should prove that a timed-out PID passes through the reload wrapper into the report message,
+and assert that the cause is the same object as the injected original Error. After a barrier failure no new session
+may be created.
+
+2026-11-18 verification: the old Windows run `ci-conversation-windows-343978-1150637-1-1` failed the exit barrier
+in DWU-02, and the next two cases failed in a chain because their WebDriver session was already deleted and the
+run was missing. The App log recorded that Host/Agent cleanup finished and that the app was preparing to exit, but
+it did not record the underlying cause of the barrier, so the leftover process cannot be identified. A later
+Windows run with no change to the exit logic, `ci-conversation-windows-343996-1150746-1-1`, passed all six cases.
+The engineering regression for the diagnostics fix passed 33/33, and the local macOS restart spec passed 4/4, with
+evidence in `packages/desktop/.e2e-artifacts/desktop-e2e-20261118-123906-763`. This only proves that the
+diagnostics are kept and the existing path runs. It does not prove that the root cause of the intermittent Windows
+exit failure is gone.
+
 ## Verification order
 
 1. Establish the default full baseline and freeze run id, wall-clock, spec/case counts and failure classification.

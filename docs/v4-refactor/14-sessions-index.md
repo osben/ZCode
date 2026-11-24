@@ -13,6 +13,32 @@ Updated: 2026-07-22
 
 ## Schema
 
+### Activity summary for close protection (2026-11-12)
+
+`SessionSummary.hasCompactWork` is an optional boolean derived from the current snapshot as
+`control.activeWorks.some(work => work.kind === "compact")`. A new CLI always writes the boolean. A legacy frame
+that lacks it is read as false, and the cold-storage summary does not restore a running compact. The field takes
+part in summary equality, so both the start and the end must produce an upsert.
+
+Desktop close protection is deduplicated per session: a session is active when any of `phase` being
+`prewarming` or `running`, `hasBackgroundWork === true`, or `hasCompactWork === true` holds. This does not change
+the meaning of phase, the list spinner or the persisted task status. Pending commands, pending interactions, other
+independent activeWorks, manual terminals and future automatic tasks add no protection condition.
+
+The existing task-index syncer in the Host derives the active count after a full snapshot or an incremental batch
+is applied, and reports it to Main through the taskRuntimeReporter. The initial snapshot must also report the
+current active count, so that silent persistence does not cause a missed report. A session that is foreground,
+background and compacting at once counts once. When the runtime becomes unavailable, the contribution of that
+generation is withdrawn and old frames must not revive it. A new generation waits for a new snapshot to set the
+baseline, and dispose publishes zero. After a gap within one generation, recovery keeps the latest confirmed
+count, so a short resubscribe does not clear it and pretend the task ended.
+
+```text
+CLI session snapshot -> sessions-index summary -> Host syncer atomic reduction -> Main activity count -> existing exit confirmation
+```
+
+For the close behavior and acceptance boundary see [session activity close confirmation](../desktop/session-activity-close-confirmation.md).
+
 `SessionSummary` currently contains session identity, workspaceId, phase, title and title source, parent session, creation/activity times, a usage summary, and lightweight permission/user-input counts. It must not carry a full interaction payload, conversation rows or tasks-index organization state.
 
 Frames follow the V4 topic five-piece set: subscribe / unsubscribe; snapshot; delta (`session.upserted` / `session.removed`); seq/logEpoch; resync.

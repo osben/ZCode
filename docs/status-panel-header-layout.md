@@ -1,27 +1,5 @@
 # Status Panel Header Layout
 
-## Purpose
+The Status panel at the top right and the mini/panel switch have been replaced by the capsule above the input box. The current rules and acceptance records are maintained in one place in [Chat Status Panel](ui/chat-summary-panel.md).
 
-The headings for the Git, Goal, Progress, and Run sections in the Status panel must use a consistent information order. Avoid mixing layouts where some status information is aligned to the right while other information follows the heading.
-
-## Rules
-
-- Order each section header row as: title, expand/collapse chevron, status content.
-- In the collapsed state, status content for Git, Progress, and Run must appear immediately after the chevron; do not push it to the far right with `ml-auto`.
-- Goal pause/resume is an immediate action for the current goal and appears before elapsed-time and token metrics.
-- In the expanded Status panel, provide an absolutely positioned collapse button in the upper-right corner to switch to the mini state.
-- When the upper-right collapse button is present, reserve space on the right side of section header rows so titles, chevrons, and status content do not overlap it.
-- When the mini pill displays running background tasks, show only the task-type icon and the number of running tasks; do not show elapsed time or a timer. The expanded Run section and task details continue to show elapsed time.
-- Task-type icons in the mini pill, including subagent avatars, are 16x16px and centered in the icon slot. The avatar's default 20px minimum size must not overflow the slot. Avatars elsewhere keep their size.
-
-## Size regression acceptance
-
-- Show a subagent-only mini pill at desktop and phone widths in Zai Light and Zai Dark, with one and several counts, in Chinese and English.
-- Avatar and icon slot are both 16x16px with coinciding centers, keep the existing gap to the text, and do not jump when hover switches to the expand icon.
-- Ordinary 20px avatars keep their size.
-
-## Compatibility
-
-- This layout does not change the Status panel's data sources; it changes only the information order in header rows.
-- The mini state continues to use the existing pill-row entry point to expand the panel.
-- Continue using existing i18n keys; do not add locale resources.
+The details reuse the existing content and actions, and no longer have the old panel's collapse button, top clearance or horizontal offset. Goal controls, Git actions and background stop keep using the existing capability checks.

@@ -257,6 +257,35 @@ Subscription failures reuse `chat_error_banner` to avoid dashboard having a seco
 `fault.subscribe.sessionNotFound` etc reasonCode not allowed only in message. Silent fallback errors in background panes,
 pre-warmed drafts and errors suppressed by product logic are not exposed.
 
+After a normal Windows desktop exit is confirmed (Main has `lifecycleScene=app_quit`), Host cleanup may cancel an
+in-flight runtime handshake. If Main later receives a custom event with `name=chat_error_banner`,
+`group=ui_error`, `surface=session_subscription_error` and an `error_message` that is exactly
+`Windows runtime start was cancelled`, only this one ARMS report is skipped. Main must read the existing exit
+state after validating the event and before sending. It must not infer a normal exit from the batch send time,
+fuzzy error text or a Renderer disconnect. The same text while the app is still running, after a cancelled exit
+confirmation, on a single window close or under `update_install`, and any other error, are reported as before.
+Local logs, error display and reconnect behavior are unchanged. Events already sent before the exit cannot be
+recalled, and a forced system termination that never entered `app_quit` is not covered by this rule. Startup
+performance events express `cold_start` through event fields, and a late startup callback must not change an
+already established exit lifecycle back to `runtime`.
+
+Targeted acceptance uses
+[`windows-runtime-quit-telemetry.test.ts`](../../packages/desktop/test/e2e/infrastructure/lifecycle/windows-runtime-quit-telemetry.test.ts):
+after a real Electron normal exit completes, the test keeps the Renderer through a test listener and checks, via
+the existing IPC and Main's final event ring, that the same text is reportable while running, is reported zero
+times after the exit, and that a Job control channel error after the exit is still reportable. On 2026-11-19 on
+Windows x64 the counterexample failed before the fix and passed 1/1 after it, with evidence in
+`packages/desktop/.e2e-artifacts/desktop-e2e-20261119-024956-546`. This evidence only covers Main's event
+admission. It does not claim real system shutdown, the source of the handshake cancel, or other platforms. On
+2026-11-19 the user confirmed promotion: the infrastructure/lifecycle scenario is kept, with a standalone fixture
+declaring `providerRequestPolicy=none`; no Docker preset or cross-platform admission is added. On the official
+path, the Windows x64 standalone fixture replay and the default replay each passed 1/1 with 0 skipped:
+`packages/desktop/.e2e-artifacts/desktop-e2e-20261119-030234-095` (standalone fixture) and
+`packages/desktop/.e2e-artifacts/desktop-e2e-20261119-030343-939` (default replay). The generic promotion and
+fixture check CLI currently covers only the conversation and plugin domains, so this case follows the manual
+promotion used for non-conversation cases, and the standalone manifest is checked against the existing admission
+contract without changing the engineering tools.
+
 Attribution fields are optional incremental fields: `error_source` / `failure_reason` / `provider_scope` /
 `provider_id` / `model_id` / `provider_kind` / `transport` / `status_code` /
 `provider_error_code` / `failure_retryable` / `failure_phase` / `failure_exception_kind`. Where

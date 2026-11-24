@@ -1,5 +1,26 @@
 import { TID_CHAT_MODEL_SELECT_TRIGGER, TID_V4_MODEL_CONFIG } from "@zcode/shared/test-ids";
 
+/**
+ * Close the combined model panel. The provider flyout is its own Popover layer and stays mounted
+ * for a moment after a provider pick, so one Escape right after a pick can land on the flyout;
+ * repeat until the panel itself reports closed.
+ */
+export async function closeComposerModelPanel() {
+  const trigger = $(`[data-testid="${TID_CHAT_MODEL_SELECT_TRIGGER}"]`);
+  await browser
+    .waitUntil(
+      async () => {
+        if ((await trigger.getAttribute("aria-expanded")) !== "true") return true;
+        await browser.keys("Escape");
+        return false;
+      },
+      { timeout: 5000, interval: 200 },
+    )
+    // Best effort like the single Escape it replaces: an owner may keep the panel open (for
+    // example while a config ACK is in flight); the caller's own assertions decide.
+    .catch(() => undefined);
+}
+
 /** 合并入口与开关由真实点击驱动，滑杆由键盘驱动，不用 DOM 值覆盖伪造 React 状态。 */
 export async function selectCombinedComposerThoughtLevel(value: string): Promise<boolean> {
   const trigger = $(
@@ -33,7 +54,7 @@ export async function selectCombinedComposerThoughtLevel(value: string): Promise
         timeout: 15000,
       },
     );
-    await browser.keys("Escape");
+    await closeComposerModelPanel();
     return true;
   }
   if (!(await slider.isExisting())) {
@@ -41,7 +62,7 @@ export async function selectCombinedComposerThoughtLevel(value: string): Promise
     const current = await $(`[data-testid="${TID_V4_MODEL_CONFIG}"]`).getAttribute("data-thought");
     if (current !== value)
       throw new Error(`当前模型没有可调思考档位: ${value} (current=${current})`);
-    await browser.keys("Escape");
+    await closeComposerModelPanel();
     return true;
   }
   await slider.waitForExist({ timeout: 15000 });
@@ -89,6 +110,6 @@ export async function selectCombinedComposerThoughtLevel(value: string): Promise
       }
     }
   }
-  await browser.keys("Escape");
+  await closeComposerModelPanel();
   return true;
 }

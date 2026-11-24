@@ -8,6 +8,7 @@ import {
   createCoreError,
   createRootTraceContext,
   getCurrentTraceContext,
+  modelMessageContentToText,
   traceContextToLogContext,
   type ToolExecutionSpanWriter,
   type SessionEvent,
@@ -32,6 +33,7 @@ import {
   createPermissionErrorResult,
   createToolHandlerFailureError,
   isToolHandlerFailure,
+  isToolOutputError,
 } from "./errors.js";
 import { emitToolCallError, emitToolCallResult, emitToolCallStarted } from "./events.js";
 import {
@@ -49,6 +51,7 @@ import { serializeOutput } from "./result-serialization.js";
 import { appendNestedInstructions } from "./nested-instructions.js";
 import {
   ToolDeadline,
+  createInputPreemptionSlot,
   executeWithTimeout,
   linkAbortSignal,
   observeToolAdmissionClock,
@@ -64,10 +67,16 @@ import {
 } from "./turn-control.js";
 import { mergeToolExecutionTelemetry, readToolExecutionTelemetry } from "../handlers/tool-perf.js";
 import type { ToolExecuteOptions, ToolExecutorDeps } from "./types.js";
-import { validateInitialModelToolInput, validateInput, validateOutput } from "./validation.js";
+import {
+  createUnparsedToolInputError,
+  validateHookUpdatedInput,
+  validateInitialModelToolInput,
+  validateOutput,
+} from "./validation.js";
 import type { ExecutableToolCall } from "../types.js";
 import { resolveEmbeddedSearchBranchCapability } from "../../embedded-search/capability.js";
 import { resolveToolEntryModelContract } from "../model-contract.js";
+import { isEmptyToolName, lookupToolEntry, resolveLiveToolEntry } from "./live-entry-resolution.js";
 
 const UNDISCOVERED_TOOL_SCHEMA_EXPLANATION =
   "\n\nThis tool's schema was not sent to the API — it was not in the discovered-tool set derived from message history. " +
@@ -126,12 +135,12 @@ async function executeToolCallImpl(
     deps.traceContext ??
     createRootTraceContext({ sessionId: deps.sessionId, turnId: deps.turnId });
   const emptyToolName = isEmptyToolName(toolCall.name);
-  const registeredEntry = emptyToolName ? undefined : deps.registry.get(toolCall.name);
+  const lookup = await lookupToolEntry(deps, toolCall, options, parentTraceContext, telemetry);
+  if (lookup.cancelled) return lookup.cancelled;
   const model = options?.model ?? deps.model;
-  const entry = registeredEntry
-    ? resolveToolEntryModelContract(registeredEntry, {
-        model,
-      })
+  const modelContractContext = { model };
+  let entry = lookup.entry
+    ? resolveToolEntryModelContract(lookup.entry, modelContractContext)
     : undefined;
   const pluginId = entry?.metadata.mcpPresentation?.pluginId;
   const canonicalToolCall =
@@ -168,7 +177,10 @@ async function executeToolCallImpl(
     // model (including a blank name).
     // Fix reason: a non-empty unknown tool name used to send only `Tool not found: X`, without the
     // tool_use_error wrapper.
-    result.modelContent = `<tool_use_error>Error: No such tool available: ${toolCall.name}</tool_use_error>`;
+    // For an MCP tool, attach the owning server's status (pointing at WaitForMcpServers while it is still connecting) so the model can decide to wait or give up;
+    // for other suffixes (Grep/Glob, unregistered built-in tools, case) see "Suffix for unknown tools" in docs/model-tool-call-validation.md.
+    const reason = deps.describeUnavailableTool?.(toolCall.name, model) ?? "";
+    result.modelContent = `<tool_use_error>Error: No such tool available: ${toolCall.name}${reason}</tool_use_error>`;
     // registry miss 发生在 handler/ToolCallStarted 之前；旧代码只把失败
     // 返回给 provider，没有发布 ToolCallError，V4 tool row 因而永久停在 inputStreaming。
     await emitToolCallError(
@@ -245,36 +257,64 @@ async function executeToolCallImpl(
       return result;
     }
 
+    if (entry.resolveForExecution) {
+      const resolution = await resolveLiveToolEntry(
+        entry.resolveForExecution,
+        canonicalToolCall,
+        options?.signal,
+      );
+      if (resolution.status === "failed") {
+        const result = createErrorResult(canonicalToolCall, resolution.error);
+        const id = canonicalToolCall.id;
+        await emitToolCallError(deps, id, traceContext, turnId, result.error, undefined, pluginId);
+        if (resolution.cancelled) {
+          telemetry?.finishCancelled("abort_signal");
+        } else {
+          telemetry?.finishFailed(
+            "lookup",
+            "configuration",
+            "cause" in resolution ? resolution.cause : result.error,
+          );
+        }
+        return result;
+      }
+      // 切换为 live entry 后必须重新套用本轮模型契约投影，否则会绕过 resolveModelContract。
+      entry = resolveToolEntryModelContract(resolution.entry, modelContractContext);
+    }
+
     const preparedInitialInput = prepareInitialToolExecutionInput({
       entry,
       input: canonicalToolCall.input,
       logger: deps.logger,
     });
     let executionInput = preparedInitialInput.input;
-    const initialInputValidation = validateInitialModelToolInput(
-      executionInput,
-      entry,
-      preparedInitialInput.runtimeValidationIssues,
-    );
+    const search = options?.toolSearch;
+    const inputSchema = entry.inputSchema;
+    // 入参不是合法 JSON 时先返回这个错误，不再按 {} 做 schema 校验（工具存在才到这里，未知工具仍先报未知）。
+    const initialInputValidation =
+      createUnparsedToolInputError(canonicalToolCall.name, canonicalToolCall.input) ??
+      validateInitialModelToolInput(
+        executionInput,
+        entry,
+        preparedInitialInput.runtimeValidationIssues,
+        // 延迟 schema 未加载只提供纠错提示，不增加工具执行拒绝条件；只在校验失败时生成。
+        // 原提示省略了类型退化原因；完整解释与 schema 一并提供，避免只引导盲目重试。
+        // 修复原因：这段提示原来接在 `</tool_use_error>` 之后，落在包装外面；它属于这次校验错误，
+        // 现在作为错误正文的一部分放在包装之内。
+        () =>
+          search?.enabled &&
+          !search.discovered.has(canonicalToolCall.name) &&
+          search.catalog.some((tool) => tool.name === canonicalToolCall.name && tool.deferred)
+            ? UNDISCOVERED_TOOL_SCHEMA_EXPLANATION +
+              `Load the tool first: call ${toolSearchNameForMode(search.mode)} with query "select:${canonicalToolCall.name}", then retry this call. ` +
+              `For reference, this tool's input schema is: ${JSON.stringify(inputSchema)}` +
+              (search.mode === "local"
+                ? `\nCall DeferredToolCall with {name: "${canonicalToolCall.name}", input: {...}}.`
+                : "")
+            : "",
+      );
     if (initialInputValidation) {
       const result = createErrorResult(canonicalToolCall, initialInputValidation);
-      const search = options?.toolSearch;
-      // 延迟 schema 未加载只提供纠错提示，不增加工具执行拒绝条件。
-      if (
-        search?.enabled &&
-        !search.discovered.has(canonicalToolCall.name) &&
-        search.catalog.some((tool) => tool.name === canonicalToolCall.name && tool.deferred)
-      ) {
-        // 原提示省略了类型退化原因；完整解释与 schema 一并提供，避免只引导盲目重试。
-        result.modelContent =
-          (result.modelContent ?? initialInputValidation.message) +
-          UNDISCOVERED_TOOL_SCHEMA_EXPLANATION +
-          `Load the tool first: call ${toolSearchNameForMode(search.mode)} with query "select:${canonicalToolCall.name}", then retry this call. ` +
-          `For reference, this tool's input schema is: ${JSON.stringify(entry.inputSchema)}` +
-          (search.mode === "local"
-            ? `\nCall DeferredToolCall with {name: "${canonicalToolCall.name}", input: {...}}.`
-            : "");
-      }
       // schema 失败与 registry miss 同属 handler/ToolCallStarted 之前的早退；旧代码
       // 只把失败回灌模型，没有发布 ToolCallError，V4 tool row 因而在整个 turn 里停在
       // inputStreaming（CreateWorkflow 卡持续显示「正在编写工作流」），模型重试后又叠一张。
@@ -293,6 +333,8 @@ async function executeToolCallImpl(
 
     const toolInputValidation = entry.validateInput?.(executionInput, {
       runtimeTaskRegistry: deps.runtimeTaskRegistry,
+      executionPort: deps.executionPort,
+      bashShellSelection: deps.getBashShellSelection?.() ?? deps.bashShellSelection,
     });
     if (toolInputValidation && isToolHandlerFailure(toolInputValidation)) {
       // Tool-specific semantic validation previously lived only in the handler, so invalid calls still ran
@@ -375,7 +417,7 @@ async function executeToolCallImpl(
             canonicalToolCall,
             preToolHookResult.hookPermissionDecisionReason ??
               preToolHookResult.stopReason ??
-              "Blocked by PreToolUse hook",
+              `Hook PreToolUse:${canonicalToolCall.name} denied this tool`,
             {
               decision: "deny",
               mode,
@@ -403,7 +445,7 @@ async function executeToolCallImpl(
         logger: deps.logger,
         source: "hook",
       });
-      const hookInputValidation = validateInput(executionInput, entry);
+      const hookInputValidation = validateHookUpdatedInput(executionInput, entry);
       if (hookInputValidation) {
         // When validation fails after a Hook modifies the input, this returns before the handler. The old branch did not
         // carry the PreToolUse context, so the model saw only a schema error and missed Hook diagnostics;
@@ -504,6 +546,7 @@ async function executeToolCallImpl(
             await deps.emitEvent(event);
           };
     let readFileStateMetadata: ToolExecutionResult["readFileStateMetadata"];
+    let subagent: ToolExecutionResult["subagent"];
     let skillTelemetryMetadata: SkillTelemetryMetadata | undefined;
     let failureStage: "handler" | "serialize" | "post_hook" = "handler";
 
@@ -512,6 +555,8 @@ async function executeToolCallImpl(
       const embeddedSearchDecision = resolveEmbeddedSearchBranchCapability({
         bashAvailable: deps.registry.has("Bash"),
       });
+      // 工具只拿到 register；带 decide 的接管点留在 executor，交给 executeWithTimeout。
+      const inputPreemption = createInputPreemptionSlot();
       const context: ToolExecutionContext = {
         toolCallId: canonicalToolCall.id,
         toolSearch: options?.toolSearch,
@@ -525,6 +570,7 @@ async function executeToolCallImpl(
         spanId: traceContext.spanId,
         parentSpanId: traceContext.parentSpanId,
         abortSignal: executionAbortController.signal,
+        inputPreemption,
         backgroundTaskControlPort: deps.backgroundTaskControlPort,
         emitEvent,
         executionPort: deps.executionPort,
@@ -567,6 +613,7 @@ async function executeToolCallImpl(
         dynamicWorkflowRunPort: deps.dynamicWorkflowRunPort,
         dynamicWorkflowSnippetPort: deps.dynamicWorkflowSnippetPort,
         modelCatalogPort: deps.modelCatalogPort,
+        mcpServerWaitPort: deps.mcpServerWaitPort,
         runtimeTaskRegistry: deps.runtimeTaskRegistry,
         readFileState: deps.readFileState,
         recordReadFileStateMetadata: (metadata) => {
@@ -583,6 +630,10 @@ async function executeToolCallImpl(
         recordSkillTelemetryMetadata: (metadata) => {
           skillTelemetryMetadata = metadata;
         },
+        getDynamicWorkflowToolSurfaceDeferral: deps.getDynamicWorkflowToolSurfaceDeferral,
+        recordSubagent: (facts) => {
+          subagent = facts;
+        },
         bashShellSelection,
         getWorkingDirectory: deps.getWorkingDirectory,
         setWorkingDirectory: deps.setWorkingDirectory,
@@ -595,6 +646,7 @@ async function executeToolCallImpl(
         deliveryKind: deps.deliveryKind,
         memoryRoot: deps.getMemoryRoot?.(),
         runtimeScope: deps.runtimeScope,
+        syncSubagent: deps.syncSubagent,
         providerVisibleToolNames: deps.registry
           .list()
           .filter((name) => deps.registry.getMetadata(name)?.providerVisible !== false),
@@ -610,6 +662,7 @@ async function executeToolCallImpl(
         deadline,
         executionAbortController,
         entry,
+        inputPreemption,
       );
       const durationMs = Date.now() - startTime;
       if (isToolHandlerFailure(output)) {
@@ -632,15 +685,36 @@ async function executeToolCallImpl(
         executionAbortController.signal,
       );
       failureStage = "post_hook";
-      const postToolHookResult = await runPostToolUseHooks(
-        deps,
-        canonicalToolCall,
-        executionInput,
-        output,
-        serialization.artifactPath,
-        traceContext,
-        options?.signal,
-      );
+      // Fix reason: Hooks used to be chosen by "did it throw"; a Bash non-zero exit or an MCP isError does not throw, so the model
+      // received is_error: true while the Hook ran PostToolUse. Now the same test as is_error is used (hooks.md, "Definition of failure"):
+      // an error result runs only PostToolUseFailure, and error is the tool_result body the model sees.
+      // The Hook uses the signal passed in by the turn: after an immediate send it is already aborted, so the hook is recorded as cancelled at once
+      // (HookRunFailed, outcome cancelled) and the tool result is unchanged; an immediate send does not wait for the hook to finish.
+      const outputIsError = isToolOutputError(canonicalToolCall.name, output);
+      const postToolHookEventName = outputIsError
+        ? HookEventName.PostToolUseFailure
+        : HookEventName.PostToolUse;
+      const postToolHookResult = outputIsError
+        ? await runPostToolUseFailureHooks(
+            deps,
+            canonicalToolCall,
+            executionInput,
+            createCoreError(
+              CoreErrorType.ToolExecutionFailed,
+              modelMessageContentToText(serialization.modelContent ?? serialization.content),
+            ),
+            traceContext,
+            options?.signal,
+          )
+        : await runPostToolUseHooks(
+            deps,
+            canonicalToolCall,
+            executionInput,
+            output,
+            serialization.artifactPath,
+            traceContext,
+            options?.signal,
+          );
       // Fix reason: Hook text used to be spliced into the tool result and consumed its budget. Now the tool result
       // holds only the tool's original text, and settlement writes the Hook text as attachments after this batch of
       // results.
@@ -668,7 +742,7 @@ async function executeToolCallImpl(
         ...formattedSafePreContexts,
         ...(await formatToolHookAdditionalContexts(
           deps,
-          HookEventName.PostToolUse,
+          postToolHookEventName,
           canonicalToolCall,
           safePostContexts,
           traceContext,
@@ -722,6 +796,7 @@ async function executeToolCallImpl(
           modelContent: finalModelContent,
           ...(hookAdditionalContexts.length > 0 ? { hookAdditionalContexts } : {}),
           ...(readFileStateMetadata ? { readFileStateMetadata } : {}),
+          ...(subagent ? { subagent } : {}),
           performance: perf,
           serialization,
           durationMs,
@@ -801,6 +876,9 @@ async function executeToolCallImpl(
         error,
         toolName: canonicalToolCall.name,
       });
+      // 修复原因：同步子代理在 child session 就绪之后失败时，父 transcript 里原来没有结构化身份，
+      // 冷加载只能从模型可见文本里找 agentId 行；失败结果也带上身份，结算写进 tool part。
+      if (subagent) result = { ...result, subagent };
 
       // Serialization or post_hook can still fail after a Skill resolves successfully; retain the resolved metadata
       // in the error event so a failed Skill agent_step can still be attributed to that skill.
@@ -870,10 +948,6 @@ function resolveModelOutputEntry(entry: ToolEntry, output: unknown): ToolEntry {
       preview: { direction: "head" },
     },
   };
-}
-
-function isEmptyToolName(toolName: string): boolean {
-  return toolName.trim().length === 0;
 }
 
 function errorCategoryForToolError(type: string | undefined): AgentTelemetryErrorCategory {

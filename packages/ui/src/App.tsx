@@ -1,3 +1,4 @@
+import { GitStatusRepositoryContext } from "@/hooks/useGitRepository.js";
 import { PluginUiWorkspaceProvider } from "@/plugin-ui/index.js";
 /* eslint-disable max-lines -- App currently orchestrates workspace-level state, navigation, Git-derived data, and shell wiring; the new side pane memory bridge has been extracted, and further splits need a dedicated refactor along shell boundaries. */
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -80,7 +81,6 @@ import { useOffPeakTaskNotifications } from "@/hooks/useOffPeakTaskNotifications
 import type { AppProps, WorkspaceMainView } from "@/app-shell/types.js";
 import type {
   ChatSearchResultHighlightRequest,
-  ChatViewSummaryPanelVariant,
   ConversationFindMatchState,
 } from "@/v4/legacyChatViewTypes.js";
 import { getActiveSidePaneTab } from "@/lib/workspaceSidePane.js";
@@ -245,8 +245,6 @@ export function App({
     selectedProvider: workspaceShellZCodeState.selectedProvider,
     intl,
   });
-  const [summaryPanelVariantOverride, setSummaryPanelVariantOverride] =
-    useState<ChatViewSummaryPanelVariant | null>(null);
   const draftFocusVersion = workspaceShellZCodeState.draftFocusVersion;
   const {
     isTerminalOpen,
@@ -272,6 +270,7 @@ export function App({
     handleOpenExtensionLogs,
     handleOpenFileManager,
     handleNavigateFileManager,
+    handleCodeViewerFocusRequestApplied,
     handleOpenPluginMarket,
     handleOpenTerminalTab,
     handleOpenModelTrajectory,
@@ -1368,8 +1367,65 @@ export function App({
     ],
   );
 
+  const gitNavigationRequest = useRef(0);
+  const gitNavigationScope = useRef({ key: "" });
+  const gitNavigationKey = JSON.stringify([
+    activeTaskCwd,
+    workspaceIdentity,
+    activeTaskId,
+    isWorkspaceVisible,
+  ]);
+  // 使用绑定身份而非路径值，A → B → A 也不能接受第一次 A 的迟到结果。
+  if (gitNavigationScope.current.key !== gitNavigationKey)
+    gitNavigationScope.current = { key: gitNavigationKey };
+  useEffect(
+    () => () => {
+      gitNavigationRequest.current += 1;
+    },
+    [],
+  );
+  const openStatusGitChange = useCallback(
+    (path: string, source: "unstaged" | "staged") => {
+      const scope = gitNavigationScope.current;
+      const request = ++gitNavigationRequest.current;
+      void services.gitService
+        .getDiff({ workspacePath: activeTaskCwd, path, sourceId: source })
+        .then((diff) => {
+          // 切换工作区后迟到的 Diff 不能打开到新工作区。
+          if (gitNavigationScope.current !== scope || gitNavigationRequest.current !== request)
+            return;
+          if (diff.patch)
+            handleOpenCodeViewerIfWritable({
+              type: "patch",
+              title: path.split(/[\\/]/).pop() || path,
+              path,
+              patch: diff.patch,
+              workspacePath: activeTaskCwd,
+              workspaceIdentity,
+            });
+          else handleOpenGitReview(source);
+        })
+        .catch((error) => {
+          logger.warn("[composer-status] 读取文件差异失败", { error });
+          if (gitNavigationScope.current === scope && gitNavigationRequest.current === request)
+            handleOpenGitReview(source);
+        });
+    },
+    [
+      activeTaskCwd,
+      workspaceIdentity,
+      services.gitService,
+      handleOpenCodeViewerIfWritable,
+      handleOpenGitReview,
+    ],
+  );
+  const statusGitRepository = useMemo(
+    () => ({ workspacePath: activeTaskCwd, state: gitState, openChange: openStatusGitChange }),
+    [activeTaskCwd, gitState, openStatusGitChange],
+  );
+
   return (
-    <>
+    <GitStatusRepositoryContext.Provider value={statusGitRepository}>
       <CommandCenterDialog
         open={isQuickPickOpen}
         commands={quickPickCommands}
@@ -1469,8 +1525,6 @@ export function App({
             isGitOpen={isGitOpen}
             isSidePaneOpen={isSidePaneOpen}
             sidePaneFullView={supportsSidePaneFullView ? sidePaneFullView : undefined}
-            summaryPanelVariantOverride={summaryPanelVariantOverride}
-            onSummaryPanelVariantOverrideChange={setSummaryPanelVariantOverride}
             sidePaneState={sidePaneState}
             recentClosedSidePaneTabs={recentClosedSidePaneTabs}
             shellPanelIds={shellPanelIds}
@@ -1531,6 +1585,7 @@ export function App({
             handleOpenDeveloperTools={handleOpenDeveloperTools}
             handleOpenFileManager={handleOpenFileManager}
             handleNavigateFileManager={handleNavigateFileManager}
+            handleCodeViewerFocusRequestApplied={handleCodeViewerFocusRequestApplied}
             handleOpenPluginMarket={handleOpenPluginMarket}
             handleOpenTerminalTab={handleOpenTerminalTabIfWritable}
             handleOpenModelTrajectory={handleOpenModelTrajectory}
@@ -1567,6 +1622,6 @@ export function App({
           />
         </ExtensionViewsProvider>
       </PluginUiWorkspaceProvider>
-    </>
+    </GitStatusRepositoryContext.Provider>
   );
 }

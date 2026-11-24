@@ -124,12 +124,37 @@ Use the system Git CLI, not a JS Git implementation. It reuses the user's Git in
 - Repository detection: `git rev-parse --show-toplevel`
 - Status: `git status --porcelain=v2 --branch -z`
 - Identity: `git config --get user.name`, `git config --get user.email`; when the source is needed, `git config --list --show-origin --null`
-- diff: `git diff --no-ext-diff -- <path>`, `git diff --cached --no-ext-diff -- <path>`
-- Branch comparison: `git diff @{upstream}...HEAD --`
+- diff: `git diff --no-ext-diff --no-textconv -- <path>`, `git diff --cached --no-ext-diff --no-textconv -- <path>`
+- Branch comparison: `git diff --no-ext-diff --no-textconv @{upstream}...HEAD --`
 - stage: `git add -- <path...>`
 - unstage: `git restore --staged -- <path...>`
 - Discard workspace changes: `git restore --worktree -- <path...>`
 - Commit: `git commit -m <message>`
+
+### Git child process safe invocation convention
+
+Git child processes built by the product must go through `GitCommandProvider.run` (`packages/services/src/git/providers/gitCommandProvider.ts`).
+Callers pass only the subcommand and its arguments and no longer assemble safety arguments themselves; the entry applies the following hardening in one place (`buildProductGitArgs`):
+
+1. A fixed prefix `-c core.fsmonitor=`: automatic queries do not run the fsmonitor script configured in the repository. Opening a workspace is not authorization to run that script.
+2. For the subcommands `diff`, `show` and `log`, `--no-ext-diff --no-textconv` is added right after the subcommand.
+   - `--no-ext-diff` only forbids the external diff driver (`diff.external` and `diff.<driver>.command`); it does not forbid `diff.<driver>.textconv`.
+   - textconv runs when a patch is printed: `diff -p`, `--binary`, `--no-index`, `show`, `log -p`.
+     `--numstat`, `--stat`, `--name-only` and `show <ref>:<path>` do not run it, so the added arguments have no side effect on them.
+   - Both arguments must be present together, because `--binary` does not turn textconv off.
+3. Callers do not repeat these arguments, so none is missed. `GitCommandExecutionResult.args` keeps the caller's original arguments; only the argv actually spawned carries the prefix.
+
+Preview and statistics use the raw content, and a worktree patch must apply to the original file; converted display text is not accepted.
+This constraint covers only commands built by the product and does not rewrite terminal/Bash commands the user runs explicitly.
+
+Out of scope:
+
+- The CLI workflow (`workflow-git-world-read.ts` in `apps/zcode-cli`) is a separate process and declares the same two arguments in its own argv-building module.
+  The CLI automatic git snapshot (`git-snapshot.ts`) uses its own fixed environment and `-c` overrides and does not go through this entry.
+
+Regression acceptance: `pnpm test:git-invocation`. In a temporary directory, create a repository that has `diff.external`, `diff.<driver>.textconv` and a `core.fsmonitor`
+script; each script only writes an invocation marker and prints distinguishable text. First confirm with native git that the markers appear without the guard, then call
+`diff`, `show`, `log -p`, `--no-index` and `status` through the provider, even when the caller passes `--no-ext-diff` itself, and assert that no marker appears and the patch comes from the original text.
 
 ## Repository Root and Workspace Path
 

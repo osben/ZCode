@@ -1,3 +1,4 @@
+import { ZCODE_PREINSTALLED_TOOLS_AVAILABLE_ENV } from "@zcode/shared/preinstalled-tools";
 import {
   createRemoteProjectService,
   IRemoteProjectService,
@@ -60,6 +61,7 @@ import { stat } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { acpAgentPlatformSupported } from "@zcode/acp-agent-runtime";
+import { prependPathEntries } from "#src/runtime-tools/runtimeToolResolver.js";
 import {
   createNodeProviderRuntimePathEnv,
   NodeForkAcpAgentCatalogStore,
@@ -71,7 +73,7 @@ import {
   resolveForkAcpAgentModelVisibilityFilePath,
   resolveForkAcpAgentsFilePath,
 } from "@zcode/provider-node";
-import { getAppConfigDir as resolveAppConfigDir } from "./paths.js";
+import { getAppConfigDir as resolveAppConfigDir, getCredentialsFilePath } from "./paths.js";
 import { createVoiceDictationService, IVoiceDictationService } from "./voice-dictation/index.js";
 import {
   createSystemCredentialCipher,
@@ -175,6 +177,7 @@ export {
   getZCodeDataRootDir,
   getConversationWorkspaceDir,
   getAppConfigDir,
+  getCredentialsFilePath,
   getExportLogStageDir,
   getExportLogDir,
   getFeedbackRootDir,
@@ -288,7 +291,6 @@ export type {
 export {
   createProviderProvisioningSource,
   listProviderProvisioningCredentialKeys,
-  resolveCredentialFilePath,
   type ProviderProvisioningSource,
   type ProviderProvisioningSourceOptions,
 } from "./model-provider/providerProvisioningSource.js";
@@ -559,7 +561,6 @@ import {
   createProviderProvisioningSource,
   listProviderProvisioningCredentialKeys,
   PROVIDER_PROVISIONING_OAUTH_CREDENTIAL_KEYS,
-  resolveCredentialFilePath,
   type ProviderProvisioningSource,
 } from "./model-provider/providerProvisioningSource.js";
 import { createProviderProvisioningTarget } from "./model-provider/providerProvisioningTarget.js";
@@ -1310,6 +1311,8 @@ export function createLocalServices(options: {
   >["prepareLegacyAccountConnections"];
   /** After injection, ServiceCollection owns disposal; other app-managed downloads in Host may reuse it. */
   hostApiNetworkTransport?: HostApiNetworkTransport;
+  /** Reply language pushed by Main to the Desktop Host for the Agent (null means unset); not injected for remote and Web, the CLI reads null. */
+  resolveReplyLanguage?: () => string | null;
   /** Let Desktop Host ask Main to register the exact local video path authorized for the Agent. */
   authorizeLocalMediaPreviewPath?: (path: string) => Promise<string>;
   /** Desktop Host can query Main's all-window workspace inventory; unavailable inventory fails closed. */
@@ -1379,6 +1382,8 @@ export function createLocalServices(options: {
   zcodeAgentCommandResolver?: ZCodeAgentCommandResolver;
   /** Local runtime environment collected asynchronously by Desktop Main; once injected into Local Host, do not start a login shell synchronously. */
   runtimeProcessEnvPatch?: Record<string, string>;
+  /** Injected only when the desktop Local Host has a local publish target; the pre-install path is fixed and only locates the program, never sent to remote or Web. */
+  preinstalledToolsBinDir?: string;
   /** Fallback for Agent child-process spawn.cwd when the last local desktop workspace is missing. */
   zcodeAgentSpawnFallbackCwd?: string;
   /** One-time Agent network configuration received by a desktop-attached remote server from Desktop Host. */
@@ -1485,7 +1490,7 @@ export function createLocalServices(options: {
   const provisioningOAuthKeys = new Set<string>(PROVIDER_PROVISIONING_OAUTH_CREDENTIAL_KEYS);
   const credentialCipherProvider =
     options.credentialCipherProvider ??
-    createSystemCredentialCipher({ filePath: join(resolveAppConfigDir(), "credentials.json") });
+    createSystemCredentialCipher({ filePath: getCredentialsFilePath() });
   const credentialService = createCredentialService({
     cipherProvider: credentialCipherProvider,
     onDidMutate: ({ keys, operation }) => {
@@ -1726,7 +1731,7 @@ export function createLocalServices(options: {
           providerConfigLog.info(undefined, "ZCode Built-in CDN 配置已更新", event);
         else providerConfigLog.debug(undefined, "ZCode Built-in 刷新检查", event);
       },
-      fetchRelease: (endpointOrigin, signal) =>
+      fetchRelease: (endpointOrigin, signal, { reuseUrl }) =>
         fetchZCodeBuiltinRemoteRelease({
           apiClient,
           resolveZcodeJwtToken: () => credentialService.load("zcodejwttoken"),
@@ -1734,6 +1739,7 @@ export function createLocalServices(options: {
           signal,
           appVersion: ZCODE_VERSION,
           platform: clientConfigPlatform,
+          reuseUrl,
         }),
     },
     onZCodeBuiltinRefreshError: (error) => {
@@ -1799,7 +1805,7 @@ export function createLocalServices(options: {
     cipherProvider: credentialCipherProvider,
     personalRepository: providerConfigRuntime.personalRepository,
     settingService,
-    credentialFilePath: resolveCredentialFilePath(resolveAppConfigDir()),
+    credentialFilePath: getCredentialsFilePath(),
     personalConfigFilePath: join(resolveAppConfigDir(), PERSONAL_PROVIDER_CONFIG_FILE_NAME),
   });
   const providerProvisioningDisposers = [
@@ -2506,6 +2512,7 @@ export function createLocalServices(options: {
   const worktreeRemovalGate = createWorktreeRemovalGate();
   const zcodeAgentService = createZCodeAgentService({
     credentialCipherProvider,
+    reportPluginTelemetryEvent: options?.reportPluginTelemetryEvent,
     runSessionOperation: (target, operation) =>
       worktreeRemovalGate.runSessionOperation(
         target.sessionId,
@@ -2731,6 +2738,11 @@ export function createLocalServices(options: {
       // empty Registry.
       await providerConfigRuntime.start();
       return {
+        [ZCODE_PREINSTALLED_TOOLS_AVAILABLE_ENV]:
+          !isDesktopAttachedRemote && options.preinstalledToolsBinDir ? "1" : undefined,
+        ...(!isDesktopAttachedRemote && options.preinstalledToolsBinDir
+          ? { PATH: prependPathEntries(process.env.PATH ?? "", [options.preinstalledToolsBinDir]) }
+          : {}),
         ...buildAgentRuntimeEnv({
           httpProxy: agentNetwork.httpProxy,
           noProxy: agentNetwork.noProxy,
@@ -2768,6 +2780,8 @@ export function createLocalServices(options: {
           readSubagentRuntimeConfig: subagentsService.readRuntimeConfig,
         }
       : {}),
+    // 只有 Desktop Host 注入回复语言；远端与 Web 不注入，CLI 读到 null 后按对话语言回复。
+    resolveReplyLanguage: options?.resolveReplyLanguage,
     ...(isDesktopAttachedRemote
       ? { sessionRuntimePreferencesAuthority: "external" as const }
       : {
@@ -2782,6 +2796,8 @@ export function createLocalServices(options: {
                 settings.askUserQuestionAutoResolutionEnabled !== false,
               nativeSearchEnhancementsEnabled: settings.nativeSearchEnhancementsEnabled !== false,
               toolSearchMode: settings.toolSearchMode ?? DEFAULT_APP_TOOL_SEARCH_MODE,
+              totalTokensReminderEnabled: settings.totalTokensReminderEnabled === true,
+              agentAlwaysBackgroundEnabled: settings.agentAlwaysBackgroundEnabled !== false,
               memoryEnabled: settings.memoryEnabled === true,
               memoryIndexAsContext: settings.memoryIndexAsContext === true,
               modelContextBudgetStrategy,
@@ -2807,6 +2823,11 @@ export function createLocalServices(options: {
   const zcodeTaskIndexSyncer = createZCodeTaskIndexSyncer({
     agentService: zcodeAgentService,
     taskIndexRepo,
+    // v4 命令只返回准入回执，退出保护必须消费权威会话状态而不是 RPC 在途数。
+    reportActiveSessionCount: options?.taskRuntimeReporter?.onActiveSessionCountChanged
+      ? (runningTaskCount) =>
+          options.taskRuntimeReporter?.onActiveSessionCountChanged?.({ runningTaskCount })
+      : undefined,
   });
   // Automatic archiving is triggered only by this scheduled scan (at first start, hourly, and on a settings change); neither readTree nor a task click
   // runs archiveInactive any more. The criteria still exclude non-terminal sessions observed by the syncer, and the scan never starts a CLI.
@@ -3549,7 +3570,7 @@ export function createLocalServices(options: {
         personalConfigFilePath: join(resolveAppConfigDir(), PERSONAL_PROVIDER_CONFIG_FILE_NAME),
         stateFilePath: join(resolveAppConfigDir(), "runtime", "provider", "provisioning.json"),
         listProvisioningCredentialKeys: () =>
-          listProviderProvisioningCredentialKeys(resolveCredentialFilePath(resolveAppConfigDir())),
+          listProviderProvisioningCredentialKeys(getCredentialsFilePath()),
       }),
     );
   }
@@ -3794,9 +3815,7 @@ export async function createServerHostServices(options: {
   // Headless hosts must find a missing system library at startup, not at first login or provisioning.
   const credentialCipherProvider =
     options.credentialCipherProvider ??
-    (await createServerCredentialCipher({
-      filePath: join(resolveAppConfigDir(), "credentials.json"),
-    }));
+    (await createServerCredentialCipher({ filePath: getCredentialsFilePath() }));
   // Bug cause: billing/balance treats X-Device-Mid as required, but standalone Server hosts have no Desktop main
   // writing a device identity, and buildZCodeSourceHeaders() only reads it and never generates one. The original fix
   // lived only in the legacy stdio entry, while the Core and Lite HTTP entries for SSH/WSL/Docker share this assembly

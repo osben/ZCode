@@ -41,7 +41,7 @@ export const OffPeakCreateInputSchema = z
 export type OffPeakCreateInput = z.infer<typeof OffPeakCreateInputSchema>;
 export const OffPeakCreateInputJsonSchema = toToolJsonSchema(OffPeakCreateInputSchema);
 
-/** Client execution status (mirrors shared ZCodeOffPeakTaskStatus; do not import shared across the zod v3/v4 boundary). */
+/** Client execution status (mirrors the values of shared ZCodeOffPeakTaskStatus; the mirror dates from when contracts used zod 3). */
 export const OffPeakTaskStatusSchema = z.enum([
   "queued",
   "paused",

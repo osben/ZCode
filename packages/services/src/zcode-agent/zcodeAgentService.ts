@@ -1,6 +1,9 @@
 import {
+  V4_SESSION_DELETION_PREVIEW_BATCH_MAX,
   v4SessionDeletionPreviewSchema,
+  v4SessionDeletionPreviewBatchResultSchema,
   v4SessionDeletionResultSchema,
+  type V4SessionDeletionPreviewBatchItem,
 } from "@zcode/shared/zcode-protocol-v4";
 import { sessionLifecycleSnapshotSchema, type SessionLifecycleSnapshot } from "@zcode/shared";
 import { credentialCipherRequestSchema } from "@zcode/shared";
@@ -13,15 +16,18 @@ import {
   isNetworkFailure,
 } from "#src/providers/api/networkErrorClassifier.js";
 import {
+  isProjectTokenTransportFailureCode,
   ZCODE_PROVIDER_CONFIG_NETWORK_ERROR,
+  ZCODE_PROVIDER_PROJECT_TOKEN_NETWORK_ERROR,
   zcodeProviderRuntimeHeadersErrorCode,
 } from "@zcode/shared";
 import { RemoteConversationTelemetry } from "#src/conversation-telemetry/remoteConversationTelemetry.js";
+import { toAgentPluginDiscoveryTelemetry } from "#src/plugins/pluginManagementService.js";
 import {
   remoteConversationTelemetryEventSchema,
   type RemoteConversationTelemetryEvent,
 } from "@zcode/shared/conversation-telemetry";
-import { resolveWorkspaceTelemetryDetail } from "@zcode/shared";
+import { resolveWorkspaceTelemetryDetail, type RendererTelemetryEventPayload } from "@zcode/shared";
 import { isAuxiliarySessionKind } from "@zcode/shared";
 import { createAppControlReverseRpc } from "#src/app-control/index.js";
 import type { AppControlService } from "#src/app-control/contract.js";
@@ -100,6 +106,7 @@ import type { OffPeakClientConfig } from "#src/coding-plan-subscription/codingPl
 import {
   subagentRuntimeConfigSchema,
   zcodeSubagentsReadRuntimeConfigParamsSchema,
+  zcodeSessionReadReplyLanguageParamsSchema,
   type SubagentRuntimeConfig,
   ZCODE_SESSION_RUNTIME_PREFERENCES_REQUEST_TIMEOUT_MS,
   resolveWorkspaceKey,
@@ -147,6 +154,7 @@ import {
   zcodePluginOperationProgressNotificationSchema,
   zcodePluginsRestoreBuiltinResultSchema,
   zcodePluginsSetEnabledResultSchema,
+  zcodePluginsWorkspaceTrustResultSchema,
   zcodePluginsCancelOperationResultSchema,
   zcodePluginsUninstallResultSchema,
   zcodePluginsValidateResultSchema,
@@ -215,6 +223,7 @@ import {
   applyDynamicWorkflowUserMode,
   createDynamicWorkflowClientConfig,
   DEFAULT_DYNAMIC_WORKFLOW_MODE,
+  DYNAMIC_WORKFLOW_MODE_ON_FETCH_FAILURE,
   isDynamicWorkflowModeEnabled,
   normalizeDynamicWorkflowMode,
   type AgentLaneResourceSample,
@@ -295,6 +304,7 @@ import type {
   ZCodeAgentSetModelParams,
   ZCodeAgentSetPluginEnabledParams,
   ZCodeAgentSetLspPreferencesParams,
+  ZCodeAgentSetWorkspacePluginTrustParams,
   ZCodeAgentSetThoughtLevelParams,
   ZCodeAgentPluginReferenceCatalogParams,
   ZCodeAgentSkillReferenceCatalogParams,
@@ -378,6 +388,7 @@ import {
   parseWorkspaceConfigTopic,
   conversationTopicWireCandidateSchema,
   conversationTelemetryFactSchema,
+  turnAdmissionTelemetrySchema,
   cuaPermissionObservationSchema,
   sessionsIndexTopic,
   sessionsIndexReconcileResultSchema,
@@ -426,7 +437,7 @@ import {
   ZCodeAttachmentFaultError,
   type CommandAck,
   type ConversationTopicWireCandidate,
-  type ConversationTelemetryFact,
+  type ConversationTelemetryInput,
   type SessionsIndexTopicWireCandidate,
   type WorkspaceConfigTopicWireCandidate,
   type CommandEnvelope,
@@ -1181,6 +1192,8 @@ interface CreateZCodeAgentServiceBaseOptions extends Omit<
 > {
   /** Used only by the MCP status-probing process; do not apply idle cleanup to chat. */
   mcpStatusIdleTimeoutMs?: number;
+  /** Desktop Host 注入：Agent 插件推荐事实在此单点转成插件业务埋点。 */
+  reportPluginTelemetryEvent?: (event: RendererTelemetryEventPayload) => void;
   accountProviderConfigSource?: ProviderSource<AccountProviderConfigSnapshot>;
   accountRequestAuthService?: IAccountRequestAuthService;
   /** ChatGPT plan (SIWC) request-auth resolver owned by the host (local credentials only). */
@@ -1199,6 +1212,11 @@ interface CreateZCodeAgentServiceBaseOptions extends Omit<
     workspacePath: string;
     workspaceIdentity?: string;
   }) => Promise<SubagentRuntimeConfig>;
+  /**
+   * Agent 回复语言（同步、只读内存，null 为未设置），应答 CLI 的 session/readReplyLanguage。
+   * 只有 Desktop Host 注入（值由 Main 持有并推送）；未注入的 Host（远端、Web）回答 null。
+   */
+  resolveReplyLanguage?: () => string | null;
   sessionRuntimePreferencesAuthority?: "local" | "external";
   prepareProjectExecution?: (
     projectId: string,
@@ -1566,8 +1584,12 @@ export function createZCodeAgentService(
   }>();
   const conversationFrameEmitters = new Map<string, Emitter<ConversationTopicWireCandidate>>();
   const localTtftFactsEmitter = new Emitter<{ workspaceKey: string; facts: LocalTtftFacts }>();
-  const conversationTelemetryFactEmitters = new Map<string, Emitter<ConversationTelemetryFact>>();
+  const conversationTelemetryFactEmitters = new Map<string, Emitter<ConversationTelemetryInput>>();
   const contextComposition = createContextCompositionClient({
+    onModelRequestMetrics: (workspace, fact) => {
+      if (!collectRemoteConversationFact(workspace, fact))
+        getConversationTelemetryFactEmitter(workspace).fire(fact);
+    },
     getExistingClient: (target) => getReadOnlyClient(target, "existing-only"),
     isRuntimeUnavailableError: (error) =>
       error instanceof Error &&
@@ -1585,7 +1607,7 @@ export function createZCodeAgentService(
   const remoteConversationTelemetry = new Map<string, RemoteConversationTelemetry>();
   function collectRemoteConversationFact(
     workspace: ZCodeAgentWorkspaceTarget,
-    fact: ConversationTelemetryFact,
+    fact: ConversationTelemetryInput,
   ): boolean {
     const key = resolveWorkspaceKey(workspace);
     let collector = remoteConversationTelemetry.get(key);
@@ -1885,17 +1907,29 @@ export function createZCodeAgentService(
       });
     } catch (error) {
       if (pendingProviderRuntimeHeaders.get(params.key) !== params.pending) return;
+      const errorMessage = error instanceof Error ? error.message : String(error);
       logger.warn(undefined, "ZCode provider runtime headers 应用失败", {
         modelId: params.pending.request.modelSelection.modelId,
         providerId: params.pending.request.providerId,
         requestId: params.pending.request.requestId,
         sessionId: params.pending.request.sessionId,
-        error: error instanceof Error ? error.message : String(error),
+        error: errorMessage,
         workspaceKey: resolveWorkspaceKey(params.pending.request.workspace),
       });
+      // Bug 原因（ZCT-2122890271808978944 等）：冷缓存换证遇到断网/超时，原先与其它失败一样回
+      // headersApplied:false，Agent 视为不可重试，整轮在首次模型尝试前结束。换证客户端只抛固定码
+      // （见 ProjectAccessTokenClient），这里仅把这两个传输故障码改用结构化 RPC 错误码，
+      // 交给 Agent 的 network_error 预算；其它失败码和应答形态保持不变。
+      if (isProjectTokenTransportFailureCode(errorMessage)) {
+        await params.pending.client.respondError(params.pending.protocolRequestId, {
+          code: ZCODE_PROVIDER_PROJECT_TOKEN_NETWORK_ERROR,
+          message: errorMessage,
+        });
+        return;
+      }
       await params.pending.client.respond(params.pending.protocolRequestId, {
         headersApplied: false,
-        errorMessage: error instanceof Error ? error.message : String(error),
+        errorMessage,
       });
     } finally {
       if (pendingProviderRuntimeHeaders.get(params.key) === params.pending) {
@@ -2295,7 +2329,7 @@ export function createZCodeAgentService(
     const key = resolveWorkspaceKey(workspace);
     const existing = conversationTelemetryFactEmitters.get(key);
     if (existing) return existing;
-    const created = new Emitter<ConversationTelemetryFact>();
+    const created = new Emitter<ConversationTelemetryInput>();
     conversationTelemetryFactEmitters.set(key, created);
     return created;
   }
@@ -2875,10 +2909,27 @@ export function createZCodeAgentService(
             });
           return;
         }
+        if (message.method === V4_NOTIFICATIONS.turnAdmissionTelemetry) {
+          const parsed = turnAdmissionTelemetrySchema.safeParse(message.params);
+          if (parsed.success) {
+            if (!collectRemoteConversationFact(workspace, parsed.data))
+              getConversationTelemetryFactEmitter(workspace).fire(parsed.data);
+          } else logger.debug(undefined, "丢弃无效会话接纳遥测通知");
+          return;
+        }
         if (contextComposition.handleNotification(workspace, message)) return;
         if (message.method === V4_NOTIFICATIONS.conversationTelemetryFact) {
           const parsed = conversationTelemetryFactSchema.safeParse(message.params);
-          if (parsed.success) {
+          if (parsed.success && parsed.data.kind === "plugin.discovery") {
+            // Plugin recommendation facts are reported once on the Host only and do not enter the renderer / remote-control engine, so multiple windows or phones do not double count.
+            try {
+              options?.reportPluginTelemetryEvent?.(
+                toAgentPluginDiscoveryTelemetry(parsed.data, workspace),
+              );
+            } catch {
+              /* A failure in the observer is isolated from the main session path. */
+            }
+          } else if (parsed.success) {
             // Remote-control facts are owned exclusively by the execution service, so the desktop does not count steps twice when it also has this session open.
             if (!collectRemoteConversationFact(workspace, parsed.data))
               getConversationTelemetryFactEmitter(workspace).fire(parsed.data);
@@ -3019,6 +3070,24 @@ export function createZCodeAgentService(
           // 该私有能力属于已建立的 stdio 进程连接，不转发至 UI，也不记录载荷。
           void executeCredentialCipherRequest(options.credentialCipherProvider, parsed.data)
             .then((reply) => client.respond(request.id, reply))
+            .catch(() => {});
+          return;
+        }
+        // 回复语言是 Host 级的值，不按 workspace 路由；放在守卫之后，服务多个 workspace 的
+        // CLI 会被误拒。从内存同步应答，不做 IO（docs/i18n/agent-reply-language.md）。
+        if (request.method === zcodeProtocolMethods.sessionReadReplyLanguage) {
+          if (!zcodeSessionReadReplyLanguageParamsSchema.safeParse(request.params).success) {
+            void client
+              .respondError(request.id, {
+                code: -32602,
+                message: "Invalid reply language request",
+              })
+              .catch(() => {});
+            return;
+          }
+          // 注入的值已在 Host 收消息时按 replyLanguageSchema 校验，这里不再重复。
+          void client
+            .respond(request.id, { language: options?.resolveReplyLanguage?.() ?? null })
             .catch(() => {});
           return;
         }
@@ -4372,6 +4441,15 @@ export function createZCodeAgentService(
     );
   }
 
+  /** 归档永久删除的 CLI 载体：本机优先已有 runtime，没有就用管理面进程；远端只用已有连接。 */
+  async function sessionDeletionClient(
+    workspace: ZCodeAgentWorkspaceTarget,
+  ): Promise<ZCodeProtocolClient> {
+    return isLocalActiveWorkspaceClient(workspace)
+      ? await getReadOnlyClient(workspace, "existing-only").catch(() => getPluginManagementClient())
+      : await getReadOnlyClient(workspace, "existing-only");
+  }
+
   async function resolveGlobalSavedWorkflowCarrier(): Promise<{
     client: ZCodeProtocolClient;
     workspace: ZCodeWorkspaceRef;
@@ -4493,9 +4571,10 @@ export function createZCodeAgentService(
   /**
    * Server-provided value (docs/dynamic-workflow/launch.md “Gray release”): the Host reads it once and keeps it fixed within this process.
    * Three reasons:
-   *   1. 1. The decision is made on the client readiness path, so session creation cannot wait on the remote service each time—this caused a regression in 3.12.2;
-   *   2. 2. A read failure fails closed and is not retried, avoiding a request timeout on every create while offline;
-   *   3. 3. Server-side gray-release changes take effect in the next Host process by design (the provider also has a 1-hour snapshot and forceRefresh).
+   *   1. The decision is made on the client readiness path, so session creation cannot wait on the remote service each time, this caused a regression in 3.12.2;
+   *   2. A read failure loads on demand (DYNAMIC_WORKFLOW_MODE_ON_FETCH_FAILURE = onDemand), is latched and not retried,
+   *      avoiding a request timeout on every create while offline; the cost is that a Host started offline stays onDemand until restart;
+   *   3. Server-side gray-release changes take effect in the next Host process by design (the provider also has a 1-hour snapshot and forceRefresh).
    * Unlike Off-Peak, this also works for remote workspaces, so it does not inspect workspaceIdentity / remoteSessionId.
    */
   function resolveDynamicWorkflowOffer(): Promise<DynamicWorkflowClientConfig | undefined> {
@@ -4505,10 +4584,13 @@ export function createZCodeAgentService(
       try {
         return await resolve();
       } catch (error) {
-        logger.warn(undefined, "动态工作流灰度读取失败，按关闭处理", {
+        // 读取抛错说明不了服务端意图，与 provider 的请求失败同一裁决：按需加载提供。
+        // 过去返回 undefined 再在 gate 回落 disabled，离线启动的 Host 会关掉工作流入口和工具；
+        // 不用 alwaysOn 是因为它让每个新会话首轮就注册十个工作流工具，太占上下文。
+        logger.warn(undefined, "动态工作流灰度读取失败，按需加载处理", {
           errorMessage: error instanceof Error ? error.message : String(error),
         });
-        return undefined;
+        return createDynamicWorkflowClientConfig(DYNAMIC_WORKFLOW_MODE_ON_FETCH_FAILURE, "default");
       }
     })();
     return dynamicWorkflowOffer;
@@ -4534,8 +4616,9 @@ export function createZCodeAgentService(
    * create cannot disagree. The choice is not latched; a settings change applies to the next session creation.
    * `onDemand` is passed to the CLI unchanged: it decides whether the ten tools register on the first request or wait for the first `/workflow`.
    *
-   * An unreadable offer (failed remote read or no value) falls back to the default `disabled`; the user's choice then has no effect, because a choice
-   * cannot enable a feature the offer disables (see applyDynamicWorkflowUserMode). A Host without a wired resolver does not take part in the feature.
+   * The user's choice always applies (launch.md “The user's choice”): when the offer read fails it is treated as onDemand (see
+   * resolveDynamicWorkflowOffer), and when the resolver gives no value the default disabled is used, then the user's choice is applied.
+   * A Host without a wired resolver does not take part in the feature, so the choice has no effect.
    */
   async function resolveDynamicWorkflowGate(): Promise<DynamicWorkflowMode> {
     if (!options?.resolveDynamicWorkflowClientConfig) return "disabled";
@@ -5113,23 +5196,83 @@ export function createZCodeAgentService(
     },
 
     async previewSessionDeletion(params) {
-      const client = isLocalActiveWorkspaceClient(params.workspace)
-        ? await getReadOnlyClient(params.workspace, "existing-only").catch(() =>
-            getPluginManagementClient(),
-          )
-        : await getReadOnlyClient(params.workspace, "existing-only");
+      const client = await sessionDeletionClient(params.workspace);
       return client.request(
         V4_METHODS.sessionDeletionPreview,
         params,
         v4SessionDeletionPreviewSchema,
       );
     },
+    async previewSessionDeletions(params) {
+      // 修复原因：逐项预检让 CLI 每项各扫一遍全表（N×13 次同步扫描）。按实际 CLI client 分组，
+      // 同一 client 整批一次扫描；某组失败只把该组各项记为错误，不影响其他组。
+      const results: V4SessionDeletionPreviewBatchItem[] = [];
+      const clients = new Map<string, Promise<ZCodeProtocolClient>>();
+      const groups = new Map<ZCodeProtocolClient, number[]>();
+      for (const [index, item] of params.items.entries()) {
+        const key = JSON.stringify([
+          item.workspace.workspacePath,
+          item.workspace.workspaceIdentity ?? "",
+        ]);
+        let client = clients.get(key);
+        if (!client) {
+          client = sessionDeletionClient(item.workspace);
+          clients.set(key, client);
+        }
+        try {
+          const resolved = await client;
+          groups.set(resolved, [...(groups.get(resolved) ?? []), index]);
+        } catch (error) {
+          results[index] = { error: { code: sessionDeletionErrorCode(error) } };
+        }
+      }
+      for (const [client, group] of groups)
+        for (let start = 0; start < group.length; start += V4_SESSION_DELETION_PREVIEW_BATCH_MAX) {
+          const indexes = group.slice(start, start + V4_SESSION_DELETION_PREVIEW_BATCH_MAX);
+          const items = indexes.map((index) => params.items[index]!);
+          let batch: V4SessionDeletionPreviewBatchItem[];
+          try {
+            batch = await client
+              .request(
+                V4_METHODS.sessionDeletionPreviewBatch,
+                { items },
+                v4SessionDeletionPreviewBatchResultSchema,
+              )
+              .then((result) => result.results)
+              .catch(async (error: unknown) => {
+                // 旧 CLI 不认识批量方法时逐项回退，结果语义不变。
+                if (!isProtocolMethodNotFoundError(error)) throw error;
+                const fallback: V4SessionDeletionPreviewBatchItem[] = [];
+                for (const item of items)
+                  fallback.push(
+                    await client
+                      .request(
+                        V4_METHODS.sessionDeletionPreview,
+                        item,
+                        v4SessionDeletionPreviewSchema,
+                      )
+                      .then(
+                        (preview) => ({ preview }),
+                        (itemError: unknown) => ({
+                          error: { code: sessionDeletionErrorCode(itemError) },
+                        }),
+                      ),
+                  );
+                return fallback;
+              });
+            if (batch.length !== items.length) throw new Error("session-data.unavailable");
+          } catch (error) {
+            const code = sessionDeletionErrorCode(error);
+            batch = items.map(() => ({ error: { code } }));
+          }
+          indexes.forEach((index, position) => {
+            results[index] = batch[position]!;
+          });
+        }
+      return { results };
+    },
     async executeSessionDeletion(params) {
-      const client = isLocalActiveWorkspaceClient(params.workspace)
-        ? await getReadOnlyClient(params.workspace, "existing-only").catch(() =>
-            getPluginManagementClient(),
-          )
-        : await getReadOnlyClient(params.workspace, "existing-only");
+      const client = await sessionDeletionClient(params.workspace);
       return client.request(
         V4_METHODS.sessionDeletionExecute,
         params,
@@ -6143,6 +6286,21 @@ export function createZCodeAgentService(
           ...(params.scope ? { scope: params.scope } : {}),
         },
         zcodePluginsSetEnabledResultSchema,
+        { timeoutMs: PLUGIN_MANAGEMENT_REQUEST_TIMEOUT_MS },
+      );
+    },
+
+    async setWorkspacePluginTrust(params: ZCodeAgentSetWorkspacePluginTrustParams) {
+      const client = await getPluginManagementClient();
+      return client.request(
+        zcodeProtocolMethods.pluginsWorkspaceTrust,
+        {
+          workspace: buildWorkspaceRef(params),
+          pluginRoot: params.pluginRoot,
+          declarationDigest: params.declarationDigest,
+          trusted: params.trusted,
+        },
+        zcodePluginsWorkspaceTrustResultSchema,
         { timeoutMs: PLUGIN_MANAGEMENT_REQUEST_TIMEOUT_MS },
       );
     },
@@ -8220,4 +8378,10 @@ function sessionTargetOf(
     ...(workspace.workspaceIdentity ? { workspaceIdentity: workspace.workspaceIdentity } : {}),
     sessionId,
   };
+}
+
+/** JSON-RPC method-not-found：旧 CLI 不认识新方法。 */
+/** 批量预检的单项错误码：取错误消息（如 session-data.identity-mismatch），读不到时记为不可用。 */
+function sessionDeletionErrorCode(error: unknown): string {
+  return (error instanceof Error && error.message) || "session-data.unavailable";
 }

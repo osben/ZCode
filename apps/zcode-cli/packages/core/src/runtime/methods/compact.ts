@@ -34,7 +34,10 @@ import type { Model } from "../deps.js";
 import type { ProviderContextUsageSnapshot } from "../types.js";
 import type { AgentRuntimeInternal } from "../internal.js";
 import { autoCompactDecisionLogContext } from "./compact-log-context.js";
-import { resolveNormalRequestMaxOutputTokens } from "./model-token-limits.js";
+import {
+  resolveAutoCompactPolicyConfig,
+  resolveNormalRequestMaxOutputTokens,
+} from "./model-token-limits.js";
 import type {
   AutoCompactLoopContext,
   AutoCompactOutcome,
@@ -193,14 +196,7 @@ export async function autoCompactIfNeeded(
 ): Promise<AutoCompactOutcome> {
   throwIfTurnAborted(abortSignal);
 
-  const config: AutoCompactPolicyConfig = {
-    contextWindow: context.model.properties.contextWindow,
-    ...this.config.compact,
-    maxOutputTokens: resolveNormalRequestMaxOutputTokens({
-      modelMaxOutputTokens: context.model.optionSpecs.maxOutputTokens.max,
-    }),
-    modelContextBudgetStrategy: this.config.modelContextBudgetStrategy,
-  };
+  const config = resolveAutoCompactPolicyConfig(this, context.model);
   const activeEntries = context.turnRequestState.entries;
   const activeProjection = buildRuntimeProviderRequestMessages(this, {
     entries: activeEntries,

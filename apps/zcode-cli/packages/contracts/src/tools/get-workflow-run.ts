@@ -225,7 +225,7 @@ export const GetWorkflowRunOutputSchema = WorkflowRunSummarySchema.extend({
    * Models named by this run's script: names exactly as written → canonical forms. **Present only if
    * the script named models.** AmendWorkflow reuses these bindings for names that appear again.
    */
-  modelBindings: z.record(z.string()).optional(),
+  modelBindings: z.record(z.string(), z.string()).optional(),
   /**
    * Script file for this run, **already formatted for the model-facing surface** (workspace-relative
    * when inside the session working directory; absolute otherwise). **Present only when this run

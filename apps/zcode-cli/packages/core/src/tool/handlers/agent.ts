@@ -6,6 +6,8 @@ import {
   AgentErrorCode,
   AgentInputJsonSchema,
   AgentInputSchema,
+  AgentInputWithBackgroundJsonSchema,
+  AgentInputWithBackgroundSchema,
   AgentOutputSchema,
   AgentType,
   CoreErrorType,
@@ -13,9 +15,11 @@ import {
   readAgentFailureHandback,
   type AgentInput,
   type AgentOutput,
+  type SessionId,
   type TraceContext,
 } from "@zcode/contracts";
 import { TASK_TOOL_NAME } from "../compat.js";
+import { canReadBackgroundOutputFile } from "../executor/background-task-output.js";
 import { truncateMiddleForModel } from "../result-persistence-format.js";
 import type { ToolEntry, ToolHandler } from "../types.js";
 
@@ -88,9 +92,11 @@ const AGENT_TOOL_OUTPUT_SCHEMA = {
  * that “CreateWorkflow is required,” pointing it to a nonexistent tool and causing a needless tool_not_found.
  * Default to true so TUI, headless, and existing callers (including AGENT_PROVIDER_DESCRIPTION baked at module load)
  * keep their current behavior. Only an explicit false removes this line.
+ * alwaysBackground defaults to true, see createAgentToolEntry.
  */
 function buildAgentProviderDescription(
   options: {
+    alwaysBackground?: boolean;
     dynamicWorkflowEnabled?: boolean;
   } = {},
 ): string {
@@ -108,9 +114,11 @@ function buildAgentProviderDescription(
     "- The agent's final report is not shown to the user — relay what matters.",
     "- Use SendMessage with the agent's ID to continue a previously spawned agent with its context intact; a new Agent call starts fresh.",
     "- Each agent type's model, reasoning effort, and tools come from its definition (`.zcode/agents/*.md` frontmatter).",
-    // ZCode runs in the foreground by default; the background description stays this one line
-    // and forbids fabricating results that have not arrived.
-    "- `run_in_background: true` runs the agent asynchronously; you'll be notified when it completes. Never fabricate or predict a pending agent's results — the notification is never something you write yourself; if the user asks before it arrives, say it's still running.",
+    // With always-background there is no run_in_background parameter; when the switch is off the default is foreground, and the background description is only this one line.
+    // Both forms require not fabricating results that have not arrived (07-subagent.md, "ZCode current implementation").
+    options.alwaysBackground === false
+      ? "- `run_in_background: true` runs the agent asynchronously; you'll be notified when it completes. Never fabricate or predict a pending agent's results — the notification is never something you write yourself; if the user asks before it arrives, say it's still running."
+      : "- Subagents run in the background; you'll be notified when one completes. Never fabricate or predict a pending agent's results — the notification is never something you write yourself; if the user asks before it arrives, say it's still running.",
     // Keep only the case where the user explicitly names a workflow: workflows are always triggered by an explicit user request,
     // consistent with the rest of the system prompt. Do not assign multi-agent orchestration that feeds each result into the next step
     // to CreateWorkflow; that would let the model choose a workflow without the user asking.
@@ -218,55 +226,78 @@ function formatAgentOutputForModel(output: unknown): string {
   ].join("\n");
 }
 
-const agentHandler: ToolHandler = async (input, context) => {
-  const parsed = AgentInputSchema.parse(input) as AgentInput;
-  const agentType = parsed.subagent_type ?? AgentType.GeneralPurpose;
+function createAgentHandler(alwaysBackground: boolean): ToolHandler {
+  const inputSchema = alwaysBackground ? AgentInputSchema : AgentInputWithBackgroundSchema;
+  return async (input, context) => {
+    const parsed = inputSchema.parse(input) as AgentInput;
+    const agentType = parsed.subagent_type ?? AgentType.GeneralPurpose;
 
-  if (!context.subagentPort) {
-    throw createCoreError(
-      CoreErrorType.ConfigurationError,
-      "SubagentPort is not configured for Agent tool",
-      {
-        context: {
-          code: AgentErrorCode.SUBAGENT_UNAVAILABLE,
-          toolCallId: context.toolCallId,
-          toolName: "Agent",
+    if (!context.subagentPort) {
+      throw createCoreError(
+        CoreErrorType.ConfigurationError,
+        "SubagentPort is not configured for Agent tool",
+        {
+          context: {
+            code: AgentErrorCode.SUBAGENT_UNAVAILABLE,
+            toolCallId: context.toolCallId,
+            toolName: "Agent",
+          },
+          recoverable: false,
         },
-        recoverable: false,
-      },
-    );
-  }
+      );
+    }
 
-  const request = {
-    sessionId: context.sessionId,
-    turnId: context.turnId,
-    parentToolCallId: context.toolCallId,
-    agentType,
-    description: parsed.description,
-    prompt: parsed.prompt,
-    callerCanReadOutputFile: canReadBackgroundOutputFile(context.providerVisibleToolNames),
-    workingDirectory: context.workingDirectory,
-    workspaceRoot: context.workspaceRoot,
-    trace: {
-      traceId: context.traceId,
-      spanId: context.spanId,
-      parentSpanId: context.parentSpanId,
+    const request = {
       sessionId: context.sessionId,
       turnId: context.turnId,
-    } as TraceContext,
+      parentToolCallId: context.toolCallId,
+      agentType,
+      description: parsed.description,
+      prompt: parsed.prompt,
+      callerCanReadOutputFile: canReadBackgroundOutputFile(context.providerVisibleToolNames),
+      workingDirectory: context.workingDirectory,
+      workspaceRoot: context.workspaceRoot,
+      trace: {
+        traceId: context.traceId,
+        spanId: context.spanId,
+        parentSpanId: context.parentSpanId,
+        sessionId: context.sessionId,
+        turnId: context.turnId,
+      } as TraceContext,
+    };
+    const output = await context.subagentPort.launch(
+      {
+        ...request,
+        // 总在后台时不读 run_in_background：模型仍传入的字段已被 runtime schema 丢掉。
+        ...(alwaysBackground
+          ? { alwaysBackground: true }
+          : { runInBackground: parsed.run_in_background === true }),
+      },
+      {
+        signal: context.abortSignal,
+        ...(context.model ? { model: context.model } : {}),
+        ...(context.subagentModelOverride ? { modelOverride: context.subagentModelOverride } : {}),
+        ...(context.recordSubagent ? { onChildSessionReady: context.recordSubagent } : {}),
+        // 立即发送时由 runner 判断转后台还是取消；executor 读同一个判断。
+        ...(context.inputPreemption ? { inputPreemption: context.inputPreemption } : {}),
+      },
+    );
+    // 后台启动的事实与模型可见的启动回执出自这同一个返回值；记成结构化字段，读的一侧不再解析回执文本。
+    if (output.status === "async_launched") {
+      context.recordSubagent?.({
+        agentId: output.agentId,
+        childSessionId: output.childSessionId as SessionId,
+        background: true,
+        outputFile: output.outputFile,
+      });
+    }
+    return output;
   };
-  return context.subagentPort.launch(
-    {
-      ...request,
-      runInBackground: parsed.run_in_background === true,
-    },
-    {
-      signal: context.abortSignal,
-      ...(context.model ? { model: context.model } : {}),
-      ...(context.subagentModelOverride ? { modelOverride: context.subagentModelOverride } : {}),
-    },
-  );
-};
+}
+
+// 两种形态各一个 handler，Agent 与 Task 别名共用同一个对象。
+const ALWAYS_BACKGROUND_AGENT_HANDLER = createAgentHandler(true);
+const OPTIONAL_BACKGROUND_AGENT_HANDLER = createAgentHandler(false);
 
 export const agentToolEntry: ToolEntry = {
   capability: "Launch a profile-backed subagent; background execution is runtime-configured",
@@ -281,7 +312,7 @@ export const agentToolEntry: ToolEntry = {
     riskLevel: "low",
     needsApproval: false,
   },
-  handler: agentHandler,
+  handler: ALWAYS_BACKGROUND_AGENT_HANDLER,
   formatModelContent: formatAgentOutputForModel,
   formatErrorModelContent: formatAgentFailureForModel,
   inputSchema: AgentInputJsonSchema,
@@ -327,11 +358,6 @@ export const agentToolEntry: ToolEntry = {
   },
 };
 
-function canReadBackgroundOutputFile(toolNames: readonly string[] | undefined): boolean {
-  const names = new Set(toolNames ?? []);
-  return names.has("Read") || names.has("Bash");
-}
-
 export const taskToolEntry: ToolEntry = {
   ...agentToolEntry,
   capability: "Claude Code-compatible alias for launching a ZCode subagent",
@@ -368,22 +394,33 @@ function createTaskToolEntryFromAgent(entry: ToolEntry): ToolEntry {
 
 export function createAgentToolEntry(
   options: {
+    /**
+     * Whether Agent always runs in the background (07-subagent.md, "ZCode current implementation"). Defaults to true: the input has no
+     * run_in_background, and every call starts in the background. Only an explicit false returns to the old form: optional run_in_background,
+     * foreground when omitted. The schema, description and handler switch together, so the tools segment bytes change with it.
+     */
+    alwaysBackground?: boolean;
     /** See buildAgentProviderDescription: defaults to true; remove the workflow line only when explicitly disabled for rollout. */
     dynamicWorkflowEnabled?: boolean;
   } = {},
 ): ToolEntry {
+  const alwaysBackground = options.alwaysBackground !== false;
   return {
     ...agentToolEntry,
     metadata: {
       ...agentToolEntry.metadata,
       description: buildAgentProviderDescription(options),
     },
+    handler: alwaysBackground ? ALWAYS_BACKGROUND_AGENT_HANDLER : OPTIONAL_BACKGROUND_AGENT_HANDLER,
+    inputSchema: alwaysBackground ? AgentInputJsonSchema : AgentInputWithBackgroundJsonSchema,
+    runtimeInputSchema: alwaysBackground ? AgentInputSchema : AgentInputWithBackgroundSchema,
   };
 }
 
 export function createTaskToolEntry(
   options: {
-    /** Task is a compatibility alias for Agent and embeds the full Agent description, so pass the same gate through. */
+    /** Task is a compatibility alias for Agent and reuses Agent's description and schema in full, so pass the same options through. */
+    alwaysBackground?: boolean;
     dynamicWorkflowEnabled?: boolean;
   } = {},
 ): ToolEntry {

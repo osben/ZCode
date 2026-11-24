@@ -1,13 +1,14 @@
 import { existsSync } from "node:fs";
 import { extname } from "node:path";
 import { sanitizeZCodeRuntimeEnvInPlace } from "@zcode/shared";
+import type { WindowsGitBashDiscoveryOptions } from "@zcode/shared/node";
 import { applyNetworkEgressEnv, type NetworkEgressEnvPolicy } from "../network/subprocess-env.js";
 import {
   resolveEffectiveBashShellSelection,
   type BashShellProvider,
 } from "./bash-shell-provider.js";
 import { applyExecutionTextEnv } from "./outputEncoding.js";
-import { windowsExecutableCandidates } from "./windows-executable.js";
+import { resolveWindowsComSpec, windowsExecutableCandidates } from "./windows-executable.js";
 import type {
   ExecutionCommand,
   ExecutionEnvOverlay,
@@ -69,16 +70,17 @@ export function buildExecutionEnv(
   return env;
 }
 
-export function resolveExecutionCommand(
+export async function resolveExecutionCommand(
   command: ExecutionCommand,
   options: {
     cwd?: string;
     env?: NodeJS.ProcessEnv;
     exists?: (path: string) => boolean;
+    gitBashDiscovery?: Omit<WindowsGitBashDiscoveryOptions, "env" | "platform" | "isExecutable">;
     platform?: NodeJS.Platform;
     resolvedShell?: ResolvedSpawnCommand;
   } = {},
-): ResolvedSpawnCommand {
+): Promise<ResolvedSpawnCommand> {
   const platform = options.platform ?? process.platform;
   const env = options.env ?? process.env;
 
@@ -88,9 +90,10 @@ export function resolveExecutionCommand(
     }
 
     if (command.shellProfile === "posix-bash") {
-      const resolution = resolveEffectiveBashShellSelection({
+      const resolution = await resolveEffectiveBashShellSelection({
         env,
         exists: options.exists,
+        gitBashDiscovery: options.gitBashDiscovery,
         override: command.shellOverride,
         platform,
       });
@@ -107,6 +110,28 @@ export function resolveExecutionCommand(
     };
   }
 
+  return resolveArgvExecutionCommand(command, {
+    cwd: options.cwd,
+    env,
+    exists: options.exists,
+    platform,
+  });
+}
+
+/**
+ * Fork: the synchronous argv branch of `resolveExecutionCommand`, shared with the LSP spawn path,
+ * which must resolve its command before returning (specs/upstream-sync-4.0.0.md).
+ */
+export function resolveArgvExecutionCommand(
+  command: { file: string; args?: string[] },
+  options: {
+    cwd?: string;
+    env: NodeJS.ProcessEnv;
+    exists?: (path: string) => boolean;
+    platform: NodeJS.Platform;
+  },
+): ResolvedSpawnCommand {
+  const { env, platform } = options;
   if (platform !== "win32") {
     return {
       args: command.args ?? [],
@@ -135,7 +160,7 @@ export function resolveExecutionCommand(
   return {
     args: createCmdShimArgs(resolvedFile, command.args ?? []),
     cwdDialect: "cmd",
-    file: getEnvValue(env, "ComSpec", "win32") ?? "cmd.exe",
+    file: resolveWindowsComSpec(env),
     shell: false,
   };
 }
@@ -218,7 +243,7 @@ function resolveShell(
 ): true | string {
   if (typeof shell === "string") return shell;
   if (platform === "win32") {
-    return getEnvValue(env, "ComSpec", "win32") ?? "cmd.exe";
+    return resolveWindowsComSpec(env);
   }
   return true;
 }
@@ -273,15 +298,4 @@ function deleteEnvKey(env: Record<string, string>, key: string, platform: NodeJS
       delete env[existingKey];
     }
   }
-}
-
-function getEnvValue(
-  env: NodeJS.ProcessEnv,
-  key: string,
-  platform: NodeJS.Platform,
-): string | undefined {
-  if (platform !== "win32") return env[key];
-  const lowerKey = key.toLowerCase();
-  const actualKey = Object.keys(env).find((candidate) => candidate.toLowerCase() === lowerKey);
-  return actualKey ? env[actualKey] : undefined;
 }

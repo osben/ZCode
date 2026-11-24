@@ -6,7 +6,6 @@ import {
   TID_SETTINGS_MEMORY_SWITCH,
   TID_SETTINGS_SECTION_NAV,
   TID_TASK_SETTINGS_BUTTON,
-  TID_V4_COMPOSER_BACKGROUND_WORK_TRIGGER,
   TID_V4_BACKGROUND_WORK_CANCEL,
   testId,
 } from "@zcode/shared";
@@ -25,9 +24,15 @@ import {
   waitForV4TimelineContaining,
 } from "../../../../helpers/v4-conversation.js";
 
+// Removed from @zcode/shared/test-ids by upstream 4.0.0; kept local for the skipped suite.
+const TID_V4_COMPOSER_BACKGROUND_WORK_TRIGGER = "v4-composer-background-work-trigger";
+
 // MEM13/MEM14. Explicit case-local replay holds the Dream provider response, not the UI thread.
 // Promotion requires human review; this case deliberately stays in manual-review/pending.
-describe("manual Dream background progress", () => {
+// Fork: the 4.0.0 sync (specs/upstream-sync-4.0.0.md) took upstream's composer status capsules, which
+// replace the status panel. The fork's background work trigger flow for Dream is hidden until a follow-up re-homes it in the capsules,
+// so this suite is skipped (not deleted).
+describe.skip("manual Dream background progress", () => {
   before(async function () {
     this.timeout(120_000);
     await seedCliConfig({ features: { memory: true }, memory: { use: true } });

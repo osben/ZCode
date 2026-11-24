@@ -13,6 +13,7 @@ import { conversationRowSchema } from "./rows.js";
 import { sharedContextImportStateSchema } from "./shared-context-import.js";
 import {
   backgroundWorkSummarySchema,
+  activitySummaryDismissedSchema,
   commandStateSummarySchema,
   goalStateSchema,
   inputRoutingSchema,
@@ -54,6 +55,8 @@ export const statePatchSchema = z.object({
   pendingInteractions: z.array(pendingInteractionSchema).optional(),
   pendingCommands: z.array(commandStateSummarySchema).optional(),
   backgroundWorks: z.array(backgroundWorkSummarySchema).optional(),
+  activitySummaryDismissed: activitySummaryDismissedSchema.optional(),
+  completedActivityCount: z.number().int().nonnegative().nullable().optional(),
   subagents: subagentProjectionStateSchema.optional(),
   // Live runtime state for workflow runs. The container itself is not strict, so an old desktop receiving this new key simply **strips one key**,
   // preserving every other key in the patch — which is why no version-skew defenses are needed.

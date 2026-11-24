@@ -1,3 +1,7 @@
+import {
+  bindPrelaunchedElectronSession,
+  restartPrelaunchedElectronAfterExit,
+} from "#e2e/helpers/e2e-prelaunched-electron";
 import { execFileSync } from "node:child_process";
 
 import { buildWindowsTaskkillArgs, listE2EProcessTreePids } from "./e2e-process-cleanup.js";
@@ -84,9 +88,7 @@ export async function reloadElectronSessionSafely(
       await browser.deleteSession({ shutdownDriver: false });
     } catch (error) {
       if (pendingBarrier.error) {
-        throw new Error("Electron reload 旧进程退出屏障失败", {
-          cause: pendingBarrier.error,
-        });
+        throw createExitBarrierError(pendingBarrier.error);
       }
       throw error;
     }
@@ -94,7 +96,7 @@ export async function reloadElectronSessionSafely(
       throw new Error("Electron reload 未经过旧进程退出屏障");
     }
     if (pendingBarrier.error) {
-      throw new Error("Electron reload 旧进程退出屏障失败", { cause: pendingBarrier.error });
+      throw createExitBarrierError(pendingBarrier.error);
     }
 
     // Bug root cause: a running Host flushes asynchronously and writes back provider/config data; if the test direct
@@ -102,6 +104,8 @@ export async function reloadElectronSessionSafely(
     // after the exit barrier completes and before the new process starts is there a deterministic window without
     // concurrent writers.
     await options.afterElectronProcessExit?.();
+    // 独立启动模式的App由runner复用同一调试地址重启；普通候选这里是no-op。
+    await restartPrelaunchedElectronAfterExit(browser);
 
     // reloadSession deletes the already-closed old protocol session again and swallows the invalid-session error;
     // ChromeDriver is still alive, so afterwards only a new protocol session is created, never crossing the process
@@ -111,10 +115,17 @@ export async function reloadElectronSessionSafely(
     // automatically; the helper must wait for the new main process's CDP bridge to be rebuilt and pass the probe
     // before returning to the caller.
     await (options.reloadElectronServiceBridge ?? reloadE2EElectronServiceBridge)(browser);
+    await bindPrelaunchedElectronSession(browser);
     return newSessionId;
   } finally {
     pendingExitBarrierByBrowser.delete(browser);
   }
+}
+
+function createExitBarrierError(cause: unknown) {
+  // Bug cause: the WDIO report serializes only the top-level message/stack, so setting cause alone loses the leftover PID.
+  const detail = cause instanceof Error ? cause.message : String(cause);
+  return new Error(`Electron reload old process exit barrier failed: ${detail}`, { cause });
 }
 
 /** Fully restarts Electron while explicitly reusing the same userData, so an empty profile does not mask recovery behavior. */

@@ -84,7 +84,7 @@ import {
   createDynamicWorkflowClientConfig,
   normalizeDynamicWorkflowMode,
   resolveDynamicWorkflowClientConfig,
-  DEFAULT_DYNAMIC_WORKFLOW_MODE,
+  DYNAMIC_WORKFLOW_MODE_ON_FETCH_FAILURE,
   ZCODE_DYNAMIC_WORKFLOW_MODE_ENV,
 } from "@zcode/shared";
 import type { ICredentialService } from "../credential/credential.js";
@@ -433,10 +433,10 @@ export class BigModelCodingPlanSubscriptionProvider {
 
   /**
    * Dynamic workflow rollout snapshot: share client/configs with off-peak tasks, with no additional request. Three boundaries:
-   *   1. Resolve the local override (ZCODE_DYNAMIC_WORKFLOW_MODE) before any network action and return immediately when present—
+   *   1. Resolve the local override (ZCODE_DYNAMIC_WORKFLOW_MODE) before any network action and return immediately when present,
    *      preview builds and developer testing are then unaffected by the one-hour snapshot or first-Host race;
    *   2. forceRefresh works like Off-Peak: clear the snapshot and fetch again (otherwise a rollout change may remain invisible for up to one hour);
-   *   3. Fail closed on request errors: return the default (disabled) and warn; never throw to the caller—
+   *   3. On request errors, load on demand: return the default (onDemand) and warn; never throw to the caller,
    *      callers run during session creation/client readiness, and a rollout read failure must not block ordinary chat.
    */
   async getDynamicWorkflowClientConfig(options?: {
@@ -457,10 +457,13 @@ export class BigModelCodingPlanSubscriptionProvider {
         env: process.env,
       });
     } catch (error) {
-      log.warn(undefined, "动态工作流灰度配置读取失败，按关闭处理", {
+      // 请求失败（断网、HTTP 报错、远程设备连不上服务端）不代表服务端要关闭，按需加载提供：
+      // 入口都在，十个工作流工具推迟到 /workflow 才注册（alwaysOn 每个新会话首轮就注册，太占上下文）。
+      // 过去这里按 disabled 处理，离线启动时界面没有工作流入口。key 缺失仍走上面的 resolve → disabled。
+      log.warn(undefined, "动态工作流灰度配置读取失败，按需加载处理", {
         errorMessage: error instanceof Error ? error.message : String(error),
       });
-      return createDynamicWorkflowClientConfig(DEFAULT_DYNAMIC_WORKFLOW_MODE, "default");
+      return createDynamicWorkflowClientConfig(DYNAMIC_WORKFLOW_MODE_ON_FETCH_FAILURE, "default");
     }
   }
 

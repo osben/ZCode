@@ -26,6 +26,9 @@ This is a personal fork of [zai-org/ZCode](https://github.com/zai-org/ZCode). I 
 
 ## Updates
 
+- 2026-11-23: Updated to ZCode v4.0.0.
+- 2026-11-23: Updated to ZCode v3.19.1 (merged together with 4.0.0).
+- 2026-11-23: Updated to ZCode v3.19.0 (merged together with 4.0.0).
 - 2026-11-12: Updated to ZCode v3.18.2.
 - 2026-11-12: Updated to ZCode v3.18.1.
 - 2026-11-11: Updated to ZCode v3.18.0.

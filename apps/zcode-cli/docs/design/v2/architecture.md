@@ -85,7 +85,10 @@ Startup keeps only the architectural order, not implementation detail:
 
 1. The entry layer parses minimal startup info and creates the top-level execution context.
 2. The config system merges defaults, user config, project config, environment variables and CLI
-   arguments under an explicit precedence.
+   arguments under an explicit precedence. The skill and command toggles (`skillOverrides`,
+   `commandOverrides`) merge by path: if the user and the project each disable a different skill,
+   both stay disabled. For the merge rules of other nested objects, see
+   [config merge legacy issues](../../../../../docs/issues/config-merge-legacy/01-nested-fields-replaced-by-higher-layer.md).
 3. All project-owned environment variables use the `ZCODE_` prefix.
 4. bootstrap creates base adapters and injects them into core.
 5. Storage runs required initialization and migrations.

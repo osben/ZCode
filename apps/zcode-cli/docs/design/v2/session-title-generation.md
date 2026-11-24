@@ -5,8 +5,8 @@
 `session.title` is first derived by truncating the user input at first persistence: stable and cheap, but poor
 for long prompts, mixed Chinese/English input and file attachments. Core constraints:
 
-- User titles and AI titles are separate. A user-set title always wins; an AI title is regenerable
-  enhancement metadata.
+- User titles and AI titles are separate. A user-set title always wins; an AI title is enhancement
+  metadata, generated at most once per session.
 - The title is generated asynchronously after the first real user message of a root session and written
   back to session metadata.
 - Title generation is a low-risk sidecar. It must not affect the main agent loop or overwrite an explicit
@@ -21,7 +21,8 @@ for long prompts, mixed Chinese/English input and file attachments. Core constra
    the user to configure a second model.
 3. By default disable thinking/reasoning control fields inherited from the main session, so a short
    sidecar request does not slow down or waste output budget on a high/max thinking tier.
-4. An AI title may overwrite only a default / first-input / older AI title, never a custom user title.
+4. An AI title may overwrite only a default / first-input title, never an already generated AI title or
+   a custom user title.
 5. The title is written through `SessionStorePort` and persisted by the SQLite adapter.
 6. A title update emits an observable session event with traceId/sessionId/turnId/modelRef/source.
 7. On failure, timeout, unparsable or invalid model output, keep the current title and leave the main
@@ -76,7 +77,8 @@ interface UpdateSessionInput {
 
 When `expectedTitleSources` is non-empty and the current `title_source` is not in the list, the adapter
 must no-op and return the current session. AI title writes use
-`["default", "first_input", "generated"]`, so a `custom` title is never overwritten by a late AI result.
+`["default", "first_input"]`, so an already generated `generated` title and a user-set `custom` title are
+never overwritten by a late or repeated AI result.
 
 ## Trigger rules
 
@@ -92,7 +94,17 @@ When enabled, all of these must still hold:
    `interactive`.
 4. The turn is the first real user turn, counted after resume.
 5. The user prompt is not a summary, compact, rewind, hook synthetic, slash-command expansion or blank.
-6. The session title source is not `custom`.
+6. The persisted session title source is `default` or `first_input`.
+
+The turn count in item 4 and the in-memory "already tried" marker of the runtime are both rebuilt on
+cold resume: if the active history after a compact holds only the summary and hidden reminders (no
+real user message in the retained segment), the count goes back to 0 and the marker of the new
+runtime has its initial value. So "already generated" is decided only by the persisted source in item
+6: it is read once before the request, `generated` / `custom` skip it directly without a title model
+request, and the write-back uses CAS to cover concurrency. The exception is the first `/goal`: it
+borrows the same title request to generate the goal summary title, so it still requests when the
+source is `generated` / `custom`, but the result is written only to the goal summary, not to the
+session title.
 
 The async sidecar request starts after the main turn completes; it stays out of the main
 `TurnResult.usage` and emits its own model request / model complete / session title events.
@@ -157,7 +169,14 @@ goal summary title) do not inherit high/max thinking.
 The system prompt requires:
 
 - A recognizable title of 3-7 words.
-- The user's main language.
+- When the history has a `language` announcement, use the language of the latest announcement:
+  `Write the title in <Language>. Keep technical terms and code identifiers in their original form.`.
+  With no announcement, or when the latest one is a clearing announcement, follow the user's main
+  language (`Use the user's primary language.`). The session title and the goal summary title share
+  this rule. `<Language>` is parsed back from the announcement body by the template, the body is
+  rebuilt from it, and it is used only when it equals the original body character by character
+  (the attachment metadata carries only the source name); nothing extra is read from the Host (see
+  [Agent reply language](../../../../../docs/i18n/agent-reply-language.md)).
 - Sentence case; keep proper nouns, file names and technical names.
 - No explanation, markdown, numbering, quotes or multi-line text.
 
@@ -201,7 +220,8 @@ Minimum coverage:
 
 - The SQLite migration gives old sessions the default `first_input`.
 - `createSession` writes `title_source`; `updateSession` can update a generated title.
-- The generated-title CAS cannot overwrite a custom title.
+- The generated-title CAS can overwrite neither a custom title nor an existing generated title.
+- A session with a generated title that sends a message after compact and cold resume sends no title model request, and the title stays unchanged.
 - Without `model.lite`, the title request uses the main provider/model with role `lite`.
 - With `model.lite`, the title request uses the lite provider/model.
 - The title request strips inherited thinking/reasoning provider options; the main request keeps its

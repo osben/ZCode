@@ -73,7 +73,7 @@ Core flow:
 7. Read file bytes through `FileSystemPort.readTextFile`; the adapter infers the text encoding from BOM, UTF-8 validation and legacy Chinese encoding detection, and returns LF-normalized Unicode logical content plus the original `encoding` and `lineEndings` metadata.
 8. ZCode currently rejects an empty `old_string` to avoid implicit insertion into existing files; creating a new file or a full rewrite uses `Write`.
 9. Creating a file when it does not exist and `old_string` is empty is not exposed by ZCode for now; supporting it later requires updating the `Write/Edit` boundary and tests first.
-10. Reject `.ipynb` files; there is no dedicated notebook edit tool, so the error message says to read and rewrite the whole notebook JSON with Write if necessary, and must not point to a nonexistent tool.
+10. Reject `.ipynb` files, telling the model to change the notebook JSON with a shell command or script (ZCode has no notebook edit tool).
 11. An existing file must have been fully `Read` earlier.
 12. If mtime changed, continue when the full read-cache content is still identical; otherwise reject as a stale edit.
 13. Find the actual string using exact first, then quote normalization and restricted compatibility matchers.
@@ -116,6 +116,25 @@ Error semantics:
 ZCode gives these errors stable codes so flow never depends on English text. When the Edit handler finds an expected rejection at the existing check position it returns `{ result:false, errorCode, message }` instead of `throw`ing to the executor; the success path, read count and execution order are unchanged. The executor assembles the structured error generically and wraps only the provider-visible `modelContent` in `<tool_use_error>`; UI, logs and the structured error keep the bare message.
 
 Numeric error codes are fixed: no change `1`, file exists and `old_string` empty `3`, file not found `4`, Notebook `5`, not fully read `6`, stale `7`, not found `8`, non-unique `9`, file too large `10`. I/O failures, cancellation and expected-revision conflicts remain execution exceptions and keep the generic exception path. ZCode path policy additionally rejects an empty `file_path`; the Edit handler returns the local stable error code `13` with the existing `Tool path must not be empty` message before entering shared path resolution, so the shared exception does not bypass Edit's provider error envelope. These numeric codes are exported by the Edit tool contract; the handler keeps no second private mapping, so provider errors and the public tool contract do not drift.
+
+### Text the model sees (2026-11-14)
+
+| Condition | errorCode | Text |
+| --- | --- | --- |
+| `.ipynb` | 5 | `File is a Jupyter Notebook. Edit does not change .ipynb files; change the notebook JSON with a shell command or script instead.` |
+| File too large | 10 | `File is too large to edit (<actual size>). Maximum editable file size is 1GB.` |
+| File cannot be read as UTF-8 or GB encodings (adapter `unsupported`) | 15 | See below |
+| old_string not found, and old_string contains `\uXXXX` escapes | 8 | The original sentence plus one line `(note: Edit also tried swapping \uXXXX escapes and their characters; neither form matched, so the mismatch is likely elsewhere in old_string. Re-read the file and copy the exact surrounding text.)` |
+
+Text of the encoding error:
+
+```text
+File is not valid UTF-8 or a supported legacy encoding (GB2312, GBK, GB18030), or it is binary. Edit and Write never convert a file's encoding on their own, so nothing was written. If the file is text, make the change with a shell command that reads and writes it in its own encoding (iconv, or PowerShell Get-Content/Set-Content -Encoding), or ask the user whether to convert it to UTF-8 first. To replace the whole file with new UTF-8 text anyway, delete it first, then Write it.
+```
+
+- The size uses one decimal place with a trailing `.0` removed (`1536 bytes -> 1.5KB`), the same as the Read PDF summary; the limit is still 1GB. When the file is only slightly over the limit and formats to the same `1GB`, the parentheses show the byte count instead (`(1073741825 bytes)`), so the text never reads "(1GB) ... limit 1GB".
+- The escape note is added only when old_string contains `\uXXXX`: the matcher only replaces `\uXXXX` in old_string with the character before searching (`unicode_escape_normalized`); it does not replace characters with escapes. So when old_string has non-ASCII characters but no escapes, the line is not added.
+- The old texts mentioned a nonexistent `NotebookEdit` tool, hard-coded the size as `(1GB)`, and the encoding error was the unlabeled `Unsupported or binary text encoding: <path>`.
 
 ## Implementation status (2026-05-08)
 

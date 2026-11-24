@@ -290,6 +290,58 @@ Current cancel boundary: later session pre-checks stop and in-flight results are
 
 Regression uses a controllable pre-check stop point to verify the DOM is already shown, confirm is disabled, cancel is immediate, the next item is not issued, a late result does not pollute a reopened dialog, covering desktop and phone paths; no fixed sleep replaces the stop point.
 
+#### 2026-11-19: one scan per batch for the preview
+
+Observed: when permanently deleting 259 archived sessions, the dialog stayed for a long time on "Checking 0/259
+sessions..." and other sessions became slow during the check.
+Root cause: the UI previewed roots one by one in series. For every root the CLI ran one full-table
+`instr(body,'zcode-artifact://')` scan over 13 tables (part, message, input, workflow journal and others), and also
+read the fork and runtime presence tables in full. The execute phase and the re-check under the write lock each
+scanned again. The synchronous SQLite scans blocked the Agent event loop, about N x 13 x 3 full-table scans in total.
+
+Fix (confirmed by the owner):
+
+```text
+UI (20 items per batch)
+  └─ previewArchivedTaskDeletions(addresses[])          ← updates "checked X/N" after each batch returns
+      └─ Host: group by original source, archive judgment same as for a single item
+          └─ V4 storage/sessionData/deletionPreviewBatch { items[] } → { results[] }  (in input order)
+              └─ CLI: each round, one batch of roots shares one fork scan and one runtime presence read,
+                      at most two rounds: the first round checks "no artifacts" and gets the owned tree;
+                      roots that have artifacts then run the 13 reference SQL statements once as a batch;
+                      hits are attributed to the root of the referenced session
+```
+
+- Results are independent per item: `{ preview }` or `{ error: { code } }`. A single failure (identity mismatch,
+  invalid session ID and so on) does not affect other items in the same batch; the UI still lists failed items under
+  "cannot be deleted this time". When the whole batch RPC fails, every item of that batch counts as a failed check.
+- "Outside the tree" is still judged from the view of a single root: a referrer that is not inside the owned tree
+  of the root that owns the referenced session is an external reference, and other roots in the same batch also
+  count as referrers. Batch results are fully identical to one-by-one previews on the same data (sessionIds, forks,
+  references and their order, revision).
+- No-artifact skip: if the owned tree of a root has no artifact file in CLI storage and the deletion credential
+  holds no retained attachment, no reference scan is done for that root. A reference can only point to an artifact
+  that exists. When the artifact file is lost but the database still has `zcode-artifact://` text, it is no longer
+  listed as a "retained attachment". Preview, execution and the re-check under the write lock use the same
+  judgment, so the revision stays consistent.
+- The old single-item `deletionPreview` method and the execution protocol are unchanged. Execution still re-checks
+  revision, runtime state and references per item, and the re-check under the write lock goes through the same
+  batch implementation. Known boundary: a root with no artifacts is not rescanned for references under the write
+  lock either. If, after the file listing in the execute phase and before the write lock, that tree happens to
+  produce a new artifact that another session references, the write-lock check will not find it. Archived sessions
+  are bound by the busy and runtime presence checks and cannot produce a new artifact in this window, so the
+  boundary is accepted.
+  Version-skew fallback: when an old CLI does not know the batch method (JSON-RPC -32601), services call the old
+  method per item for that group; when an old Source does not know it (`Method not found`), the Host calls the
+  single-item preview per item for that group; when an old Host does not know it, the UI calls the single-item
+  preview per item.
+- A single failure does not affect the batch: when the storage layer throws for a whole batch (for example the
+  deletion credential of one root is corrupt), the roots are rechecked one by one and only those that still fail
+  are recorded as single-item errors.
+- The cancel boundary is unchanged: after cancel no next batch is sent and in-flight results are dropped. A batch
+  already sent still finishes its synchronous CLI scan. A batch holds at most 20 items, so synchronous scans drop
+  from 13 per item to at most 13 per batch. No table schema change and no new index.
+
 ### Authority, order and concurrency
 
 | State                                                                   | Sole owner                                                        | Other layers                                                                                         |

@@ -44,6 +44,8 @@ import {
   type WebRemoteControlIpcManager,
 } from "./desktopWebRemoteControlIpc.js";
 import { openFileUrlInDefaultApp, openPathInDefaultApp } from "./desktopMainIpcHelpers.js";
+import type { ConfirmExecutableFileOpen } from "@desktop/main/file-open-apps/index.js";
+import { getStabilityLifecycleScene } from "@desktop/main/desktopStabilityTelemetry.js";
 
 function isPublicRemoteReasonCode(code: string | undefined): code is string {
   // Bug cause: a prefix OR formed a second source of truth for public codes, letting any internal
@@ -200,6 +202,8 @@ export function registerRemoteIpcHandlers(options: {
     warn: (...args: unknown[]) => void;
     error: (...args: unknown[]) => void;
   };
+  /** 系统默认打开可执行类文件前的用户确认（见 file-open-apps/executableOpenGuard）。 */
+  confirmExecutableFileOpen: ConfirmExecutableFileOpen;
   appTelemetryRuntime: {
     onRendererReady(payload: { hasPendingOAuthCallback: boolean; rendererId: number }): void;
     syncRendererContext(payload: { rendererId: number; context: unknown }): void;
@@ -358,7 +362,7 @@ export function registerRemoteIpcHandlers(options: {
       return;
     }
     if (new URL(url).protocol === "file:") {
-      void openFileUrlInDefaultApp(url, options.logger);
+      void openFileUrlInDefaultApp(url, options.logger, options.confirmExecutableFileOpen);
       return;
     }
     const sender = event.sender;
@@ -389,7 +393,7 @@ export function registerRemoteIpcHandlers(options: {
   });
 
   ipcMain.handle(PlatformChannels.OpenExternalFile, async (_event, rawPath: string) =>
-    openPathInDefaultApp(rawPath, options.logger),
+    openPathInDefaultApp(rawPath, options.logger, options.confirmExecutableFileOpen),
   );
 
   ipcMain.on(PlatformChannels.RendererReady, (event) => {
@@ -429,6 +433,18 @@ export function registerRemoteIpcHandlers(options: {
         "[report-arms-custom-event] invalid payload:",
         formatZodError(result.error),
       );
+      return;
+    }
+
+    // 正常退出清理会取消在途握手；只在 Main 已确认 app_quit 后排除这条曝光，避免吞掉运行期故障。
+    if (
+      options.armsCustomContext.platform === "win32" &&
+      getStabilityLifecycleScene() === "app_quit" &&
+      result.data.name === "chat_error_banner" &&
+      result.data.group === "ui_error" &&
+      result.data.properties?.surface === "session_subscription_error" &&
+      result.data.properties.error_message === "Windows runtime start was cancelled"
+    ) {
       return;
     }
 

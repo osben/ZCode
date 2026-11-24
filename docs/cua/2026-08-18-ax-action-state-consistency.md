@@ -71,7 +71,7 @@ zcode-cua MCP result -> official authority gate
 | ID             | Setup                                 | Action              | Assertions                                                      | Evidence               |
 | -------------- | ------------------------------------- | ------------------- | --------------------------------------------------------------- | ---------------------- |
 | CUA-RCPT-01    | action receipt without post-state     | bridge/serialize    | Projected as ordinary MCP text; no synthesized refresh_required | core bridge unit       |
-| CUA-RCPT-02    | receipt + structuredContent           | bridge              | structuredContent appended as ordinary MCP text                 | core bridge unit       |
+| CUA-RCPT-02    | receipt + structuredContent           | bridge              | content is projected first; structured fields stay for the app  | core bridge unit       |
 | CUA-RCPT-03    | receipt text over budget              | serialize           | Generic resultBudget truncation                                 | core budget unit       |
 | CUA-RCPT-04    | possibly_sent                         | bridge              | retry_action=false; old action not replayed                     | producer + bridge unit |
 | CUA-AX-SYNC-05 | image removed by request media budget | provider projection | The corresponding image_ref is removed too                      | media-budget unit      |

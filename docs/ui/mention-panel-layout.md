@@ -192,3 +192,10 @@ The loading rows' total height equals four candidate rows. When loading switches
 The current `+` categories and bottom hints are in [chat-composer-action-menu.md](chat-composer-action-menu.md):
 directly choose attachment, goal, plugin, file and session; `@`, `/`, `$` are explained at the bottom and no
 longer separate menu items.
+
+## Session search regression constraints
+
+Session candidates are searched by task metadata, not by message body. The generated title in the Desktop mention
+replay must keep the search marker, so that the original input marker disappearing after title generation is not
+mistaken for a missing candidate. Both `@` and `#` must hit the same seed session and write the same canonical
+reference.

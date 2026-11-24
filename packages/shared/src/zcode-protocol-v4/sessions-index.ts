@@ -48,6 +48,8 @@ export const sessionSummarySchema = z.object({
   sessionEnded: z.boolean(),
   // Used by the list indicator (keep it boolean here so the sidebar does not have to subscribe to all of backgroundWorks).
   hasBackgroundWork: z.boolean(),
+  // A standalone compact does not change phase; close protection must read the currently active work, and a missing field in an old frame is treated as false.
+  hasCompactWork: z.boolean().optional(),
   // Sidebar workflow run rows: bounded run summaries,
   // with only the fields needed to draw the mini track; absent when the session has no runs. optional preserves compatibility with old frames/CLI.
   workflowActivity: sessionWorkflowActivitySchema.optional(),

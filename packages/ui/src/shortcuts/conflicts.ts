@@ -4,13 +4,13 @@
  * Split out of bindings.ts (separating the core from conflict policy; bindings.ts also has a max-lines limit):
  * Key matching, recording, and the active table remain in bindings.ts; this module only answers whether a binding can be applied.
  */
-import { parseShortcutBinding, SHORTCUT_COMMANDS, type ShortcutCommandId } from "@zcode/shared";
+import { SHORTCUT_COMMANDS, type ShortcutCommandId } from "@zcode/shared";
 
 import {
   isAppleKeyboardPlatform,
   type KeyboardShortcutPlatformInfo,
 } from "../lib/keyboardShortcuts.js";
-import { resolveEffectiveShortcutBindings } from "./bindings.js";
+import { canonicalShortcutBindingKey, resolveEffectiveShortcutBindings } from "./bindings.js";
 
 /**
  * Reserved-key blacklist: native browser/editor behavior, refresh and developer tools, all function keys,
@@ -52,32 +52,6 @@ export const RESERVED_BINDINGS: ReadonlySet<string> = new Set([
 const MACOS_MENU_RESERVED_BINDINGS: ReadonlySet<string> = new Set(["CmdOrCtrl+m"]);
 
 /**
- * Physical-equivalence normalization used only for conflict detection (new): treat platform-equivalent combinations as the same physical key
- * (CmdOrCtrl ≡ explicit Ctrl on Windows/Linux; AltGr adds the Alt bit). If conflict detection compares strings exactly,
- * a platform-normalized recorder value (for example, recording ⌃M on Windows yields "CmdOrCtrl+m") bypasses occupancy checks
- * for explicit Ctrl defaults such as the toolbar's "Ctrl+m", causing a silent conflict with no warning.
- * Normalize into a stable comparison key according to the core modifiersMatch semantics:
- * - Non-Apple: primary = cmdOrCtrl | ctrl | altGr (same physical primary modifier), alt = alt | altGr
- * - Apple: primary = cmdOrCtrl (meta), secondaryCtrl = ctrl (separate physical key), alt = alt | altGr
- */
-function canonicalBindingKey(binding: string, isApple: boolean): string | null {
-  const parsed = parseShortcutBinding(binding);
-  if (parsed === null) {
-    return null;
-  }
-  if (isApple) {
-    // On Apple, modifiersMatch's wantPrimaryOrCtrl also treats altGr as a primary modifier
-    // (AltGr+m ≡ ⌘⌥M ≡ CmdOrCtrl+Alt+m), so include it in canonical primary-modifier normalization.
-    return `${parsed.cmdOrCtrl || parsed.altGr ? 1 : 0}${parsed.ctrl ? 1 : 0}${
-      parsed.alt || parsed.altGr ? 1 : 0
-    }${parsed.shift ? 1 : 0}:${parsed.key}`;
-  }
-  return `${parsed.cmdOrCtrl || parsed.ctrl || parsed.altGr ? 1 : 0}${
-    parsed.alt || parsed.altGr ? 1 : 0
-  }${parsed.shift ? 1 : 0}:${parsed.key}`;
-}
-
-/**
  * Whether two binding strings represent the same physical combination (canonical keys match). Search reuses the same normalization
  * as conflict detection; Settings “search by shortcut” uses it to match CmdOrCtrl+m recorded on Windows with explicit Ctrl+m.
  * If either string fails to parse, they are not equal (matching conflict detection's null short-circuit behavior).
@@ -88,8 +62,8 @@ export function isSamePhysicalBinding(
   options?: { platformInfo?: KeyboardShortcutPlatformInfo },
 ): boolean {
   const isApple = isAppleKeyboardPlatform(options?.platformInfo);
-  const keyA = canonicalBindingKey(a, isApple);
-  const keyB = canonicalBindingKey(b, isApple);
+  const keyA = canonicalShortcutBindingKey(a, isApple);
+  const keyB = canonicalShortcutBindingKey(b, isApple);
   return keyA !== null && keyA === keyB;
 }
 
@@ -106,11 +80,11 @@ function getReservedCanonicalKeys(): {
     const apple = new Set<string>();
     const nonApple = new Set<string>();
     for (const binding of RESERVED_BINDINGS) {
-      const appleKey = canonicalBindingKey(binding, true);
+      const appleKey = canonicalShortcutBindingKey(binding, true);
       if (appleKey !== null) {
         apple.add(appleKey);
       }
-      const nonAppleKey = canonicalBindingKey(binding, false);
+      const nonAppleKey = canonicalShortcutBindingKey(binding, false);
       if (nonAppleKey !== null) {
         nonApple.add(nonAppleKey);
       }
@@ -148,7 +122,7 @@ export function checkShortcutBindingConflict(
   const commandEntry = SHORTCUT_COMMANDS.find((entry) => entry.id === commandId);
   const commandScope = commandEntry?.scope ?? "global";
   const isApple = isAppleKeyboardPlatform(options?.platformInfo);
-  const newKey = canonicalBindingKey(newBinding, isApple);
+  const newKey = canonicalShortcutBindingKey(newBinding, isApple);
   // The macOS ⌘M minimize guard applies to every scope: the system menu consumes the key before renderer dispatch,
   // so binding it to a composer command would also be inert.
   if (isApple && MACOS_MENU_RESERVED_BINDINGS.has(newBinding)) {
@@ -159,7 +133,7 @@ export function checkShortcutBindingConflict(
       return { kind: "reserved", binding: newBinding };
     }
   }
-  const effective = resolveEffectiveShortcutBindings(overrides);
+  const effective = resolveEffectiveShortcutBindings(overrides, options?.platformInfo);
   for (const entry of SHORTCUT_COMMANDS) {
     if (entry.id === commandId) {
       continue;
@@ -169,7 +143,7 @@ export function checkShortcutBindingConflict(
       continue;
     }
     for (const binding of effective[entry.id] ?? []) {
-      const candidateKey = canonicalBindingKey(binding, isApple);
+      const candidateKey = canonicalShortcutBindingKey(binding, isApple);
       if (newKey !== null && candidateKey === newKey) {
         // Web menu-channel commands are not configurable, but their default keys are still consumed by the root fallback listener
         // (useRootPlatformEffects responds to Cmd/Ctrl+N and O). Reject these as reserved keys; do not offer a steal-binding flow
@@ -206,8 +180,8 @@ export function buildShortcutOverridesAfterSteal(
   },
 ): Record<string, string[]> {
   const isApple = isAppleKeyboardPlatform(options?.platformInfo);
-  const newKey = canonicalBindingKey(newBinding, isApple);
-  const effective = resolveEffectiveShortcutBindings(overrides);
+  const newKey = canonicalShortcutBindingKey(newBinding, isApple);
+  const effective = resolveEffectiveShortcutBindings(overrides, options?.platformInfo);
   const commandEntry = SHORTCUT_COMMANDS.find((entry) => entry.id === commandId);
   const commandScope = commandEntry?.scope ?? "global";
   const next: Record<string, string[]> = {};
@@ -234,7 +208,7 @@ export function buildShortcutOverridesAfterSteal(
       continue;
     }
     const remaining = (effective[entry.id] ?? []).filter((binding) => {
-      const candidateKey = canonicalBindingKey(binding, isApple);
+      const candidateKey = canonicalShortcutBindingKey(binding, isApple);
       return newKey === null || candidateKey !== newKey;
     });
     if (remaining.length !== (effective[entry.id] ?? []).length) {

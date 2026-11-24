@@ -108,7 +108,10 @@ async function panel() {
 
 // Open state must survive re-renders while sibling sections change. The duplicate sibling key that broke this in
 // the live app does not reproduce under jsdom; the desktop E2E (status-panel-last-turn) is the regression guard.
-describe("ConversationStatusPanel insight section toggling", () => {
+// Fork: the 4.0.0 sync (specs/upstream-sync-4.0.0.md) took upstream's composer status capsules, which
+// replace the status panel. The fork's Last turn and Context sections are hidden until a follow-up re-homes them in the capsules,
+// so this suite is skipped (not deleted).
+describe.skip("ConversationStatusPanel insight section toggling", () => {
   it("keeps Last turn and Context open across re-renders", async () => {
     const ConversationStatusPanel = await panel();
     const props = {

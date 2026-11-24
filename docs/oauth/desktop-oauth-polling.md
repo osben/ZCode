@@ -61,23 +61,26 @@ App                  init A                  init B                  Host pendin
 
 - The app generates a 32-byte random `poll_token` per login and sends it only via
   `Authorization: Bearer`; it is never written to logs, settings or URLs.
-- `flow_id`, `expires_at` and `poll_interval_sec` returned by `init` live only in Host memory.
-- The app accepts only an HTTPS `authorize_url`, a future `expires_at`, and a `poll_interval_sec`
-  of at least 1 second and less than the remaining flow lifetime. An abnormal server response ends
-  the flow without opening any external address.
+- `flow_id`, `expires_at`, `server_time` and `poll_interval_sec` returned by `init` live only in Host memory.
+- The app accepts only an HTTPS `authorize_url`, an `expires_at` that has not yet expired on the server's
+  clock, and a `poll_interval_sec` of at least 1 second and less than the remaining flow lifetime. An
+  abnormal server response ends the flow without opening any external address.
 - The resident root layer queries the pending flow in the Host; with no pending flow no network
   request is made.
 - Only `zai` and `bigmodel` poll; extension providers keep the original deep-link process and do not
   start empty Root polling.
-- The interval between consecutive polls uses the Host monotonic clock, so a system clock set back cannot stop the next
-  query after it is due. The `expires_at` checks at init, polling and callback still use the system time, and the local
-  wait is still capped at five minutes. This split does not let an expired response through and does not replace the
-  server's absolute deadline with a fixed TTL.
 - The BigModel browser callback uses the official `/app/oauth/login?redirect=zcode://oauth/callback`
   and must not display the success or failure pages of `/oauth/cli/callback/bigmodel`. Changing the
   callback address does not cancel Host polling.
 - `pending` keeps polling at the server interval; `ready` writes atomically once and ends;
   `failed`, expiration, cancellation or business errors end the current flow.
+- The interval between consecutive polls uses the Host monotonic clock, so a system clock set back cannot stop the next
+  query after it is due.
+- The remaining flow lifetime is computed on the server's clock; see [Local clock skew](#local-clock-skew).
+  The Host timer clears the flow at the earlier of the remaining lifetime and the five-minute cap
+  (monotonic clock). Later polling reports expiration, and a late callback is handled as an invalid state.
+  A system time jump does not change the expiry time. This split does not let an expired response through
+  and does not replace the server's absolute deadline with a fixed TTL.
 - Unknown poll status, field type errors or a missing provider token fail as protocol errors, not
   JS type exceptions.
 - `OAuthService` is the sole owner of login completion. Deep-link and polling results are processed
@@ -103,6 +106,38 @@ App                  init A                  init B                  Host pendin
 - Web `/remote`, shared-host attachment, session/task realtime and replayable recovery chains are
   unchanged.
 
+## Local clock skew
+
+`expires_at` is an absolute time (Unix seconds) on the server's clock. A server flow lives 300 seconds, and
+after it expires poll returns HTTP 400 with `code 3004` (`invalid_flow`). Subtracting `expires_at` from the
+local `Date.now()` counts the local clock skew into the remaining lifetime: when the local clock is X seconds
+fast, only `300 - X` seconds are left, and at about 298 seconds fast or more every init is judged invalid and
+the user cannot log in (there was a Windows machine whose clock was 394 seconds fast).
+
+The init response `data` carries `server_time` (the server's current time, Unix seconds), on the same server
+clock as `expires_at`. The `Date` response header is not part of the interface contract, so the client does
+not read it.
+
+```text
+init response data: expires_at + server_time (same server clock, Unix seconds)
+  remaining lifetime = (expires_at - server_time) seconds   <- local skew cancels out; falls back to local time when no numeric server_time is returned
+  Host timer = min(remaining lifetime, 5 minutes)           <- monotonic clock; clears the flow on expiry, system time jumps do not matter
+server:  after expiry poll returns 400 / 3004                <- final decision, ends the flow as a 4xx terminal state
+```
+
+- The server documentation words this as "compute the offset first, then the countdown":
+  `offset = server_time - local receive time`,
+  `local expiry = expires_at - offset = local receive time + (expires_at - server_time)`.
+  The client shows no countdown and only starts a timer from the remaining lifetime, so both wordings give the
+  same result.
+- The local timer starts when the response is received, one network one-way delay later than the server; the
+  server's 3004 is the backstop.
+- The monotonic clock may pause during system sleep; after wake-up the server's 3004 ends a flow that has expired.
+- An init that is already expired on the server's clock (`expires_at <= server_time`) is still rejected.
+- An older server that does not return `server_time` falls back to local time, which is the behavior before the
+  fix: users whose local clock is fast still fail against such environments.
+- The same rule applies to Host (including the server form), the CLI and Web `/remote` browser login.
+
 ## Acceptance scenarios
 
 - While the Z.AI or BigModel deep link has not returned, polling `ready` still completes login and
@@ -115,6 +150,10 @@ App                  init A                  init B                  Host pendin
   not overwrite it.
 - BigModel uses the original official redirect page for deep-link compatibility while keeping the
   polling flow.
+- With the local clock 394 seconds faster than the server, login still completes; an init already expired on
+  the server's clock is still refused.
+- After the system time jumps forward or back, the flow keeps polling at the server interval and completes
+  with the server's result.
 
 ### Dual-path race regression
 

@@ -12,6 +12,8 @@ export const ZCODE_TOOL_ENV_PASSTHROUGH_ENV_KEY = "ZCODE_TOOL_ENV_PASSTHROUGH_JS
 export const ZCODE_DESKTOP_CONTEXT_PROMPT_ENABLED_ENV = "ZCODE_DESKTOP_CONTEXT_PROMPT_ENABLED";
 export const ZCODE_CUA_PRODUCT_HELPER_ENV_KEY = "ZCODE_CUA_PRODUCT_HELPER";
 export const ZCODE_CUA_BROKER_SOCKET_ENV_KEY = "ZCODE_CUA_PERMISSION_BROKER_SOCKET";
+/** Socket sentinel for a standalone CLI that self-signs a credential group: when node_repl sees it, it runs the broker inside this process. */
+export const ZCODE_CUA_IN_PROCESS_BROKER_SOCKET = "in-process";
 // Official command endpoint (agent-side proxy, design doc 5.8): the address and session token
 // are injected per session by the agent into Bash/tool subprocesses only, never inherited via
 // the agent's global env.
@@ -203,6 +205,15 @@ export function readZCodeAgentTelemetryEnv(
 
 export function getCapturedZCodeAgentTelemetryEnv(): Record<string, string> {
   return { ...capturedZCodeAgentTelemetryEnv };
+}
+
+export function mintStandaloneZCodeCuaBrokerCredentials(): boolean {
+  if (capturedCuaBrokerCredentials) return false;
+  capturedCuaBrokerCredentials = Object.freeze({
+    socket: ZCODE_CUA_IN_PROCESS_BROKER_SOCKET,
+    pluginAuthority: globalThis.crypto.randomUUID().replaceAll("-", ""),
+  });
+  return true;
 }
 
 export function getCapturedZCodeCuaBrokerCredentials(): {

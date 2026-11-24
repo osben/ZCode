@@ -11,7 +11,12 @@ import {
   type ToolPart,
   STREAM_RECOVERY_DISCARDED_ERROR_NAME,
 } from "@zcode/contracts";
-import { readSubagentRunMetadata, type SubagentRunMetadata } from "@zcode/core";
+import {
+  hasStructuredSubagentFacts,
+  readLegacySubagentRunMetadata,
+  readSubagentRunMetadata,
+  type SubagentRunMetadata,
+} from "@zcode/core";
 import type { ZCodeSessionEndedSubagent, ZCodeSessionRunningSubagent } from "@zcode/shared";
 
 const SUBAGENT_TOOL_NAMES = new Set(["Agent", "Task", "subagent"]);
@@ -19,12 +24,14 @@ const CANCELLATION_PATTERN = /abort|cancel|interrupt|stop/i;
 const BACKGROUND_LAUNCH_ACK_PREFIX = "Async agent launched successfully.";
 
 interface SubagentCandidate {
+  parentMessageIds?: string[];
   agentId?: string;
   childSessionId: string;
-  runInBackground: boolean;
-  /** 父 tool part 是后台 launch ACK（纯文本）：它的 completed 只表示「已启动」，不是 child 的终态。 */
+  /** 父 tool part 记录的是后台启动（part.metadata.background；旧 part 是 launch ACK 前缀）：它的 completed 只表示「已启动」，不是 child 的终态。 */
   launchAcknowledged: boolean;
-  /** launch ACK 里的 output_file（metadata.json 在同一目录）。 */
+  /** 父 tool part 没有本次新增的结构化事实（升级前写下），按原来的方式读 launch ACK 文本。 */
+  legacyReceipt: boolean;
+  /** 后台启动时定下的输出文件（part.metadata.outputFile；旧 part 取 launch ACK 的 output_file；metadata.json 在同一目录）。 */
   outputFile?: string;
   output: Record<string, unknown> | null;
   part: ToolPart;
@@ -102,6 +109,7 @@ function parseJsonObject(value: string | undefined): Record<string, unknown> | n
   }
 }
 
+// 只给没有结构化事实的旧 part 用：与引入 part.metadata 事实之前的读法一模一样。
 function agentIdFromLaunchAcknowledgement(value: string | undefined): string | undefined {
   if (!value) return undefined;
   return nonEmptyString(value.match(/(?:^|\n)agentId:\s*([^\s(]+)/)?.[1]);
@@ -184,15 +192,21 @@ function candidateFromToolPart(
   const input = asRecord(part.state.input);
   const stateMetadata = "metadata" in part.state ? asRecord(part.state.metadata) : {};
   const metadata = { ...asRecord(part.metadata), ...stateMetadata };
-  const agentId =
-    stringField(output ?? {}, "agentId") ??
-    // A background Agent's persisted launch ACK is plain text. A cold query without the transient
-    // spawn event cannot recover childSessionId, causing a real running Agent to be skipped entirely.
-    // The standard ACK includes agentId; recover it from that stable field, consistent with the
-    // runtime's session ID rules.
-    agentIdFromLaunchAcknowledgement(completedOutput) ??
-    stringField(metadata, "agentId") ??
-    relation?.agentId;
+  // Fix reason (2026-11-10): the code used to detect a background launch by the launch-acknowledgement prefix and used a regex to pull agentId and
+  // output_file out of the acknowledgement text. The text format changes, long text is truncated, and when the parent agent has no Read / Bash
+  // the acknowledgement carries no output_file line. Settlement now writes the identity and the background launch fact into part.metadata
+  // (agentId / childSessionId / outputFile together, plus background for background runs), and those are read first.
+  // Fix reason (2026-11-11, !3624 review CR-01): older parts written before the upgrade lack these fields, and reading only structured fields
+  // would stop listing old Agents in the child-session directory; without these fields, read the acknowledgement text with the original logic, exactly as before.
+  const legacyReceipt = !hasStructuredSubagentFacts(part.metadata);
+  const agentId = legacyReceipt
+    ? (stringField(output ?? {}, "agentId") ??
+      agentIdFromLaunchAcknowledgement(completedOutput) ??
+      stringField(metadata, "agentId") ??
+      relation?.agentId)
+    : (stringField(metadata, "agentId") ??
+      stringField(output ?? {}, "agentId") ??
+      relation?.agentId);
   const childSessionId =
     stringField(output ?? {}, "childSessionId") ??
     stringField(metadata, "childSessionId") ??
@@ -206,15 +220,19 @@ function candidateFromToolPart(
     relation?.description ??
     stringField(input, "prompt") ??
     "Subagent";
-  const launchAcknowledged = completedOutput?.startsWith(BACKGROUND_LAUNCH_ACK_PREFIX) === true;
-  // 取到行尾：Windows 的用户目录可能带空格。
-  const outputFile = launchAcknowledged
-    ? nonEmptyString(completedOutput?.match(/(?:^|\n)output_file:[ \t]*([^\r\n]+)/)?.[1]?.trim())
-    : undefined;
+  const launchAcknowledged = legacyReceipt
+    ? completedOutput?.startsWith(BACKGROUND_LAUNCH_ACK_PREFIX) === true
+    : part.state.status === "completed" && metadata.background === true;
+  const outputFile = !launchAcknowledged
+    ? undefined
+    : legacyReceipt
+      ? // 取到行尾：Windows 的用户目录可能带空格。
+        nonEmptyString(completedOutput?.match(/(?:^|\n)output_file:[ \t]*([^\r\n]+)/)?.[1]?.trim())
+      : stringField(metadata, "outputFile");
   return {
     childSessionId,
-    runInBackground: input.run_in_background === true,
     launchAcknowledged,
+    legacyReceipt,
     ...(outputFile ? { outputFile } : {}),
     part,
     output,
@@ -248,10 +266,32 @@ function collectCandidates(
     for (const part of message.parts) {
       if (part.type !== "tool") continue;
       const candidate = candidateFromToolPart(part, relations.get(part.callID));
-      if (candidate) candidates.set(candidate.childSessionId, candidate);
+      if (candidate) {
+        const previous = candidates.get(candidate.childSessionId);
+        candidates.set(candidate.childSessionId, {
+          ...candidate,
+          parentMessageIds: [
+            ...new Set([...(previous?.parentMessageIds ?? []), String(message.info.id)]),
+          ],
+        });
+      }
     }
   }
   return [...candidates.values()];
+}
+
+/** 与身份候选共用解析和活动分支筛选，不能用投影行是否存在代替持久来源。 */
+export function collectSubagentParentMessageIds(
+  session: SessionInfo,
+  messages: readonly MessageWithParts[],
+  parentEvents?: readonly SessionEvent[],
+): Record<string, string[]> {
+  return Object.fromEntries(
+    collectCandidates(session, messages, parentEvents).map((candidate) => [
+      candidate.childSessionId,
+      candidate.parentMessageIds ?? [],
+    ]),
+  );
 }
 
 export function collectSubagentChildSessionIds(
@@ -361,10 +401,14 @@ function runningStatus(input: {
   // and a partial parent projection may temporarily omit the still-running background task. Looking
   // only at the tool part would then misclassify the child as ended and clear its V4 running row
   // during cold seeding. If the child has no terminal output and the spawn relation has not stopped,
-  // the background input itself is a recoverable running fact. Actual terminal state from the
+  // the background launch fact itself is a recoverable running fact. Actual terminal state from the
   // background/child projection/outcome takes precedence.
+  // Fix reason: this used to read run_in_background === true from the raw input. Once Agents always run in the background that field is
+  // absent from the input, so a running background subagent was judged ended when cold start seeded; the structured background launch fact is read now.
+  // Known and accepted boundary: in the millisecond window before the launch acknowledgement returns, launchAcknowledged is still false and the decision
+  // is left to the parent projection below; the old logic judged a failed launch as running in that window.
   if (
-    input.candidate.runInBackground &&
+    input.candidate.launchAcknowledged &&
     input.background === undefined &&
     input.childProjection === undefined &&
     input.candidate.stoppedStatus === undefined &&
@@ -454,7 +498,7 @@ function endedStatus(input: {
   const outputStatus = stringField(input.candidate.output ?? {}, "status");
   if (outputStatus === "cancelled" || outputStatus === "stopped") return "cancelled";
   if (outputStatus === "failed" || outputStatus === "error") return "failed";
-  // 纯文本 launch ACK 与结构化的 async_launched 同义：completed 只表示已启动，终态看 child。
+  // 后台启动记录（part.metadata.background；旧 part 是纯文本 launch ACK）与结构化的 async_launched 同义：completed 只表示已启动，终态看 child。
   // 修复原因：之前按 tool part 的 completed 判 success，冷查询里 child 已失败的后台 Agent 显示为成功。
   if (outputStatus === "async_launched" || input.candidate.launchAcknowledged) {
     return input.childOutcome.status ?? "lost";
@@ -473,8 +517,9 @@ function startedAt(
 }
 
 /**
- * 为可能是上一代 runtime 遗留的后台 Agent（launch ACK 早于本进程启动）预读 metadata.json，
- * 交给 `projectSessionSubagents` 的 `previousRuntimeRunMetadata`。路径先用 launch ACK 的
+ * 为可能是上一代 runtime 遗留的后台 Agent（后台启动早于本进程启动）预读 metadata.json，
+ * 交给 `projectSessionSubagents` 的 `previousRuntimeRunMetadata`。路径用启动时记在 part 上的
+ * outputFile：之后改了存储配置也不受影响。没有结构化事实的旧 part 按原来的逻辑：先用 launch ACK 的
  * output_file，没有时按 runner 的目录布局 `<outputRootDir>/<父会话>/<agentId>`；`outputRootDir`
  * 只在需要时才解析。读不到的不放进结果，投影按原判据处理。
  */
@@ -503,12 +548,21 @@ export async function loadPreviousRuntimeRunMetadata(input: {
   let outputRootResolved = false;
   await Promise.all(
     launches.map(async (candidate) => {
+      if (!candidate.legacyReceipt) {
+        if (!candidate.outputFile) return;
+        const metadata = await readSubagentRunMetadata({
+          agentId: candidate.agentId!,
+          outputFile: candidate.outputFile,
+        });
+        if (metadata) result.set(candidate.childSessionId, metadata);
+        return;
+      }
       if (!candidate.outputFile && !outputRootResolved) {
         outputRootResolved = true;
         outputRootDir = input.resolveOutputRootDir?.();
       }
       if (!candidate.outputFile && !outputRootDir) return;
-      const metadata = await readSubagentRunMetadata({
+      const metadata = await readLegacySubagentRunMetadata({
         agentId: candidate.agentId!,
         ...(candidate.outputFile ? { outputFile: candidate.outputFile } : {}),
         ...(outputRootDir ? { outputRootDir } : {}),
@@ -567,7 +621,7 @@ export function projectSessionSubagents(
         ? candidate.part.state.time.end
         : undefined;
     const runMetadata = input.previousRuntimeRunMetadata?.get(candidate.childSessionId);
-    const status = endedStatus({
+    const persistedStatus = endedStatus({
       background,
       candidate,
       childOutcome,
@@ -575,6 +629,17 @@ export function projectSessionSubagents(
       fromPreviousRuntime,
       runMetadata,
     });
+    // 首次前台 Agent 的 tool end 早于 SendMessage 恢复后的 child 终态；
+    // 冷查询必须采用新一轮持久化结果，否则清除时间会误过滤新结果。
+    const resumedOutcome =
+      !candidate.launchAcknowledged &&
+      fromPreviousRuntime &&
+      childOutcome.status !== undefined &&
+      (childOutcome.endedAt ?? 0) > (stateEndedAt ?? 0)
+        ? childOutcome
+        : undefined;
+    const status = resumedOutcome?.status ?? persistedStatus;
+    const summary = resumedOutcome?.summary ?? candidate.summary ?? childOutcome.summary;
     const metadataEndedAt =
       fromPreviousRuntime && runMetadataEndedStatus(runMetadata) === status
         ? runMetadata?.completedAt
@@ -582,15 +647,14 @@ export function projectSessionSubagents(
     ended.push({
       ...common,
       status,
-      ...(candidate.summary || childOutcome.summary
-        ? { summary: candidate.summary ?? childOutcome.summary }
-        : {}),
+      ...(summary ? { summary } : {}),
       endedAt:
         // 遗留 Agent 停在旧进程退出前最后一次落盘的时刻，launch ACK 的时间不是它的结束时间。
         (fromPreviousRuntime && status === "lost"
           ? (childOutcome.endedAt ?? childSession.time.updated)
           : undefined) ??
         metadataEndedAt ??
+        resumedOutcome?.endedAt ??
         background?.completedAt?.getTime() ??
         candidate.stoppedAt ??
         stateEndedAt ??

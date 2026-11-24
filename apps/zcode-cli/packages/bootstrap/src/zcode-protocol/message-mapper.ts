@@ -282,8 +282,9 @@ function mapToolStateMetadata(
     return metadata;
   }
   const protocolMetadata = { ...metadata };
-  // readFileState contains a complete file snapshot used only for internal Agent resume recovery.
-  // The app/remote protocol needs display metadata only; do not expose file contents through tool-state metadata.
+  // readFileState is a snapshot of read state (new snapshots carry only a content hash; older snapshots from before the upgrade carry the full
+  // content), used only for internal agent cold recovery and rewind rebuild. The app/remote protocol needs display metadata only; do not
+  // expose it, or the file contents in older snapshots, through tool-state metadata.
   delete protocolMetadata.readFileState;
   return protocolMetadata;
 }

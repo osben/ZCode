@@ -2,7 +2,10 @@ import { constants as fsConstants, type Stats } from "node:fs";
 import { access, stat } from "node:fs/promises";
 import { delimiter, isAbsolute, join, resolve as resolvePath } from "node:path";
 import type { ResolvedLspServer } from "@zcode/contracts";
-import { resolveExecutionCommand, type ResolvedSpawnCommand } from "../exec/execution-command.js";
+import {
+  resolveArgvExecutionCommand,
+  type ResolvedSpawnCommand,
+} from "../exec/execution-command.js";
 import { getWindowsEnvValue, windowsExecutableCandidates } from "../exec/windows-executable.js";
 import { buildMcpStdioEnv } from "../mcp/network.js";
 import { pathApiFor } from "./paths.js";
@@ -47,8 +50,8 @@ export function resolveLspSpawnCommand(
   server: ResolvedLspServer,
   options: ResolveLspSpawnCommandOptions,
 ): ResolvedSpawnCommand {
-  return resolveExecutionCommand(
-    { mode: "argv", file: server.command, args: server.args },
+  return resolveArgvExecutionCommand(
+    { file: server.command, args: server.args },
     {
       cwd: options.cwd,
       env: options.env as NodeJS.ProcessEnv,

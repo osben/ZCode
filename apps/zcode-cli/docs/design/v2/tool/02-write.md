@@ -97,14 +97,26 @@ Failure paths:
 - A UNC path does no early I/O and is left to permission handling.
 - Filesystem errors during the write bubble up.
 
-These errors keep the original cause and distinguish:
+These errors keep the original cause. Failures the handler can anticipate are told apart by a numeric `errorCode` (see the next section); permission denials go through the permission chain, and filesystem I/O errors are thrown as they are. None of these are in the table below.
 
-- `file_not_read`
-- `partial_read`
-- `stale_file`
-- `permission_denied`
-- `secret_detected`
-- `io_error`
+### 模型看到的文字（2026-11-14）
+
+下面的失败由 handler 返回 `{ result: false, errorCode, message }`，executor 包成 `<tool_use_error>…</tool_use_error>`；
+App 显示不带标签的原文。检查都在 handler 里、权限之后，时机不变。`<file_path>` 是模型传入的原值。
+
+| 条件 | errorCode | 文字 |
+| --- | --- | --- |
+| 已有文件没读过；或最近一次视图是部分视图（Read 只返回了一页、压缩补回时只给了引用、截断后注入上下文的 MEMORY.md） | 2 | `File has not been read yet. Read it first before writing to it.` |
+| 读后被改过 | 3 | `File has been modified since read, either by the user or by a linter. Read it again before attempting to write it.` |
+| 目标是目录 | 17 | `<file_path> is a directory, not a file. To create a file inside it, include the file name in file_path.` |
+| 目标存在但不是普通文件 | 18 | `<file_path> exists but is not a regular file (a device, FIFO or socket). Write only creates or overwrites regular files.` |
+
+截断注入的 MEMORY.md 不单独写“只看到开头，改用 Edit”：ZCode 的 Edit 同样要求先完整读过（03-edit.md），照那句去做
+会再失败一次；“先 Read”在 Write 与 Edit 上都成立。
+目录与非普通文件原来返回文件系统层的 `Cannot read directory as text file: <path>` / `Cannot read non-file path as text: <path>`，
+模型看不出是 `file_path` 写错了。已有文件的编码读不出来时仍抛文件系统错误，文字不变。
+
+修复原因：这些失败原来都是抛出的异常，不带 `<tool_use_error>`；Edit 的同类失败一直带标签，两个工具不一致。
 
 ## Implementation status (2026-05-08)
 

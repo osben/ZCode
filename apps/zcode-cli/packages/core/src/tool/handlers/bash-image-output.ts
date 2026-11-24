@@ -2,15 +2,16 @@ import { readFile, stat } from "node:fs/promises";
 import {
   READ_IMAGE_MAX_DIMENSION,
   detectImageMediaType,
-  isImageProcessorPortError,
   parseImageDataUrl,
-  type ParsedImageDataUrl,
   type TraceContext,
 } from "@zcode/contracts";
 import type { ToolExecutionContext } from "../types.js";
 import { stripClaudeCodeHintLines } from "./bash-semantics.js";
 
 const MAX_IMAGE_FILE_BYTES = 20 * 1024 * 1024;
+// RIFF 头：4 字节 "RIFF" + 4 字节小端长度，长度字段记录的是文件总长减去这 8 字节。
+const RIFF_SIZE_OFFSET = 4;
+const RIFF_HEADER_BYTES = 8;
 
 export interface BashImageSource {
   artifactPath?: string;
@@ -24,7 +25,12 @@ export async function prepareBashImageOutput(
 ): Promise<{ stdout: string } | undefined> {
   const source = stripClaudeCodeHintLines(await readBashImageSource(stdout));
   const parsed = parseImageDataUrl(source);
-  if (!parsed) return undefined;
+  // 声明类型必须先与 magic bytes 一致，原因有两个：resize 适配器对 WebP 原样透传、不解码；
+  // 对其他格式按内容解码，却按声明的类型返回原 bytes。不检查的话，任意字节声明成 image/webp、
+  // 或错标类型的图片（例如 PNG 标成 JPEG）都会带着错误类型发给 provider。
+  if (!parsed || detectImageMediaType(parsed.data) !== parsed.mediaType) return undefined;
+  // WebP 不解码，截断的 WebP 头部完好也能过上一步；只能用 RIFF 头声明的文件总长发现截断。
+  if (parsed.mediaType === "image/webp" && isTruncatedRiff(parsed.data)) return undefined;
   if (!context.imageProcessorPort) return { stdout: parsed.dataUrl };
 
   try {
@@ -42,11 +48,8 @@ export async function prepareBashImageOutput(
     };
   } catch (error) {
     if (context.abortSignal.aborted) throw error;
-    if (shouldFallbackToOriginalImage(error)) {
-      const fallback = fallbackValidImageDataUrl(parsed);
-      if (fallback) return fallback;
-    }
-    // Bash image output is best-effort; fall back to text if an invalid image fails decoding so a bad image block is not sent to the provider.
+    // Any resize failure falls back to text. Previously, after a decode failure only magic bytes let it through: a truncated or corrupted image
+    // with an intact header was sent as an image block, the provider rejected it, and the bad image was replayed with session history so every later request failed.
     return undefined;
   }
 }
@@ -64,17 +67,10 @@ async function readBashImageSource(stdout: BashImageSource): Promise<string> {
   }
 }
 
-function fallbackValidImageDataUrl(input: ParsedImageDataUrl): { stdout: string } | undefined {
-  const detected = detectImageMediaType(input.data);
-  if (!detected || detected !== input.mediaType) return undefined;
-  // Once image stdout passes magic validation, resize is only a model-budget optimization;
-  // an optimization failure must not downgrade the provider-visible image block to raw data URI text.
-  return { stdout: input.dataUrl };
-}
-
-function shouldFallbackToOriginalImage(error: unknown): boolean {
-  if (!isImageProcessorPortError(error)) return true;
-  return error.code === "processing_failed";
+// Magic bytes already confirmed WebP before this call, and the data is at least 12 bytes, so the length field can be read safely.
+function isTruncatedRiff(data: Uint8Array): boolean {
+  const view = new DataView(data.buffer, data.byteOffset, data.byteLength);
+  return data.byteLength < view.getUint32(RIFF_SIZE_OFFSET, true) + RIFF_HEADER_BYTES;
 }
 
 function createToolTrace(context: ToolExecutionContext): TraceContext {

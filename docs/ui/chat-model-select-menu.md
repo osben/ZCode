@@ -4,16 +4,16 @@
 
 ## Goal
 
-The composer reuses `ModelConfigSelect`, and model selection uses a simple menu, reducing the interaction cost of a search-style Command list for small-scope model switching.
+The composer reuses `ModelConfigSelect`. The composer merged panel uses a Popover that holds the provider list, a plain search bar, a listbox of models and a native slider. Other call sites keep using a DropdownMenu.
 
 ## Current implementation
 
 - `packages/ui/src/ModelConfigSelect.tsx`
-  - Renders the model menu with the existing `DropdownMenu` component, keeping `bg-menu`, compact row height and keyboard menu semantics.
-  - With several providers, the merged menu has the currently browsed provider row at the top; expanded (hover, click or keyboard) it is the provider list, and the Models list below shows the models of the browsed provider. The provider row is for browsing only: click, keyboard confirm, or hovering / arrow-moving to a provider in the desktop submenu only switches the Models list; model, thinking level and account connection change only when a model row is selected (ISSUE-058, see [`specs/composer-model-picker-browse-only-providers.md`](../../specs/composer-model-picker-browse-only-providers.md)).
+  - Non-composer call sites render the model menu with the existing `DropdownMenu` component, keeping `bg-menu`, compact row height and keyboard menu semantics.
+  - With several providers, the merged menu has the currently browsed provider row at the top; expanded (hover, click or ArrowRight) it opens the provider list (a flyout pinned to the panel's right edge in the composer Popover, a submenu at DropdownMenu call sites), and the Models list below shows the models of the browsed provider; the composer also has a search box that filters the shown provider's models. The provider row is for browsing only: a click or Enter/Space on a provider switches the Models list and closes the flyout, while hovering or arrowing between provider rows changes nothing; model, thinking level and account connection change only when a model row is selected (ISSUE-058, see [`specs/composer-model-picker-browse-only-providers.md`](../../specs/composer-model-picker-browse-only-providers.md)).
   - The Z.ai / BigModel family shows the current connection method as a short badge on the group title, for example `Start`, `Individual`, `Team`, `API`; the badge is a borderless, faint-surface round pill, and model items do not repeat it. The connection method is switched only in settings; the composer menu only consumes the current selection.
   - With a single provider, the first-level menu shows the model list directly without wrapping a provider layer.
-  - The selected model uses `DropdownMenuRadioItem` to keep single-select state; a model restricted by the currently running task uses disabled semantics and a lock hint and does not trigger a switch.
+  - In the composer a model uses `role="option"` and `aria-selected` for single-select state; other call sites use `DropdownMenuRadioItem`. A model restricted by the currently running task uses disabled semantics and a lock hint and does not trigger a switch.
   - When the model config's input types include any non-Text value, a compact localized "视觉 / Vision" badge follows the model name. The badge is a light round pill: thin border, faint surface background, `text-ui-xs` medium weight; it belongs to the left model content and the row-end selected check keeps its position. It only describes the input types already declared in the provider registry and does not promise the current adapter can send the corresponding attachment.
   - `Ctrl+M` only opens the model menu and does not cycle models in order; model switching must be an explicit user selection in the menu.
   - When the trigger text changes it reuses the toolbar rolling label animation, consistent with the mode / thought level controls; under system reduced motion it is replaced statically.

@@ -548,6 +548,8 @@ function subagentInfoFromToolPart(
       : {};
   const output = part.state.status === "completed" ? parseJsonObject(part.state.output) : null;
   const metadata = part.metadata && typeof part.metadata === "object" ? part.metadata : {};
+  // 新 part 的身份由 Agent 工具结算写进 part.metadata（同步失败的 error part 也有），排在文本之前；
+  // 升级前写下的旧 part 只有回执文本，靠 agentId 行。这个兜底不能删（!3624 评审 CR-01）。
   const explicitAgentId =
     stringField(output, "agentId") ??
     stringField(metadata, "agentId") ??
@@ -1482,12 +1484,11 @@ function steerDeliveryOfMessage(message: MessageWithParts): "guide" | "queue" | 
 }
 
 /**
- * Turn-boundary decision: a real user starter (except guide steer — inlined into the current
+ * Turn-boundary decision: a real user starter (except guide steer, which is inlined into the current
  * turn) or a model-only wake trigger (background wake / goal continuation each opening a turn).
- * Note: the live "merger" case (a notification folded into the current turn while the active
- * loop is still running) cannot be distinguished from persisted facts on the cold path; it is
- * uniformly treated as a boundary — no content is lost and no bubbles appear; only turn
- * attribution differs from the live merger case, a known deviation.
+ * A notification consumed inside the active loop stays in its original turn according to the persisted
+ * inputPresentation via the shared policy, so splitting turns on cold recovery cannot conflict with the stable
+ * fork anchor; legacy notifications without the marker still follow the wake rule.
  */
 function isTurnBoundaryStarter(message: MessageWithParts): boolean {
   if (isRealUserTurnStarter(message)) {

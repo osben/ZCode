@@ -18,8 +18,10 @@ pluginStoreOrder format is unchanged; already-published config needs no adjustme
 - `packages/services/src/client-config/clientConfigService.ts`: request, validation,
   caching, refresh, and in-flight merging.
 - `getSnapshot({ forceRefresh? })` returns validated public fields; currently
-  pluginStoreOrder, zsrcUrl, and uiPluginRecommendations. It never returns the whole
-  remote response and never exposes account or provider data to the Renderer.
+  pluginStoreOrder, zsrcUrl, uiPluginRecommendations and draftModelMigration (rules in
+  [draft model migration](chat/draft-model-migration.md)). It never returns the whole
+  remote response and never exposes account or provider data to the Renderer. The
+  refresh interval is for internal use by the service only and is not part of the snapshot.
 - On service success with a missing/withdrawn pluginStoreOrder it returns null; a
   single malformed pattern still degrades per the existing ordering contract.
   Envelope/HTTP/network failures reject that read and keep the service's existing
@@ -52,14 +54,16 @@ flowchart LR
   app_version, platform) plus the optional identity of the read; the request context is injected by the Host
   assembly. Different contexts share no snapshot/in-flight request, and late results
   write back only to their own key.
-- A valid snapshot has a 1-hour TTL; in-flight requests merge within the same
+- The valid snapshot TTL comes from the response field `clientConfigRefreshIntervalSeconds`
+  (see "Refresh interval and failure fallback" below); in-flight requests merge within the same
   context. A forced refresh bypasses the valid snapshot but does not clear it. While
   a forced refresh runs, plain reads still return the valid old snapshot
   immediately; only a successful refresh atomically replaces it.
-- Before each config read, expired cache entries with no in-flight request are
-  removed, releasing old identities' cache keys and snapshots. In-flight entries
+- Before each config read, expired cache entries of other contexts with no in-flight
+  request are removed, releasing old identities' cache keys and snapshots. The old
+  snapshot of the current context is kept as the failure fallback; in-flight entries
   stay until the request completes so cleanup does not cause duplicate same-identity
-  requests; unexpired entries are still reused within the original TTL.
+  requests.
 - The HTTP request and body read use a 15-second overall AbortSignal budget;
   failures are not cached as errors and never permanently lock the in-flight state.
 - Callers get a copy of the snapshot so same-process consumers cannot mutate the
@@ -84,17 +88,20 @@ capability — this feature's semantic graph seeds the real code and the unique 
 
 ## Acceptance
 
-| ID     | Setup / action / assertion                                                                                                                                                                      |
-| ------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| CCF-01 | Parallel reads of the same URL and identity → one HTTP request only; reads after login, account switch or logout never reuse another identity's snapshot                                        |
-| CCF-02 | Valid snapshot exists → plain reads during a forced refresh return the old value; on refresh failure the old value stays readable, and a successful withdrawal returns null                     |
-| CCF-03 | Switch endpoint/version/platform, late old requests → snapshots stay isolated per key, no cross-overwrite                                                                                       |
-| CCF-04 | Error envelope/HTTP/hanging body → rejected and retryable; timeout cancels the whole request                                                                                                    |
-| CCF-05 | RPC getSnapshot → strictly typed public fields, unknown fields not passed through, callers cannot mutate the cache                                                                              |
-| CCF-06 | Multiple remote workspaces / server remote service sets → the same injected instance is registered                                                                                              |
-| CCF-07 | Real dev / browser → Code, Work, refresh, empty categories, and legacy guides merging hold; logs use client-config.getSnapshot                                                                  |
-| CCF-08 | Diff the three subscription source files against the MR target branch → zero changes from this MR, legacy-path tests pass                                                                       |
-| CCF-09 | Reads of different identities under a controllable clock → the next read purges expired entries; in-flight entries are kept and deduplicated per identity, unexpired snapshots are still reused |
+| ID     | Setup / action / assertion                                                                                                                                                                                                 |
+| ------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| CCF-01 | Parallel reads of the same URL and identity → one HTTP request only; reads after login, account switch or logout never reuse another identity's snapshot                                                                   |
+| CCF-02 | Snapshot exists → plain reads during a forced refresh return the old value; on refresh failure the old value stays readable and plain reads do not error; a successful withdrawal returns null                             |
+| CCF-03 | Switch endpoint/version/platform, late old requests → snapshots stay isolated per key, no cross-overwrite                                                                                                                  |
+| CCF-04 | Error envelope/HTTP/hanging body → rejected and retryable; timeout cancels the whole request                                                                                                                               |
+| CCF-05 | RPC getSnapshot → strictly typed public fields, unknown fields not passed through, callers cannot mutate the cache                                                                                                         |
+| CCF-06 | Multiple remote workspaces / server remote service sets → the same injected instance is registered                                                                                                                         |
+| CCF-07 | Real dev / browser → Code, Work, refresh, empty categories, and legacy guides merging hold; logs use client-config.getSnapshot                                                                                             |
+| CCF-08 | Diff the three subscription source files against the MR target branch → zero changes from this MR, legacy-path tests pass                                                                                                  |
+| CCF-09 | Reads of different identities under a controllable clock → the next read purges expired entries of other identities; in-flight entries are kept and deduplicated per identity, the current identity's old snapshot is kept |
+| CCF-10 | Response interval 60 seconds → a plain read after 61 seconds starts a refresh; a missing or out-of-range field falls back to 3600 seconds or the bounds                                                                    |
+| CCF-11 | API returns 503 / hangs while an old snapshot exists → a plain read returns the old snapshot within 3 seconds; no repeated request within 60 seconds after the failure; after recovery the new value is returned           |
+| CCF-12 | Mobile attachment calls getSnapshot → returns the desktop Host's public snapshot, no longer times out                                                                                                                      |
 
 Browser E2E keeps the existing manual-review/pending cases, injecting the new
 service contract; cases are not promoted on their own.
@@ -156,3 +163,53 @@ flowchart LR
   dedupe, expired-snapshot forced-refresh in-flight dedupe, failed-entry release, and the
   cache size after repeated identity switches; 3 of them failed before the fix. Cleanup
   runs on the next read and adds no timer.
+
+## Refresh interval and failure fallback (2026-11-13)
+
+Operations adjust the refresh cadence in one place through `data.configs.clientConfigRefreshIntervalSeconds`.
+Only two readers follow this field for now: `ClientConfigService` and the
+[Built-in Provider Config refresh](builtin-provider-maintenance/delivery.md#effect-and-recovery-boundaries).
+Other readers (plan, help, forced update, Desktop Main gray release) keep their existing cadence and
+will migrate when results and caches are reused uniformly.
+
+- The interval is in seconds, rounded and clamped to [60, 3600]; when missing, not a number or not
+  positive it is 3600, the previous one hour. The shared parse function
+  `resolveClientConfigRefreshIntervalMs` keeps the two paths from parsing separately.
+- Each per-context cache entry stores the snapshot, the expiry time, the failure retry time and the
+  in-flight request:
+
+| State                                                     | Plain read behavior                                                                                                                                            |
+| --------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Snapshot not expired, or in the failure retry wait period | Returns the snapshot immediately                                                                                                                               |
+| Snapshot expired                                          | Starts or reuses the in-flight refresh and waits at most 3 seconds; on timeout or failure returns the old snapshot and the request continues in the background |
+| No snapshot (cold start, identity or Endpoint changed)    | Waits for the request; on failure it rejects and the business side shows the default                                                                           |
+| `forceRefresh`                                            | Waits for the request; on failure it rejects and the old snapshot is kept                                                                                      |
+
+- A successful refresh sets the expiry from the interval in this response and clears the failure state.
+  When a refresh fails while an old snapshot exists, no request is repeated within 60 seconds, so reads
+  do not each wait on the network during an API outage. A success with the field missing is still
+  treated as a server-side withdrawal, and the old snapshot must not override a withdrawal.
+- Logs use the `client-config` scope: entering the failure state logs one warn, continued failure logs
+  debug, and recovery logs info.
+- The mobile `web-remote-replayable` attachment allows the `ClientConfig` channel. The service returns
+  only public fields, the JWT is still injected by the desktop Host, and mobile reads no credentials.
+
+```mermaid
+sequenceDiagram
+  participant R as Renderer (desktop / mobile / remote workspace)
+  participant C as Host ClientConfigService
+  participant S as client/configs
+  R->>C: getSnapshot()
+  alt snapshot valid
+    C-->>R: snapshot
+  else snapshot expired
+    C->>S: refresh (single flight per key)
+    alt succeeds within 3 seconds
+      S-->>C: new snapshot + interval
+      C-->>R: new snapshot
+    else timeout or failure
+      C-->>R: old snapshot
+      S-->>C: completes later, written back to its own key
+    end
+  end
+```

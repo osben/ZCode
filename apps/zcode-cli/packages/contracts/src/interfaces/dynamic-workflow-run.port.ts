@@ -836,6 +836,7 @@ export interface DynamicWorkflowRunPort {
    * cross-session read path. Optional-member rationale is the same as for {@link resume}.
    */
   listRunsForSession?(limit?: number): Promise<DynamicWorkflowRunSessionSummary[]>;
+  getActivityHistory?(): Promise<DynamicWorkflowActivityHistory>;
   /**
    * Cold replay: replay journal entries for runs belonging to **this service's parent session** that
    * have not run in this process as progress-event payloads. These are **the same payloads** and use
@@ -1285,4 +1286,10 @@ export interface DynamicWorkflowRunSessionSummary {
    * eventually disagree—the button will be enabled but the command rejected.
    */
   resumable: boolean;
+}
+
+/** 冷恢复完整 Activity 索引；只含身份、状态与事件水位，不携带脚本或结果。 */
+export interface DynamicWorkflowActivityHistory {
+  runs: Array<{ runId: string; status: string; sequence: number }>;
+  childSessionIds: string[];
 }

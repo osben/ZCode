@@ -36,7 +36,10 @@ import { resolveRetryOptionsForBudget } from "./retry-budget.js";
 import { DEFAULT_MODEL_STREAM_IDLE_TIMEOUT_MS } from "./stream-idle-timeout.js";
 import { runGenerateText } from "./runner-generate.js";
 import { runStreamText } from "./runner-stream.js";
-import { normalizeReasoningHistory } from "./reasoning-history-normalization.js";
+import {
+  normalizeOpenAiReasoningHistory,
+  normalizeReasoningHistory,
+} from "./reasoning-history-normalization.js";
 import {
   defaultRuntime,
   type AiSdkAccountAccess,
@@ -437,15 +440,17 @@ function projectRequestHistory(
   request: AiSdkModelTextRequest,
   resolved: ResolvedAiSdkModel,
 ): AiSdkModelTextRequest {
+  const targetModel = { providerId: resolved.providerId, modelId: resolved.modelId };
+  if (resolved.providerKind === "openai") {
+    const messages = normalizeOpenAiReasoningHistory(request.messages, targetModel);
+    return messages === request.messages ? request : { ...request, messages };
+  }
   if (resolved.providerKind !== "anthropic") return request;
 
   // Structure normalization used to live in the serializer that every physical request passes through, so
   // signature-repair retries re-deleted the assistant placeholder the previous round had just restored and
   // merged user messages again. The logical request entry projects exactly once; later attempts only reuse
   // or derive from this request-local history.
-  const messages = normalizeReasoningHistory(request.messages, {
-    providerId: resolved.providerId,
-    modelId: resolved.modelId,
-  });
+  const messages = normalizeReasoningHistory(request.messages, targetModel);
   return messages === request.messages ? request : { ...request, messages };
 }

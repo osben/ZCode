@@ -1,5 +1,5 @@
 import type { Event } from "@zcode/rpc";
-import type { ConversationTelemetryFact } from "@zcode/shared/zcode-protocol-v4";
+import type { ConversationTelemetryInput } from "@zcode/shared/zcode-protocol-v4";
 import type { IZCodeAgentService } from "#src/zcode-agent/zcodeAgent.js";
 
 export interface ConversationTelemetryWorkspaceTarget {
@@ -12,7 +12,7 @@ export interface ConversationTelemetryWorkspaceTarget {
  * agent service after clientMode authorization; it does not open another RPC channel or let Web/mobile bypass the desktop-continuous gate.
  */
 export interface IConversationTelemetryService {
-  onFact(target: ConversationTelemetryWorkspaceTarget): Event<ConversationTelemetryFact>;
+  onFact(target: ConversationTelemetryWorkspaceTarget): Event<ConversationTelemetryInput>;
 }
 
 export function createConversationTelemetryService(

@@ -12,6 +12,7 @@ import { spawnCancellableStep, startStepExecution } from "./e2e-step-process.mjs
 import { applyForkE2ETelemetryReportEndpoint } from "./fork-e2e-telemetry-endpoint.mjs";
 import { hasRequiredSshE2EEnvironment, isSshFormalSpec } from "./e2e-formal-spec-selection.mjs";
 import { normalizeE2EDesktopBuildEnv } from "./ensure-e2e-desktop-build.mjs";
+import { PREINSTALLED_ENTRY_SHIM_PROCESS_TIMEOUT_MS } from "./build-windows-preinstalled-entry-shim.mjs";
 import { isFormalSpecAdmittedByEnvironment } from "./e2e-formal-spec-selection.mjs";
 
 const RUNNER_SHARD_ARG_PREFIX = "--shards=";
@@ -213,26 +214,46 @@ export function createWindowsE2EShardPlan({
     !wdioArgs.some((arg) => arg === "--exclude" || arg.startsWith("--exclude="));
   const buildEnv = createBuildEnv(env);
 
-  const buildSteps = sharded
-    ? [
-        {
-          id: "build-desktop",
-          kind: "build",
-          command: process.execPath,
-          args: [join(desktopDir, "scripts/ensure-e2e-desktop-build.mjs")],
-          cwd: repoRoot,
-          env: buildEnv,
-        },
-        {
-          id: "build-agent",
-          kind: "build",
-          command: process.execPath,
-          args: [join(repoRoot, "scripts/build-desktop-agent-cli.mjs")],
-          cwd: repoRoot,
-          env: buildEnv,
-        },
-      ]
-    : [];
+  const buildSteps = [
+    ...(platform === "win32"
+      ? [
+          {
+            id: "prepare-windows-entry-shim",
+            kind: "build",
+            command: process.execPath,
+            args: [
+              join(desktopDir, "scripts/build-windows-preinstalled-entry-shim.mjs"),
+              "--ensure",
+            ],
+            cwd: repoRoot,
+            env: buildEnv,
+            timeoutMs: PREINSTALLED_ENTRY_SHIM_PROCESS_TIMEOUT_MS,
+            killProcessTree: true,
+            killSignal: "SIGKILL",
+          },
+        ]
+      : []),
+    ...(sharded
+      ? [
+          {
+            id: "build-desktop",
+            kind: "build",
+            command: process.execPath,
+            args: [join(desktopDir, "scripts/ensure-e2e-desktop-build.mjs")],
+            cwd: repoRoot,
+            env: buildEnv,
+          },
+          {
+            id: "build-agent",
+            kind: "build",
+            command: process.execPath,
+            args: [join(repoRoot, "scripts/build-desktop-agent-cli.mjs")],
+            cwd: repoRoot,
+            env: buildEnv,
+          },
+        ]
+      : []),
+  ];
 
   const children = Array.from({ length: shardTotal }, (_, offset) => {
     const shardIndex = offset + 1;

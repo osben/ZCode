@@ -39,7 +39,9 @@ function ConversationPendingGuideListImpl({
   if (rows.length === 0) return null;
   return (
     // Pending guide messages render rows directly, bypassing the normal turn container; add the input dock's horizontal padding so bubbles and the status do not hug the edges.
-    <div data-v4-pending-guide-list="true" className="flex flex-col gap-5 px-4 pt-5">
+    // Bugfix: 856563f260 changed the input dock padding from px-4 to px-2, but this stayed px-4, so the bubble was 8px
+    // narrower than the input's right edge; the padding must stay the same value as the dock.
+    <div data-v4-pending-guide-list="true" className="flex flex-col gap-5 px-2 pt-5">
       {rows.map((row) => (
         <ConversationTurnRow
           key={row.sourceCommandId}

@@ -64,7 +64,7 @@ export const CreateWorkflowSavedSourceSchema = z
       .max(SAVED_WORKFLOW_MAX_NAME_CHARS)
       .describe("Name of a saved workflow (see ListSavedWorkflows)."),
     args: z
-      .record(z.unknown())
+      .record(z.string(), z.unknown())
       .optional()
       .describe("Values for the arguments the saved workflow declares."),
     /** Populated during resolution: location of the saved file. Not supplied by the model. */
@@ -147,7 +147,7 @@ const CreateWorkflowModelInputSchema = z
      * `validateInput` enforces this on model input.
      */
     args: z
-      .record(z.unknown())
+      .record(z.string(), z.unknown())
       .optional()
       .describe("Values for the arguments a `path` file declares. Only with `path`."),
     /**

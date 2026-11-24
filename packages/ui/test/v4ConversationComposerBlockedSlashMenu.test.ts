@@ -18,6 +18,12 @@ const state = vi.hoisted(() => ({
   editorAppSlashCommands: undefined as AppSlashCommand[] | undefined,
 }));
 
+// Upstream 4.0.0 ComposerStatusRow measures its capsules with DOM APIs the minimal DOM lacks; this
+// suite does not cover the status row.
+vi.mock("@/v4/ConversationStatusPanel.js", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/v4/ConversationStatusPanel.js")>()),
+  ComposerStatusRow: () => null,
+}));
 vi.mock("@/hooks/useZCodeSessionService.js", () => ({
   useZCodeSessionService: () => ({}),
 }));

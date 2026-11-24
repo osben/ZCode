@@ -177,6 +177,7 @@ export async function executeToolCallsForModelStep(
       subagentModelOverride: state.subagentModelOverride,
       model: state.model,
       toolSearch: options.toolSearch,
+      responseId: options.assistantMessageId,
       onBatchStart: async (toolCallIds) => {
         // The executor still returns cancelled results for an aborted batch, but tool parts that never entered
         // a handler must not be incorrectly marked running.
