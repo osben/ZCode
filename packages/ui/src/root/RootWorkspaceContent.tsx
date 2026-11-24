@@ -217,6 +217,9 @@ export function RootWorkspaceContent({
             onOpenWorkspace={handleOpenWorkspace}
             onOpenRemoteWorkspace={handleOpenRemoteWorkspace}
             allowOpenWorkspace={allowOpenWorkspace}
+            // Bugfix: without this flag the phone settings layer treated Web remote control as local,
+            // so permanent Delete and other desktop-only settings actions stayed enabled on the phone.
+            isWebRemoteControl={Boolean(webRemoteControlWorkspaceSwitcher)}
             onLogin={onLogin}
             onLogout={handleLogout}
             user={user}

@@ -187,8 +187,7 @@ Repository:
     preflight, and the fork running guard is process-local, so a queued `session_input` does not block
     deletion.
   - APD11 checks the fork Web remote gate: on the phone the delete button is disabled with
-    `taskDelete.remoteUnavailable`, then the row is deleted on desktop. The Linux box has no Chrome, so
-    this case has not run.
+    `taskDelete.remoteUnavailable`, then the row is deleted on desktop.
   - ARM02, ARM03 and TSL39 expect fork tombstones (`deleted=1` rows stay in tasks-index, no
     `session_purge`). ARM02 expects the whole source session directory to stay while a fork child
     survives.
@@ -202,7 +201,40 @@ Repository:
     into this branch). The fork erase path also kept the deleted tasks' browser recent visits, because
     `eraseTasks` fires no `permanentlyDeleted` signal: `permanentlyDeleteTasks` and `eraseHiddenRows`
     now clear them (`specs/session-deletion-cascade.md`).
-  - Box run on 2026-11-24: TSL39 passes, archive-management 5 of 6 pass. APD11 needs Chrome for the
-    phone browser, which the box does not have.
+  - Box run on 2026-11-24: TSL39 passes, archive-management 5 of 6 pass. APD11 did not reach the delete
+    check: "Copy link" stayed disabled because no relay answered. The phone browser itself starts in
+    the box (Debian Chromium through `ZCODE_E2E_MOBILE_BROWSER_EXECUTABLE`, since Google Chrome has no
+    linux-arm64 build).
+- Mobile relay fixture. The fork deleted upstream's `web-remote-control-auth-gate-fixture.ts` when it
+  was created (a6cfcca1c), so no mobile spec got a loopback relay and pairing never produced a link.
+  It is restored as an upstream-identical file, called from `wdio.conf.ts` before Electron starts and
+  stopped in both teardown paths, as upstream does. Its unit test goes back into
+  `scripts/engineering-test-files.json`, which now matches upstream 4.0.0 again. The fixture only
+  acts on the specs it lists; the two auth-config specs it also names
+  (`web-remote-control-auth-gate`, `web-remote-control-session-events`) are not in the fork.
+  - The shared fake relay (`packages/shared/test/fixtures/fake-relay-v2.ts`) now answers the fork's
+    `POST /api/v1/remote/session` exchange: a known identity token comes back as the relay JWT.
+    Without it the desktop got no relay JWT and never produced a pairing link.
+  - With pairing working, APD11 found that `RootWorkspaceContent` did not pass `isWebRemoteControl`
+    to the workspace settings layer, so the phone's Settings page opened inside a workspace treated
+    Web remote control as local and left permanent Delete enabled. Upstream has the same missing
+    prop, but its APD11 deletes from the phone on purpose, so only the fork gate depended on it.
+    Whether upstream's other consumers of the flag are affected was not checked. Fixed by passing
+    `Boolean(webRemoteControlWorkspaceSwitcher)`, as the no-workspace path in `Root.tsx` already
+    did; every Settings consumer of the flag now gets it in workspace mode too.
+  - The phone UI follows the desktop language, not the Playwright locale, and this spec keeps the
+    desktop in Chinese. APD11 switches the desktop to English for the case and back in `finally`, so
+    its locators stay English (`scripts/check-test-copy.mjs` rejects CJK locators). It also closes
+    the desktop remote control dialog before the desktop delete steps.
+  - APD11's last step (an offline phone draft of the deleted task is cleared after reload) failed:
+    the phone learns about permanent deletions from `listPermanentlyDeletedTaskIds`, which read
+    only `task_purge` receipts, and the fork erase writes tombstones instead. The fork now answers it
+    with tombstones plus receipts (`specs/session-deletion-cascade.md`, removal replay paragraph).
+  - Box runs on 2026-11-24 with the fixture: archive-management 6 of 6 after the replay fix; `conversation-session-hooks-mobile` and
+    `conversation-session-workspace-mcp-trust` pass; `conversation-session-hook-trust` fails HK19
+    (expects the Chinese missing-entry reason, the phone shows English text) with and without the
+    Settings flag fix, so it is not caused by it and was not investigated. VP13 in
+    `conversation-session-virtual-project-mobile` now gets past pairing and fails at its persist
+    task stage, not investigated. The other specs the fixture covers (about 45) were not run.
 - `conversation-session-dynamic-workflow-gray-always-on-resume.test.ts`: the fork and upstream gates for
   the same race are combined; not run yet.

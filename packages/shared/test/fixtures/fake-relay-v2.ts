@@ -137,6 +137,14 @@ export async function createFakeRelayV2(options: FakeRelayV2Options) {
       response.end(action.body === undefined ? undefined : JSON.stringify(action.body));
       return;
     }
+    // Fork relay V2: desktop exchanges its account identity token for a relay JWT before any other call.
+    // Echo the identity token as the relay JWT so the users map keeps resolving the same user.
+    if (path === "/api/v1/remote/session" && request.method === "POST") {
+      const identityToken = (body as { identity_token?: unknown } | null)?.identity_token;
+      if (typeof identityToken !== "string" || !Object.hasOwn(options.users, identityToken))
+        return reply(401);
+      return reply(200, { jwt: identityToken, expires_in: 3600 });
+    }
     if (!userId) return reply(401);
     if (path === "/api/v1/remote/token" && request.method === "POST") {
       const parsed = parseWebRemoteControlRelayV2HttpRequest("token", body);

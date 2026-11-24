@@ -2914,11 +2914,12 @@ export class TaskIndexRepo {
     workspacePath: string;
     workspaceIdentity?: string;
   }): Promise<string[]> {
-    await this.ensureReady();
-    const rows = this.getDatabase()
-      .prepare("SELECT task_id FROM task_purge WHERE workspace_key=? AND state='deleted'")
-      .all(workspaceKey(target)) as Array<{ task_id: string }>;
-    return rows.map((row) => row.task_id);
+    // Fork erase leaves a tombstone (deleted=1) and writes no task_purge receipt, so replay from
+    // receipts alone never cleared drafts or visits of erased tasks on reconnecting clients.
+    return this.listDeletedTaskIds({
+      workspacePath: target.workspacePath,
+      workspaceIdentity: target.workspaceIdentity,
+    });
   }
 
   /** Admission into the organized state checks the archive flag in the same transaction; a cross-window unarchive must not get past a confirmed deletion. */

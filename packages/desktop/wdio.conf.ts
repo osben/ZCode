@@ -144,6 +144,7 @@ import { getE2EProviderEndpointEnv } from "#e2e/helpers/e2e-provider-endpoint";
 import { prepareOAuthCompletionRaceFixture } from "./test/e2e/helpers/oauth-completion-race-fixture.js";
 import { prepareAccessToken401Fixture } from "./test/e2e/helpers/access-token-401-fixture.js";
 import { prepareVoiceInputFixture } from "./test/e2e/helpers/asr-mock-server.js";
+import { prepareWebRemoteControlAuthGateFixture } from "./test/e2e/helpers/web-remote-control-auth-gate-fixture.js";
 import { prepareOfficialMcpAuthRoutingFixture } from "#e2e/helpers/mcp-official-auth-routing-fixture";
 import { prepareMcpFailureGuidanceFixture } from "#e2e/helpers/mcp-failure-guidance-fixture";
 import { createE2EReplayFixtureVariables } from "./test/e2e/helpers/e2e-runtime-paths.js";
@@ -744,6 +745,7 @@ let stopOAuthCompletionRaceFixture: (() => Promise<void>) | null = null;
 let stopTtftOtlpFixture: (() => Promise<void>) | null = null;
 let stopAccessToken401Fixture: (() => Promise<void>) | null = null;
 let stopVoiceInputFixture: (() => Promise<void>) | null = null;
+let stopWebRemoteControlAuthGateFixture: (() => Promise<void>) | null = null;
 let stopOfficialMcpAuthRoutingFixture: (() => Promise<void>) | null = null;
 let stopMcpFailureGuidanceFixture: (() => Promise<void>) | null = null;
 let pluginCdnZipFixtureServer: PluginCdnZipFixtureServer | null = null;
@@ -5767,6 +5769,12 @@ export const config: WebdriverIO.Config = {
           settingsFile: E2E_APP_SETTINGS_FILE,
         });
         stopVoiceInputFixture = await prepareVoiceInputFixture(specs);
+        stopWebRemoteControlAuthGateFixture = await prepareWebRemoteControlAuthGateFixture({
+          specs,
+          credentialsFile: E2E_APP_CREDENTIALS_FILE,
+          settingsFile: E2E_APP_SETTINGS_FILE,
+          workspacePath: resolve(E2E_HOME_DIR, "ZCodeProject"),
+        });
         stopOfficialMcpAuthRoutingFixture = await prepareOfficialMcpAuthRoutingFixture({
           specs,
           credentialsFile: E2E_APP_CREDENTIALS_FILE,
@@ -5924,6 +5932,8 @@ export const config: WebdriverIO.Config = {
           stopAccessToken401Fixture = null;
           await stopVoiceInputFixture?.();
           stopVoiceInputFixture = null;
+          await stopWebRemoteControlAuthGateFixture?.();
+          stopWebRemoteControlAuthGateFixture = null;
           await stopOfficialMcpAuthRoutingFixture?.();
           stopOfficialMcpAuthRoutingFixture = null;
           await stopMcpFailureGuidanceFixture?.();
@@ -6015,6 +6025,8 @@ export const config: WebdriverIO.Config = {
           stopAccessToken401Fixture = null;
           await stopVoiceInputFixture?.();
           stopVoiceInputFixture = null;
+          await stopWebRemoteControlAuthGateFixture?.();
+          stopWebRemoteControlAuthGateFixture = null;
           await stopOfficialMcpAuthRoutingFixture?.();
           stopOfficialMcpAuthRoutingFixture = null;
           await stopMcpFailureGuidanceFixture?.();
