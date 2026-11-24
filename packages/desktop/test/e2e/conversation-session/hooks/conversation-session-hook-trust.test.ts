@@ -35,6 +35,7 @@ import {
   DEFAULT_WORKSPACE,
   clearAppData,
   clickTestIdByDom,
+  pinE2ELocale,
   waitForWorkspaceApp,
 } from "#e2e/helpers/desktop-app";
 import { sel } from "#e2e/helpers/selectors";
@@ -276,6 +277,9 @@ describe("Workspace Hook Trust (HK05–HK07, HK18–HK19)", () => {
     // 否则桌面端的远控弹窗会停在登录门禁，拿不到配对链接。
     const endpoint = process.env.ZCODE_WEB_REMOTE_CONTROL_URL;
     if (!endpoint) throw new Error("HK19 requires the web remote control fixture");
+    // The phone follows the desktop language, and the desktop starts in the host OS language
+    // (English in the Linux box); pin Chinese so the zh-CN reason below is what the phone shows.
+    await pinE2ELocale("zh-CN");
     const pairingUrl = await obtainUnreadPairingUrl(new URL(endpoint).origin);
     const executablePath =
       process.env.ZCODE_E2E_MOBILE_BROWSER_EXECUTABLE || process.env.R3_MOBILE_CHROME;
