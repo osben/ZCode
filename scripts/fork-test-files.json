@@ -368,6 +368,7 @@
   "packages/ui/test/reviewLastTurnSourcePane.test.ts",
   "packages/ui/test/rootRestoredDraftScope.test.ts",
   "packages/ui/test/rootSelectProjectReuseExistingRoot.test.ts",
+  "packages/ui/test/rootWorkspaceSettingsLayerRemoteFlag.test.tsx",
   "packages/ui/test/selectionSideChatDictation.test.ts",
   "packages/ui/test/selectionSideChatPlanDetail.test.ts",
   "packages/ui/test/selectionSideChatSubagent.test.ts",
