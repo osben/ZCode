@@ -180,6 +180,7 @@
   "packages/shared/src/fork-attachment-ref-trust/contract.test.ts",
   "packages/shared/src/zcode-protocol-v4/workflow-runs-goldens.test.ts",
   "packages/shared/test/contextBudgetPolicy.test.ts",
+  "packages/shared/test/fakeRelayV2SessionExchange.test.ts",
   "packages/shared/test/forkAgentRuntimeSetting.test.ts",
   "packages/shared/test/forkLocaleSettings.test.ts",
   "packages/shared/test/gitRemoteWebUrl.test.ts",

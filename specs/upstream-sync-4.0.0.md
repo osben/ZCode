@@ -212,5 +212,30 @@ Repository:
   `scripts/engineering-test-files.json`, which now matches upstream 4.0.0 again. The fixture only
   acts on the specs it lists; the two auth-config specs it also names
   (`web-remote-control-auth-gate`, `web-remote-control-session-events`) are not in the fork.
+  - The shared fake relay (`packages/shared/test/fixtures/fake-relay-v2.ts`) now answers the fork's
+    `POST /api/v1/remote/session` exchange: a known identity token comes back as the relay JWT.
+    Without it the desktop got no relay JWT and never produced a pairing link.
+  - With pairing working, APD11 found that `RootWorkspaceContent` did not pass `isWebRemoteControl`
+    to the workspace settings layer, so the phone's Settings page opened inside a workspace treated
+    Web remote control as local and left permanent Delete enabled. Upstream has the same missing
+    prop, but its APD11 deletes from the phone on purpose, so only the fork gate depended on it.
+    Whether upstream's other consumers of the flag are affected was not checked. Fixed by passing
+    `Boolean(webRemoteControlWorkspaceSwitcher)`, as the no-workspace path in `Root.tsx` already
+    did; every Settings consumer of the flag now gets it in workspace mode too.
+  - The phone UI follows the desktop language, not the Playwright locale, and this spec keeps the
+    desktop in Chinese. APD11 switches the desktop to English for the case and back in `finally`, so
+    its locators stay English (`scripts/check-test-copy.mjs` rejects CJK locators). It also closes
+    the desktop remote control dialog before the desktop delete steps.
+  - Open: APD11's last step (an offline phone draft of the deleted task is cleared after reload)
+    fails. The phone learns about permanent deletions from `task_purge` receipts
+    (`listPermanentlyDeletedTaskIds`), and the fork erase writes tombstones instead, so no receipt
+    exists. Needs a decision on how fork tombstones reach that replay.
+  - Box runs on 2026-11-24 with the fixture: archive-management 5 of 6 (APD11 fails only at the
+    offline draft step above); `conversation-session-hooks-mobile` and
+    `conversation-session-workspace-mcp-trust` pass; `conversation-session-hook-trust` fails HK19
+    (expects the Chinese missing-entry reason, the phone shows English text) with and without the
+    Settings flag fix, so it is not caused by it and was not investigated. VP13 in
+    `conversation-session-virtual-project-mobile` now gets past pairing and fails at its persist
+    task stage, not investigated. The other specs the fixture covers (about 45) were not run.
 - `conversation-session-dynamic-workflow-gray-always-on-resume.test.ts`: the fork and upstream gates for
   the same race are combined; not run yet.

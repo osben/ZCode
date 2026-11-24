@@ -470,6 +470,8 @@ describe("归档管理", () => {
   });
   it("APD11：手机端永久删除禁用并说明原因，桌面删除后手机与两库同步移除", async function () {
     this.timeout(150000);
+    // The phone UI follows the desktop language, not the Playwright locale; run this case in English.
+    await setDesktopLocale("en-US");
     await $('[data-testid="settings-back-button"]').click();
     let receive!: (url: string) => void;
     const pairing = new Promise<string>((resolve) => {
@@ -589,6 +591,9 @@ describe("归档管理", () => {
         path: join(process.env.ZCODE_E2E_ARTIFACT_DIR!, "apd-mobile-delete-disabled.png"),
       });
       expect(readRow("arm-removed")).toBeDefined();
+      // The desktop remote control dialog opened for "Copy link" is still up; close it before the desktop steps.
+      await browser.keys("Escape");
+      await $('[data-testid="web-remote-control-dialog-scroll"]').waitForExist({ reverse: true });
       await $('[data-testid="task-settings-button"]').click();
       await $('[data-testid="settings-section-nav-archives"]').click();
       await $('[data-testid="archive-management"]').waitForDisplayed();
@@ -630,6 +635,7 @@ describe("归档管理", () => {
     } finally {
       await mobile.close();
       server.close();
+      await setDesktopLocale("zh-CN");
       await browser.execute(() => {
         const target = window as Window & { __apdRestoreClipboard?: () => void };
         target.__apdRestoreClipboard?.();
@@ -638,6 +644,14 @@ describe("归档管理", () => {
     }
   });
 });
+
+async function setDesktopLocale(locale: string) {
+  await browser.execute((value) => {
+    (
+      window as typeof window & { __testActions: { setLocale(value: string): void } }
+    ).__testActions.setLocale(value);
+  }, locale);
+}
 
 async function confirmDelete() {
   const confirm = $(`[data-testid="${TID_TASK_DELETE_CONFIRM}"]`);
