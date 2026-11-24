@@ -470,8 +470,6 @@ describe("归档管理", () => {
   });
   it("APD11：手机端永久删除禁用并说明原因，桌面删除后手机与两库同步移除", async function () {
     this.timeout(150000);
-    // The phone UI follows the desktop language, not the Playwright locale; run this case in English.
-    await setDesktopLocale("en-US");
     await $('[data-testid="settings-back-button"]').click();
     let receive!: (url: string) => void;
     const pairing = new Promise<string>((resolve) => {
@@ -497,6 +495,9 @@ describe("归档管理", () => {
       headless: true,
     });
     try {
+      // The phone UI follows the desktop language, not the Playwright locale; run this case in English.
+      // Switched inside try so the finally block always restores zh-CN.
+      await setDesktopLocale("en-US");
       await browser.execute((port) => {
         const target = window as Window & { __apdRestoreClipboard?: () => void };
         const previous = navigator.clipboard.writeText.bind(navigator.clipboard);
