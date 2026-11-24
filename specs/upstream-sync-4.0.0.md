@@ -187,8 +187,7 @@ Repository:
     preflight, and the fork running guard is process-local, so a queued `session_input` does not block
     deletion.
   - APD11 checks the fork Web remote gate: on the phone the delete button is disabled with
-    `taskDelete.remoteUnavailable`, then the row is deleted on desktop. The Linux box has no Chrome, so
-    this case has not run.
+    `taskDelete.remoteUnavailable`, then the row is deleted on desktop.
   - ARM02, ARM03 and TSL39 expect fork tombstones (`deleted=1` rows stay in tasks-index, no
     `session_purge`). ARM02 expects the whole source session directory to stay while a fork child
     survives.
@@ -202,7 +201,16 @@ Repository:
     into this branch). The fork erase path also kept the deleted tasks' browser recent visits, because
     `eraseTasks` fires no `permanentlyDeleted` signal: `permanentlyDeleteTasks` and `eraseHiddenRows`
     now clear them (`specs/session-deletion-cascade.md`).
-  - Box run on 2026-11-24: TSL39 passes, archive-management 5 of 6 pass. APD11 needs Chrome for the
-    phone browser, which the box does not have.
+  - Box run on 2026-11-24: TSL39 passes, archive-management 5 of 6 pass. APD11 did not reach the delete
+    check: "Copy link" stayed disabled because no relay answered. The phone browser itself starts in
+    the box (Debian Chromium through `ZCODE_E2E_MOBILE_BROWSER_EXECUTABLE`, since Google Chrome has no
+    linux-arm64 build).
+- Mobile relay fixture. The fork deleted upstream's `web-remote-control-auth-gate-fixture.ts` when it
+  was created (a6cfcca1c), so no mobile spec got a loopback relay and pairing never produced a link.
+  It is restored as an upstream-identical file, called from `wdio.conf.ts` before Electron starts and
+  stopped in both teardown paths, as upstream does. Its unit test goes back into
+  `scripts/engineering-test-files.json`, which now matches upstream 4.0.0 again. The fixture only
+  acts on the specs it lists; the two auth-config specs it also names
+  (`web-remote-control-auth-gate`, `web-remote-control-session-events`) are not in the fork.
 - `conversation-session-dynamic-workflow-gray-always-on-resume.test.ts`: the fork and upstream gates for
   the same race are combined; not run yet.
