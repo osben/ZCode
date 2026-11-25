@@ -55,6 +55,7 @@
   "packages/desktop/test/desktopTaskDraftRouting.test.ts",
   "packages/desktop/test/desktopTaskDraftShortRead.test.ts",
   "packages/desktop/test/desktopTelemetryFetch.test.ts",
+  "packages/desktop/test/e2ePinLocalePersisted.test.ts",
   "packages/desktop/test/forkAgentRuntimeSelection.test.ts",
   "packages/desktop/test/forkDesktopProductIdentity.test.ts",
   "packages/desktop/test/forkE2ETelemetryEndpoint.test.ts",

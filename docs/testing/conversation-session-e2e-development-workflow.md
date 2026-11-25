@@ -99,7 +99,7 @@ E2E 落地回答“怎么稳定测”：
 
 ## 共享初始化合同
 
-断言固定语言文案的用例在 `prepareV4ConversationE2E` 后调用 `pinE2ELocale`，并等待 renderer 生效。macOS 的系统语言不由 `LANG` / `LC_ALL` 保证；预装工具的中文文案断言遵循同一合同。重启或清理设置后再次初始化时仍明确固定语言。
+断言固定语言文案的用例在 `prepareV4ConversationE2E` 后调用 `pinE2ELocale`，它等待 renderer 生效，并等待 `setting.json` 保存新语言（手机等宿主侧读者读的是保存的设置）。macOS 的系统语言不由 `LANG` / `LC_ALL` 保证；预装工具的中文文案断言遵循同一合同。重启或清理设置后再次初始化时仍明确固定语言。
 DSYNC-18 使用中文 placeholder 填写子智能体、MCP、钩子和命令表单，因此在共享初始化后固定
 `pinE2ELocale("zh-CN")`，再准备 provider 和各类配置；不依赖 Runner 的默认界面语言。
 

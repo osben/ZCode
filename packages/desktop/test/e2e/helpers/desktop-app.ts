@@ -13,7 +13,7 @@ import {
   NodePersonalProviderConfigRepository,
   PERSONAL_PROVIDER_CONFIG_FILE_NAME,
 } from "@zcode/provider-node";
-import { ZAI_PROVIDER_ID } from "@zcode/shared";
+import { resolvePersistedUiLocale, ZAI_PROVIDER_ID } from "@zcode/shared";
 import {
   TID_COMPOSER_WORKSPACE_TRIGGER,
   TID_SETTINGS_BACK_BUTTON,
@@ -897,7 +897,7 @@ type LocaleTestActions = { getLocale(): E2ELocale; setLocale(locale: E2ELocale):
 /**
  * 运行中把界面语言固定为 locale，并等 renderer 生效。
  * 首帧跟随宿主系统语言：容器、英文系统下是英文，断言中文文案的 spec 必须自己固定语言。
- * 走真实的 setLocale（写进设置文件）；clearAppData 会清掉它，之后的 case 要重新调用。
+ * 走真实的 setLocale，并等它写进设置文件；clearAppData 会清掉它，之后的 case 要重新调用。
  */
 export async function pinE2ELocale(locale: E2ELocale): Promise<void> {
   const readLocale = () =>
@@ -916,6 +916,12 @@ export async function pinE2ELocale(locale: E2ELocale): Promise<void> {
   await browser.waitUntil(async () => (await readLocale()) === locale, {
     timeout: 15000,
     timeoutMsg: `界面语言没有切到 ${locale}`,
+  });
+  // The renderer switches before its settingService.update lands; host readers such as the
+  // paired phone read the saved setting, so wait for setting.json to hold the new language too.
+  await browser.waitUntil(async () => resolvePersistedUiLocale(await readSettings()) === locale, {
+    timeout: 15000,
+    timeoutMsg: `setting.json 没有保存界面语言 ${locale}`,
   });
 }
 
