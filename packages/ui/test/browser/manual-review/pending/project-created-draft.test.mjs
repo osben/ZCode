@@ -99,17 +99,22 @@ test("PCD: newly created projects select only the active draft", { timeout: 120_
     await page.locator("html").evaluate((element, value) => {
       element.className = value ?? "";
     }, originalTheme);
-    // 只清理本用例创建的项目容器；不删除文件或已有任务。
-    for (const name of names) {
-      const row = page.locator(`[data-project-name="${name}"]`).first();
-      await row.getByRole("button", { name: /More/ }).focus();
-      await page.keyboard.press("Enter");
-      await page.getByRole("menuitem", { name: /Delete project/ }).click();
-      const confirm = page.getByRole("alertdialog");
-      if (await confirm.count())
+    try {
+      // 只清理本用例创建的项目容器；不删除文件或已有任务。
+      for (const name of names) {
+        const row = page.locator(`[data-project-name="${name}"]`).first();
+        await row.getByRole("button", { name: /More/ }).focus();
+        await page.keyboard.press("Enter");
+        await page.getByRole("menuitem", { name: /Delete project/ }).click();
+        // Fork: project delete always asks first, in a role="dialog" confirm (project-delete-confirm).
+        const confirm = page.getByTestId("project-delete-confirm");
+        await confirm.waitFor();
         await confirm.getByRole("button", { name: /Delete|Confirm/ }).click();
-      await row.waitFor({ state: "hidden" });
+        await row.waitFor({ state: "hidden" });
+      }
+    } finally {
+      // An open CDP connection keeps this process alive, so a failed cleanup used to hang the caller.
+      await browser.close();
     }
-    await browser.close();
   }
 });

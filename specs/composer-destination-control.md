@@ -13,7 +13,9 @@ instant and per-device). New component: `v4/composer/ComposerDestinationControl.
   only when no branch can be named — an explicit intent is actionable at send and wins over the
   detached label); worktree mode → violet `Worktree` (never the auto-generated name). Pipeline
   `creating` keeps the chip usable (it reflects state, does not block). The popover opens **upward**
-  (`side="top"`) — it hangs under the app header.
+  (`side="top"`) — it hangs under the app header. The chip's leading icon (branch or worktree)
+  carries `data-branch-switcher-primary-icon="true"`, the same marker as the upstream
+  `GitBranchSwitcher` it replaces, so upstream E2E (VP13 on the phone) finds the branch entry.
 - **Popover row 1 — New worktree + switch**: quiet at rest (the at-rest location note and the
   dirty-tree note were removed by user decision; the location still applies from settings, it is
   just not displayed). The sub shows pipeline states only: "Creating worktree…", "Ready → <path>",
