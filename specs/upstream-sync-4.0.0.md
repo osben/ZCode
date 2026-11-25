@@ -236,5 +236,13 @@ Repository:
     Settings flag fix, so it is not caused by it and was not investigated. VP13 in
     `conversation-session-virtual-project-mobile` now gets past pairing and fails at its persist
     task stage, not investigated. The other specs the fixture covers (about 45) were not run.
+  - #636 fixed both. HK19 now pins the desktop to Chinese before pairing. VP13 needed the
+    `data-branch-switcher-primary-icon` marker on the destination chip, and its desktop child check
+    (`project-created-draft.test.mjs`, PCD01/02) waited for an alertdialog in cleanup while the fork
+    project delete confirm is a `role="dialog"` (`project-delete-confirm`). Box run on 2026-11-25 at
+    8612f056e: both specs pass.
+  - `pinE2ELocale` returned once the renderer showed the new language, before `setting.json` held
+    it. The phone reads the saved setting, so it now also waits for the file
+    (`docs/testing/conversation-session-e2e-development-workflow.md`, shared setup contract).
 - `conversation-session-dynamic-workflow-gray-always-on-resume.test.ts`: the fork and upstream gates for
   the same race are combined; not run yet.
