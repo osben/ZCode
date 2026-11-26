@@ -179,6 +179,13 @@ pub enum Fact {
         tool_use: ToolUseId,
         display: Value,
     },
+    /// Fork: the final value of one display mark of a stored message (`metadata.assistantFeedback` or
+    /// `metadata.pinnedAt`, specs/fork-rust-feedback-and-pins.md). The store edits the message record in place; a
+    /// message that is not in the session, or whose role does not take the mark, is `NotFound`.
+    MessageMarked {
+        message: MessageId,
+        mark: crate::message_mark::Mark,
+    },
     /// Fork: an input queued behind a running turn, Node's `session_input` row `admitted` (specs/fork-rust-agent-parity.md,
     /// Input ledger). Written again when the queued input is edited (the row's sequence is kept).
     ///
@@ -364,6 +371,10 @@ pub struct LoadedSession {
     /// ([`crate::session_api::SessionView::tool_displays`]).
     #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
     pub tool_displays: std::collections::BTreeMap<ToolUseId, Value>,
+    /// Fork: the stored like and pin of each message (Node `metadata.assistantFeedback` and `metadata.pinnedAt`), for
+    /// the cold projection ([`crate::session_api::SessionView::marks`]).
+    #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
+    pub marks: std::collections::BTreeMap<MessageId, crate::message_mark::Marks>,
     /// Fork: `meta.workspace.root` is the session's stored execution worktree (node-store `run_in_worktree`), so a
     /// root that is gone refuses the workspace tools (Node `getMissingExecutionWorktreeToolError`).
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]

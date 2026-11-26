@@ -307,6 +307,8 @@ impl Transcript {
             | KernelEvent::GoalVerification { .. }
             // Fork: hook rows and the blocked prompt are a desktop projection (HK-UP-01).
             | KernelEvent::HookInvocation { .. }
+            // Fork: a like or pin is a desktop row field (specs/fork-rust-feedback-and-pins.md).
+            | KernelEvent::MessageMarked { .. }
             | KernelEvent::PromptBlocked { .. }
             | KernelEvent::ToolInputStarted { .. }
             | KernelEvent::ModelRequestCompleted { .. }

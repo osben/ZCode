@@ -238,6 +238,10 @@ pub(crate) struct Actor {
     /// Fork (9.62, DWL-05): the result display of each completed call, loaded with the session and extended by
     /// [`Self::commit`] (`Fact::ToolDisplayed`); only [`Self::view`] reads it (the cold result card).
     pub(crate) tool_displays: std::collections::BTreeMap<ToolUseId, serde_json::Value>,
+    /// Fork: the like and pin of each message, loaded with the session and changed only by [`Self::mark_message`];
+    /// [`Self::view`] reads it, so a rebuild keeps them (specs/fork-rust-feedback-and-pins.md).
+    pub(crate) marks:
+        std::collections::BTreeMap<MessageId, rust_cli_kernel_api::message_mark::Marks>,
     pub(crate) selection: ModelSelection,
     /// 执行状态：权限模式 × plan 开关（修复线 F20，shell-permissions.md §4.6）。判决用的模式是 [`Self::mode`]。
     pub(crate) execution: rust_cli_kernel_api::permission::ExecutionState,
@@ -395,6 +399,7 @@ impl Actor {
             commands: state.commands,
             message_models: state.message_models,
             tool_displays: state.tool_displays,
+            marks: state.marks,
             selection: state.selection,
             execution: state.mode,
             plan_flags: Default::default(),
@@ -891,6 +896,9 @@ impl Actor {
                 self.titles.disable();
                 accepted()
             }
+            Command::MarkMessage { message, request } => {
+                self.mark_message(id, message, request).await
+            }
             Command::Rename { title } => self.rename(id, title, None).await,
             Command::RenameRecorded { title, record } => self.rename(id, title, Some(record)).await,
             Command::StopTask { task } => self.stop_task(task).await,
@@ -1013,6 +1021,7 @@ impl Actor {
             commands: self.commands.clone(),
             message_models: self.message_models.clone(),
             tool_displays: self.tool_displays.clone(),
+            marks: self.marks.clone(),
             // Fork: only turns still in the conversation carry a summary (a cut removes its rows).
             turn_files: self
                 .turn_files

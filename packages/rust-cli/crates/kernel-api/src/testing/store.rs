@@ -436,6 +436,16 @@ impl SessionStore for MemoryStore {
                     _ => None,
                 })
                 .collect(),
+            // Fork: the committed marks, folded in order as node-store reads them back from the metadata.
+            marks: facts
+                .iter()
+                .fold(std::collections::BTreeMap::new(), |mut marks, fact| {
+                    if let Fact::MessageMarked { message, mark } = fact {
+                        let next = marks.get(message).copied().unwrap_or_default().with(*mark);
+                        marks.insert(message.clone(), next);
+                    }
+                    marks
+                }),
             execution_worktree,
         })
     }

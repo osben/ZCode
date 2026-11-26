@@ -165,6 +165,7 @@ async fn session_as(
             goal_verifications: Vec::new(),
             message_models: Default::default(),
             tool_displays: Default::default(),
+            marks: Default::default(),
         },
         Opened::Loaded,
     )

@@ -58,6 +58,7 @@ pub fn load(
         commands: commands(&records),
         message_models: message_models(&records),
         tool_displays: tool_displays(&records),
+        marks: crate::marks::load(&records),
         messages: crate::hydrate::hydrate(&active),
         earlier: crate::hydrate::hydrate(&earlier),
         model,

@@ -243,6 +243,14 @@ pub enum Command {
     /// `session/create` field `titleGenerationEnabled: false` the desktop Host sends for automation runs,
     /// specs/fork-rust-automations.md). The first input still names the session. Always `Accepted`.
     DisableTitleGeneration,
+    /// Fork: a like, dislike or pin on a stored message (specs/fork-rust-feedback-and-pins.md; Node
+    /// `persistAssistantFeedback` / `persistRowPinned`). Refused with [`crate::message_mark::MARK_STALE`] when the
+    /// message is not in the active history or its role does not take the mark; a pin that changes nothing is
+    /// `Accepted` without a write or an event.
+    MarkMessage {
+        message: MessageId,
+        request: crate::message_mark::MarkRequest,
+    },
     /// 用户改名（`/rename`，Node `setCustomSessionTitle`）：标题来源记为 `custom`，之后不再自动生成（docs/specs/rust-cli/titles.md §4）。
     Rename {
         title: String,
@@ -557,6 +565,10 @@ pub struct SessionView {
     /// as fork entries (never messages, so never model history); loaded when the session opens.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub browser_screenshots: Vec<crate::browser_turn::BrowserScreenshotRecord>,
+    /// Fork: the like and pin marks of the messages in the history (stored, then each [`Command::MarkMessage`]), so a
+    /// cold projection or a rebuild draws `feedback` and `pinnedAt` (specs/fork-rust-feedback-and-pins.md).
+    #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
+    pub marks: std::collections::BTreeMap<MessageId, crate::message_mark::Marks>,
 }
 
 /// The command id prefix of the input a SessionStart hook gives (`initial_user_message`): it is not typed input, so

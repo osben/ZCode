@@ -104,6 +104,8 @@ pub(super) fn rows(projection: &mut Projection, view: &SessionView) {
                     projection.cold_hook_invocation(&record.invocation, at, &mut out);
                 }
                 projection.message(message, at, 0, &mut out);
+                // Fork: the stored pin of a typed input (specs/fork-rust-feedback-and-pins.md).
+                cold_marks(projection, view, message);
                 // Fork: this turn's other stored hook dispatches follow their input's row (HK-UP-01 Design 7),
                 // anchored by the user message, like the live order; a dispatch without a stored anchor never
                 // reaches here.
@@ -186,6 +188,8 @@ pub(super) fn rows(projection: &mut Projection, view: &SessionView) {
                 notice_batch = false;
                 turn_ended = ends_turn(assistant);
                 projection.message(message, at, 0, &mut out);
+                // Fork: the stored like and pin of the reply (specs/fork-rust-feedback-and-pins.md).
+                cold_marks(projection, view, message);
                 // Fork: the stored goal verifications that followed this message (projection/goal_verify.rs).
                 if let Some(goal) = &view.goal {
                     for item in goal.verifications.iter().filter(|item| {
@@ -231,6 +235,13 @@ pub(super) fn rows(projection: &mut Projection, view: &SessionView) {
             flush_screenshots(projection, &mut anchor, view, at, &mut out);
             projection.close_cold_turn(interrupted, at, &mut out);
         }
+    }
+}
+
+/// Fork: the stored like and pin of `message` go on the rows its projection just drew.
+fn cold_marks(projection: &mut super::Projection, view: &SessionView, message: &Message) {
+    if let Some(marks) = view.marks.get(message.id()) {
+        projection.cold_marks(message.id().as_str(), marks);
     }
 }
 

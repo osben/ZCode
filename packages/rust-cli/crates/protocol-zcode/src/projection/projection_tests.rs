@@ -37,6 +37,8 @@ mod guided_steer;
 mod hook_rows;
 #[path = "interrupted_reply_tests.rs"]
 mod interrupted_reply;
+#[path = "marks_tests.rs"]
+mod marks;
 #[path = "model_change_tests.rs"]
 mod model_change;
 #[path = "rebuild_running_tests.rs"]

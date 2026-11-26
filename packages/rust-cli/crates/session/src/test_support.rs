@@ -373,6 +373,7 @@ impl Setup {
                 goal_verifications: self.goal_verifications,
                 message_models: Default::default(),
                 tool_displays: Default::default(),
+                marks: Default::default(),
             },
             self.opened,
         );

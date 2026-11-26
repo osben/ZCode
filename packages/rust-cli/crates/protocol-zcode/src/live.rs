@@ -583,6 +583,16 @@ impl Live {
         self.state().projection.row_target(row_id, entity, action)
     }
 
+    /// Fork: see [`Projection::mark_target`].
+    pub fn mark_target(
+        &self,
+        row_id: u64,
+        entity: &str,
+        kind: crate::projection::MarkKind,
+    ) -> Result<String, crate::projection::TargetMiss> {
+        self.state().projection.mark_target(row_id, entity, kind)
+    }
+
     /// Fork: see [`Projection::fork_target`].
     pub fn fork_target(
         &self,

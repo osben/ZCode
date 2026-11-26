@@ -24,6 +24,7 @@ mod goal_target;
 mod goal_verify;
 mod ids;
 mod load;
+mod marks;
 mod node_checkpoints;
 mod notices;
 mod presence;

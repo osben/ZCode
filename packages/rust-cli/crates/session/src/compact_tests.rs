@@ -284,6 +284,7 @@ async fn session_with_hooks(
             goal_verifications: Vec::new(),
             message_models: Default::default(),
             tool_displays: Default::default(),
+            marks: Default::default(),
         },
         Opened::Loaded,
     );

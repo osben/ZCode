@@ -19,6 +19,7 @@ mod guide_segments;
 mod hook_rows;
 mod kinds;
 mod markers;
+mod marks;
 mod model_change;
 mod plans;
 mod provider_error;
@@ -41,6 +42,7 @@ use serde_json::{Map, Value, json};
 
 pub use actions::{RowAction, RowTarget, TargetMiss};
 use kinds::{RowKind, ToolStatus};
+pub use marks::MarkKind;
 use state::{ActiveWork, Followup, LastError, Phase};
 
 /// Node's `PROTOCOL_V4_LIMITS.snapshotTailWindowRows`: the snapshot's row window; older rows come from `rowsRange`.
@@ -1229,6 +1231,9 @@ impl Projection {
                     self.title_source = *source;
                     patch.insert("meta".into(), state::meta(&self.title, self.title_source));
                 }
+            }
+            KernelEvent::MessageMarked { message, mark } => {
+                self.mark_message(message.as_str(), mark, &mut out);
             }
             KernelEvent::ExternalAgentConfig { agent, options } => {
                 self.external_agent_config_event(agent, options, &mut patch);

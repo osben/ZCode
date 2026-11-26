@@ -2547,7 +2547,8 @@ async fn commands_missing_from_the_inbound_schema_reach_the_command_path() {
     };
     let target = json!({"rowId": 1, "entityId": "m1"});
 
-    // A known command zcode-rs has not ported is refused as unsupported, not as an invalid envelope.
+    // A known command reaches its handler, not the invalid-envelope refusal. `setRowPinned` is ported
+    // (specs/fork-rust-feedback-and-pins.md): row 1 is not in this empty session, so the target is stale.
     let ack = inbound(
         &server,
         command(
@@ -2559,8 +2560,8 @@ async fn commands_missing_from_the_inbound_schema_reach_the_command_path() {
     )
     .await
     .unwrap();
-    assert_eq!(ack["status"], "rejected", "{ack}");
-    assert_eq!(ack["reasonCode"], "proto.unsupportedCommand", "{ack}");
+    assert_eq!(ack["status"], "stale", "{ack}");
+    assert_eq!(ack["reasonCode"], "proto.staleTarget", "{ack}");
     let ack = inbound(
         &server,
         command(

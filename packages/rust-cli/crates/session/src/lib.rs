@@ -43,6 +43,7 @@ mod local_record;
 mod log;
 mod loop_fold;
 mod loop_tick;
+mod mark;
 #[cfg(test)]
 mod metering_tests;
 mod mode;
@@ -253,6 +254,11 @@ pub struct SessionState {
     /// Fork (9.62): the stored result display of each completed call (cold load: `LoadedSession.tool_displays`).
     pub tool_displays:
         std::collections::BTreeMap<rust_cli_kernel_api::ids::ToolUseId, serde_json::Value>,
+    /// Fork: the stored like and pin of each message (cold load: `LoadedSession.marks`).
+    pub marks: std::collections::BTreeMap<
+        rust_cli_kernel_api::ids::MessageId,
+        rust_cli_kernel_api::message_mark::Marks,
+    >,
 }
 
 impl SessionState {
@@ -284,6 +290,7 @@ impl SessionState {
             goal_verifications: Vec::new(),
             message_models: Default::default(),
             tool_displays: Default::default(),
+            marks: Default::default(),
         }
     }
 
@@ -325,6 +332,7 @@ impl SessionState {
             goal_verifications: loaded.goal_verifications,
             message_models: loaded.message_models,
             tool_displays: loaded.tool_displays,
+            marks: loaded.marks,
         }
     }
 }

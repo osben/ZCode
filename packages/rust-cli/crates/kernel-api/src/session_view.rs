@@ -40,6 +40,7 @@ impl SessionView {
             tool_displays: Default::default(),
             hook_invocations: Vec::new(),
             browser_screenshots: Vec::new(),
+            marks: Default::default(),
         }
     }
 }
