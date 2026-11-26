@@ -85,7 +85,7 @@ fn anchor(anchor: &Value, map: &Mapping, child: &str) -> Value {
 }
 
 /// Node `cloneMessageForFork`（legacy）。
-fn message(info: &Value, map: &Mapping, child: &str, next: &str) -> Value {
+fn message(info: &Value, map: &Mapping, child: &str, next: &str, side_chat: bool) -> Value {
     let mut out = object(info);
     let origin = json!({"sessionId": info["sessionID"], "messageId": info["id"]});
     out.insert("id".into(), next.into());
@@ -99,7 +99,42 @@ fn message(info: &Value, map: &Mapping, child: &str, next: &str) -> Value {
     let mut metadata = object(&info["metadata"]);
     metadata.insert("forkOrigin".into(), origin);
     out.insert("metadata".into(), Value::Object(metadata));
+    if side_chat {
+        hide_for_side_chat(&mut out, info);
+    }
     Value::Object(out)
+}
+
+/// Node `buildAtomicConversationForkBundle` for `selection_side_chat`: the goal boundary is dropped (the child copies no
+/// goal), and the inherited message is for the model only, hidden from the pane and the transcript, whatever it was.
+fn hide_for_side_chat(out: &mut Map<String, Value>, info: &Value) {
+    if let Some(Value::Object(anchor)) = out.get_mut("anchor") {
+        anchor.shift_remove("goalBoundary");
+    }
+    out.insert("visibility".into(), "model-only".into());
+    let semantics = &info["semantics"];
+    let mut hidden = Map::new();
+    hidden.insert(
+        "origin".into(),
+        semantics
+            .get("origin")
+            .cloned()
+            .unwrap_or("migration".into()),
+    );
+    hidden.insert(
+        "kind".into(),
+        semantics
+            .get("kind")
+            .cloned()
+            .unwrap_or("system_reminder".into()),
+    );
+    if let Some(source) = semantics.get("source").filter(|v| truthy(Some(v))) {
+        hidden.insert("source".into(), source.clone());
+    }
+    hidden.insert("uiVisibility".into(), "hidden".into());
+    hidden.insert("providerVisibility".into(), "visible".into());
+    hidden.insert("transcriptVisibility".into(), "hidden".into());
+    out.insert("semantics".into(), Value::Object(hidden));
 }
 
 /// `compactBoundary` 的消息 ID 映射（Node `clonePartForFork` 的 compaction 分支）。
@@ -202,6 +237,7 @@ fn part(ctx: &Commit<'_>, part: &Value, map: &Mapping, next: &str) -> Value {
 pub(crate) fn copy_messages(
     ctx: &Commit<'_>,
     records: &[&WithParts],
+    side_chat: bool,
 ) -> Result<Mapping, StoreError> {
     let mut map = Mapping::new();
     // 带位置键的 tool part（node-store.md §4.6，工作线 F81）：键指向 assistant 之后的行，逐条映射时还没有新 ID。
@@ -209,7 +245,7 @@ pub(crate) fn copy_messages(
     for record in records {
         let next = message_id(ctx.now, &(ctx.uuid)());
         map.insert(record.id().to_owned(), next.clone());
-        let info = message(&record.info, &map, ctx.session, &next);
+        let info = message(&record.info, &map, ctx.session, &next, side_chat);
         messages::save_message(ctx.conn, &info, ctx.now as i64).storage()?;
         for source in &record.parts {
             let cloned = part(ctx, source, &map, &next);

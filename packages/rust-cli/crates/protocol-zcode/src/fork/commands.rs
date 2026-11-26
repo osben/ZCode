@@ -34,6 +34,10 @@ pub(crate) async fn decide(
             super::message_marks::set_feedback(live, envelope, revision).await
         }
         "setRowPinned" => super::message_marks::set_pinned(live, envelope, revision).await,
+        // Fork: the selection side chat (specs/fork-rust-selection-side-chat.md).
+        "createSelectionSideSession" => {
+            super::selection_side_chat::create(server, live, envelope, revision).await
+        }
         // Fork: the per-turn summary rewind (specs/fork-rust-agent-parity.md).
         "applyFileRewind" => file_summary::apply(live, envelope, revision).await,
         "deleteSession" => session_delete::delete(server, live, envelope, revision).await,

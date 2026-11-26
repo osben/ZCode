@@ -388,8 +388,12 @@ pub struct SessionFork {
     pub parent: SessionId,
     pub child: SessionId,
     pub created_at_ms: u64,
-    /// 复制到这条消息为止（含）：按用户输入分叉（F75）是这一轮最后一条 assistant。
-    pub through: MessageId,
+    /// 复制到这条消息为止（含）：按用户输入分叉（F75）是这一轮最后一条 assistant。Fork: `None` copies no history;
+    /// only a selection side chat of a parent with nothing to inherit asks for it (Node copies zero messages there).
+    pub through: Option<MessageId>,
+    /// Fork: what the child is (specs/fork-rust-selection-side-chat.md). Absent reads as an ordinary fork.
+    #[serde(default, skip_serializing_if = "ForkKind::is_fork")]
+    pub kind: ForkKind,
     pub selection: ModelSelection,
     pub mode: PermissionMode,
     /// plan 开关（修复线 F20；serde 缺省 false）。
@@ -400,6 +404,29 @@ pub struct SessionFork {
     /// fork's own transaction — the row keeps the parent's workspace. Absent forks in the parent's directory.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub execution: Option<crate::env::EnvPath>,
+}
+
+/// Fork: the kind of child a [`SessionFork`] writes. A side chat is Node's `selection_side_chat` task type: it inherits
+/// the history for the model only, starts a blank pane, and copies no goal (specs/fork-rust-selection-side-chat.md).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ForkKind {
+    #[default]
+    Fork,
+    SelectionSideChat,
+}
+
+/// Fork: the source of the reminder that ends a side chat's inherited history (Node `SELECTION_SIDE_CHAT_BOUNDARY`,
+/// `session-fork-commit/builders.ts`). Node hides everything before it from the pane; the model reads it.
+pub const SELECTION_SIDE_CHAT_SOURCE: &str = "selection_side_chat";
+
+/// The boundary reminder's text, word for word as Node writes it.
+pub const SELECTION_SIDE_CHAT_BOUNDARY: &str = "The preceding conversation was inherited from the parent task for reference only. Do not continue the parent's active work automatically; answer only new questions sent in this side chat. Modify the workspace only when the user explicitly asks you to do so in this side chat.";
+
+impl ForkKind {
+    pub fn is_fork(&self) -> bool {
+        *self == Self::Fork
+    }
 }
 
 /// [`SessionStore::fork`] 的回执。

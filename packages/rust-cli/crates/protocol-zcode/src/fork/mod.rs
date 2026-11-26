@@ -40,6 +40,7 @@ mod release_under_directory;
 pub(crate) use queue::settle_running_turn;
 pub(crate) mod in_flight;
 mod row_commands;
+mod selection_side_chat;
 mod session_config;
 pub(crate) mod session_data;
 mod session_data_files;

@@ -43,6 +43,8 @@ mod marks;
 mod model_change;
 #[path = "rebuild_running_tests.rs"]
 mod rebuild_running;
+#[path = "side_chat_tests.rs"]
+mod side_chat;
 #[path = "streaming_tool_tests.rs"]
 mod streaming_tool;
 #[path = "subagent_rows_tests.rs"]

@@ -295,6 +295,15 @@ pub enum Command {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         target_cwd: Option<ForkTarget>,
     },
+    /// Fork (desktop `createSelectionSideSession`, specs/fork-rust-selection-side-chat.md): a new `selection_side_chat`
+    /// child of this session. Unlike [`Command::ForkFromAssistant`] it is accepted at any time, also while a turn runs: the
+    /// child inherits the committed history for the model only (a running turn keeps just its opening input), copies no
+    /// goal, queue or running state, and never changes this session. `selection` is the child's model (Node's
+    /// `firstInput.modelSelection`); absent takes this session's current one. The receipt is [`CommandResult::Forked`].
+    ForkSelectionSideChat {
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        selection: Option<ModelSelection>,
+    },
     /// 批准或拒绝一条扣住的同伴消息（docs/specs/rust-cli/cross-session.md §2.4，F28）：`message` 是
     /// [`crate::peers::HeldPeerMessage::msg_id`]。已经解决（过期、改模式放行）时 `Rejected`。
     ResolvePeerMessage {

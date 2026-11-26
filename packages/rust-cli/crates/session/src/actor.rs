@@ -888,6 +888,9 @@ impl Actor {
                 assistant,
                 target_cwd,
             } => self.fork_from_assistant(assistant, target_cwd).await,
+            Command::ForkSelectionSideChat { selection } => {
+                self.fork_selection_side_chat(selection).await
+            }
             Command::AdoptTitle { title } => {
                 self.adopt_title(title);
                 accepted()

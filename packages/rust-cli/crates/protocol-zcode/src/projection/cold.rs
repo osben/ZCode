@@ -63,7 +63,17 @@ pub(super) fn rows(projection: &mut Projection, view: &SessionView) {
     };
     // Fork (D2): the user message of the turn being projected; its stored screenshot goes before the turn closes.
     let mut anchor: Option<String> = None;
-    for (index, message) in view.messages.iter().enumerate() {
+    // Fork: a selection side chat inherits its parent's history for the model only; the pane starts after the boundary
+    // reminder (Node marks the inherited rows hidden; specs/fork-rust-selection-side-chat.md).
+    let inherited = view
+        .messages
+        .iter()
+        .position(|message| {
+            matches!(message, Message::Attachment(attachment)
+                if attachment.source == rust_cli_kernel_api::store::SELECTION_SIDE_CHAT_SOURCE)
+        })
+        .map_or(0, |boundary| boundary + 1);
+    for (index, message) in view.messages.iter().enumerate().skip(inherited) {
         match message {
             // Fork (9.63): a workflow record with its launch metadata is a turn of its own (Node's cold hydration opens
             // it as the live projection did): the turn before it closes, and it settles at once.
