@@ -248,4 +248,4 @@ Repository:
   the same race are combined. Box run on 2026-11-26 at 27ccb81c7: Node 4/4, Rust 2/4 (DWU-03 and the
   dependent DWU-04): zcode-rs did not send the 4.0.0 `activitySummaryDismissed` boundary, so the Activity
   capsule kept the stopped run after the next real message. Ported in `specs/fork-rust-activity-summary.md`;
-  Rust 4/4 after the port. `completedActivityCount` is still not sent by zcode-rs (same spec, open follow-up).
+  Rust 4/4 after the port. `completedActivityCount` is sent by zcode-rs too (`specs/fork-rust-completed-activity-count.md`).

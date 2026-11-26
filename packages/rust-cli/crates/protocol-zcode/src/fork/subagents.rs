@@ -674,6 +674,70 @@ fn paginate_ended(
 
 // ---- the method ----
 
+/// The child rows of the candidates (Node `getSession` per id), including the ids only the live table knows, so the
+/// synthetic candidates pass the same persisted-row filter.
+async fn children_of(
+    queries: &dyn rust_cli_kernel_api::store::StoreQueries,
+    rows: &ParentDoc,
+    live: &[SubagentEntry],
+) -> Result<ChildrenDoc, String> {
+    let mut ids: Vec<String> = rows
+        .parts
+        .iter()
+        .filter_map(candidate_from_part)
+        .map(|candidate| candidate.child_session_id)
+        .collect();
+    for entry in live {
+        let id = entry.child.as_str().to_owned();
+        if !ids.contains(&id) {
+            ids.push(id);
+        }
+    }
+    let children = queries
+        .subagent_children(ids)
+        .await
+        .map_err(|error| error.to_string())?;
+    serde_json::from_value(children).map_err(|error| format!("subagent children: {error}"))
+}
+
+/// Fork (specs/fork-rust-activity-summary.md, `completedActivityCount`): every ended child of the open session's active
+/// branch with its ended status, the same classification `session/subagents` pages through, with no page limit. `live`
+/// is the kernel's subagent table; the session is open, so its parent is live. A failed read is an error: the caller
+/// must not take a partial list as the full history. A session not saved yet has no children.
+pub(crate) async fn ended_outcomes(
+    queries: &dyn rust_cli_kernel_api::store::StoreQueries,
+    session: &SessionId,
+    live: &[SubagentEntry],
+    now_ms: u64,
+) -> Result<Vec<(String, String)>, String> {
+    // A new session has no parent row until its first message is written (node-store answers
+    // `parent: null`, the in-memory store NotFound): its history is empty, not unknown, so the
+    // total starts at 0 like Node's new session.
+    let rows: ParentDoc = match queries.subagent_rows(session).await {
+        Ok(rows) => {
+            serde_json::from_value(rows).map_err(|error| format!("subagent rows: {error}"))?
+        }
+        Err(rust_cli_kernel_api::store::StoreError::NotFound { .. }) => ParentDoc::default(),
+        Err(error) => return Err(error.to_string()),
+    };
+    let children = children_of(queries, &rows, live).await?;
+    let projection = project(ProjectionInput {
+        parts: &rows.parts,
+        children: &children.children,
+        live,
+        parent_live: true,
+        now_ms,
+    });
+    Ok(projection
+        .ended
+        .into_iter()
+        .map(|item| {
+            let status = item.value["status"].as_str().unwrap_or("lost").to_owned();
+            (item.child_session_id, status)
+        })
+        .collect())
+}
+
 /// `session/subagents` (Node `listSessionSubagents`): params validated like the zod schema,
 /// rows read through `StoreQueries`, the projection above, and Node's session-unavailable error
 /// for a parent without a persisted row. Unlike Node there is no "store missing" empty path —
@@ -691,7 +755,7 @@ pub(crate) async fn subagents(server: &Server, params: &Value) -> Result<Value, 
         })?;
     let rows: ParentDoc = serde_json::from_value(rows)
         .map_err(|error| RpcError::internal(format!("subagent rows: {error}")))?;
-    let Some(parent) = rows.parent else {
+    let Some(parent) = &rows.parent else {
         return Err(unavailable(&session_id));
     };
     // Node's live parent is the revision source and the in-process subagent facts; a cold query
@@ -712,26 +776,9 @@ pub(crate) async fn subagents(server: &Server, params: &Value) -> Result<Value, 
         }
         None => (u64::try_from(parent.time_updated).unwrap_or(0), Vec::new()),
     };
-    // Children resolve by candidate id (Node `getSession` per id) — including the ids only the
-    // live table knows, so the synthetic candidates pass the same persisted-row filter.
-    let mut ids: Vec<String> = rows
-        .parts
-        .iter()
-        .filter_map(candidate_from_part)
-        .map(|candidate| candidate.child_session_id)
-        .collect();
-    for entry in &live {
-        let id = entry.child.as_str().to_owned();
-        if !ids.contains(&id) {
-            ids.push(id);
-        }
-    }
-    let children = queries
-        .subagent_children(ids)
+    let children = children_of(queries.as_ref(), &rows, &live)
         .await
-        .map_err(|error| RpcError::internal(error.to_string()))?;
-    let children: ChildrenDoc = serde_json::from_value(children)
-        .map_err(|error| RpcError::internal(format!("subagent children: {error}")))?;
+        .map_err(RpcError::internal)?;
     let projection = project(ProjectionInput {
         parts: &rows.parts,
         children: &children.children,

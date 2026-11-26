@@ -231,6 +231,23 @@ pub struct BackgroundRunWork {
     pub ended_at_ms: Option<i64>,
 }
 
+/// Fork: one run of [`ActivityHistory`]: the journal's `dwf_run.status` and the run's last event sequence (`-1` when it
+/// has none).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ActivityRun {
+    pub run_id: String,
+    pub status: String,
+    pub sequence: i64,
+}
+
+/// Fork: Node `DynamicWorkflowActivityHistory`, the full Activity index of one session: every journaled run and every
+/// actor session, with no list limit (specs/fork-rust-activity-summary.md, `completedActivityCount`).
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct ActivityHistory {
+    pub runs: Vec<ActivityRun>,
+    pub child_session_ids: Vec<String>,
+}
+
 /// Node's background work summary status for a run: its journal status mapped as the tracker maps a task's (completed is
 /// `resultPending`, stopped is `cancelled`, any other end is `failed`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -446,6 +463,13 @@ pub trait DynamicWorkflowRunPort: Send + Sync {
     /// replayed into the `workflowRuns` deltas a cold open folds into its snapshot. Empty when the host keeps no journal.
     async fn replay_progress_for_session(&self) -> Result<Vec<Value>, DynamicWorkflowRunError> {
         Ok(Vec::new())
+    }
+
+    /// Fork: Node `getActivityHistory`, this session's full Activity index from the journal. The default fails, so a port
+    /// that cannot read the journal (also the late slot before the run service is set) makes the count unknown (null)
+    /// instead of a partial total.
+    async fn activity_history(&self) -> Result<ActivityHistory, DynamicWorkflowRunError> {
+        Err(DynamicWorkflowRunError::unsupported("activityHistory"))
     }
 
     /// Fork (9.52): ticks whenever the host's live run set changes (a run started or settled on its own), so the session

@@ -763,6 +763,77 @@ async fn the_session_list_is_empty_without_a_store() {
     assert_eq!(session_list(&service).await, json!({"runs": []}));
 }
 
+#[tokio::test]
+async fn the_activity_history_is_the_parents_full_journal_index() {
+    // Fork (completedActivityCount): every run of this parent with its journal status, more than any preview holds.
+    let fixture = fixture(|conn| {
+        for index in 0..105 {
+            seed(
+                conn,
+                Some(PARENT),
+                &format!("run_{index:03}"),
+                DwfStatus::Completed,
+                None,
+                "return 1",
+                1,
+            );
+        }
+        seed(
+            conn,
+            Some(PARENT),
+            "run_stopped",
+            DwfStatus::Stopped,
+            None,
+            "return 1",
+            1,
+        );
+        seed(
+            conn,
+            Some("ses_other"),
+            "run_other",
+            DwfStatus::Completed,
+            None,
+            "return 1",
+            1,
+        );
+        dwf::put_actor(
+            conn,
+            &dwf::ActorRecord {
+                run_id: "run_000".to_owned(),
+                site_id: "site".to_owned(),
+                session_id: Some("ses_actor".to_owned()),
+                ..dwf::ActorRecord::default()
+            },
+            1,
+        )
+        .expect("actor row");
+    });
+    let history = port(&fixture.service, PARENT)
+        .activity_history()
+        .await
+        .expect("the journal is readable");
+    assert_eq!(history.runs.len(), 106);
+    assert!(history.runs.iter().all(|run| run.run_id != "run_other"));
+    let stopped = history
+        .runs
+        .iter()
+        .find(|run| run.run_id == "run_stopped")
+        .expect("stopped run");
+    assert_eq!(stopped.status, "cancelled");
+    assert_eq!(history.child_session_ids, ["ses_actor"]);
+}
+
+#[tokio::test]
+async fn the_activity_history_without_a_store_fails_so_the_count_is_unknown() {
+    let service = WorkflowRunService::new(
+        Arc::new(SessionResidency::new()),
+        Arc::new(NoConcurrency),
+        Arc::new(FakeChildRunner::new()),
+        factory(),
+    );
+    assert!(port(&service, PARENT).activity_history().await.is_err());
+}
+
 // ---- The run list (Node listRuns): the gap complement, the probe row and the ownership markers.
 
 #[tokio::test]
@@ -1014,6 +1085,13 @@ impl Probe {
 }
 
 impl RunStore for Probe {
+    fn activity_history(
+        &self,
+        _parent_session_id: &str,
+    ) -> anyhow::Result<rust_cli_node_store::dwf::ActivityHistory> {
+        Ok(rust_cli_node_store::dwf::ActivityHistory::default())
+    }
+
     fn session_progress(
         &self,
         _parent_session_id: &str,
@@ -1173,6 +1251,13 @@ struct Racing {
 }
 
 impl RunStore for Racing {
+    fn activity_history(
+        &self,
+        _parent_session_id: &str,
+    ) -> anyhow::Result<rust_cli_node_store::dwf::ActivityHistory> {
+        Ok(rust_cli_node_store::dwf::ActivityHistory::default())
+    }
+
     fn session_progress(
         &self,
         _parent_session_id: &str,

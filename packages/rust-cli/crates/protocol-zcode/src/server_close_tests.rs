@@ -37,6 +37,8 @@ struct DraftQueries {
     /// The title the next admission reports as written.
     admitted_title: StdMutex<Option<String>>,
     log: Log,
+    /// Fork (completedActivityCount): the `subagent_rows` / `subagent_children` documents; `None` is unsupported.
+    subagent_docs: StdMutex<Option<(Value, Value)>>,
 }
 
 fn unsupported<T>() -> Result<T, StoreError> {
@@ -73,6 +75,20 @@ impl StoreQueries for DraftQueries {
         _kind: &str,
     ) -> Result<Vec<FrontendRecord>, StoreError> {
         Ok(Vec::new())
+    }
+
+    async fn subagent_rows(&self, _session: &SessionId) -> Result<Value, StoreError> {
+        match &*self.subagent_docs.lock_unpoisoned() {
+            Some((rows, _)) => Ok(rows.clone()),
+            None => unsupported(),
+        }
+    }
+
+    async fn subagent_children(&self, _ids: Vec<String>) -> Result<Value, StoreError> {
+        match &*self.subagent_docs.lock_unpoisoned() {
+            Some((_, children)) => Ok(children.clone()),
+            None => unsupported(),
+        }
     }
 
     async fn is_draft(&self, session: &SessionId) -> Result<bool, StoreError> {
@@ -131,6 +147,8 @@ struct TestHandle {
     log: Log,
     /// Accept submits instead of answering `Duplicate`.
     accepts: std::sync::atomic::AtomicBool,
+    /// Fork (completedActivityCount): the kernel's subagent table; `None` is unsupported.
+    table: StdMutex<Option<Vec<rust_cli_kernel_api::panels::SubagentEntry>>>,
 }
 
 #[async_trait]
@@ -164,6 +182,17 @@ impl HandleOverride for TestHandle {
     async fn close(&self, reason: EndReason) -> Vec<String> {
         self.closes.lock_unpoisoned().push(reason);
         Vec::new()
+    }
+
+    async fn subagents(
+        &self,
+    ) -> Result<Vec<rust_cli_kernel_api::panels::SubagentEntry>, KernelError> {
+        self.table
+            .lock_unpoisoned()
+            .clone()
+            .ok_or_else(|| KernelError::Failed {
+                message: "no subagent table".to_owned(),
+            })
     }
 }
 
@@ -276,6 +305,7 @@ async fn open_view(
         closes: StdMutex::new(Vec::new()),
         log: log.clone(),
         accepts: std::sync::atomic::AtomicBool::new(false),
+        table: StdMutex::new(None),
     });
     let queries = Arc::new(DraftQueries {
         log,
@@ -733,6 +763,7 @@ async fn two_concurrent_cold_opens_run_the_session_open_hook_once() {
         closes: StdMutex::new(Vec::new()),
         log: Log::default(),
         accepts: std::sync::atomic::AtomicBool::new(false),
+        table: StdMutex::new(None),
     });
     let queries = Arc::new(DraftQueries::default());
     let kernel = Arc::new(CloseKernel { handle, queries });
@@ -877,3 +908,6 @@ async fn a_kernel_message_does_not_fold_the_activity() {
             .is_none()
     );
 }
+
+#[path = "server_completed_activity_tests.rs"]
+mod completed_activity;

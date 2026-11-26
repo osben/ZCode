@@ -322,6 +322,54 @@ pub fn list_runs_by_parent_session(
         .map_err(Into::into)
 }
 
+/// Fork: one run of [`ActivityHistory`]: its id, the physical `dwf_run.status` and its last event sequence (`-1` when
+/// it has none).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ActivityRun {
+    pub run_id: String,
+    pub status: String,
+    pub sequence: i64,
+}
+
+/// Fork: the full Activity index of one parent session (Node `DynamicWorkflowActivityHistory`): every run with its
+/// status and water mark, and every actor session (workflow child), with no list limit and no script, node or result
+/// body. specs/fork-rust-activity-summary.md, `completedActivityCount`.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct ActivityHistory {
+    pub runs: Vec<ActivityRun>,
+    pub child_session_ids: Vec<String>,
+}
+
+/// Fork: Node `getActivityHistory`, the cold seed of `completedActivityCount`.
+pub fn activity_history(conn: &Connection, parent_session_id: &str) -> Result<ActivityHistory> {
+    let mut runs = conn.prepare(
+        "select r.id, r.status,
+           coalesce((select max(e.sequence) from dwf_event e where e.run_id = r.id), -1)
+         from dwf_run r where r.parent_session_id = ?1",
+    )?;
+    let runs = runs
+        .query_map(params![parent_session_id], |row| {
+            Ok(ActivityRun {
+                run_id: row.get(0)?,
+                status: row.get(1)?,
+                sequence: row.get(2)?,
+            })
+        })?
+        .collect::<rusqlite::Result<Vec<_>>>()?;
+    let mut children = conn.prepare(
+        "select distinct a.session_id from dwf_actor a
+         join dwf_run r on r.id = a.run_id
+         where r.parent_session_id = ?1 and a.session_id is not null",
+    )?;
+    let child_session_ids = children
+        .query_map(params![parent_session_id], |row| row.get(0))?
+        .collect::<rusqlite::Result<Vec<String>>>()?;
+    Ok(ActivityHistory {
+        runs,
+        child_session_ids,
+    })
+}
+
 /// Node `listRuns`: runs by project (optional) and status, most recently updated first, up to `limit`.
 pub fn list_runs(conn: &Connection, query: &RunListQuery) -> Result<Vec<RunListRecord>> {
     if query.limit == 0 || query.statuses.as_ref().is_some_and(Vec::is_empty) {
@@ -1023,3 +1071,7 @@ mod golden_tests;
 #[cfg(test)]
 #[path = "dwf_list_tests.rs"]
 mod dwf_list_tests;
+
+#[cfg(test)]
+#[path = "activity_history_tests.rs"]
+mod activity_history_tests;

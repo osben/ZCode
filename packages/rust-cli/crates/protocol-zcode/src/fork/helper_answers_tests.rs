@@ -121,6 +121,8 @@ async fn a_plugin_ui_delta_reaches_the_sessions_subscribers_but_not_its_snapshot
     let live = server.live(&SessionId::new("s1")).await.unwrap();
     live.sink.subscribe("sub-1", "conn-1");
     live.sink.start("sub-1", Purpose::Online).await;
+    // The open's success-total seed runs in the pump (specs/fork-rust-completed-activity-count.md).
+    settled(&live).await;
     let before = live.sink.snapshot();
     let delta = json!({
         "op": "pluginUi.resourceUpdated",

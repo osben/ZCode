@@ -47,11 +47,8 @@ ledger / subagent table ──► Projection ────────┘
   children that ended before it. zcode-rs builds a cold projection from the session view, not from an event
   replay, so a reopened session has no boundary until the next real input. Finished items of the last batch show
   again after a restart.
-- `completedActivityCount` is not sent. Node derives it from full-history child and run outcome indices with
-  journal cold seeds, rewind cuts and transactional rollback. zcode-rs has no full-history source yet (its
-  subagent manifest has no ended previews and its run state is the bounded preview). Sending a count built from
-  previews would be worse than omitting the field: the UI trusts the number over its own preview fallback. With
-  the field absent the UI uses the preview count, the path the schema keeps for older CLIs. Open follow-up.
+- `completedActivityCount` has its own spec: `specs/fork-rust-completed-activity-count.md` (full-history seed from the
+  workflow journal and the store's subagent classification, live updates from the subagent table and the run deltas).
 
 ## Acceptance
 

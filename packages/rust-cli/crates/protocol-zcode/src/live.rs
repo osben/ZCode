@@ -93,6 +93,10 @@ struct State {
     /// Fork (specs/fork-rust-activity-summary.md): the session's `activitySummaryDismissed`, set by a real user input
     /// and released as its items run again.
     activity_summary: Option<Value>,
+    /// Fork (specs/fork-rust-completed-activity-count.md): the session's `completedActivityCount` outcomes, and the
+    /// value last sent to the subscribers (the snapshot always carries the current one).
+    completed_activity: crate::fork::completed_activity::CompletedActivity,
+    completed_sent: Option<u64>,
 }
 
 /// 锁里算好、锁外写出的东西：（订阅、区间、payload）与变了的会话列表行。
@@ -145,6 +149,8 @@ pub struct Live {
     /// "Draft prewarm in Rust mode"). The store owns that fact; a draft never becomes one again, so the probe is
     /// dropped the first time the store says the session has its row.
     draft_probe: Mutex<Option<Arc<dyn rust_cli_kernel_api::store::StoreQueries>>>,
+    /// Fork (specs/fork-rust-completed-activity-count.md): the store reads of the full-history seed, set at the open.
+    activity_queries: Mutex<Option<Arc<dyn rust_cli_kernel_api::store::StoreQueries>>>,
     /// Fork: the session's incognito profile, frozen at creation (the row's `fork_incognito`), or at the activation of a
     /// prepared execution worktree, whose reserved row has none ([`Live::freeze_incognito`]). Set once.
     incognito: std::sync::OnceLock<rust_cli_kernel_api::incognito::IncognitoProfile>,
@@ -199,6 +205,9 @@ impl Live {
         let epoch = context.fresh("epoch");
         let workspace = listed.unwrap_or_else(|| view.meta.workspace.root.as_str().to_owned());
         context.register(view.meta.id.as_str(), &workspace);
+        let completed_activity =
+            crate::fork::completed_activity::CompletedActivity::opened(!view.messages.is_empty());
+        let completed_sent = completed_activity.count();
         Self {
             session: view.meta.id.as_str().to_owned(),
             screenshot_binding,
@@ -230,6 +239,8 @@ impl Live {
                 metrics: Vec::new(),
                 workflow_runs: None,
                 activity_summary: None,
+                completed_activity,
+                completed_sent,
             }),
             context,
             topics,
@@ -243,6 +254,7 @@ impl Live {
             admission_applied: std::sync::atomic::AtomicU64::new(0),
             hook_review: crate::fork::hook_review::SessionReview::default(),
             draft_probe: Mutex::new(None),
+            activity_queries: Mutex::new(None),
             incognito: view
                 .meta
                 .incognito
@@ -668,6 +680,10 @@ impl Live {
                 state.workflow_runs.as_ref(),
                 &deltas,
             );
+            if let Some(runs) = state.workflow_runs.take() {
+                state.completed_activity.fold_runs(&runs.runs);
+                state.workflow_runs = Some(runs);
+            }
             state.log.record(deltas);
             self.collect(&mut state)
         };
@@ -818,6 +834,7 @@ impl Live {
             } else {
                 state.child_runs.table(&entries)
             };
+            state.completed_activity.table(&entries);
             let deltas = state.projection.subagent_table(&entries, now);
             let spawned = if deltas.is_empty() {
                 Vec::new()
@@ -830,6 +847,50 @@ impl Live {
         };
         spawned.extend(plan.open);
         self.watch_children(spawned);
+        self.write(outgoing).await;
+    }
+
+    /// Fork (specs/fork-rust-completed-activity-count.md): the store reads of the success total's seed; the open sets
+    /// them before it asks for the first seed.
+    pub(crate) fn set_activity_queries(
+        &self,
+        queries: Arc<dyn rust_cli_kernel_api::store::StoreQueries>,
+    ) {
+        *self.activity_queries.lock_unpoisoned() = Some(queries);
+    }
+
+    /// Fork (specs/fork-rust-completed-activity-count.md, rule 2): read the full history and seed the success total.
+    /// In the session's pump task, so no subagent table change or run delta lands between the read and the seed.
+    pub async fn seed_completed_activity(&self) {
+        let Some(queries) = self.activity_queries.lock_unpoisoned().clone() else {
+            return;
+        };
+        let session = rust_cli_kernel_api::ids::SessionId::new(self.session.as_str());
+        let seed = match self.handle.subagents().await {
+            Ok(entries) => {
+                let runs = self
+                    .context
+                    .dynamic_workflow_runs()
+                    .map(|sessions| sessions.for_session(&session));
+                crate::fork::completed_activity::read_seed(
+                    queries.as_ref(),
+                    &session,
+                    &entries,
+                    runs,
+                    self.context.now(),
+                )
+                .await
+            }
+            Err(error) => {
+                tracing::warn!(event = "protocol.activity_count.table_failed", error = %error, "reading the subagent table failed; the success total is unknown");
+                None
+            }
+        };
+        let outgoing = {
+            let mut state = self.state();
+            state.completed_activity.seed(seed);
+            self.collect(&mut state)
+        };
         self.write(outgoing).await;
     }
 
@@ -1053,12 +1114,15 @@ impl Live {
         // Fork: the rebuilt projection starts without background works; re-read both tables.
         self.subagents_changed().await;
         self.shells_changed().await;
+        // Fork: a rewind cuts children from the active branch; the success total is read again.
+        self.seed_completed_activity().await;
         self.rebuilds.send_modify(|count| *count += 1);
     }
 
     /// 待发的增量与变了的会话列表行（阶段、标题、待回答的询问或预览变了才发，活动时间不算）。
     fn collect(&self, state: &mut State) -> Outgoing {
         release_running_activity(state);
+        publish_completed_activity(state);
         let frames = state
             .log
             .flush()
@@ -1396,6 +1460,8 @@ fn snapshot_of(state: &State, seq: u64) -> Value {
     if let Some(boundary) = &state.activity_summary {
         snapshot["activitySummaryDismissed"] = boundary.clone();
     }
+    // Fork (specs/fork-rust-completed-activity-count.md): always present; null while the full history is unknown.
+    snapshot["completedActivityCount"] = json!(state.completed_activity.count());
     snapshot
 }
 
@@ -1443,6 +1509,19 @@ fn release_running_activity(state: &mut State) {
         json!({"op": "state.updated", "patch": {"activitySummaryDismissed": &next}}),
     ]);
     state.activity_summary = Some(next);
+}
+
+/// Fork (specs/fork-rust-completed-activity-count.md, "Delivery"): the total goes out in the frame of the change that
+/// moved it, only when it differs from the last value sent.
+fn publish_completed_activity(state: &mut State) {
+    let count = state.completed_activity.count();
+    if count == state.completed_sent {
+        return;
+    }
+    state.completed_sent = count;
+    state.log.record(vec![
+        json!({"op": "state.updated", "patch": {"completedActivityCount": count}}),
+    ]);
 }
 
 #[cfg(test)]

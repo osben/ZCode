@@ -754,6 +754,16 @@ impl DynamicWorkflowRunPort for SessionRuns {
         on_blocking_pool(move || Ok(service.session_progress_of(&parent))).await
     }
 
+    /// Fork: Node `getActivityHistory`, this session's full Activity index from the journal. A host with no journal store
+    /// fails the read (the count is then unknown).
+    async fn activity_history(
+        &self,
+    ) -> Result<rust_cli_kernel_api::workflow_run::ActivityHistory, DynamicWorkflowRunError> {
+        let service = self.service.clone();
+        let parent = self.parent.clone();
+        on_blocking_pool(move || service.activity_history_of(&parent)).await
+    }
+
     /// Node `retuneConcurrency` (9.50): a live run of this session changes its limit in place.
     async fn retune_concurrency(
         &self,
@@ -820,6 +830,40 @@ impl WorkflowRunService {
                 Vec::new()
             }
         }
+    }
+
+    /// Fork: the journal's full Activity index of one parent (Node `getActivityHistory`).
+    pub(crate) fn activity_history_of(
+        &self,
+        parent: &str,
+    ) -> Result<rust_cli_kernel_api::workflow_run::ActivityHistory, DynamicWorkflowRunError> {
+        use rust_cli_kernel_api::workflow_run::{ActivityHistory, ActivityRun};
+        let store = self
+            .inner
+            .store
+            .get()
+            .ok_or_else(|| DynamicWorkflowRunError::unsupported("activityHistory"))?;
+        let history = store.activity_history(parent).map_err(|error| {
+            tracing::warn!(
+                event = "workflow.run.activity_history_failed",
+                session = %parent,
+                error = %format!("{error:#}"),
+                "the session's workflow activity history could not be read"
+            );
+            DynamicWorkflowRunError::new(format!("{error:#}"))
+        })?;
+        Ok(ActivityHistory {
+            runs: history
+                .runs
+                .into_iter()
+                .map(|run| ActivityRun {
+                    run_id: run.run_id,
+                    status: run.status,
+                    sequence: run.sequence,
+                })
+                .collect(),
+            child_session_ids: history.child_session_ids,
+        })
     }
 
     /// The live runs of one parent session. Taken under the lock; the lock is released before any journal read.
