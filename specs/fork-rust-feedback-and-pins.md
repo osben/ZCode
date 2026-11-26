@@ -37,7 +37,8 @@ event `MessageMarked`, which the projection turns into a `row.upserted` delta. N
 
 1. Owner: the session actor (the single owner of commits). The `v4` handler sends one kernel command and never touches the
    store or the projection.
-2. Order for one command: validate the message against the active history, commit the fact (the store edits the record),
+2. Order for one command: validate the message against the shown history (the active history plus the part before
+   the last compaction that a cold open shows), commit the fact (the store edits the record),
    update the actor's mark map, append the `MessageMarked` kernel event, ack. A commit failure changes nothing (no map
    change, no event) and the command is rejected. Node's compensating restore is therefore not needed: one transaction
    either edits the record or does not.
@@ -62,7 +63,7 @@ Target resolution (Node `resolveRowActionTarget`, run by the gateway before the 
 | pin on a row that is not `assistantText` / `userInput`                                   | `rejected`, `guard.actionUnavailable`       |
 | pin on an `assistantText` row that is not `complete`                                     | `rejected`, `guard.actionUnavailable`       |
 | pin on a `userInput` row whose origin is not `realUser`                                  | `rejected`, `guard.actionUnavailable`       |
-| the message is gone from the active history when the actor runs the command              | `rejected`, `proto.staleTarget`             |
+| the message is gone from the shown history when the actor runs the command               | `rejected`, `proto.staleTarget`             |
 | commit failure                                                                           | `rejected`, `fault.command.executionFailed` |
 
 `fault.command.assistantFeedbackUnsupported` and `fault.command.rowPinUnsupported` are Node's answers for a host without
@@ -78,7 +79,8 @@ A Rust `assistantText` row has one row per text block of a message, with `entity
 is therefore by `assistantResponseId`:
 
 - feedback goes to the **last** `assistantText` row of the message (Node `findLast`: the UI reads the last row);
-- the pin goes to the **first** row of the message (Node `find`);
+- the pin also goes to the **last** row: Node writes it on its shared row, and the App's action toolbar reads
+  `latestAssistantTextRow.pinnedAt`, so on the first row a pinned reply would show as unpinned;
 - a `userInput` row with `origin` `realUser` is matched by `entityId` = the user message id.
 
 Clearing removes the field from the row. A change that equals the row's value emits no delta.

@@ -827,3 +827,69 @@ async fn a_side_chat_command_sent_twice_forks_once() {
     assert!(matches!(first, Ack::Accepted { .. }), "{first:?}");
     assert_eq!(built.session.send(side_chat(None)).await, Ack::Duplicate);
 }
+
+/// Reopening with an unanswered input adds the resume placeholder in memory only: the store has no row for it, so the
+/// side chat ends at the input before it.
+#[test]
+fn a_side_chat_never_ends_at_the_resume_placeholder() {
+    let sentinel = Message::Assistant(AssistantMessage {
+        id: MessageId::new("a_resume"),
+        content: vec![said(rust_cli_kernel_api::message::NO_RESPONSE_REQUESTED)],
+        model: rust_cli_kernel_api::message::SYNTHETIC_MODEL.to_owned(),
+        stop_reason: None,
+        usage: None,
+    });
+    let history = vec![
+        human("u1", "first"),
+        assistant("a1", said("one")),
+        human("u2", "unanswered"),
+        sentinel,
+    ];
+    assert_eq!(
+        side_chat_through(&history, false, None),
+        Some(MessageId::new("u2"))
+    );
+}
+
+/// Records the fork the actor hands to the store.
+#[derive(Default)]
+struct Forks(std::sync::Mutex<Vec<rust_cli_kernel_api::store::SessionFork>>);
+
+#[async_trait::async_trait]
+impl rust_cli_kernel_api::testing::StoreHooks for Forks {
+    async fn before(
+        &self,
+        call: rust_cli_kernel_api::testing::StoreCall<'_>,
+    ) -> Result<(), rust_cli_kernel_api::store::StoreError> {
+        if let rust_cli_kernel_api::testing::StoreCall::Fork(fork) = call {
+            self.0.lock().unwrap().push(fork.clone());
+        }
+        Ok(())
+    }
+}
+
+/// A parent that runs in a managed worktree passes its root, so the side chat reads and edits the same worktree.
+#[tokio::test]
+async fn a_side_chat_runs_in_the_parent_worktree() {
+    for worktree in [false, true] {
+        let history = vec![human("msg_u1", "first"), assistant("msg_a1", said("one"))];
+        let store = seeded(&history).await;
+        let forks = Arc::new(Forks::default());
+        let mut setup = Setup::new(Arc::new(ScriptedModel::new(Vec::new())));
+        setup.store = Some(store.clone());
+        setup.store_hooks = Some(forks.clone());
+        setup.messages = history;
+        setup.opened = Opened::Loaded;
+        setup.execution_worktree = worktree;
+        let built = setup.build().await;
+        let ack = built.session.send(side_chat(None)).await;
+        assert!(matches!(ack, Ack::Accepted { .. }), "{ack:?}");
+        let recorded = forks.0.lock().unwrap().clone();
+        assert_eq!(recorded.len(), 1);
+        assert_eq!(
+            recorded[0].execution,
+            worktree.then(|| meta().workspace.root),
+            "worktree={worktree}"
+        );
+    }
+}

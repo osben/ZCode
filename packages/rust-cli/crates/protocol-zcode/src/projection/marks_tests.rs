@@ -82,11 +82,11 @@ fn a_stored_like_and_pin_show_on_a_cold_open() {
     ]);
     let texts = rows_of(&projection, "assistantText");
     assert_eq!(texts.len(), 2);
-    // Feedback is on the last text row of the message, the pin on the first (Node `findLast` and `find`).
+    // Both marks are on the last text row of the message, the row the App's action toolbar reads.
     assert!(texts[0].get("feedback").is_none());
-    assert_eq!(texts[0]["pinnedAt"], 5_000);
+    assert!(texts[0].get("pinnedAt").is_none());
     assert_eq!(texts[1]["feedback"], "like");
-    assert!(texts[1].get("pinnedAt").is_none());
+    assert_eq!(texts[1]["pinnedAt"], 5_000);
     let users = rows_of(&projection, "userInput");
     assert_eq!(users[0]["pinnedAt"], 4_000);
     assert!(users[0].get("feedback").is_none());
@@ -144,7 +144,7 @@ fn a_live_pin_and_unpin_move_pinned_at() {
     let pin = feed.apply(marked("msg_a1", Mark::Pinned(Some(7_000))));
     let row = &pin[0]["row"];
     assert_eq!(row["pinnedAt"], 7_000);
-    assert_eq!(row["text"], "first");
+    assert_eq!(row["text"], "second");
     let pin_user = feed.apply(marked("msg_u1", Mark::Pinned(Some(7_500))));
     assert_eq!(pin_user[0]["row"]["kind"], "userInput");
     assert_eq!(pin_user[0]["row"]["pinnedAt"], 7_500);

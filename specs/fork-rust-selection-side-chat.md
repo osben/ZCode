@@ -19,11 +19,14 @@ Product rules: `docs/ui/conversation-selection-side-chat.md`. Wire shape: `packa
    after it (assistant text, tool calls and results). A turn opened by a notification keeps nothing of that turn (the
    notifications batched before its last one go too). A turn whose opening message is not stored yet leaves the whole
    committed history. A running compaction is not a turn: all committed history is copied.
+   The resume placeholder (`No response requested.`, added on reopen and not stored until the next commit) is never the
+   last copied message.
 4. The child copies no goal, goal verification, queue, auto-drain state or running state. It never changes the parent: no
    command, queue item, lease or event is sent to the parent session.
 5. The child's model is `firstInput.modelSelection` when given, else the parent's current selection. Its permission mode and
    plan switch are the parent's current ones. The follow-up mode (queue or guide) is copied from the parent. The child keeps
-   the parent's workspace and incognito profile.
+   the parent's workspace and incognito profile. A parent that runs in a managed worktree passes its execution root, so the
+   child reads and edits the same worktree.
 6. Row shape (the same as Node writes, so Node reads a Rust-made child and the other way round): `task_type`
    `selection_side_chat`, `parent_id` the parent, title `Selection side chat` with source `generated`, slug
    `<parent slug>-selection_side_chat-<base36 ms>`. Each inherited message is `visibility: model-only` with

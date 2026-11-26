@@ -74,7 +74,9 @@ fn completed_while_running(messages: &[Message], at: usize, prompt: Option<&Mess
 fn has_row(message: &Message) -> bool {
     match message {
         Message::User(user) => !matches!(user.origin, UserOrigin::ToolResult { .. }),
-        Message::Assistant(_) | Message::Attachment(_) => true,
+        // The resume sentinel stays uncommitted until the next commit, so the store has no row for it yet.
+        Message::Assistant(assistant) => !assistant.is_resume_sentinel(),
+        Message::Attachment(_) => true,
         Message::System(_) => false,
     }
 }
@@ -188,7 +190,10 @@ impl Actor {
             selection: selection.unwrap_or_else(|| self.selection.clone()),
             mode: self.execution.mode,
             plan: self.execution.plan,
-            execution: None,
+            // The child runs where the parent runs: without the root it would open in the original checkout.
+            execution: self
+                .execution_worktree
+                .then(|| self.meta.workspace.root.clone()),
         };
         let receipt = match self.deps.store.fork(fork).await {
             Ok(receipt) => receipt,

@@ -170,3 +170,32 @@ async fn an_unknown_message_or_a_wrong_role_is_stale() {
     );
     assert!(marked(&built).is_empty());
 }
+
+/// A compacted session still shows the history before the compaction with its marks: a pin there can be removed.
+#[tokio::test]
+async fn a_message_before_the_compaction_can_be_marked() {
+    let old = MessageId::new("msg_old");
+    let mut setup = Setup::new(Arc::new(ScriptedModel::new(Vec::new())));
+    setup.earlier = vec![Message::Assistant(
+        rust_cli_kernel_api::message::AssistantMessage {
+            id: old.clone(),
+            content: vec![rust_cli_kernel_api::message::ContentBlock::Text {
+                text: "before".to_owned(),
+            }],
+            model: "m".to_owned(),
+            stop_reason: None,
+            usage: None,
+        },
+    )];
+    let built = setup.build().await;
+    assert!(accepted(
+        &send(&built, "p1", &old, MarkRequest::Pin(true)).await
+    ));
+    assert!(accepted(
+        &send(&built, "p2", &old, MarkRequest::Pin(false)).await
+    ));
+    assert_eq!(
+        marked(&built),
+        [Mark::Pinned(Some(1_000)), Mark::Pinned(None)]
+    );
+}

@@ -3,8 +3,8 @@
 //! resolves to (Node `resolveRowActionTarget`).
 //!
 //! A message has one `assistantText` row per text block here, all carrying its id as `assistantResponseId` (Node shares
-//! the `entityId` instead). Feedback goes on the last of them and the pin on the first, as in Node, so the UI that reads
-//! the last row sees the like and a message pins once.
+//! the `entityId` instead). Feedback and the pin go on the last of them, the row the App's action toolbar reads
+//! (`latestAssistantTextRow`), so a message is marked once.
 
 use rust_cli_kernel_api::message_mark::{Feedback, Mark, Marks};
 use serde_json::{Map, Value, json};
@@ -81,7 +81,7 @@ impl Projection {
             Mark::Pinned(_) => self
                 .rows
                 .iter()
-                .position(|row| text_row_of(row, message) || user_row_of(row, message)),
+                .rposition(|row| text_row_of(row, message) || user_row_of(row, message)),
         };
         let Some(at) = at else {
             return;

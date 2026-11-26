@@ -28,7 +28,13 @@ impl Actor {
         message: MessageId,
         request: MarkRequest,
     ) -> Ack {
-        let Some(found) = self.messages.iter().find(|stored| *stored.id() == message) else {
+        // A compacted session still shows its earlier history with its marks; a rewind never reaches `earlier`.
+        let Some(found) = self
+            .earlier
+            .iter()
+            .chain(self.messages.iter())
+            .find(|stored| *stored.id() == message)
+        else {
             return rejected(MARK_STALE);
         };
         let stored = self.marks.get(&message).copied().unwrap_or_default();
