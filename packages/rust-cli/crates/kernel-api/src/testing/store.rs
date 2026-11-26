@@ -436,6 +436,16 @@ impl SessionStore for MemoryStore {
                     _ => None,
                 })
                 .collect(),
+            // Fork: the committed marks, folded in order as node-store reads them back from the metadata.
+            marks: facts
+                .iter()
+                .fold(std::collections::BTreeMap::new(), |mut marks, fact| {
+                    if let Fact::MessageMarked { message, mark } = fact {
+                        let next = marks.get(message).copied().unwrap_or_default().with(*mark);
+                        marks.insert(message.clone(), next);
+                    }
+                    marks
+                }),
             execution_worktree,
         })
     }
@@ -503,16 +513,26 @@ impl SessionStore for MemoryStore {
                     session: fork.parent.clone(),
                 })?;
         let (messages, _) = replay(&facts);
-        let end = messages
-            .iter()
-            .position(|m| m.id() == &fork.through)
-            .ok_or_else(|| StoreError::Storage {
-                message: format!(
-                    "Checkpoint message not found in session store: {}",
-                    fork.through
-                ),
-            })?
-            + 1;
+        let side_chat = fork.kind == crate::store::ForkKind::SelectionSideChat;
+        let end = match &fork.through {
+            Some(through) => {
+                messages
+                    .iter()
+                    .position(|m| m.id() == through)
+                    .ok_or_else(|| StoreError::Storage {
+                        message: format!(
+                            "Checkpoint message not found in session store: {through}"
+                        ),
+                    })?
+                    + 1
+            }
+            None if side_chat => 0,
+            None => {
+                return Err(StoreError::Storage {
+                    message: "a fork needs a message to copy through".to_owned(),
+                });
+            }
+        };
         let title = if parent.title.is_empty() {
             crate::title::UNTITLED
         } else {
@@ -523,20 +543,33 @@ impl SessionStore for MemoryStore {
             kind: SessionKind::Fork,
             parent: Some(parent.id.clone()),
             workspace: parent.workspace.clone(),
-            title: format!("Fork of {title}"),
+            title: if side_chat {
+                "Selection side chat".to_owned()
+            } else {
+                format!("Fork of {title}")
+            },
             trace: parent.trace.clone(),
             created_at_ms: fork.created_at_ms,
             incognito: parent.incognito,
         };
-        let notice = Message::Attachment(AttachmentMessage {
-            id: MessageId::new(format!("msg_fork_notice_{}", fork.child)),
-            source: "fork".to_owned(),
-            text: rust_cli_base::reminder::wrap(&format!(
-                "This session was forked from {}.",
-                parent.id
-            )),
-            data: serde_json::Value::Null,
-        });
+        let notice = if side_chat {
+            Message::Attachment(AttachmentMessage {
+                id: MessageId::new(format!("msg_side_chat_boundary_{}", fork.child)),
+                source: crate::store::SELECTION_SIDE_CHAT_SOURCE.to_owned(),
+                text: rust_cli_base::reminder::wrap(crate::store::SELECTION_SIDE_CHAT_BOUNDARY),
+                data: serde_json::Value::Null,
+            })
+        } else {
+            Message::Attachment(AttachmentMessage {
+                id: MessageId::new(format!("msg_fork_notice_{}", fork.child)),
+                source: "fork".to_owned(),
+                text: rust_cli_base::reminder::wrap(&format!(
+                    "This session was forked from {}.",
+                    parent.id
+                )),
+                data: serde_json::Value::Null,
+            })
+        };
         let mut copied = vec![
             Fact::ModelSelected {
                 selection: fork.selection,

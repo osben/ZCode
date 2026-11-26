@@ -6,6 +6,7 @@
 mod actions;
 mod background_result;
 mod background_shells;
+pub use background_shells::ShellEnd;
 mod bash_progress;
 mod browser_screenshot;
 mod cold;
@@ -14,9 +15,11 @@ mod external_agent_config;
 mod external_agent_status;
 mod external_tools;
 mod goal_verify;
+mod guide_segments;
 mod hook_rows;
 mod kinds;
 mod markers;
+mod marks;
 mod model_change;
 mod plans;
 mod provider_error;
@@ -39,6 +42,7 @@ use serde_json::{Map, Value, json};
 
 pub use actions::{RowAction, RowTarget, TargetMiss};
 use kinds::{RowKind, ToolStatus};
+pub use marks::MarkKind;
 use state::{ActiveWork, Followup, LastError, Phase};
 
 /// Node's `PROTOCOL_V4_LIMITS.snapshotTailWindowRows`: the snapshot's row window; older rows come from `rowsRange`.
@@ -117,6 +121,9 @@ struct Turn {
     /// settles them `cancelled` without output, like Node's `ToolCancelled` (the query answers a call cut off by Stop
     /// with that text).
     rejected: Vec<String>,
+    /// Fork: a guided steer opened a work segment and no model step has started since (Node `guideDrainOpen`):
+    /// steers absorbed at the same boundary share that segment (guide_segments.rs).
+    guide_open: bool,
 }
 
 /// Fork: a pending interaction that is the session's workspace hook review (`fork/hook_review.rs`).
@@ -1225,6 +1232,9 @@ impl Projection {
                     patch.insert("meta".into(), state::meta(&self.title, self.title_source));
                 }
             }
+            KernelEvent::MessageMarked { message, mark } => {
+                self.mark_message(message.as_str(), mark, &mut out);
+            }
             KernelEvent::ExternalAgentConfig { agent, options } => {
                 self.external_agent_config_event(agent, options, &mut patch);
             }
@@ -1391,6 +1401,7 @@ impl Projection {
             control_only: false,
             unstopped: Vec::new(),
             rejected: Vec::new(),
+            guide_open: false,
         });
         // B1.1: the worktreeCreated marker leads the turn (Node flushes its pending marker before the model
         // divider and the header).
@@ -1536,6 +1547,7 @@ impl Projection {
                 row.insert("state".into(), json!(header));
                 row.insert("endedAt".into(), json!(now));
                 row.insert("activeMs".into(), json!(now.saturating_sub(started)));
+                Self::complete_work_segments(row, now);
                 if let Some(tokens) = output_tokens {
                     row.insert("outputTokens".into(), json!(tokens));
                 }

@@ -321,7 +321,8 @@ describe("Coding Plan upgrade E2E mock server", () => {
       const delivery = await fetchJson<{ data: { deliveries: unknown[] } }>(
         `${base}/api/v1/marketing/touch`,
       );
-      expect(delivery.data.deliveries).toHaveLength(2);
+      // A fresh fixture delivers the banner only: the popup stays off until a spec turns it on.
+      expect(delivery.data.deliveries).toHaveLength(1);
       await fetchJson(`${base}/__e2e/marketing/reset`, { method: "POST", body: "{}" });
 
       await resetCodingPlanUpgradeMockServer(base, "personal-system-busy");
@@ -337,7 +338,7 @@ describe("Coding Plan upgrade E2E mock server", () => {
       const fresh = await fetchJson<{ data: { deliveries: unknown[] } }>(
         `${base}/api/v1/marketing/touch`,
       );
-      expect(fresh.data.deliveries).toHaveLength(2);
+      expect(fresh.data.deliveries).toHaveLength(1);
       const ledger = await fetchJson<{ events: unknown[] }>(`${base}/__e2e/marketing/state`);
       expect(ledger.events).toEqual([]);
     },

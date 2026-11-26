@@ -34,6 +34,7 @@ import {
   waitForWorkspaceApp,
   type E2EModelProviderSnapshot,
 } from "./desktop-app.js";
+import { closeCloudContentDialogIfPresent } from "./occupation-onboarding.js";
 import { sel } from "./selectors.js";
 import { createAndConfigurePersonalProvider } from "./personal-provider-settings.js";
 import { saveProviderModelMetadataDialog } from "./provider-model-metadata-dialog.js";
@@ -618,7 +619,14 @@ export async function selectRegistryProviderModelById(
 
   for (let attempt = 0; attempt < 3; attempt += 1) {
     const trigger = $(sel(TID_CHAT_MODEL_SELECT_TRIGGER));
-    await trigger.waitForClickable({ timeout: 30000 });
+    // The marketing popup is fetched after start and can open over the composer at any point in setup.
+    await browser.waitUntil(
+      async () => {
+        await closeCloudContentDialogIfPresent();
+        return trigger.isClickable();
+      },
+      { timeout: 30000, timeoutMsg: "the model selector stayed covered" },
+    );
     if (
       !(await isUpstreamModelSelected(modelId, {
         includePlainModelFallback,

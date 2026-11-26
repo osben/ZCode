@@ -124,7 +124,10 @@ fn hoist(messages: Vec<&Message>) -> Vec<&Message> {
     let mut reversed: Vec<&Message> = Vec::with_capacity(messages.len());
     let mut pending: Vec<&Message> = Vec::new();
     for message in messages.into_iter().rev() {
-        if matches!(message, Message::Attachment(_)) {
+        // Fork: a selection side chat's boundary reminder stays where it was written, directly before the child's first
+        // question; step reminders (token budget) hoist over it, as Node orders them.
+        if matches!(message, Message::Attachment(a) if a.source != rust_cli_kernel_api::store::SELECTION_SIDE_CHAT_SOURCE)
+        {
             pending.push(message);
             continue;
         }

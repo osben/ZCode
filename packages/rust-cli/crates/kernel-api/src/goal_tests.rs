@@ -134,7 +134,8 @@ fn plain_fork() -> SessionFork {
         parent: SessionId::new("sess_1"),
         child: SessionId::new("sess_2"),
         created_at_ms: 5,
-        through: MessageId::new("msg_1"),
+        through: Some(MessageId::new("msg_1")),
+        kind: Default::default(),
         selection: ModelSelection::new(
             "anthropic".to_owned(),
             rust_cli_base::models::GLM_5_3.to_owned(),

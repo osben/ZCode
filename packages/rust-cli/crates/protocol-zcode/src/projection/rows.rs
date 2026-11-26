@@ -52,6 +52,7 @@ impl Projection {
         };
         if let Some(current) = &mut self.turn {
             current.response = Some(response);
+            current.guide_open = false;
         }
         let key = block_key(kind, turn, response, index);
         if !self.index.contains_key(&key) {
@@ -258,6 +259,7 @@ impl Projection {
                 }
                 if let Some(current) = &mut self.turn {
                     current.response = None;
+                    current.guide_open = false;
                 }
             }
             // Fork: a steer absorbed into the running turn is a guided user row inside it (Node's drained guide row).
@@ -323,6 +325,7 @@ impl Projection {
                     }
                     row.insert("clientId".into(), json!(meta.client));
                 }
+                self.open_guided_work_segment(&turn.id, attachment.id.as_str(), now, out);
                 self.append(key, row, out);
             }
             // 工具结果、meta 输入与中断标记（user）与 system 消息不投成行（P1）。

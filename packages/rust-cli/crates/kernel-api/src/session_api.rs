@@ -243,6 +243,14 @@ pub enum Command {
     /// `session/create` field `titleGenerationEnabled: false` the desktop Host sends for automation runs,
     /// specs/fork-rust-automations.md). The first input still names the session. Always `Accepted`.
     DisableTitleGeneration,
+    /// Fork: a like, dislike or pin on a stored message (specs/fork-rust-feedback-and-pins.md; Node
+    /// `persistAssistantFeedback` / `persistRowPinned`). Refused with [`crate::message_mark::MARK_STALE`] when the
+    /// message is not in the active history or its role does not take the mark; a pin that changes nothing is
+    /// `Accepted` without a write or an event.
+    MarkMessage {
+        message: MessageId,
+        request: crate::message_mark::MarkRequest,
+    },
     /// 用户改名（`/rename`，Node `setCustomSessionTitle`）：标题来源记为 `custom`，之后不再自动生成（docs/specs/rust-cli/titles.md §4）。
     Rename {
         title: String,
@@ -286,6 +294,15 @@ pub enum Command {
         assistant: MessageId,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         target_cwd: Option<ForkTarget>,
+    },
+    /// Fork (desktop `createSelectionSideSession`, specs/fork-rust-selection-side-chat.md): a new `selection_side_chat`
+    /// child of this session. Unlike [`Command::ForkFromAssistant`] it is accepted at any time, also while a turn runs: the
+    /// child inherits the committed history for the model only (a running turn keeps just its opening input), copies no
+    /// goal, queue or running state, and never changes this session. `selection` is the child's model (Node's
+    /// `firstInput.modelSelection`); absent takes this session's current one. The receipt is [`CommandResult::Forked`].
+    ForkSelectionSideChat {
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        selection: Option<ModelSelection>,
     },
     /// 批准或拒绝一条扣住的同伴消息（docs/specs/rust-cli/cross-session.md §2.4，F28）：`message` 是
     /// [`crate::peers::HeldPeerMessage::msg_id`]。已经解决（过期、改模式放行）时 `Rejected`。
@@ -557,6 +574,10 @@ pub struct SessionView {
     /// as fork entries (never messages, so never model history); loaded when the session opens.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub browser_screenshots: Vec<crate::browser_turn::BrowserScreenshotRecord>,
+    /// Fork: the like and pin marks of the messages in the history (stored, then each [`Command::MarkMessage`]), so a
+    /// cold projection or a rebuild draws `feedback` and `pinnedAt` (specs/fork-rust-feedback-and-pins.md).
+    #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
+    pub marks: std::collections::BTreeMap<MessageId, crate::message_mark::Marks>,
 }
 
 /// The command id prefix of the input a SessionStart hook gives (`initial_user_message`): it is not typed input, so

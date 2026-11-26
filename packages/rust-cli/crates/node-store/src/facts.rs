@@ -171,6 +171,7 @@ pub(crate) fn commit_in(
 pub(crate) fn apply(ctx: &Commit<'_>, fact: &Fact) -> Result<(), StoreError> {
     match fact {
         Fact::MessageAppended { message } => crate::append::append(ctx, message),
+        Fact::MessageMarked { message, mark } => crate::marks::apply(ctx, message, mark),
         Fact::TitleChanged { title } => {
             // Node `setCustomSessionTitle`。
             let update = sessions::Update {

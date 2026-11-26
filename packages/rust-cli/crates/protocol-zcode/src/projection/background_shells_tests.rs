@@ -13,7 +13,7 @@ fn shell(id: &str, status: BackgroundStatus) -> BackgroundEntry {
     BackgroundEntry::new(id, BackgroundKind::Shell, "sleep 120", status)
 }
 
-/// A backgrounded Bash call is a running `bash` work titled by its description until the ledger drops it.
+/// A backgrounded Bash call is a running `bash` work titled by its description until it ends.
 #[test]
 fn a_background_command_is_a_running_work_until_it_ends() {
     let mut feed = Feed::new();
@@ -63,7 +63,12 @@ fn a_background_command_is_a_running_work_until_it_ends() {
     let ended = feed
         .projection
         .shell_table(&[shell("b1", BackgroundStatus::Killed)], 7000);
-    assert_eq!(ended[0]["patch"]["backgroundWorks"], json!([]));
+    // Fork: an ended command stays (Node's tracker entry), killed reads as `cancelled`.
+    assert_eq!(
+        ended[0]["patch"]["backgroundWorks"][0]["status"],
+        "cancelled"
+    );
+    assert_eq!(ended[0]["patch"]["backgroundWorks"][0]["endedAt"], 7000);
 }
 
 /// Fork (9.52, divergence 609): a live dynamic workflow run is a running `workflow` work, listed after the shell commands
@@ -85,6 +90,7 @@ fn a_live_workflow_run_is_a_running_work_until_it_settles() {
     let started = feed.projection.background_table(
         &[shell("b1", BackgroundStatus::Running)],
         std::slice::from_ref(&run),
+        &Default::default(),
         5000,
     );
     let expected = json!([
@@ -117,14 +123,18 @@ fn a_live_workflow_run_is_a_running_work_until_it_settles() {
             .background_table(
                 &[shell("b1", BackgroundStatus::Running)],
                 std::slice::from_ref(&run),
+                &Default::default(),
                 6000,
             )
             .is_empty(),
         "an unchanged list is no patch, and the start times are kept"
     );
-    let settled =
-        feed.projection
-            .background_table(&[shell("b1", BackgroundStatus::Running)], &[], 7000);
+    let settled = feed.projection.background_table(
+        &[shell("b1", BackgroundStatus::Running)],
+        &[],
+        &Default::default(),
+        7000,
+    );
     assert_eq!(
         settled[0]["patch"]["backgroundWorks"]
             .as_array()
@@ -151,14 +161,16 @@ fn an_ended_run_is_an_ended_work_with_its_end_and_no_cancel() {
         ended_at_ms: None,
     };
     feed.projection
-        .background_table(&[], std::slice::from_ref(&live), 5000);
+        .background_table(&[], std::slice::from_ref(&live), &Default::default(), 5000);
     let ended = BackgroundRunWork {
         started_at_ms: 4500,
         status: BackgroundRunStatus::ResultPending,
         ended_at_ms: Some(9000),
         ..live
     };
-    let patch = feed.projection.background_table(&[], &[ended], 9000);
+    let patch = feed
+        .projection
+        .background_table(&[], &[ended], &Default::default(), 9000);
     assert_eq!(
         patch[0]["patch"]["backgroundWorks"],
         json!([{
@@ -340,4 +352,212 @@ fn an_absorbed_notification_records_status_and_output_without_settling_rows() {
         Some("/logs/s1/toolu_bash-stdout.log")
     );
     assert_eq!(bash_row(&cold)["status"], before["status"]);
+}
+
+fn started(feed: &mut Feed, id: &str) {
+    feed.projection
+        .shell_table(&[shell(id, BackgroundStatus::Running)], 5000);
+}
+
+fn ends(
+    id: &str,
+    status: Option<BackgroundStatus>,
+    tail: &str,
+) -> std::collections::HashMap<String, super::ShellEnd> {
+    std::collections::HashMap::from([(
+        id.to_owned(),
+        super::ShellEnd {
+            status,
+            tail: Some(tail.to_owned()),
+        },
+    )])
+}
+
+/// Specs/fork-rust-background-and-context-usage.md rules 2 and 3: a command the ledger stops listing stays, in its
+/// slot, with Node's status (`completed` is `resultPending`, `failed`, killed is `cancelled`), `endedAt`, not
+/// cancellable and the output tail as `resultSummary`. The status comes from the notice.
+#[test]
+fn an_ended_command_stays_with_its_end_state_and_output_tail() {
+    for (notice, expected) in [
+        (BackgroundStatus::Completed, "resultPending"),
+        (BackgroundStatus::Failed, "failed"),
+        (BackgroundStatus::Killed, "cancelled"),
+    ] {
+        let mut feed = Feed::new();
+        started(&mut feed, "b1");
+        feed.apply(KernelEvent::BackgroundWork {
+            work: "b1".into(),
+            status: notice,
+        });
+        assert_eq!(feed.projection.vanished_shells(&[]), ["b1"]);
+        let patch = feed.projection.background_table(
+            &[],
+            &[],
+            &ends("b1", None, "line 1\nbuild done\n"),
+            9000,
+        );
+        let expected_work = json!([{
+            "workId": "b1",
+            "kind": "bash",
+            "title": "sleep 120",
+            "status": expected,
+            "startedAt": 5000,
+            "endedAt": 9000,
+            "cancellable": false,
+            "anchorRowId": null,
+            "resultSummary": "line 1\nbuild done\n",
+        }]);
+        assert_eq!(patch[0]["patch"]["backgroundWorks"], expected_work);
+        assert_eq!(
+            feed.projection.snapshot(feed.seq, "e")["backgroundWorks"],
+            expected_work
+        );
+        // Written once: later reads change nothing, and the end is not listed as vanished again.
+        assert!(feed.projection.vanished_shells(&[]).is_empty());
+        assert!(
+            feed.projection
+                .background_table(&[], &[], &Default::default(), 12_000)
+                .is_empty()
+        );
+    }
+}
+
+/// Rule 2: the ended command keeps its slot among the others, and an empty tail leaves `resultSummary` out.
+#[test]
+fn an_ended_command_keeps_its_slot_and_an_empty_tail_has_no_summary() {
+    let mut feed = Feed::new();
+    feed.projection.background_table(
+        &[
+            shell("b1", BackgroundStatus::Running),
+            shell("b2", BackgroundStatus::Running),
+        ],
+        &[],
+        &Default::default(),
+        5000,
+    );
+    feed.apply(KernelEvent::BackgroundWork {
+        work: "b1".into(),
+        status: BackgroundStatus::Completed,
+    });
+    let patch = feed.projection.background_table(
+        &[shell("b2", BackgroundStatus::Running)],
+        &[],
+        &ends("b1", None, ""),
+        6000,
+    );
+    let works = &patch[0]["patch"]["backgroundWorks"];
+    assert_eq!(works[0]["workId"], "b1");
+    assert_eq!(works[0]["status"], "resultPending");
+    assert!(works[0].get("resultSummary").is_none());
+    assert_eq!(works[1]["workId"], "b2");
+    assert_eq!(works[1]["status"], "running");
+    // A third command starts after the ended one.
+    let patch = feed.projection.background_table(
+        &[
+            shell("b2", BackgroundStatus::Running),
+            shell("b3", BackgroundStatus::Running),
+        ],
+        &[],
+        &Default::default(),
+        7000,
+    );
+    let ids: Vec<&str> = patch[0]["patch"]["backgroundWorks"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|work| work["workId"].as_str().unwrap())
+        .collect();
+    assert_eq!(ids, ["b1", "b2", "b3"]);
+}
+
+/// Rule 2: the status order is the notice, then the output read, then the ledger entry, then `failed`; a notice that
+/// arrives after the ledger forgot the command corrects the status and nothing else.
+#[test]
+fn the_end_status_has_an_order_and_a_late_notice_corrects_it() {
+    let mut feed = Feed::new();
+    started(&mut feed, "b1");
+    let patch = feed
+        .projection
+        .background_table(&[], &[], &ends("b1", None, "x"), 8000);
+    assert_eq!(patch[0]["patch"]["backgroundWorks"][0]["status"], "failed");
+    feed.apply(KernelEvent::BackgroundWork {
+        work: "b1".into(),
+        status: BackgroundStatus::Completed,
+    });
+    let patch = feed
+        .projection
+        .background_table(&[], &[], &Default::default(), 9000);
+    let work = &patch[0]["patch"]["backgroundWorks"][0];
+    assert_eq!(work["status"], "resultPending");
+    assert_eq!(work["endedAt"], 8000);
+    assert_eq!(work["resultSummary"], "x");
+
+    // The output read's status is used when no notice came; a ledger entry's terminal status after it.
+    let mut feed = Feed::new();
+    started(&mut feed, "b1");
+    let patch = feed.projection.background_table(
+        &[],
+        &[],
+        &ends("b1", Some(BackgroundStatus::Killed), "x"),
+        8000,
+    );
+    assert_eq!(
+        patch[0]["patch"]["backgroundWorks"][0]["status"],
+        "cancelled"
+    );
+    let mut feed = Feed::new();
+    started(&mut feed, "b1");
+    let patch = feed
+        .projection
+        .shell_table(&[shell("b1", BackgroundStatus::Completed)], 8000);
+    assert_eq!(
+        patch[0]["patch"]["backgroundWorks"][0]["status"],
+        "resultPending"
+    );
+}
+
+/// Rule 4: the summary is the last 4096 UTF-16 units (zod counts JS `.length`), cut on a character boundary, so a
+/// tail of non-BMP characters (two units each) stays within the schema cap.
+#[test]
+fn the_result_summary_is_capped_in_utf16_units_like_node() {
+    let mut feed = Feed::new();
+    started(&mut feed, "b1");
+    let tail = format!("head{}", "\u{1F600}".repeat(3000));
+    let patch = feed
+        .projection
+        .background_table(&[], &[], &ends("b1", None, &tail), 8000);
+    let summary = patch[0]["patch"]["backgroundWorks"][0]["resultSummary"]
+        .as_str()
+        .unwrap();
+    assert_eq!(summary.encode_utf16().count(), 4096);
+    assert_eq!(summary.chars().count(), 2048);
+    assert!(summary.chars().all(|ch| ch == '\u{1F600}'));
+
+    let mut feed = Feed::new();
+    started(&mut feed, "b1");
+    let ascii = "ab".repeat(4000);
+    let patch = feed
+        .projection
+        .background_table(&[], &[], &ends("b1", None, &ascii), 8000);
+    assert_eq!(
+        patch[0]["patch"]["backgroundWorks"][0]["resultSummary"],
+        ascii[ascii.len() - 4096..]
+    );
+}
+
+/// Rule 5: a command that runs again replaces its ended item and keeps its start time.
+#[test]
+fn a_command_that_runs_again_replaces_its_ended_item() {
+    let mut feed = Feed::new();
+    started(&mut feed, "b1");
+    feed.projection
+        .background_table(&[], &[], &ends("b1", None, "x"), 8000);
+    let patch = feed
+        .projection
+        .shell_table(&[shell("b1", BackgroundStatus::Running)], 9000);
+    let work = &patch[0]["patch"]["backgroundWorks"][0];
+    assert_eq!(work["status"], "running");
+    assert_eq!(work["startedAt"], 5000);
+    assert!(work.get("endedAt").is_none());
+    assert!(work.get("resultSummary").is_none());
 }

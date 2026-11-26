@@ -353,7 +353,8 @@ impl HandleOverride for TestHandle {
                     parent: self.id.clone(),
                     child: child.clone(),
                     created_at_ms: 5000,
-                    through: assistant.clone(),
+                    through: Some(assistant.clone()),
+                    kind: Default::default(),
                     selection: view.selection.clone(),
                     mode: view.mode,
                     plan: view.plan,
@@ -381,6 +382,49 @@ impl HandleOverride for TestHandle {
                     result: CommandResult::Forked(Forked {
                         session: child,
                         through: Some(assistant.clone()),
+                        copied,
+                    }),
+                };
+            }
+            // The selection side chat, as the actor's `fork_selection_side_chat` runs it: the whole committed history
+            // here (nothing runs in the double), the chosen model or the session's own.
+            Command::ForkSelectionSideChat { selection } => {
+                let view = self.view.lock().unwrap().clone();
+                let child = SessionId::new(format!("{}_side_{}", self.id.as_str(), envelope.id));
+                let through = view.messages.last().map(|message| message.id().clone());
+                let fork = rust_cli_kernel_api::store::SessionFork {
+                    parent: self.id.clone(),
+                    child: child.clone(),
+                    created_at_ms: 5000,
+                    through: through.clone(),
+                    kind: rust_cli_kernel_api::store::ForkKind::SelectionSideChat,
+                    selection: selection.clone().unwrap_or(view.selection.clone()),
+                    mode: view.mode,
+                    plan: view.plan,
+                    execution: None,
+                };
+                let copied = match SessionStore::fork(self.store.as_ref(), fork).await {
+                    Ok(receipt) => receipt.copied,
+                    Err(error) => {
+                        return KernelAck::Rejected {
+                            reason: error.to_string(),
+                        };
+                    }
+                };
+                self.sent.lock().unwrap().push((
+                    envelope.id.as_str().to_owned(),
+                    format!(
+                        "ForkSelectionSideChat child={} model={}",
+                        child.as_str(),
+                        selection
+                            .as_ref()
+                            .map_or("-", |chosen| chosen.model.as_str())
+                    ),
+                ));
+                return KernelAck::Accepted {
+                    result: CommandResult::Forked(Forked {
+                        session: child,
+                        through,
                         copied,
                     }),
                 };
@@ -2547,7 +2591,8 @@ async fn commands_missing_from_the_inbound_schema_reach_the_command_path() {
     };
     let target = json!({"rowId": 1, "entityId": "m1"});
 
-    // A known command zcode-rs has not ported is refused as unsupported, not as an invalid envelope.
+    // A known command reaches its handler, not the invalid-envelope refusal. `setRowPinned` is ported
+    // (specs/fork-rust-feedback-and-pins.md): row 1 is not in this empty session, so the target is stale.
     let ack = inbound(
         &server,
         command(
@@ -2559,8 +2604,8 @@ async fn commands_missing_from_the_inbound_schema_reach_the_command_path() {
     )
     .await
     .unwrap();
-    assert_eq!(ack["status"], "rejected", "{ack}");
-    assert_eq!(ack["reasonCode"], "proto.unsupportedCommand", "{ack}");
+    assert_eq!(ack["status"], "stale", "{ack}");
+    assert_eq!(ack["reasonCode"], "proto.staleTarget", "{ack}");
     let ack = inbound(
         &server,
         command(
@@ -3193,4 +3238,111 @@ async fn a_subscribe_validates_workspace_and_worktree_ids_like_the_app_schema() 
     let mut extra = base.clone();
     extra["unknownField"] = json!(1);
     assert!(request(extra).await.is_err());
+}
+
+/// A `createSelectionSideSession` envelope through the command entry (the inbound schema validates it too).
+async fn side_chat_command(server: &Server, id: &str, payload: Value) -> Value {
+    crate::commands::command(
+        server,
+        json!({
+            "commandId": id, "clientId": "client", "sessionId": "s1", "type": "createSelectionSideSession",
+            "issuedAt": 1, "baseRevision": 0, "baseLogEpoch": "e", "payload": payload,
+        }),
+    )
+    .await
+    .unwrap()
+}
+
+fn sent(kernel: &WorktreeKernel) -> Vec<String> {
+    kernel
+        .sent
+        .lock()
+        .unwrap()
+        .iter()
+        .map(|(_, name)| name.clone())
+        .collect()
+}
+
+/// specs/fork-rust-selection-side-chat.md: without a `firstInput` the side chat is an empty child of the parent, opened
+/// for the App, and nothing is sent to it or to the parent but the fork.
+#[tokio::test]
+async fn a_side_chat_without_a_first_input_is_an_opened_empty_child() {
+    let (_scope, server, kernel) = server();
+    forkable(&server, &kernel, None).await;
+    let ack = side_chat_command(&server, "c-side", json!({})).await;
+    assert_eq!(ack["status"], "accepted", "{ack}");
+    assert_eq!(
+        ack["result"],
+        json!({"type": "createSelectionSideSession", "sessionId": "s1_side_c-side"})
+    );
+    assert_eq!(
+        sent(&kernel),
+        ["ForkSelectionSideChat child=s1_side_c-side model=-"]
+    );
+    let child = SessionId::new("s1_side_c-side");
+    let meta = kernel.store.meta(&child).expect("the child is stored");
+    assert_eq!(meta.parent, Some(SessionId::new("s1")));
+    assert_eq!(meta.title, "Selection side chat");
+    // The handler opened the child for the App.
+    assert!(server.bridge.get(&child).is_some());
+}
+
+/// A `firstInput` starts in the child only, under the command's id; the chosen model rides on the fork and the
+/// first input. The parent receives no input, and its history is as it was.
+#[tokio::test]
+async fn a_side_chat_first_input_starts_in_the_child_only() {
+    let (_scope, server, kernel) = server();
+    forkable(&server, &kernel, None).await;
+    let parent_messages = kernel
+        .handle(&SessionId::new("s1"))
+        .unwrap()
+        .view
+        .lock()
+        .unwrap()
+        .messages
+        .clone();
+    let ack = side_chat_command(
+        &server,
+        "c-side",
+        json!({"firstInput": {"text": "what does this mean",
+            "modelSelection": {"providerId": "other", "modelId": "m2"}}}),
+    )
+    .await;
+    assert_eq!(ack["status"], "accepted", "{ack}");
+    assert_eq!(ack["result"]["sessionId"], "s1_side_c-side");
+    assert_eq!(
+        ack["result"]["input"],
+        json!({"delivery": "startNow", "inputId": "c-side"})
+    );
+    let log = sent(&kernel);
+    assert_eq!(log.len(), 2, "{log:?}");
+    assert_eq!(
+        log[0],
+        "ForkSelectionSideChat child=s1_side_c-side model=m2"
+    );
+    assert!(log[1].starts_with("Submit what does this mean"), "{log:?}");
+    // The first submit went to the child's handle, not the parent's.
+    let parent = kernel.handle(&SessionId::new("s1")).unwrap();
+    assert_eq!(parent.view.lock().unwrap().messages, parent_messages);
+    let parent_live = server.bridge.get(&SessionId::new("s1")).unwrap();
+    assert_eq!(
+        parent_live.sink.status().0,
+        crate::projection::state::Phase::CompletedSuccess
+    );
+}
+
+/// The same command id again answers the first result (same child, a duplicate ack); no second fork.
+#[tokio::test]
+async fn a_side_chat_retry_with_the_same_command_id_returns_the_same_child() {
+    let (_scope, server, kernel) = server();
+    forkable(&server, &kernel, None).await;
+    let first = side_chat_command(&server, "c-side", json!({})).await;
+    let again = side_chat_command(&server, "c-side", json!({})).await;
+    assert_eq!(first["status"], "accepted", "{first}");
+    assert_eq!(again["status"], "duplicate", "{again}");
+    assert_eq!(again["result"], first["result"]);
+    assert_eq!(sent(&kernel).len(), 1);
+    // A different command id is a new side chat.
+    let other = side_chat_command(&server, "c-side-2", json!({})).await;
+    assert_ne!(other["result"]["sessionId"], first["result"]["sessionId"]);
 }

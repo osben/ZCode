@@ -1299,6 +1299,43 @@ fn a_folded_steer_puts_its_state_before_the_system_turn() {
     );
 }
 
+/// Fork (specs/fork-rust-selection-side-chat.md): a side chat's boundary reminder stays directly before the child's first
+/// question, with the step's token reminder before it, whether or not system turns are on. Node's boundary is a user-role
+/// reminder in both modes, so it is never folded into the system message.
+#[test]
+fn the_side_chat_boundary_is_the_last_reminder_before_the_question() {
+    let source = rust_cli_kernel_api::store::SELECTION_SIDE_CHAT_SOURCE;
+    let messages = [
+        human("u1", "parent question"),
+        assistant("m1", vec![text("parent answer")]),
+        attachment("b1", source, "boundary"),
+        human("u2", "side question"),
+        attachment("t1", "total_tokens_reminder", "15000000 tokens left"),
+    ];
+    for options in [&ON, &OFF] {
+        let api = normalize(&messages, options);
+        let user = api
+            .iter()
+            .rev()
+            .find(|message| message.role == ApiRole::User)
+            .unwrap();
+        let parts = texts(user);
+        assert_eq!(parts.last().map(String::as_str), Some("side question"));
+        assert!(
+            parts[parts.len() - 2].contains("boundary"),
+            "{parts:?} (system turns: {})",
+            options.system_turns
+        );
+        // The boundary is in the user message in both modes, once.
+        let all: String = api.iter().flat_map(texts).collect();
+        assert_eq!(all.matches("boundary").count(), 1);
+    }
+    // Without system turns the token reminder sits earlier in the same message.
+    let api = normalize(&messages, &OFF);
+    let parts = texts(api.last().unwrap());
+    assert!(parts[0].contains("15000000 tokens left"), "{parts:?}");
+}
+
 fn steered_text(prompt: &str) -> String {
     reminder::wrap(&format!(
         "The user sent a new message while you were working:\n{prompt}"

@@ -583,6 +583,16 @@ impl Live {
         self.state().projection.row_target(row_id, entity, action)
     }
 
+    /// Fork: see [`Projection::mark_target`].
+    pub fn mark_target(
+        &self,
+        row_id: u64,
+        entity: &str,
+        kind: crate::projection::MarkKind,
+    ) -> Result<String, crate::projection::TargetMiss> {
+        self.state().projection.mark_target(row_id, entity, kind)
+    }
+
     /// Fork: see [`Projection::fork_target`].
     pub fn fork_target(
         &self,
@@ -953,10 +963,28 @@ impl Live {
             },
             None => Vec::new(),
         };
+        // Fork (specs/fork-rust-background-and-context-usage.md rule 4): the ledger lists running commands only; the
+        // output tail of a command that just ended is read once, here, before the list keeps it as an ended work.
+        let vanished = self.state().projection.vanished_shells(&entries);
+        let mut ends = std::collections::HashMap::new();
+        for id in vanished {
+            let read = match self.handle.background_bash_output(&id).await {
+                Ok(Some(rust_cli_kernel_api::panels::BashOutputRead::Window {
+                    status,
+                    text,
+                    ..
+                })) => crate::projection::ShellEnd {
+                    status,
+                    tail: Some(text),
+                },
+                _ => crate::projection::ShellEnd::default(),
+            };
+            ends.insert(id, read);
+        }
         let now = self.context.now();
         self.state()
             .projection
-            .background_table(&entries, &runs, now)
+            .background_table(&entries, &runs, &ends, now)
     }
 
     /// Fork: the watcher of the kernel's subagent table; it ends with this session.

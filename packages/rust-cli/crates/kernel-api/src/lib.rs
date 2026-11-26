@@ -110,6 +110,7 @@ pub mod mcp_name;
 pub mod mcp_state;
 pub mod mcp_vars;
 pub mod message;
+pub mod message_mark;
 pub mod metering;
 pub mod model;
 pub mod model_name;

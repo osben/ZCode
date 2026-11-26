@@ -120,6 +120,7 @@ fn loaded_sessions_round_trip_with_open_work() {
         goal_verifications: Vec::new(),
         message_models: Default::default(),
         tool_displays: Default::default(),
+        marks: Default::default(),
         execution_worktree: false,
     };
     round_trip(&loaded);

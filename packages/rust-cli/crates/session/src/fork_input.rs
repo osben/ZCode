@@ -4,9 +4,9 @@
 //! 由存储一次写完（`SessionStore::fork`）；文件不动。
 
 use rust_cli_kernel_api::ids::MessageId;
-use rust_cli_kernel_api::message::Message;
+use rust_cli_kernel_api::message::{Message, UserOrigin};
 use rust_cli_kernel_api::session_api::{Ack, CommandResult, Forked};
-use rust_cli_kernel_api::store::SessionFork;
+use rust_cli_kernel_api::store::{ForkKind, SessionFork};
 
 use crate::actor::{Actor, rejected};
 use crate::rewind_plan::selectable;
@@ -69,6 +69,55 @@ fn completed_while_running(messages: &[Message], at: usize, prompt: Option<&Mess
     running_turn_start(messages, prompt).is_some_and(|start| at < start)
 }
 
+/// Fork: a message the store keeps as a row of its own (tool results live inside their assistant row, and a compaction
+/// boundary or an interrupt marker has no row a fork could end at).
+fn has_row(message: &Message) -> bool {
+    match message {
+        Message::User(user) => !matches!(user.origin, UserOrigin::ToolResult { .. }),
+        // The resume sentinel stays uncommitted until the next commit, so the store has no row for it yet.
+        Message::Assistant(assistant) => !assistant.is_resume_sentinel(),
+        Message::Attachment(_) => true,
+        Message::System(_) => false,
+    }
+}
+
+/// Fork: a background task notification (Node's `model-only` turn trigger).
+fn is_notification(message: &Message) -> bool {
+    matches!(message, Message::User(user) if matches!(&user.origin,
+        UserOrigin::Meta { source } if source == rust_cli_kernel_api::hooks::queued_command::TASK_NOTIFICATION))
+}
+
+/// Fork: where a selection side chat's inherited history ends (Node `selectionSideChatHistoryMessages`). While a turn runs,
+/// only the input that opened it stays: a typed input is kept, a notification that opened a notification turn (with the
+/// notifications batched before it) is dropped with everything after it. A turn whose opening message is not stored yet
+/// leaves the whole committed history. The answer is the last message with a row of its own, `None` when there is none.
+pub(crate) fn side_chat_through(
+    messages: &[Message],
+    turn_running: bool,
+    prompt: Option<&MessageId>,
+) -> Option<MessageId> {
+    let mut end = messages.len();
+    let opened = prompt
+        .filter(|_| turn_running)
+        .and_then(|prompt| messages.iter().position(|message| message.id() == prompt));
+    if let Some(at) = opened {
+        end = if matches!(&messages[at], Message::User(user) if user.origin == UserOrigin::Human) {
+            at + 1
+        } else {
+            let mut start = at;
+            while start > 0 && is_notification(&messages[start - 1]) {
+                start -= 1;
+            }
+            start
+        };
+    }
+    messages[..end]
+        .iter()
+        .rev()
+        .find(|message| has_row(message))
+        .map(|message| message.id().clone())
+}
+
 const RUNNING: &str = "a turn is running; fork after it finishes";
 
 impl Actor {
@@ -116,6 +165,49 @@ impl Actor {
         self.copy_through(assistant, target).await
     }
 
+    /// Fork: `ForkSelectionSideChat` (specs/fork-rust-selection-side-chat.md). Accepted at any time; reads only the active
+    /// history and the running turn's opening message, and changes nothing in this session.
+    pub(crate) async fn fork_selection_side_chat(
+        &self,
+        selection: Option<rust_cli_kernel_api::model::ModelSelection>,
+    ) -> Ack {
+        let turn = self
+            .running
+            .as_ref()
+            .filter(|running| running.run.is_some());
+        let through = side_chat_through(
+            &self.messages,
+            turn.is_some(),
+            turn.and_then(|running| running.prompt.as_ref()),
+        );
+        let child = self.deps.ids.session();
+        let fork = SessionFork {
+            parent: self.meta.id.clone(),
+            child: child.clone(),
+            created_at_ms: self.deps.clock.now_ms(),
+            through: through.clone(),
+            kind: ForkKind::SelectionSideChat,
+            selection: selection.unwrap_or_else(|| self.selection.clone()),
+            mode: self.execution.mode,
+            plan: self.execution.plan,
+            // The child runs where the parent runs: without the root it would open in the original checkout.
+            execution: self
+                .execution_worktree
+                .then(|| self.meta.workspace.root.clone()),
+        };
+        let receipt = match self.deps.store.fork(fork).await {
+            Ok(receipt) => receipt,
+            Err(error) => return rejected(error.to_string()),
+        };
+        Ack::Accepted {
+            result: CommandResult::Forked(Forked {
+                session: child,
+                through,
+                copied: receipt.copied,
+            }),
+        }
+    }
+
     /// Writes the child session that carries the history through `through` (`SessionStore::fork`, files untouched).
     /// `target` (B1.3) names the child id and the worktree root the child executes in.
     async fn copy_through(
@@ -132,7 +224,8 @@ impl Actor {
             parent: self.meta.id.clone(),
             child: child.clone(),
             created_at_ms: self.deps.clock.now_ms(),
-            through: through.clone(),
+            through: Some(through.clone()),
+            kind: ForkKind::Fork,
             selection: self.selection.clone(),
             mode: self.execution.mode,
             plan: self.execution.plan,

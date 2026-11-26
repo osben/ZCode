@@ -15,7 +15,7 @@ use rust_cli_kernel_api::user_input::INTERRUPT_TEXTS;
 use serde_json::json;
 use tokio_util::sync::CancellationToken;
 
-use super::{completed_while_running, through};
+use super::{completed_while_running, side_chat_through, through};
 use crate::Opened;
 use crate::rewind::tests::{Writing, file};
 use crate::test_support::{Setup, envelope, finished, meta, submit, until};
@@ -580,4 +580,316 @@ async fn a_fork_from_assistant_adopts_the_host_child_and_worktree() {
     assert_eq!(loaded.meta.parent, Some(meta().id));
     assert!(loaded.execution_worktree);
     assert_eq!(loaded.meta.workspace.root.as_str(), "/work/.worktrees/one");
+}
+
+fn side_chat(selection: Option<rust_cli_kernel_api::model::ModelSelection>) -> CommandEnvelope {
+    envelope("side-1", Command::ForkSelectionSideChat { selection })
+}
+
+/// A store that already holds `history` as the parent's committed messages.
+async fn seeded(history: &[Message]) -> Arc<MemoryStore> {
+    let store = Arc::new(MemoryStore::default());
+    store.create(meta()).await.unwrap();
+    let batch = FactBatch {
+        owner_epoch: OwnerEpoch::LOCAL,
+        command: None,
+        facts: history
+            .iter()
+            .map(|message| Fact::MessageAppended {
+                message: message.clone(),
+            })
+            .collect(),
+        turn: None,
+    };
+    store.commit(&meta().id, batch).await.unwrap();
+    store
+}
+
+fn notification(id: &str) -> Message {
+    user(
+        id,
+        "<task-notification>done</task-notification>",
+        UserOrigin::Meta {
+            source: "task-notification".to_owned(),
+        },
+    )
+}
+
+/// Fork (specs/fork-rust-selection-side-chat.md): the inherited history of a side chat while a turn runs keeps only the
+/// input that opened it; with no turn, or a turn whose opening message is not stored yet, it is everything committed.
+#[test]
+fn a_side_chat_cuts_the_running_turn_after_its_opening_input() {
+    let history = vec![
+        human("u1", "first"),
+        assistant("a1", said("one")),
+        human("u2", "second"),
+        assistant("a2", said("partial")),
+    ];
+    let id = MessageId::new;
+    // No turn: all of it.
+    assert_eq!(side_chat_through(&history, false, None), Some(id("a2")));
+    // A typed input opened the running turn: it stays, the reply after it goes.
+    assert_eq!(
+        side_chat_through(&history, true, Some(&id("u2"))),
+        Some(id("u2"))
+    );
+    // The opening message is not stored yet: everything committed stays.
+    assert_eq!(
+        side_chat_through(&history, true, Some(&id("u3"))),
+        Some(id("a2"))
+    );
+    assert_eq!(side_chat_through(&history, true, None), Some(id("a2")));
+    // A turn opened by notifications loses them all, the batched ones included.
+    let notified = vec![
+        human("u1", "first"),
+        assistant("a1", said("one")),
+        notification("n1"),
+        notification("n2"),
+        assistant("a2", said("partial")),
+    ];
+    assert_eq!(
+        side_chat_through(&notified, true, Some(&id("n2"))),
+        Some(id("a1"))
+    );
+    // Nothing with a row of its own: no history.
+    assert_eq!(side_chat_through(&[], false, None), None);
+    assert_eq!(
+        side_chat_through(&[human("u1", "only")], true, Some(&id("u1"))),
+        Some(id("u1"))
+    );
+    assert_eq!(
+        side_chat_through(&[notification("n1")], true, Some(&id("n1"))),
+        None
+    );
+}
+
+fn user_result(id: &str, tool: &str, assistant: &str) -> Message {
+    Message::User(UserMessage {
+        stall_execution: None,
+        workflow_meta: None,
+        epilogue_start: None,
+        intent: None,
+        id: MessageId::new(id),
+        content: vec![ContentBlock::ToolResult {
+            tool_use_id: ToolUseId::new(tool),
+            content: vec![ToolResultContent::Text {
+                text: "ok".to_owned(),
+            }],
+            is_error: false,
+        }],
+        origin: UserOrigin::ToolResult {
+            assistant: MessageId::new(assistant),
+        },
+    })
+}
+
+/// A tool result lives inside its assistant row: a history that ends with one ends at the assistant.
+#[test]
+fn a_side_chat_never_ends_at_a_tool_result() {
+    let history = vec![
+        human("u1", "first"),
+        assistant(
+            "a1",
+            ContentBlock::ToolUse {
+                id: ToolUseId::new("toolu_1"),
+                name: "Read".to_owned(),
+                input: json!({}),
+            },
+        ),
+        user_result("r1", "toolu_1", "a1"),
+    ];
+    assert_eq!(
+        side_chat_through(&history, false, None),
+        Some(MessageId::new("a1"))
+    );
+}
+
+/// The child is a hidden `selection_side_chat` session of the parent: the history, then the boundary reminder; the
+/// parent keeps its own messages and the model it had.
+#[tokio::test]
+async fn a_side_chat_inherits_the_history_behind_a_boundary() {
+    let history = vec![human("msg_u1", "first"), assistant("msg_a1", said("one"))];
+    let store = seeded(&history).await;
+    let mut setup = Setup::new(Arc::new(ScriptedModel::new(Vec::new())));
+    setup.store = Some(store.clone());
+    setup.messages = history.clone();
+    setup.opened = Opened::Loaded;
+    let built = setup.build().await;
+    let ack = built.session.send(side_chat(None)).await;
+    let Ack::Accepted {
+        result: rust_cli_kernel_api::session_api::CommandResult::Forked(forked),
+    } = ack
+    else {
+        panic!("{ack:?}")
+    };
+    assert_eq!(forked.through, Some(MessageId::new("msg_a1")));
+    assert_eq!(forked.copied, 2);
+    let loaded = store.load(&forked.session).await.unwrap();
+    assert_eq!(loaded.meta.parent, Some(meta().id));
+    assert_eq!(loaded.meta.title, "Selection side chat");
+    assert_eq!(loaded.messages[..2], history[..]);
+    assert_eq!(loaded.messages.len(), 3, "{:?}", loaded.messages);
+    assert!(matches!(&loaded.messages[2], Message::Attachment(a)
+        if a.source == rust_cli_kernel_api::store::SELECTION_SIDE_CHAT_SOURCE));
+    // The parent is not touched.
+    assert_eq!(built.session.view().await.unwrap().messages, history);
+}
+
+/// `firstInput.modelSelection` names the child's model; the parent keeps its own.
+#[tokio::test]
+async fn a_side_chat_takes_the_chosen_model() {
+    let history = vec![human("msg_u1", "first"), assistant("msg_a1", said("one"))];
+    let store = seeded(&history).await;
+    let mut setup = Setup::new(Arc::new(ScriptedModel::new(Vec::new())));
+    setup.store = Some(store.clone());
+    setup.messages = history;
+    setup.opened = Opened::Loaded;
+    let built = setup.build().await;
+    let chosen =
+        rust_cli_kernel_api::model::ModelSelection::new("p".to_owned(), "other".to_owned());
+    let before = built.session.view().await.unwrap().selection;
+    let ack = built.session.send(side_chat(Some(chosen.clone()))).await;
+    let Ack::Accepted {
+        result: rust_cli_kernel_api::session_api::CommandResult::Forked(forked),
+    } = ack
+    else {
+        panic!("{ack:?}")
+    };
+    let loaded = store.load(&forked.session).await.unwrap();
+    assert_eq!(loaded.model, Some(chosen));
+    assert_eq!(built.session.view().await.unwrap().selection, before);
+}
+
+/// A parent with nothing stored yet has no history to inherit: the child is just the boundary.
+#[tokio::test]
+async fn a_side_chat_of_an_empty_session_inherits_nothing() {
+    let store = seeded(&[]).await;
+    let mut setup = Setup::new(Arc::new(ScriptedModel::new(Vec::new())));
+    setup.store = Some(store.clone());
+    setup.opened = Opened::Loaded;
+    let built = setup.build().await;
+    let ack = built.session.send(side_chat(None)).await;
+    let Ack::Accepted {
+        result: rust_cli_kernel_api::session_api::CommandResult::Forked(forked),
+    } = ack
+    else {
+        panic!("{ack:?}")
+    };
+    assert_eq!(forked.through, None);
+    assert_eq!(forked.copied, 0);
+    let loaded = store.load(&forked.session).await.unwrap();
+    assert_eq!(loaded.messages.len(), 1, "{:?}", loaded.messages);
+}
+
+/// While a turn runs the side chat is accepted (a fork is not): the child carries the committed history and the
+/// running turn's typed input, none of its output, and the parent's turn keeps running.
+#[tokio::test]
+async fn a_side_chat_opens_while_the_parent_turn_runs() {
+    let history = vec![human("msg_u1", "first"), assistant("msg_a1", said("one"))];
+    let store = seeded(&history).await;
+    let mut setup = Setup::new(Arc::new(Silent));
+    setup.store = Some(store.clone());
+    setup.messages = history;
+    setup.opened = Opened::Loaded;
+    let built = setup.build().await;
+    built.session.send(submit("c2", "second")).await;
+    let before = built.session.view().await.unwrap();
+    assert!(before.running, "{before:?}");
+    let ack = built.session.send(side_chat(None)).await;
+    let Ack::Accepted {
+        result: rust_cli_kernel_api::session_api::CommandResult::Forked(forked),
+    } = ack
+    else {
+        panic!("{ack:?}")
+    };
+    let loaded = store.load(&forked.session).await.unwrap();
+    assert_eq!(
+        texts(&loaded.messages)[..3],
+        ["first", "one", "second"].map(String::from)
+    );
+    assert_eq!(loaded.messages.len(), 4, "{:?}", loaded.messages);
+    let after = built.session.view().await.unwrap();
+    assert!(after.running);
+    assert_eq!(after.messages, before.messages);
+}
+
+/// The same command id again is a duplicate: no second child.
+#[tokio::test]
+async fn a_side_chat_command_sent_twice_forks_once() {
+    let history = vec![human("msg_u1", "first"), assistant("msg_a1", said("one"))];
+    let store = seeded(&history).await;
+    let mut setup = Setup::new(Arc::new(ScriptedModel::new(Vec::new())));
+    setup.store = Some(store.clone());
+    setup.messages = history;
+    setup.opened = Opened::Loaded;
+    let built = setup.build().await;
+    let first = built.session.send(side_chat(None)).await;
+    assert!(matches!(first, Ack::Accepted { .. }), "{first:?}");
+    assert_eq!(built.session.send(side_chat(None)).await, Ack::Duplicate);
+}
+
+/// Reopening with an unanswered input adds the resume placeholder in memory only: the store has no row for it, so the
+/// side chat ends at the input before it.
+#[test]
+fn a_side_chat_never_ends_at_the_resume_placeholder() {
+    let sentinel = Message::Assistant(AssistantMessage {
+        id: MessageId::new("a_resume"),
+        content: vec![said(rust_cli_kernel_api::message::NO_RESPONSE_REQUESTED)],
+        model: rust_cli_kernel_api::message::SYNTHETIC_MODEL.to_owned(),
+        stop_reason: None,
+        usage: None,
+    });
+    let history = vec![
+        human("u1", "first"),
+        assistant("a1", said("one")),
+        human("u2", "unanswered"),
+        sentinel,
+    ];
+    assert_eq!(
+        side_chat_through(&history, false, None),
+        Some(MessageId::new("u2"))
+    );
+}
+
+/// Records the fork the actor hands to the store.
+#[derive(Default)]
+struct Forks(std::sync::Mutex<Vec<rust_cli_kernel_api::store::SessionFork>>);
+
+#[async_trait::async_trait]
+impl rust_cli_kernel_api::testing::StoreHooks for Forks {
+    async fn before(
+        &self,
+        call: rust_cli_kernel_api::testing::StoreCall<'_>,
+    ) -> Result<(), rust_cli_kernel_api::store::StoreError> {
+        if let rust_cli_kernel_api::testing::StoreCall::Fork(fork) = call {
+            self.0.lock().unwrap().push(fork.clone());
+        }
+        Ok(())
+    }
+}
+
+/// A parent that runs in a managed worktree passes its root, so the side chat reads and edits the same worktree.
+#[tokio::test]
+async fn a_side_chat_runs_in_the_parent_worktree() {
+    for worktree in [false, true] {
+        let history = vec![human("msg_u1", "first"), assistant("msg_a1", said("one"))];
+        let store = seeded(&history).await;
+        let forks = Arc::new(Forks::default());
+        let mut setup = Setup::new(Arc::new(ScriptedModel::new(Vec::new())));
+        setup.store = Some(store.clone());
+        setup.store_hooks = Some(forks.clone());
+        setup.messages = history;
+        setup.opened = Opened::Loaded;
+        setup.execution_worktree = worktree;
+        let built = setup.build().await;
+        let ack = built.session.send(side_chat(None)).await;
+        assert!(matches!(ack, Ack::Accepted { .. }), "{ack:?}");
+        let recorded = forks.0.lock().unwrap().clone();
+        assert_eq!(recorded.len(), 1);
+        assert_eq!(
+            recorded[0].execution,
+            worktree.then(|| meta().workspace.root),
+            "worktree={worktree}"
+        );
+    }
 }

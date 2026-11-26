@@ -77,6 +77,19 @@ pub fn hydrate(record: &WithParts) -> Option<Message> {
             data: first["metadata"]["forkContext"].clone(),
         }));
     }
+    // Fork: Node's selection side chat boundary (`buildSelectionSideChatBoundary`, specs/fork-rust-selection-side-chat.md)
+    // is a model-only reminder like the fork notice: the model reads it, and the projection starts the pane after it.
+    if marker.is_null()
+        && source == rust_cli_kernel_api::store::SELECTION_SIDE_CHAT_SOURCE
+        && first["synthetic"] == true
+    {
+        return Some(Message::Attachment(AttachmentMessage {
+            id,
+            source,
+            text: rust_cli_base::reminder::wrap(&text(first)),
+            data: Value::Null,
+        }));
+    }
     // Fork: Node's background notification (`persistBackgroundTaskNotificationBatch`) has no
     // `rustCli` marker and stores the bare `<task-notification>` envelopes; the model saw each one
     // behind the notification preamble, so it is read back as the kernel's notification message.

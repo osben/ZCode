@@ -16,7 +16,7 @@ fn messages_get_new_ids_mapped_parents_and_the_fork_origin() {
             "goalBoundary": {"kind": "snapshot", "target": {"targetID": "t", "sessionID": "sess_1",
                 "activeInputId": "in"}, "verificationEntryIds": ["v"]}},
         "metadata": {"keep": 1}, "id": "msg_b", "sessionID": "sess_1"});
-    let cloned = message(&info, &map(), "sess_2", "msg_y");
+    let cloned = message(&info, &map(), "sess_2", "msg_y", false);
     assert_eq!(
         cloned,
         json!({"role": "assistant", "parentID": "msg_x", "time": {"created": 1},
@@ -44,7 +44,7 @@ fn messages_get_new_ids_mapped_parents_and_the_fork_origin() {
     );
     let user = json!({"role": "user", "parentID": "msg_a", "id": "msg_c", "sessionID": "sess_1"});
     assert_eq!(
-        message(&user, &map(), "sess_2", "msg_z")["parentID"],
+        message(&user, &map(), "sess_2", "msg_z", false)["parentID"],
         "msg_a"
     );
 }

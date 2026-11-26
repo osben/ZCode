@@ -1,6 +1,7 @@
 import { mkdir } from "node:fs/promises";
 import { basename as posixBasename } from "node:path/posix";
 import { basename as win32Basename } from "node:path/win32";
+import { closeCloudContentDialogIfPresent } from "./occupation-onboarding.js";
 import {
   TID_COMPOSER_WORKSPACE_TRIGGER,
   TID_TASK_ITEM,
@@ -178,8 +179,21 @@ export async function ensureLocalProjectRow(
   });
   if (await projectRowExists(workspacePath)) return;
   await mkdir(workspacePath, { recursive: true });
-  await $('[data-testid="project-section"]').moveTo();
-  await $('[data-testid="virtual-project-add"]').click();
+  // The marketing popup can open after onboarding was skipped and cover the sidebar. The add button
+  // shows only on hover (opacity 0 otherwise), so isClickable stays false: retry the hover and click.
+  await browser.waitUntil(
+    async () => {
+      await closeCloudContentDialogIfPresent();
+      try {
+        await $('[data-testid="project-section"]').moveTo();
+        await $('[data-testid="virtual-project-add"]').click();
+        return true;
+      } catch {
+        return false;
+      }
+    },
+    { timeout, timeoutMsg: "the New project button stayed covered" },
+  );
   await $('[data-testid="virtual-project-name"]').waitForDisplayed({ timeout });
   await selectNativeProjectDirectories([workspacePath]);
   await $('[data-testid="virtual-project-name"]').setValue(projectNameForWorkspace(workspacePath));

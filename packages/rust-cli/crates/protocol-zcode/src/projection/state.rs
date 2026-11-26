@@ -291,6 +291,9 @@ pub fn usage(
             "usedTokens": context.used_tokens,
             "maxTokens": window,
             "autoCompactThresholdTokens": context.compact_at,
+            // Fork (specs/fork-rust-background-and-context-usage.md): the kernel's `compact_at` is the threshold it acts on
+            // (`None` is auto-compact off), so it is authoritative, as Node marks any threshold its runtime event carries.
+            "autoCompactThresholdAuthoritative": true,
         }))),
         "cumulative": {
             "inputTokens": total.input_tokens,

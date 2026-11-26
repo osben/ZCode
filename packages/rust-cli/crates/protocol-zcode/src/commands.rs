@@ -56,8 +56,8 @@ pub(crate) use rust_cli_kernel_api::permission::resolve_execution;
 #[derive(Default, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct Input {
-    text: Option<String>,
-    model_selection: Option<Value>,
+    pub(crate) text: Option<String>,
+    pub(crate) model_selection: Option<Value>,
     mode: Option<String>,
     plan_enabled: Option<bool>,
     input_origin: Option<String>,
@@ -938,7 +938,7 @@ async fn first_content(
 /// createSession command id, with its attachments already resolved ([`first_content`]). The `input` field of the
 /// result; `None` without text or when the session refused it; `Err` when the draft could not be persisted for it
 /// ([`admit_input`]).
-async fn submit_first(
+pub(crate) async fn submit_first(
     server: &Server,
     live: &rust_cli_protocol_core::sessions::Bridged<crate::live::Live>,
     envelope: &Envelope,

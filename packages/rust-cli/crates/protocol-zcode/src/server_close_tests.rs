@@ -149,6 +149,16 @@ struct TestHandle {
     accepts: std::sync::atomic::AtomicBool,
     /// Fork (completedActivityCount): the kernel's subagent table; `None` is unsupported.
     table: StdMutex<Option<Vec<rust_cli_kernel_api::panels::SubagentEntry>>>,
+    /// Fork (specs/fork-rust-background-and-context-usage.md): the kernel's running background commands and the
+    /// output read of an ended one; `None` entries are unsupported.
+    background: StdMutex<BackgroundFixture>,
+}
+
+/// The background ledger and output read the test handle answers with.
+#[derive(Default)]
+struct BackgroundFixture {
+    entries: Option<Vec<rust_cli_kernel_api::manage::BackgroundEntry>>,
+    output: Option<rust_cli_kernel_api::panels::BashOutputRead>,
 }
 
 #[async_trait]
@@ -182,6 +192,25 @@ impl HandleOverride for TestHandle {
     async fn close(&self, reason: EndReason) -> Vec<String> {
         self.closes.lock_unpoisoned().push(reason);
         Vec::new()
+    }
+
+    async fn background_tasks(
+        &self,
+    ) -> Result<Vec<rust_cli_kernel_api::manage::BackgroundEntry>, KernelError> {
+        self.background
+            .lock_unpoisoned()
+            .entries
+            .clone()
+            .ok_or_else(|| KernelError::Failed {
+                message: "no background tasks".to_owned(),
+            })
+    }
+
+    async fn background_bash_output(
+        &self,
+        _task: &str,
+    ) -> Result<Option<rust_cli_kernel_api::panels::BashOutputRead>, KernelError> {
+        Ok(self.background.lock_unpoisoned().output.clone())
     }
 
     async fn subagents(
@@ -306,6 +335,7 @@ async fn open_view(
         log: log.clone(),
         accepts: std::sync::atomic::AtomicBool::new(false),
         table: StdMutex::new(None),
+        background: StdMutex::default(),
     });
     let queries = Arc::new(DraftQueries {
         log,
@@ -764,6 +794,7 @@ async fn two_concurrent_cold_opens_run_the_session_open_hook_once() {
         log: Log::default(),
         accepts: std::sync::atomic::AtomicBool::new(false),
         table: StdMutex::new(None),
+        background: StdMutex::default(),
     });
     let queries = Arc::new(DraftQueries::default());
     let kernel = Arc::new(CloseKernel { handle, queries });
@@ -911,3 +942,6 @@ async fn a_kernel_message_does_not_fold_the_activity() {
 
 #[path = "server_completed_activity_tests.rs"]
 mod completed_activity;
+
+#[path = "server_background_tests.rs"]
+mod background;

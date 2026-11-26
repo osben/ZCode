@@ -135,6 +135,8 @@ pub(crate) struct Setup {
     pub opened: Opened,
     /// Fork: `SessionState::start_held` (a prepared execution worktree).
     pub start_held: bool,
+    /// Fork: `SessionState::execution_worktree` (the workspace root is a managed worktree).
+    pub execution_worktree: bool,
     pub start: StartSource,
     /// 为 false 时存储里没有这个会话，所有提交都失败。
     pub stored: bool,
@@ -216,6 +218,7 @@ impl Setup {
             checkpoints: Vec::new(),
             opened: Opened::Created,
             start_held: false,
+            execution_worktree: false,
             start: StartSource::Startup,
             stored: true,
             cron: Arc::new(rust_cli_kernel_api::cron::NoCron),
@@ -362,7 +365,7 @@ impl Setup {
                 checkpoints: self.checkpoints,
                 start: self.start,
                 start_held: self.start_held,
-                execution_worktree: false,
+                execution_worktree: self.execution_worktree,
                 turn: self.turn,
                 last_turn_failed: self.last_turn_failed,
                 child_live: self.child_live,
@@ -373,6 +376,7 @@ impl Setup {
                 goal_verifications: self.goal_verifications,
                 message_models: Default::default(),
                 tool_displays: Default::default(),
+                marks: Default::default(),
             },
             self.opened,
         );

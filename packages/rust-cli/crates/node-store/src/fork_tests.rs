@@ -17,7 +17,8 @@ fn request(through: &str) -> SessionFork {
         parent: sid("sess_1"),
         child: sid("sess_2"),
         created_at_ms: 36_000,
-        through: MessageId::new(through),
+        through: Some(MessageId::new(through)),
+        kind: Default::default(),
         selection: selection(),
         mode: PermissionMode::AcceptEdits,
         plan: false,
@@ -376,4 +377,94 @@ async fn a_fork_with_an_execution_root_writes_the_child_columns_in_the_transacti
     assert_eq!(row[0], json!("/w"));
     assert_eq!(row[1], json!("/w/.worktrees/one"));
     assert_eq!(row[2], Value::Null);
+}
+
+fn side_chat(through: Option<&str>) -> SessionFork {
+    SessionFork {
+        through: through.map(MessageId::new),
+        kind: rust_cli_kernel_api::store::ForkKind::SelectionSideChat,
+        ..request("unused")
+    }
+}
+
+/// A selection side chat is Node's `selection_side_chat` row (specs/fork-rust-selection-side-chat.md): the fixed title,
+/// the task type in the slug, the inherited messages hidden from the pane and the transcript (the model still reads
+/// them), no divider, no fork notice, no goal, and the boundary reminder last.
+#[tokio::test]
+async fn a_side_chat_is_a_hidden_selection_side_chat_row_with_a_boundary() {
+    let t = TestStore::new();
+    three_turns(&t).await;
+    t.connection()
+        .execute(
+            "insert into session_target (session_id, target_id, objective, summary_title, status,
+               token_budget, tokens_used, time_used_seconds, active_input_id, time_created, time_updated)
+             values ('sess_1', 'target_1', 'ship it', null, 'active', null, 5, 2, 'input_9', 1, 2)",
+            [],
+        )
+        .unwrap();
+    let receipt = t.store.fork(side_chat(Some("msg_3_u2"))).await.unwrap();
+    assert_eq!(receipt.copied, 3);
+    let row = &t.rows(
+        "select parent_id, task_type, slug, title, title_source from session where id = 'sess_2'",
+    )[0];
+    assert_eq!(row[0], json!("sess_1"));
+    assert_eq!(row[1], json!("selection_side_chat"));
+    assert_eq!(row[2], json!("sess_1-selection_side_chat-rs0"));
+    assert_eq!(row[3], json!("Selection side chat"));
+    assert_eq!(row[4], json!("generated"));
+    let messages = data(&t, "message", "sess_2");
+    // Three inherited messages and the boundary: no timeline row, no fork notice.
+    assert_eq!(messages.len(), 4);
+    for inherited in &messages[..3] {
+        assert_eq!(inherited["visibility"], "model-only");
+        assert_eq!(inherited["semantics"]["uiVisibility"], "hidden");
+        assert_eq!(inherited["semantics"]["providerVisibility"], "visible");
+        assert_eq!(inherited["semantics"]["transcriptVisibility"], "hidden");
+    }
+    let boundary = &messages[3];
+    assert_eq!(boundary["source"], "selection_side_chat");
+    assert_eq!(boundary["semantics"]["kind"], "system_reminder");
+    assert_eq!(boundary["semantics"]["uiVisibility"], "hidden");
+    assert_eq!(boundary["synthetic"], true);
+    let parts = data(&t, "part", "sess_2");
+    assert!(parts.iter().all(|part| part["type"] != "timeline"));
+    let text = parts
+        .iter()
+        .find(|part| part["metadata"]["source"] == "selection_side_chat")
+        .unwrap();
+    assert_eq!(
+        text["text"],
+        rust_cli_kernel_api::store::SELECTION_SIDE_CHAT_BOUNDARY
+    );
+    // No goal: the parent's `session_target` is not copied.
+    assert!(
+        t.rows("select 1 from session_target where session_id = 'sess_2'")
+            .is_empty()
+    );
+    // Cold read: the history, then the boundary as an attachment of its source.
+    let loaded = t.store.load(&sid("sess_2")).await.unwrap();
+    assert_eq!(loaded.messages.len(), 4, "{:?}", loaded.messages);
+    assert!(matches!(&loaded.messages[3], Message::Attachment(a)
+        if a.source == "selection_side_chat"
+            && a.text.contains(rust_cli_kernel_api::store::SELECTION_SIDE_CHAT_BOUNDARY)));
+}
+
+/// A parent with nothing to inherit gives a child of just the boundary; a plain fork still needs a target.
+#[tokio::test]
+async fn a_side_chat_may_inherit_nothing_but_a_fork_may_not() {
+    let t = TestStore::new();
+    started(&t, "sess_1").await;
+    let receipt = t.store.fork(side_chat(None)).await.unwrap();
+    assert_eq!(receipt.copied, 0);
+    assert_eq!(data(&t, "message", "sess_2").len(), 1);
+    let plain = SessionFork {
+        through: None,
+        child: sid("sess_3"),
+        ..request("unused")
+    };
+    assert!(t.store.fork(plain).await.is_err());
+    assert!(
+        t.rows("select id from session where id = 'sess_3'")
+            .is_empty()
+    );
 }

@@ -23,6 +23,9 @@ pub enum RowAction {
     /// Fork: `v4/conversation/fileRewindPreview` and the `applyFileRewind` command (a finished
     /// turn offering `canRewindFiles`).
     FileRewind,
+    /// Fork: `setAssistantFeedback` and `setRowPinned` (projection/marks.rs): any row that exists; the kind rules are
+    /// the mark's own.
+    Mark,
 }
 
 impl RowAction {
@@ -33,7 +36,7 @@ impl RowAction {
             Self::Fork => Some("canFork"),
             Self::FileRewind => Some("canRewindFiles"),
             // Node's `fileChanges` query needs only a turnHeader row (product-projection.ts).
-            Self::FileChanges => None,
+            Self::FileChanges | Self::Mark => None,
         }
     }
 }
@@ -205,7 +208,7 @@ impl Projection {
     }
 
     /// The row a command addresses: it must exist with this `entityId` and offer `action` now.
-    fn offered_row(
+    pub(super) fn offered_row(
         &self,
         row_id: u64,
         entity: &str,

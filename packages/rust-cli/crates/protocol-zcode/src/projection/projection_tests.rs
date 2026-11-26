@@ -29,16 +29,22 @@ mod external_tools;
 mod fork_notice;
 #[path = "goal_verify_tests.rs"]
 mod goal_verify;
+#[path = "guide_segments_tests.rs"]
+mod guide_segments;
 #[path = "guided_steer_tests.rs"]
 mod guided_steer;
 #[path = "hook_rows_tests.rs"]
 mod hook_rows;
 #[path = "interrupted_reply_tests.rs"]
 mod interrupted_reply;
+#[path = "marks_tests.rs"]
+mod marks;
 #[path = "model_change_tests.rs"]
 mod model_change;
 #[path = "rebuild_running_tests.rs"]
 mod rebuild_running;
+#[path = "side_chat_tests.rs"]
+mod side_chat;
 #[path = "streaming_tool_tests.rs"]
 mod streaming_tool;
 #[path = "subagent_rows_tests.rs"]
@@ -832,6 +838,38 @@ fn the_revision_comes_from_the_events_only() {
     assert_eq!(
         deltas[0]["patch"]["usage"]["contextWindow"]["autoCompactThresholdTokens"],
         8
+    );
+    // Fork (specs/fork-rust-background-and-context-usage.md): the kernel's threshold is authoritative, so the UI uses it.
+    assert_eq!(
+        deltas[0]["patch"]["usage"]["contextWindow"]["autoCompactThresholdAuthoritative"],
+        true
+    );
+    assert_eq!(
+        projection.snapshot(2, "e")["usage"]["contextWindow"]["autoCompactThresholdAuthoritative"],
+        true
+    );
+    // Auto-compact off (or reactive-only): `None` is a disabled threshold, still authoritative (Node: null with the flag).
+    let deltas = projection.apply(
+        &event(
+            2,
+            4,
+            KernelEvent::ContextUsage {
+                used_tokens: 5,
+                max_tokens: 10,
+                compact_at: None,
+                window_tokens: Some(12),
+            },
+        ),
+        0,
+    );
+    let window = &deltas[0]["patch"]["usage"]["contextWindow"];
+    assert!(window["autoCompactThresholdTokens"].is_null());
+    assert_eq!(window["autoCompactThresholdAuthoritative"], true);
+    let snapshot = projection.snapshot(2, "e");
+    assert!(snapshot["usage"]["contextWindow"]["autoCompactThresholdTokens"].is_null());
+    assert_eq!(
+        snapshot["usage"]["contextWindow"]["autoCompactThresholdAuthoritative"],
+        true
     );
     // Fork: `maxTokens` is the model window (Node), not the window minus the summary reserve.
     assert_eq!(

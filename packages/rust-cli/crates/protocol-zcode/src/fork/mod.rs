@@ -32,6 +32,7 @@ pub(crate) mod mcp_ui_sampling;
 // Fork (F7 PR 3): the app-provided tools of the panels of Rust-run servers, and the router that composes them with the
 // Node helper's set (Node `appTools.ts`, `appToolsProtocol.ts`).
 pub(crate) mod mcp_ui_app_tools;
+mod message_marks;
 pub(crate) mod methods;
 pub mod node_helper;
 mod queue;
@@ -39,6 +40,7 @@ mod release_under_directory;
 pub(crate) use queue::settle_running_turn;
 pub(crate) mod in_flight;
 mod row_commands;
+mod selection_side_chat;
 mod session_config;
 pub(crate) mod session_data;
 mod session_data_files;

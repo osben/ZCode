@@ -8,7 +8,7 @@ use rust_cli_kernel_api::incognito::IncognitoProfile;
 use std::borrow::Cow;
 
 use rusqlite::{Connection, TransactionBehavior};
-use rust_cli_kernel_api::store::{Fact, ForkReceipt, SessionFork, StoreError};
+use rust_cli_kernel_api::store::{Fact, ForkKind, ForkReceipt, SessionFork, StoreError};
 use serde_json::{Value, json};
 
 use rust_cli_node_records::notices::FORK_NOTICE_SOURCE;
@@ -43,11 +43,11 @@ fn sanitize(text: &str) -> String {
 }
 
 /// 分叉提示的正文（Node `formatConversationForkNoticeBody`）。
-fn notice_text(fork: &SessionFork) -> String {
+fn notice_text(fork: &SessionFork, through: &str) -> String {
     let lines = [
         "This session was forked from a previous session message.".to_owned(),
         format!("parentSessionId: {}", fork.parent),
-        format!("targetMessageId: {}", fork.through),
+        format!("targetMessageId: {through}"),
         "No workspace checkpoint was restored for this fork.".to_owned(),
         CONTINUE.to_owned(),
     ];
@@ -56,15 +56,16 @@ fn notice_text(fork: &SessionFork) -> String {
 
 /// `forkContext`（提示的消息与 part 的 metadata）与时间线共用的字段；分叉对话不恢复文件，`restoredFileCount`
 /// 总是 0（Node 同样写 0）。
-fn context(fork: &SessionFork) -> Value {
+fn context(fork: &SessionFork, through: &str) -> Value {
     json!({"kind": "session_fork", "parentSessionId": fork.parent.as_str(),
-        "targetMessageId": fork.through.as_str(), "restoredFileCount": 0})
+        "targetMessageId": through, "restoredFileCount": 0})
 }
 
 /// Node `persistAssistantTimelinePartForSession`：`session_fork` 分割线。
 fn timeline(
     ctx: &Commit<'_>,
     fork: &SessionFork,
+    through: &str,
     directory: &str,
     anchor: Option<&str>,
 ) -> Result<(), StoreError> {
@@ -86,14 +87,14 @@ fn timeline(
         "semantics": {"origin": "system", "kind": "timeline_event", "uiVisibility": "visible",
             "providerVisibility": "hidden", "transcriptVisibility": "visible"}});
     messages::save_message(ctx.conn, &info, now as i64).storage()?;
-    let name = format!("fork_{}_{}", fork.parent, fork.through);
+    let name = format!("fork_{}_{}", fork.parent, through);
     let mut part = json!({"timelineType": "session_fork", "display": "separator",
         "status": "completed"});
     if let Some(anchor) = anchor {
         part["anchorMessageId"] = anchor.into();
     }
     part["parentSessionId"] = fork.parent.as_str().into();
-    part["targetMessageId"] = fork.through.as_str().into();
+    part["targetMessageId"] = through.into();
     part["restoredFileCount"] = 0.into();
     part["time"] = json!({"start": now, "end": now});
     part["id"] = format!("part_{name}_timeline").into();
@@ -104,9 +105,9 @@ fn timeline(
 }
 
 /// Node `persistSyntheticUserNoticeForSession(source = fork)`。
-fn notice(ctx: &Commit<'_>, fork: &SessionFork) -> Result<(), StoreError> {
+fn notice(ctx: &Commit<'_>, fork: &SessionFork, through: &str) -> Result<(), StoreError> {
     let id = message_id(ctx.now, &(ctx.uuid)());
-    let fork_context = context(fork);
+    let fork_context = context(fork, through);
     let info = json!({"id": id, "sessionID": ctx.session, "role": "user",
         "time": {"created": ctx.now}, "agent": records::AGENT,
         "metadata": {"forkContext": fork_context, "source": FORK_NOTICE_SOURCE, "visibility": "model-only"},
@@ -117,10 +118,34 @@ fn notice(ctx: &Commit<'_>, fork: &SessionFork) -> Result<(), StoreError> {
         "visibility": "model-only"});
     messages::save_message(ctx.conn, &info, ctx.now as i64).storage()?;
     let part = json!({"id": part_id(ctx.now, &(ctx.uuid)()), "sessionID": ctx.session,
-        "messageID": id, "type": "text", "text": notice_text(fork), "synthetic": true,
+        "messageID": id, "type": "text", "text": notice_text(fork, through), "synthetic": true,
         "time": {"start": ctx.now, "end": ctx.now},
         "metadata": {"forkContext": fork_context, "runtimeMessage": {"source": "rewind_notice"},
             "source": FORK_NOTICE_SOURCE, "visibility": "model-only"}});
+    messages::save_part(ctx.conn, &part, ctx.now as i64).storage()
+}
+
+/// Node `buildSelectionSideChatBoundary`: the reminder that ends the inherited history. It carries no `rustCli` marker,
+/// so Node reads the child the same way; the read-back here maps its source to an attachment (node-records `notices`).
+fn side_chat_boundary(ctx: &Commit<'_>, fork: &SessionFork) -> Result<(), StoreError> {
+    use rust_cli_kernel_api::store::{SELECTION_SIDE_CHAT_BOUNDARY, SELECTION_SIDE_CHAT_SOURCE};
+    let source = SELECTION_SIDE_CHAT_SOURCE;
+    let id = message_id(ctx.now, &(ctx.uuid)());
+    let turn = format!("turn_{}", (ctx.uuid)());
+    let info = json!({"id": id, "sessionID": ctx.session, "role": "user",
+        "time": {"created": ctx.now}, "agent": records::AGENT,
+        "modelSelection": facts::node_selection(&fork.selection),
+        "synthetic": true, "source": source, "visibility": "model-only",
+        "semantics": {"origin": "system", "kind": "system_reminder", "source": source,
+            "uiVisibility": "hidden", "providerVisibility": "visible", "transcriptVisibility": "hidden"},
+        "anchor": {"turnId": turn, "productTurnId": id, "orderedMessageIds": [id],
+            "boundaryMessageId": id, "origin": "synthetic"}});
+    messages::save_message(ctx.conn, &info, ctx.now as i64).storage()?;
+    let part = json!({"id": part_id(ctx.now, &(ctx.uuid)()), "sessionID": ctx.session,
+        "messageID": id, "type": "text", "text": SELECTION_SIDE_CHAT_BOUNDARY, "synthetic": true,
+        "time": {"start": ctx.now, "end": ctx.now},
+        "metadata": {"runtimeMessage": {"source": source}, "source": source,
+            "visibility": "model-only"}});
     messages::save_part(ctx.conn, &part, ctx.now as i64).storage()
 }
 
@@ -134,6 +159,13 @@ pub(crate) fn fork(
         .storage()?;
     let parent = parent(&tx, fork.parent.as_str())?;
     let created = i64::try_from(fork.created_at_ms).unwrap_or(i64::MAX);
+    let side_chat = fork.kind == ForkKind::SelectionSideChat;
+    // Node `buildForkedSessionInput`: the task type is the kind; a side chat has a fixed title.
+    let task_type = if side_chat {
+        "selection_side_chat"
+    } else {
+        "fork"
+    };
     let title = if parent.title.is_empty() {
         rust_cli_kernel_api::title::UNTITLED
     } else {
@@ -150,10 +182,10 @@ pub(crate) fn fork(
                 .clone()
                 .unwrap_or_else(|| fork.parent.as_str().to_owned()),
         ),
-        task_type: Some("fork".to_owned()),
+        task_type: Some(task_type.to_owned()),
         slug: head(
             &format!(
-                "{}-fork-{}",
+                "{}-{task_type}-{}",
                 slugify(&parent.slug),
                 rust_cli_base::js::base36(fork.created_at_ms)
             ),
@@ -161,7 +193,11 @@ pub(crate) fn fork(
         ),
         directory: parent.directory.clone(),
         path: parent.path.clone(),
-        title: format!("Fork of {title}"),
+        title: if side_chat {
+            "Selection side chat".to_owned()
+        } else {
+            format!("Fork of {title}")
+        },
         title_source: Some("generated".to_owned()),
         version: parent.version.clone(),
         permission: parent.permission.clone(),
@@ -201,22 +237,33 @@ pub(crate) fn fork(
         records.iter().map(Cow::Borrowed).collect(),
         &Branch::from_revert(parent.revert.as_ref()),
     );
-    let end = branch
-        .iter()
-        .position(|record| record.id() == fork.through.as_str())
-        .ok_or_else(|| {
-            storage(format!(
-                "Checkpoint message not found in session store: {}",
-                fork.through
-            ))
-        })?
-        + 1;
+    // A fork copies through its message; only a side chat of an empty history has none (nothing to inherit).
+    let end = match fork.through.as_ref() {
+        Some(through) => {
+            branch
+                .iter()
+                .position(|record| record.id() == through.as_str())
+                .ok_or_else(|| {
+                    storage(format!(
+                        "Checkpoint message not found in session store: {through}"
+                    ))
+                })?
+                + 1
+        }
+        None if side_chat => 0,
+        None => return Err(storage("a fork needs a message to copy through")),
+    };
     let copied: Vec<&messages::WithParts> = branch[..end].iter().map(AsRef::as_ref).collect();
-    let map = crate::fork_clone::copy_messages(&ctx, &copied)?;
-    crate::fork_clone::copy_goal(&ctx, fork.parent.as_str(), &map)?;
-    let anchor = map.get(fork.through.as_str()).map(String::as_str);
-    timeline(&ctx, fork, &parent.directory, anchor)?;
-    notice(&ctx, fork)?;
+    let map = crate::fork_clone::copy_messages(&ctx, &copied, side_chat)?;
+    if side_chat {
+        // The child copies no goal and draws no fork divider: its pane starts blank, behind the boundary reminder.
+        side_chat_boundary(&ctx, fork)?;
+    } else if let Some(through) = fork.through.as_ref() {
+        crate::fork_clone::copy_goal(&ctx, fork.parent.as_str(), &map)?;
+        let anchor = map.get(through.as_str()).map(String::as_str);
+        timeline(&ctx, fork, through.as_str(), &parent.directory, anchor)?;
+        notice(&ctx, fork, through.as_str())?;
+    }
     facts::next_sequence(&ctx)?;
     tx.commit().storage()?;
     Ok(ForkReceipt { copied: end })

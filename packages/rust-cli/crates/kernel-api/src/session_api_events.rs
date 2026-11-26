@@ -158,6 +158,12 @@ pub enum KernelEvent {
         #[serde(default)]
         source: crate::title::Source,
     },
+    /// Fork: a message's like or pin changed (specs/fork-rust-feedback-and-pins.md); the Rust counterpart of Node's
+    /// `AssistantFeedbackUpdated` / `RowPinnedUpdated` events. In memory only, like Node's event store.
+    MessageMarked {
+        message: MessageId,
+        mark: crate::message_mark::Mark,
+    },
     ModelChanged {
         selection: ModelSelection,
     },

@@ -69,6 +69,7 @@ async fn open_reading(
         log: log.clone(),
         accepts: std::sync::atomic::AtomicBool::new(false),
         table: StdMutex::new(Some(Vec::new())),
+        background: StdMutex::default(),
     });
     let rows = json!({
         "parent": {"timeUpdated": 1},
