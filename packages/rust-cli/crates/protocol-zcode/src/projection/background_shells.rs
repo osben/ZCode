@@ -97,6 +97,11 @@ impl Projection {
     }
 
     /// The snapshot `backgroundWorks`: shell commands, then workflow runs, then background subagents.
+    /// Fork (specs/fork-rust-activity-summary.md): the snapshot `subagents` manifest, for the Activity boundary.
+    pub(crate) fn subagents_value(&self) -> Value {
+        self.subagents.manifest.to_value()
+    }
+
     pub(crate) fn background_works_value(&self) -> Value {
         Value::Array(
             self.shells

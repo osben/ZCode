@@ -2,6 +2,7 @@
 //! `zcode-rs` (specs/fork-rust-agent-parity.md). Each method family or command group lives in its
 //! own module and is registered with one line in [`commands`] or [`methods`].
 
+pub(crate) mod activity_summary;
 mod background_task;
 mod background_work;
 pub(crate) mod browser_turn_screenshot;

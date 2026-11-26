@@ -765,3 +765,115 @@ async fn two_concurrent_cold_opens_run_the_session_open_hook_once() {
         "one cold open makes the projection, so one session-open hook"
     );
 }
+
+/// Fork (specs/fork-rust-activity-summary.md): a run's progress delta for `status`, at `revision`.
+fn run_delta(revision: u64, status: &str) -> Value {
+    json!({
+        "op": "workflowRun.updated",
+        "revision": revision,
+        "runId": "run-1",
+        "run": {"runId": "run-1", "toolCallId": "call-1", "status": status, "usage": {}, "lastEventSequence": revision},
+        "actors": [],
+        "nodes": []
+    })
+}
+
+/// Fork: one kernel turn opened by a user message of `origin`.
+async fn user_turn(live: &Live, seq: u64, origin: rust_cli_kernel_api::message::UserOrigin) {
+    use rust_cli_kernel_api::ids::{CommandId, MessageId, TurnId};
+    use rust_cli_kernel_api::message::{ContentBlock, Message, UserMessage};
+    use rust_cli_kernel_api::session_api::KernelEvent;
+    use rust_cli_protocol_core::sessions::SessionSink;
+    let turn = format!("turn_{seq}");
+    live.event(SequencedEvent {
+        seq,
+        revision: seq,
+        event: KernelEvent::TurnStarted {
+            turn: TurnId::new(&turn),
+            command: Some(CommandId::new(format!("c{seq}"))),
+        },
+    })
+    .await;
+    live.event(SequencedEvent {
+        seq: seq + 1,
+        revision: seq + 1,
+        event: KernelEvent::MessageDone {
+            message: Message::User(UserMessage {
+                stall_execution: None,
+                workflow_meta: None,
+                epilogue_start: None,
+                intent: None,
+                id: MessageId::new(format!("msg_{seq}")),
+                content: vec![ContentBlock::Text {
+                    text: "next".into(),
+                }],
+                origin,
+            }),
+        },
+    })
+    .await;
+}
+
+/// Fork (specs/fork-rust-activity-summary.md rules 2 to 4, DWU-03): a real message after a stopped run folds the run
+/// (the snapshot carries the boundary), and resuming the same run id releases it so its new result shows.
+#[tokio::test]
+async fn a_real_message_folds_a_stopped_run_and_its_resume_releases_it() {
+    let (_scope, server, _handle, _queries) = open(false).await;
+    let live = server.live(&SessionId::new("s1")).await.unwrap();
+    live.sink
+        .workflow_runs_changed(vec![run_delta(1, "running")])
+        .await;
+    live.sink
+        .workflow_runs_changed(vec![run_delta(2, "stopped")])
+        .await;
+    assert!(
+        live.sink
+            .snapshot()
+            .get("activitySummaryDismissed")
+            .is_none()
+    );
+
+    user_turn(
+        &live.sink,
+        1,
+        rust_cli_kernel_api::message::UserOrigin::Human,
+    )
+    .await;
+    let boundary = live.sink.snapshot()["activitySummaryDismissed"].clone();
+    assert_eq!(boundary["workflowRunIds"], json!(["run-1"]), "{boundary}");
+    assert_eq!(boundary["workIds"], json!([]));
+    assert_eq!(boundary["subagentIds"], json!([]));
+    assert!(boundary["at"].is_u64(), "{boundary}");
+
+    live.sink
+        .workflow_runs_changed(vec![run_delta(3, "running")])
+        .await;
+    let released = live.sink.snapshot()["activitySummaryDismissed"].clone();
+    assert_eq!(released["workflowRunIds"], json!([]), "{released}");
+    assert_eq!(released["at"], boundary["at"]);
+}
+
+/// Fork (specs/fork-rust-activity-summary.md rule 2): a message the kernel wrote for the model (a continuation or
+/// a notice) is not a real input and folds nothing.
+#[tokio::test]
+async fn a_kernel_message_does_not_fold_the_activity() {
+    let (_scope, server, _handle, _queries) = open(false).await;
+    let live = server.live(&SessionId::new("s1")).await.unwrap();
+    live.sink
+        .workflow_runs_changed(vec![run_delta(1, "stopped")])
+        .await;
+    user_turn(
+        &live.sink,
+        1,
+        rust_cli_kernel_api::message::UserOrigin::Meta {
+            source: "continuation".into(),
+        },
+    )
+    .await;
+    assert!(
+        live.sink
+            .snapshot()
+            .get("activitySummaryDismissed")
+            .is_none()
+    );
+}

@@ -90,6 +90,9 @@ struct State {
     metrics: Vec<Value>,
     /// Fork (9.61): the session's `workflowRuns`, folded from the run progress deltas, for the row's `workflowActivity`.
     workflow_runs: Option<rust_cli_node_store::WorkflowRunsState>,
+    /// Fork (specs/fork-rust-activity-summary.md): the session's `activitySummaryDismissed`, set by a real user input
+    /// and released as its items run again.
+    activity_summary: Option<Value>,
 }
 
 /// 锁里算好、锁外写出的东西：（订阅、区间、payload）与变了的会话列表行。
@@ -226,6 +229,7 @@ impl Live {
                 facts: Vec::new(),
                 metrics: Vec::new(),
                 workflow_runs: None,
+                activity_summary: None,
             }),
             context,
             topics,
@@ -1054,6 +1058,7 @@ impl Live {
 
     /// 待发的增量与变了的会话列表行（阶段、标题、待回答的询问或预览变了才发，活动时间不算）。
     fn collect(&self, state: &mut State) -> Outgoing {
+        release_running_activity(state);
         let frames = state
             .log
             .flush()
@@ -1280,7 +1285,14 @@ impl SessionSink for Live {
         ) {
             state.shells_dirty = true;
         }
-        let deltas = state.projection.apply(&event, now);
+        let mut deltas = state.projection.apply(&event, now);
+        if crate::fork::activity_summary::is_new_real_input(&deltas) {
+            let boundary = activity_boundary(&state, now);
+            deltas.push(
+                json!({"op": "state.updated", "patch": {"activitySummaryDismissed": &boundary}}),
+            );
+            state.activity_summary = Some(boundary);
+        }
         state.log.record(deltas);
         // Fork (9.44, closes 412): the session's blocked-run reminder clock follows its turn edges (Node
         // `noteWorkflowReminderTurn`). Only the edges this stream sees: a session with no open stream sends none.
@@ -1381,7 +1393,56 @@ fn snapshot_of(state: &State, seq: u64) -> Value {
     if let Some(runs) = &state.workflow_runs {
         snapshot["workflowRuns"] = runs.to_value();
     }
+    if let Some(boundary) = &state.activity_summary {
+        snapshot["activitySummaryDismissed"] = boundary.clone();
+    }
     snapshot
+}
+
+/// Fork (specs/fork-rust-activity-summary.md rule 2): the boundary over what the session shows at `at`.
+fn activity_boundary(state: &State, at: u64) -> Value {
+    let works = state.projection.background_works_value();
+    let subagents = state.projection.subagents_value();
+    let runs = state
+        .workflow_runs
+        .as_ref()
+        .map_or(&[][..], |runs| runs.runs.as_slice());
+    crate::fork::activity_summary::dismissed(
+        at,
+        &crate::fork::activity_summary::Facts {
+            works: &works,
+            subagents: &subagents,
+            runs,
+        },
+    )
+}
+
+/// Fork (specs/fork-rust-activity-summary.md rule 3): before every write, the boundary drops the ids that run again,
+/// whichever path (event, ledger re-read, run delta, subagent table) started them.
+fn release_running_activity(state: &mut State) {
+    let Some(boundary) = &state.activity_summary else {
+        return;
+    };
+    let works = state.projection.background_works_value();
+    let subagents = state.projection.subagents_value();
+    let runs = state
+        .workflow_runs
+        .as_ref()
+        .map_or(&[][..], |runs| runs.runs.as_slice());
+    let Some(next) = crate::fork::activity_summary::without_running(
+        boundary,
+        &crate::fork::activity_summary::Facts {
+            works: &works,
+            subagents: &subagents,
+            runs,
+        },
+    ) else {
+        return;
+    };
+    state.log.record(vec![
+        json!({"op": "state.updated", "patch": {"activitySummaryDismissed": &next}}),
+    ]);
+    state.activity_summary = Some(next);
 }
 
 #[cfg(test)]
