@@ -254,3 +254,45 @@ fn a_latest_guided_row_offers_edit_and_the_reply_keeps_retry() {
         assert_eq!(last["actions"]["canRetry"], true);
     }
 }
+
+fn guide() -> AttachmentMessage {
+    queued_command::steer_attachment(
+        MessageId::new("msg_s1"),
+        "also check the logs",
+        SteerSender::User,
+        Some("c_guide"),
+        None,
+    )
+}
+
+/// Fork: a guide is a real user input, so it can be pinned like a typed one (Node `setRowPinned` checks only the
+/// origin), and its stored pin shows on a cold open.
+#[test]
+fn a_guided_row_can_be_pinned_live_and_cold() {
+    let projection = live(history(guide()));
+    let row = kind_rows(&projection, "userInput")
+        .into_iter()
+        .find(|row| row.get("guided").is_some())
+        .expect("guided row")
+        .clone();
+    let row_id = row["rowId"].as_u64().unwrap();
+    let entity = row["entityId"].as_str().unwrap();
+    assert_eq!(
+        projection.mark_target(row_id, entity, crate::projection::MarkKind::Pin),
+        Ok("msg_s1".to_owned())
+    );
+    let mut stored = view(history(guide()));
+    stored.marks.insert(
+        MessageId::new("msg_s1"),
+        rust_cli_kernel_api::message_mark::Marks {
+            feedback: None,
+            pinned_at: Some(9_000),
+        },
+    );
+    let cold = Projection::from_view(&stored, Followup::Queue, Vec::new());
+    let pinned = kind_rows(&cold, "userInput")
+        .into_iter()
+        .find(|row| row.get("guided").is_some())
+        .expect("guided row");
+    assert_eq!(pinned["pinnedAt"], 9_000);
+}
