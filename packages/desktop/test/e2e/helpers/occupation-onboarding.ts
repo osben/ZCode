@@ -25,7 +25,15 @@ export async function skipOccupationOnboardingIfPresent(
     // WDIO v9 counts off-viewport elements as not clickable; the onboarding footer's Skip can
     // sit below the fold on the 1200x800 e2e window, so scroll it into view before waiting.
     await skip.scrollIntoView();
-    await skip.waitForClickable({ timeout: 15000 });
+    // The popup is fetched after the page renders, so it can open after the check above; close it
+    // on every poll until Skip is clickable.
+    await browser.waitUntil(
+      async () => {
+        if (!options.keepCloudDialog) await closeCloudContentDialogIfPresent();
+        return skip.isClickable();
+      },
+      { timeout: 15000, timeoutMsg: "the onboarding Skip button stayed covered" },
+    );
     await skip.click();
   }
   await $('[data-testid="onboarding-page"]').waitForExist({ reverse: true, timeout: 15000 });
@@ -33,7 +41,7 @@ export async function skipOccupationOnboardingIfPresent(
 
 // 测试后端的真实营销投放（如 2026-11 的版本介绍弹窗）会盖住引导页，「跳过」一直不可点，
 // 整条用例开局就失败。弹窗是真实流程的一部分：出现就按用户操作点关闭，不出现不等待。
-async function closeCloudContentDialogIfPresent() {
+export async function closeCloudContentDialogIfPresent() {
   const dialog = $('[data-testid="cloud-content-dialog"]');
   if (!(await dialog.isDisplayed())) return;
   await dialog.$('[data-slot="dialog-close"]').click();
