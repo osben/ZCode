@@ -193,6 +193,13 @@ impl RunStore for LazyRunStore {
         self.get()?
             .session_progress(parent_session_id, exclude, default_concurrency)
     }
+
+    fn activity_history(
+        &self,
+        parent_session_id: &str,
+    ) -> Result<rust_cli_node_store::dwf::ActivityHistory> {
+        self.get()?.activity_history(parent_session_id)
+    }
 }
 
 /// Fork (W7-11, 9.44, closes 414): the reminder clocks' run source over the service. The live runs and each run's open

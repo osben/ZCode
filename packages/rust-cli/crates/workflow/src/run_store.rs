@@ -116,6 +116,11 @@ pub trait RunStore: Send + Sync {
         exclude: &std::collections::HashSet<String>,
         default_concurrency: f64,
     ) -> Result<Vec<serde_json::Value>>;
+
+    /// Fork: Node `getActivityHistory`, the full Activity index of one parent session (every run with its status and
+    /// last sequence, every actor session), the cold seed of `completedActivityCount`. Required, not defaulted, like
+    /// `session_progress`: a wrapper that forgot to forward it would send null on every open.
+    fn activity_history(&self, parent_session_id: &str) -> Result<dwf::ActivityHistory>;
 }
 
 /// What one detail read holds, all from one snapshot of the journal (9.42).
@@ -242,6 +247,13 @@ impl RunStore for SqliteRunStore {
         default_concurrency: Option<f64>,
     ) -> Result<Option<RunDetail>> {
         self.run_detail_for(run_id, default_concurrency, true)
+    }
+
+    fn activity_history(&self, parent_session_id: &str) -> Result<dwf::ActivityHistory> {
+        let conn = self.conn.lock_unpoisoned();
+        // One read transaction: the runs and the actors come from one WAL snapshot.
+        let tx = conn.unchecked_transaction()?;
+        dwf::activity_history(&tx, parent_session_id)
     }
 
     fn session_progress(

@@ -693,3 +693,220 @@ async fn the_handler_validates_params_and_answers_the_cold_document() {
         })
     );
 }
+
+// ---- Fork: the full-history outcomes behind `completedActivityCount` ----
+
+struct HistoryQueries {
+    /// false: a new session whose parent row is not written yet (node-store answers `parent: null`).
+    saved: bool,
+    parts: serde_json::Value,
+    children: serde_json::Value,
+}
+
+#[async_trait]
+impl StoreQueries for HistoryQueries {
+    async fn subagent_rows(
+        &self,
+        _session: &SessionId,
+    ) -> Result<serde_json::Value, rust_cli_kernel_api::store::StoreError> {
+        let parent = if self.saved {
+            json!({"timeUpdated": 1})
+        } else {
+            serde_json::Value::Null
+        };
+        Ok(json!({"parent": parent, "parts": self.parts}))
+    }
+
+    async fn subagent_children(
+        &self,
+        _ids: Vec<String>,
+    ) -> Result<serde_json::Value, rust_cli_kernel_api::store::StoreError> {
+        Ok(json!({"children": self.children}))
+    }
+
+    async fn metering(
+        &self,
+        _session: &SessionId,
+    ) -> Result<
+        rust_cli_kernel_api::metering::SessionMetering,
+        rust_cli_kernel_api::store::StoreError,
+    > {
+        unreachable!("not read by the outcomes")
+    }
+
+    async fn request_stats(
+        &self,
+        _session: &SessionId,
+    ) -> Result<rust_cli_kernel_api::metering::RequestStats, rust_cli_kernel_api::store::StoreError>
+    {
+        unreachable!("not read by the outcomes")
+    }
+
+    async fn activity(
+        &self,
+        _query: rust_cli_kernel_api::metering::ActivityQuery,
+    ) -> Result<rust_cli_kernel_api::metering::ActivityStats, rust_cli_kernel_api::store::StoreError>
+    {
+        unreachable!("not read by the outcomes")
+    }
+
+    async fn put_record(
+        &self,
+        _session: &SessionId,
+        _record: &rust_cli_kernel_api::store::FrontendRecord,
+    ) -> Result<(), rust_cli_kernel_api::store::StoreError> {
+        unreachable!("not read by the outcomes")
+    }
+
+    async fn records(
+        &self,
+        _session: &SessionId,
+        _kind: &str,
+    ) -> Result<
+        Vec<rust_cli_kernel_api::store::FrontendRecord>,
+        rust_cli_kernel_api::store::StoreError,
+    > {
+        unreachable!("not read by the outcomes")
+    }
+}
+
+fn agent_part(child: &str, status: &str) -> serde_json::Value {
+    json!({
+        "callId": format!("toolu_{child}"),
+        "tool": "Agent",
+        "status": status,
+        "input": {},
+        "metadata": {"childSessionId": child, "agentId": format!("agent_{child}")},
+    })
+}
+
+fn child_row(id: &str) -> serde_json::Value {
+    json!({"id": id, "taskType": "subagent_child", "timeUpdated": 5_000})
+}
+
+#[tokio::test]
+async fn ended_outcomes_classify_every_child_with_no_page_limit() {
+    // 105 settled children, more than the 100-item preview, plus a failed and a running one.
+    let mut parts: Vec<serde_json::Value> = (0..105)
+        .map(|index| agent_part(&format!("c{index}"), "completed"))
+        .collect();
+    let mut children: Vec<serde_json::Value> = (0..105)
+        .map(|index| child_row(&format!("c{index}")))
+        .collect();
+    parts.push(agent_part("c_failed", "error"));
+    children.push(child_row("c_failed"));
+    parts.push(agent_part("c_live", "running"));
+    children.push(child_row("c_live"));
+    let queries = HistoryQueries {
+        saved: true,
+        parts: json!(parts),
+        children: json!(children),
+    };
+    let live = [entry(
+        SubagentStatus::Running,
+        "c_live",
+        false,
+        false,
+        10,
+        None,
+    )];
+    let outcomes = ended_outcomes(&queries, &SessionId::new("ses_p"), &live, 10_000)
+        .await
+        .expect("the store is readable");
+    assert_eq!(
+        outcomes
+            .iter()
+            .filter(|(_, status)| status == "success")
+            .count(),
+        105
+    );
+    assert!(outcomes.contains(&("c_failed".to_owned(), "failed".to_owned())));
+    assert!(
+        outcomes.iter().all(|(id, _)| id != "c_live"),
+        "a running child is not ended"
+    );
+}
+
+#[tokio::test]
+async fn ended_outcomes_of_a_session_not_saved_yet_are_empty() {
+    // A new session has no parent row until its first message is written: no history, so the
+    // total is 0, not unknown. A child only the live table knows has no persisted row either.
+    let queries = HistoryQueries {
+        saved: false,
+        parts: json!([]),
+        children: json!([]),
+    };
+    let outcomes = ended_outcomes(&queries, &SessionId::new("ses_new"), &[], 0)
+        .await
+        .expect("an unsaved session has an empty history");
+    assert!(outcomes.is_empty());
+    // The in-memory store answers NotFound for a session it does not hold: the same case.
+    let store = MemoryStore::default();
+    assert_eq!(
+        ended_outcomes(&store, &SessionId::new("ses_p"), &[], 0)
+            .await
+            .expect("NotFound is a session not saved yet"),
+        Vec::<(String, String)>::new()
+    );
+}
+
+#[tokio::test]
+async fn ended_outcomes_fail_when_the_store_cannot_answer() {
+    // A store without the subagent rows (the kernel-api default answers Unsupported) is not an
+    // empty history.
+    struct NoRows;
+    #[async_trait]
+    impl StoreQueries for NoRows {
+        async fn metering(
+            &self,
+            _session: &SessionId,
+        ) -> Result<
+            rust_cli_kernel_api::metering::SessionMetering,
+            rust_cli_kernel_api::store::StoreError,
+        > {
+            unreachable!("not read by the outcomes")
+        }
+        async fn request_stats(
+            &self,
+            _session: &SessionId,
+        ) -> Result<
+            rust_cli_kernel_api::metering::RequestStats,
+            rust_cli_kernel_api::store::StoreError,
+        > {
+            unreachable!("not read by the outcomes")
+        }
+        async fn activity(
+            &self,
+            _query: rust_cli_kernel_api::metering::ActivityQuery,
+        ) -> Result<
+            rust_cli_kernel_api::metering::ActivityStats,
+            rust_cli_kernel_api::store::StoreError,
+        > {
+            unreachable!("not read by the outcomes")
+        }
+
+        async fn put_record(
+            &self,
+            _session: &SessionId,
+            _record: &rust_cli_kernel_api::store::FrontendRecord,
+        ) -> Result<(), rust_cli_kernel_api::store::StoreError> {
+            unreachable!("not read by the outcomes")
+        }
+
+        async fn records(
+            &self,
+            _session: &SessionId,
+            _kind: &str,
+        ) -> Result<
+            Vec<rust_cli_kernel_api::store::FrontendRecord>,
+            rust_cli_kernel_api::store::StoreError,
+        > {
+            unreachable!("not read by the outcomes")
+        }
+    }
+    assert!(
+        ended_outcomes(&NoRows, &SessionId::new("ses_p"), &[], 0)
+            .await
+            .is_err()
+    );
+}

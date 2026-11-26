@@ -72,6 +72,8 @@ async fn a_live_delta_reaches_the_open_stream_and_an_unopened_session_drops_it()
     let live = server.live(&SessionId::new("s1")).await.unwrap();
     live.sink.subscribe("sub-1", "conn-1");
     live.sink.start("sub-1", Purpose::Online).await;
+    // The open's success-total seed runs in the pump (specs/fork-rust-completed-activity-count.md).
+    settled(&live).await;
     let before = live.sink.snapshot();
 
     let delivery = BridgeDelivery::new(Arc::downgrade(&server.context));

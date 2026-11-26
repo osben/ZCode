@@ -358,6 +358,14 @@ impl Server {
                 crate::live::watch_subagents(live.handle.subagent_changes(), Arc::downgrade(&live)),
             );
             live.sink.watch_subagents(watcher);
+            // Fork (specs/fork-rust-completed-activity-count.md): the success total's full-history seed, in the pump.
+            // Queued after the subagent table subscription: a table change from here on runs after the seed, and the
+            // seed reads the table as it is now, so no change between the read and the subscription is lost.
+            live.sink.set_activity_queries(self.kernel.queries());
+            let sink = live.sink.clone();
+            live.run(Box::pin(
+                async move { sink.seed_completed_activity().await },
+            ));
             // Fork (9.52): a workflow run that starts or settles on its own re-reads the session's background works.
             if let Some(changes) = self
                 .context

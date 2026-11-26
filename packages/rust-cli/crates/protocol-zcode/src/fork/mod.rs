@@ -2,11 +2,14 @@
 //! `zcode-rs` (specs/fork-rust-agent-parity.md). Each method family or command group lives in its
 //! own module and is registered with one line in [`commands`] or [`methods`].
 
+pub(crate) mod activity_summary;
 mod background_task;
 mod background_work;
 pub(crate) mod browser_turn_screenshot;
 mod child_processes;
 pub(crate) mod commands;
+// Fork: the v4 `completedActivityCount` (specs/fork-rust-completed-activity-count.md).
+pub(crate) mod completed_activity;
 pub(crate) mod external_agent_config;
 mod file_summary;
 pub(crate) mod slash_builtins;
@@ -47,7 +50,7 @@ pub(crate) mod session_deletion;
 mod session_store_integration_tests;
 pub(crate) mod session_tree;
 mod skills;
-mod subagents;
+pub(crate) mod subagents;
 mod usage;
 pub(crate) mod workflow_runs;
 mod workspace_model;

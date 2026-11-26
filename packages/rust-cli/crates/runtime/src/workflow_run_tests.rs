@@ -1412,6 +1412,13 @@ struct DetailStore {
 }
 
 impl rust_cli_workflow::run_store::RunStore for DetailStore {
+    fn activity_history(
+        &self,
+        _parent_session_id: &str,
+    ) -> anyhow::Result<rust_cli_node_store::dwf::ActivityHistory> {
+        Ok(rust_cli_node_store::dwf::ActivityHistory::default())
+    }
+
     fn session_progress(
         &self,
         _parent_session_id: &str,
