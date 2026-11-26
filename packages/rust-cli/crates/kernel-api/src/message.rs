@@ -443,6 +443,8 @@ pub enum AttachmentRole {
 /// 以 user 角色渲染的 attachment 来源。来源名就是
 /// attachment type；表外的来源都按 system 渲染。
 const USER_ROLE_SOURCES: &[&str] = &[
+    // Fork: Node writes the side chat boundary as a user-role reminder in both modes (never folded into the system message).
+    crate::store::SELECTION_SIDE_CHAT_SOURCE,
     "dir_sync_notice",
     "unknown_command_fallback",
     "session_context",
