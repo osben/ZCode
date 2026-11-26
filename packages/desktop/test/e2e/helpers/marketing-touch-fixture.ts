@@ -13,7 +13,9 @@ export async function createMarketingTouchFixture() {
   let held = true;
   let claimed = false;
   let claimFailure: unknown = null;
-  let popupVisible = true;
+  // Off until a marketing spec asks for it through the reset: the popup opens late and covered setup clicks in
+  // unrelated specs (onboarding Skip, New project, model selector).
+  let popupVisible = false;
   let actionDelivery: { campaign_id: string; [key: string]: unknown } | null = null;
   let actionSequence = 0;
   const waiters: Array<() => void> = [];
