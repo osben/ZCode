@@ -6,6 +6,7 @@
 mod actions;
 mod background_result;
 mod background_shells;
+pub use background_shells::ShellEnd;
 mod bash_progress;
 mod browser_screenshot;
 mod cold;

@@ -1,9 +1,10 @@
 //! Fork: background shell commands in the snapshot `backgroundWorks` (Node `product-projection.ts`
 //! `onBackgroundTaskLifecycle` for `kind: "bash"`; specs/fork-rust-agent-parity.md).
 //!
-//! The kernel's background ledger (`SessionHandle::background_tasks`) owns the commands; the adapter re-reads
-//! it after the events that can change it ([`super::Projection::background_table`]). The list holds the running
-//! commands only: an ended command leaves it, as the UI reads only running works.
+//! The kernel's background ledger (`SessionHandle::background_tasks`) owns the running commands; the adapter re-reads
+//! it after the events that can change it ([`super::Projection::background_table`]). The ledger lists running commands
+//! only, so the projection keeps an ended command itself, as Node's tracker does: the entry stays in start order with
+//! its end state and a `resultSummary` until the Activity boundary folds it (specs/fork-rust-background-and-context-usage.md).
 
 use std::collections::HashMap;
 
@@ -14,13 +15,50 @@ use serde_json::{Map, Value, json};
 
 use super::{Projection, tool_key};
 
+/// Node `BackgroundWorkSummary.resultSummary` is `.max(4096)` in JS string units (UTF-16 code units).
+const RESULT_SUMMARY_UNITS: usize = 4096;
+
+/// Fork: what the session read about a command the ledger no longer lists as running (`Live::shell_deltas`).
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct ShellEnd {
+    /// The terminal status the output read reported, when the ledger still knew the command.
+    pub status: Option<BackgroundStatus>,
+    /// The tail of the command's output file.
+    pub tail: Option<String>,
+}
+
+/// Node `BackgroundWorkSummary.status` of a runtime terminal status: `completed` waits as `resultPending`.
+fn summary_status(status: &str) -> &'static str {
+    match status {
+        "completed" => "resultPending",
+        "killed" | "stopped" | "cancelled" => "cancelled",
+        _ => "failed",
+    }
+}
+
+/// The last [`RESULT_SUMMARY_UNITS`] UTF-16 units of `text`, cut on a character boundary; None when empty.
+fn result_summary(text: &str) -> Option<String> {
+    let mut units = 0;
+    let mut start = text.len();
+    for (at, ch) in text.char_indices().rev() {
+        units += ch.len_utf16();
+        if units > RESULT_SUMMARY_UNITS {
+            break;
+        }
+        start = at;
+    }
+    Some(&text[start..])
+        .filter(|tail| !tail.is_empty())
+        .map(str::to_owned)
+}
+
 /// The Bash result text of a backgrounded command (`tools` `bash_output.rs`); the id ends at the period.
 const BACKGROUND_PREFIX: &str = "Command running in background with ID: ";
 const MOVED_MARKER: &str = "moved to the background (ID: ";
 
 #[derive(Debug, Clone, Default)]
 pub(super) struct Shells {
-    /// The running commands as `backgroundWorks` items, in start order.
+    /// The commands as `backgroundWorks` items, in start order: running ones and, kept in their slot, ended ones.
     pub(super) works: Vec<Value>,
     /// Fork (9.52): the live dynamic workflow runs as `backgroundWorks` items, after the commands.
     pub(super) runs: Vec<Value>,
@@ -118,15 +156,36 @@ impl Projection {
     /// helper: the session's refresh always reads the runs too (`background_table`).
     #[cfg(test)]
     pub fn shell_table(&mut self, entries: &[BackgroundEntry], now: u64) -> Vec<Value> {
-        self.background_table(entries, &[], now)
+        self.background_table(entries, &[], &HashMap::new(), now)
+    }
+
+    /// Fork: the commands the list shows as running that the ledger no longer lists as running. They ended since the
+    /// last read; the session reads their output tail once ([`ShellEnd`]) before [`Self::background_table`].
+    pub fn vanished_shells(&self, entries: &[BackgroundEntry]) -> Vec<String> {
+        self.shells
+            .works
+            .iter()
+            .filter(|work| work["status"] == "running")
+            .filter_map(|work| work["workId"].as_str())
+            .filter(|id| {
+                !entries.iter().any(|entry| {
+                    entry.id == *id
+                        && matches!(entry.kind, BackgroundKind::Shell | BackgroundKind::Monitor)
+                        && entry.status == BackgroundStatus::Running
+                })
+            })
+            .map(str::to_owned)
+            .collect()
     }
 
     /// Fork (9.52): the kernel's background ledger and the session's live workflow runs were re-read. Returns the
-    /// `backgroundWorks` patch when the running commands or the runs changed. A run keeps its first start time.
+    /// `backgroundWorks` patch when the commands (running or ended) or the runs changed. A run keeps its first start
+    /// time; `ends` has the output read of each command [`Self::vanished_shells`] named.
     pub fn background_table(
         &mut self,
         entries: &[BackgroundEntry],
         runs: &[BackgroundRunWork],
+        ends: &HashMap<String, ShellEnd>,
         now: u64,
     ) -> Vec<Value> {
         let run_works: Vec<Value> = runs
@@ -157,34 +216,97 @@ impl Projection {
             })
             .collect();
         let previous = &self.shells.works;
-        let works: Vec<Value> = entries
+        let is_shell = |entry: &&BackgroundEntry| {
+            matches!(entry.kind, BackgroundKind::Shell | BackgroundKind::Monitor)
+        };
+        let running: HashMap<&str, &BackgroundEntry> = entries
             .iter()
-            .filter(|entry| {
-                matches!(entry.kind, BackgroundKind::Shell | BackgroundKind::Monitor)
-                    && entry.status == BackgroundStatus::Running
-            })
-            .map(|entry| {
-                let existing = previous.iter().find(|work| work["workId"] == entry.id);
-                let title = self
-                    .shells
-                    .titles
-                    .get(&entry.id)
-                    .map(String::as_str)
-                    .or(Some(entry.description.trim()).filter(|text| !text.is_empty()))
-                    .unwrap_or(&entry.id);
-                json!({
-                    "workId": entry.id,
-                    "kind": "bash",
-                    "title": title,
-                    "status": "running",
-                    "startedAt": existing
-                        .and_then(|work| work["startedAt"].as_u64())
-                        .unwrap_or(now),
-                    "cancellable": true,
-                    "anchorRowId": Value::Null,
-                })
-            })
+            .filter(is_shell)
+            .filter(|entry| entry.status == BackgroundStatus::Running)
+            .map(|entry| (entry.id.as_str(), entry))
             .collect();
+        let terminal: HashMap<&str, &BackgroundEntry> = entries
+            .iter()
+            .filter(is_shell)
+            .filter(|entry| entry.status != BackgroundStatus::Running)
+            .map(|entry| (entry.id.as_str(), entry))
+            .collect();
+        let running_work = |entry: &BackgroundEntry, started: Option<u64>| {
+            let title = self
+                .shells
+                .titles
+                .get(&entry.id)
+                .map(String::as_str)
+                .or(Some(entry.description.trim()).filter(|text| !text.is_empty()))
+                .unwrap_or(&entry.id);
+            json!({
+                "workId": entry.id,
+                "kind": "bash",
+                "title": title,
+                "status": "running",
+                "startedAt": started.unwrap_or(now),
+                "cancellable": true,
+                "anchorRowId": Value::Null,
+            })
+        };
+        // Node `onBackgroundTaskLifecycle` for a terminal status: the first observation sets `endedAt` and the result
+        // summary; the item is not rewritten afterwards. The status comes from the notice (`BackgroundWork` or the
+        // notification text), then the output read, then the ledger entry; an unknown end reads as Node's `lost`.
+        let ended_work = |mut work: Value, entry: Option<&BackgroundEntry>| {
+            let id = work["workId"].as_str().unwrap_or_default().to_owned();
+            let end = ends.get(&id);
+            let status = self
+                .shells
+                .ended
+                .get(&id)
+                .map(String::as_str)
+                .or(end
+                    .and_then(|end| end.status)
+                    .filter(|status| *status != BackgroundStatus::Running)
+                    .map(BackgroundStatus::as_str))
+                .or(entry.map(|entry| entry.status.as_str()))
+                .unwrap_or("failed");
+            work["status"] = json!(summary_status(status));
+            work["endedAt"] = json!(now);
+            work["cancellable"] = json!(false);
+            let tail = end
+                .and_then(|end| end.tail.as_deref())
+                .or(entry.and_then(|entry| entry.output.as_deref()))
+                .and_then(result_summary);
+            if let Some(tail) = tail {
+                work["resultSummary"] = json!(tail);
+            }
+            work
+        };
+        let mut works: Vec<Value> = Vec::new();
+        for work in previous {
+            let id = work["workId"].as_str().unwrap_or_default();
+            if let Some(entry) = running.get(id) {
+                // A command that runs again replaces its ended item and keeps its start time.
+                works.push(running_work(entry, work["startedAt"].as_u64()));
+            } else if work["status"] == "running" {
+                works.push(ended_work(work.clone(), terminal.get(id).copied()));
+            } else {
+                // Already ended: only a later notice can change the status; `endedAt` and the summary stay.
+                let mut work = work.clone();
+                if let Some(status) = self.shells.ended.get(id) {
+                    work["status"] = json!(summary_status(status));
+                }
+                works.push(work);
+            }
+        }
+        let listed = |id: &str| previous.iter().any(|work| work["workId"] == id);
+        for entry in entries.iter().filter(is_shell) {
+            if listed(&entry.id) {
+                continue;
+            }
+            let work = running_work(entry, None);
+            works.push(if entry.status == BackgroundStatus::Running {
+                work
+            } else {
+                ended_work(work, Some(entry))
+            });
+        }
         if works == *previous && run_works == self.shells.runs {
             return Vec::new();
         }

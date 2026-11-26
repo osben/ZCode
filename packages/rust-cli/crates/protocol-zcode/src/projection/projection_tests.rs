@@ -835,6 +835,38 @@ fn the_revision_comes_from_the_events_only() {
         deltas[0]["patch"]["usage"]["contextWindow"]["autoCompactThresholdTokens"],
         8
     );
+    // Fork (specs/fork-rust-background-and-context-usage.md): the kernel's threshold is authoritative, so the UI uses it.
+    assert_eq!(
+        deltas[0]["patch"]["usage"]["contextWindow"]["autoCompactThresholdAuthoritative"],
+        true
+    );
+    assert_eq!(
+        projection.snapshot(2, "e")["usage"]["contextWindow"]["autoCompactThresholdAuthoritative"],
+        true
+    );
+    // Auto-compact off (or reactive-only): `None` is a disabled threshold, still authoritative (Node: null with the flag).
+    let deltas = projection.apply(
+        &event(
+            2,
+            4,
+            KernelEvent::ContextUsage {
+                used_tokens: 5,
+                max_tokens: 10,
+                compact_at: None,
+                window_tokens: Some(12),
+            },
+        ),
+        0,
+    );
+    let window = &deltas[0]["patch"]["usage"]["contextWindow"];
+    assert!(window["autoCompactThresholdTokens"].is_null());
+    assert_eq!(window["autoCompactThresholdAuthoritative"], true);
+    let snapshot = projection.snapshot(2, "e");
+    assert!(snapshot["usage"]["contextWindow"]["autoCompactThresholdTokens"].is_null());
+    assert_eq!(
+        snapshot["usage"]["contextWindow"]["autoCompactThresholdAuthoritative"],
+        true
+    );
     // Fork: `maxTokens` is the model window (Node), not the window minus the summary reserve.
     assert_eq!(
         deltas[0]["patch"]["usage"]["contextWindow"]["maxTokens"],
