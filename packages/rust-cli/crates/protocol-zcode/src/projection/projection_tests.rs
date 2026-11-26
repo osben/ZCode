@@ -29,6 +29,8 @@ mod external_tools;
 mod fork_notice;
 #[path = "goal_verify_tests.rs"]
 mod goal_verify;
+#[path = "guide_segments_tests.rs"]
+mod guide_segments;
 #[path = "guided_steer_tests.rs"]
 mod guided_steer;
 #[path = "hook_rows_tests.rs"]

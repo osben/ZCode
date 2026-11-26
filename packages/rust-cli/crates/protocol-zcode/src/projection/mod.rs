@@ -14,6 +14,7 @@ mod external_agent_config;
 mod external_agent_status;
 mod external_tools;
 mod goal_verify;
+mod guide_segments;
 mod hook_rows;
 mod kinds;
 mod markers;
@@ -117,6 +118,9 @@ struct Turn {
     /// settles them `cancelled` without output, like Node's `ToolCancelled` (the query answers a call cut off by Stop
     /// with that text).
     rejected: Vec<String>,
+    /// Fork: a guided steer opened a work segment and no model step has started since (Node `guideDrainOpen`):
+    /// steers absorbed at the same boundary share that segment (guide_segments.rs).
+    guide_open: bool,
 }
 
 /// Fork: a pending interaction that is the session's workspace hook review (`fork/hook_review.rs`).
@@ -1391,6 +1395,7 @@ impl Projection {
             control_only: false,
             unstopped: Vec::new(),
             rejected: Vec::new(),
+            guide_open: false,
         });
         // B1.1: the worktreeCreated marker leads the turn (Node flushes its pending marker before the model
         // divider and the header).
@@ -1536,6 +1541,7 @@ impl Projection {
                 row.insert("state".into(), json!(header));
                 row.insert("endedAt".into(), json!(now));
                 row.insert("activeMs".into(), json!(now.saturating_sub(started)));
+                Self::complete_work_segments(row, now);
                 if let Some(tokens) = output_tokens {
                     row.insert("outputTokens".into(), json!(tokens));
                 }
