@@ -729,11 +729,17 @@ impl Projection {
     }
 
     fn input_routing(&self) -> Value {
+        let queue = self.queue_state();
+        let head_locked = self.auto_drain
+            && queue["items"]
+                .get(0)
+                .is_some_and(|head| head.get("editLock").is_some());
         state::input_routing(
             self.phase,
             self.followup,
             !self.auto_drain && self.has_queue(),
             self.goal_verifier.is_some(),
+            head_locked,
         )
     }
 
