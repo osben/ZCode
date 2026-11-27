@@ -41,6 +41,13 @@ pub trait OffPeakPort: Send + Sync {
         None
     }
 
+    /// Fork: whether the off-peak tools are offered to `session`: its own flag when it was created or resumed with
+    /// one, the workspace policy otherwise (Node injects `offPeakPort` into a session's runtime only then, so the model
+    /// sees OffPeakCreate and OffPeakList only in such a session).
+    fn tools_enabled(&self, _session: &SessionId) -> bool {
+        true
+    }
+
     /// Sends `method` with `params` plus the `workspace` ref of `session` (the owner session) and answers the Host's
     /// result once it matched the method's reply schema.
     async fn request(

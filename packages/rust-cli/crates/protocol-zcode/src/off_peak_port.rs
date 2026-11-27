@@ -55,6 +55,10 @@ impl OffPeakPort for HostOffPeak {
         ))))
     }
 
+    fn tools_enabled(&self, session: &SessionId) -> bool {
+        self.context.off_peak.tools_enabled(session.as_str())
+    }
+
     async fn request(
         &self,
         session: &SessionId,
