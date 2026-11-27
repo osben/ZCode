@@ -2,6 +2,7 @@
 //! "Activity 成功总数").
 
 use super::*;
+use rust_cli_kernel_api::ids::SessionId;
 
 fn seeded(
     runs: &[(&str, &str, i64)],
@@ -149,31 +150,63 @@ fn a_reseed_replaces_the_child_outcomes() {
     assert_eq!(count.count(), Some(1));
 }
 
+fn table_entry(
+    child: &str,
+    status: rust_cli_kernel_api::panels::SubagentStatus,
+    execution: u64,
+) -> SubagentEntry {
+    SubagentEntry {
+        execution_id: String::new(),
+        execution,
+        previous: None,
+        agent: rust_cli_kernel_api::ids::AgentId::new(format!("agent_{child}")),
+        child: SessionId::new(child),
+        agent_type: "Explore".to_owned(),
+        description: "scan".to_owned(),
+        status,
+        background: true,
+        waiting: false,
+        elapsed_ms: 1,
+        ended_ago_ms: None,
+        version: 1,
+        owner: None,
+        activity: None,
+        parked: false,
+        machine: rust_cli_kernel_api::ids::MachineName::primary(),
+    }
+}
+
 #[test]
-fn a_cut_child_stays_out_until_it_runs_again() {
-    // Rewind: the kernel table still holds a child whose launch the rewind removed.
+fn a_cut_child_stays_out_for_its_cut_execution_and_a_newer_one_lifts_it() {
+    use rust_cli_kernel_api::panels::SubagentStatus::{Completed, Running};
+    // Rewind: the kernel table still holds a child whose launch the rewind removed, still running.
     let mut count = seeded(&[], &[], &[("c1", "success"), ("c2", "success")]);
     count.seed(Some(Seed {
         children: vec![("c1".to_owned(), "success".to_owned())],
-        cut: vec!["c2".to_owned()],
+        cut: vec![("c2".to_owned(), 3)],
         ..Seed::default()
     }));
-    count.child("c2", Some("success"));
+    count.table(&[table_entry("c2", Running, 3)]);
+    count.table(&[
+        table_entry("c2", Running, 3),
+        table_entry("c1", Completed, 1),
+    ]);
+    count.table(&[table_entry("c2", Completed, 3)]);
     assert_eq!(
         count.count(),
         Some(1),
-        "the table cannot bring a cut child back"
+        "the same execution finishing does not count"
     );
-    count.child("c2", None);
-    count.child("c2", Some("success"));
-    assert_eq!(count.count(), Some(2), "a resume lifts the cut");
+    count.table(&[table_entry("c2", Running, 4)]);
+    count.table(&[table_entry("c2", Completed, 4)]);
+    assert_eq!(count.count(), Some(2), "a newer execution is a resume");
 }
 
 #[test]
 fn the_next_seed_replaces_the_cut_ids() {
     let mut count = CompletedActivity::default();
     count.seed(Some(Seed {
-        cut: vec!["c2".to_owned()],
+        cut: vec![("c2".to_owned(), 0)],
         ..Seed::default()
     }));
     count.seed(Some(Seed::default()));

@@ -28,14 +28,14 @@ pub(crate) struct Seed {
     /// Every ended child on the session's active branch with its ended status (`success`, `failed`, ...).
     pub children: Vec<(String, String)>,
     /// Children of the kernel's subagent table whose launch a rewind cut: the table cannot count them again.
-    pub cut: Vec<String>,
+    pub cut: Vec<(String, u64)>,
 }
 
 #[derive(Debug, Default)]
 pub(crate) struct CompletedActivity {
     unknown: bool,
     children: HashMap<String, String>,
-    cut: HashSet<String>,
+    cut: HashMap<String, u64>,
     runs: HashMap<String, (String, i64)>,
     workflow_children: HashSet<String>,
 }
@@ -59,7 +59,7 @@ impl CompletedActivity {
         };
         self.unknown = false;
         self.children = seed.children.into_iter().collect();
-        self.cut = seed.cut.into_iter().collect();
+        self.cut = seed.cut.into_iter().collect::<HashMap<_, _>>();
         for (run_id, status, sequence) in seed.runs {
             self.run(&run_id, &status, sequence);
         }
@@ -69,12 +69,11 @@ impl CompletedActivity {
     /// A child's live outcome: `Some(status)` once it ended, `None` while it runs (again).
     pub(crate) fn child(&mut self, child_id: &str, status: Option<&str>) {
         match status {
-            Some(_) if self.cut.contains(child_id) => {}
+            Some(_) if self.cut.contains_key(child_id) => {}
             Some(status) => {
                 self.children.insert(child_id.to_owned(), status.to_owned());
             }
             None => {
-                self.cut.remove(child_id);
                 self.children.remove(child_id);
             }
         }
@@ -103,6 +102,14 @@ impl CompletedActivity {
     /// The kernel's subagent table: a running entry is no outcome (again), an ended one is its terminal status.
     pub(crate) fn table(&mut self, entries: &[SubagentEntry]) {
         for entry in entries {
+            // A cut child stays out for the execution the rewind cut; a newer execution is a resume.
+            if self
+                .cut
+                .get(entry.child.as_str())
+                .is_some_and(|cut_at| entry.execution > *cut_at)
+            {
+                self.cut.remove(entry.child.as_str());
+            }
             self.child(entry.child.as_str(), table_status(entry.status));
         }
     }

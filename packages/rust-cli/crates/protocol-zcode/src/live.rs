@@ -103,6 +103,11 @@ struct State {
     /// Fork (specs/fork-rust-activity-summary.md, rule 5): the time of the stored history's last real input, which
     /// the cold seed of `activitySummaryDismissed` needs; `None` for a session with no stored input.
     stored_input_at: Option<u64>,
+    /// Fork (specs/fork-rust-activity-summary.md, rule 5): children the store reports ended. A cold open redraws a
+    /// finished background Agent as a running row from its stored `async_launched` display, and an empty kernel
+    /// table does not settle it, so rule 3 must not read that row as running. The table lifts an id when it lists
+    /// the child running.
+    settled_children: std::collections::HashSet<String>,
 }
 
 /// 锁里算好、锁外写出的东西：（订阅、区间、payload）与变了的会话列表行。
@@ -250,6 +255,7 @@ impl Live {
                 completed_activity,
                 completed_sent,
                 stored_input_at: crate::projection::last_input_at(view),
+                settled_children: std::collections::HashSet::new(),
             }),
             context,
             topics,
@@ -861,6 +867,11 @@ impl Live {
                 state.child_runs.table(&entries)
             };
             state.completed_activity.table(&entries);
+            for entry in &entries {
+                if entry.status == rust_cli_kernel_api::panels::SubagentStatus::Running {
+                    state.settled_children.remove(entry.child.as_str());
+                }
+            }
             let deltas = state.projection.subagent_table(&entries, now);
             let spawned = if deltas.is_empty() {
                 Vec::new()
@@ -923,6 +934,9 @@ impl Live {
                 None => (None, None),
             };
             state.completed_activity.seed(seed);
+            if let Some((ended, _)) = &facts {
+                state.settled_children = ended.iter().map(|item| item.child.clone()).collect();
+            }
             if state.activity_summary.is_none()
                 && let (Some(at), Some((ended, runs))) = (state.stored_input_at, facts)
             {
@@ -1570,7 +1584,14 @@ fn release_running_activity(state: &mut State) {
         return;
     };
     let works = state.projection.background_works_value();
-    let subagents = state.projection.subagents_value();
+    let mut subagents = state.projection.subagents_value();
+    if let Some(running) = subagents.get_mut("running").and_then(Value::as_array_mut) {
+        running.retain(|child| {
+            !child["childSessionId"]
+                .as_str()
+                .is_some_and(|id| state.settled_children.contains(id))
+        });
+    }
     let runs = state
         .workflow_runs
         .as_ref()

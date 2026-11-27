@@ -894,7 +894,7 @@ async fn a_nested_child_of_a_retained_launch_is_not_cut() {
         .collect();
     ids.sort_unstable();
     assert_eq!(ids, ["c_kept", "c_nested"]);
-    assert_eq!(outcomes.cut, ["c_orphan"]);
+    assert_eq!(outcomes.cut, [("c_orphan".to_owned(), 0)]);
 }
 
 #[tokio::test]
@@ -937,7 +937,7 @@ async fn a_rewritten_history_cuts_the_table_entries_no_part_links() {
         .map(|item| item.child.as_str())
         .collect();
     assert_eq!(ids, ["c_kept"]);
-    assert_eq!(rewritten.cut, ["c_cut"]);
+    assert_eq!(rewritten.cut, [("c_cut".to_owned(), 0)]);
 }
 
 #[tokio::test]

@@ -39,8 +39,9 @@ up, and a resume of the same id takes it out of the count until it succeeds agai
 4. Re-seed: every session rebuild (rewind, rewritten history) reads the full seed again. Child outcomes are replaced
    by the seed, runs merge by sequence, workflow children only grow. A rebuild's seed leaves out the kernel table
    entries that no tool part of the active branch links (children whose launch the rewind cut, even when they ended in
-   this process) and records their ids as cut. A cut id is ignored by later table changes until the table shows it
-   running again (a resume of that child), which lifts the cut. The open's first seed has no cut ids: a child whose
+   this process) and records each id with the entry's execution number as cut. A cut id is ignored by later table
+   changes, running or ended, until the table lists it with a newer execution (a resume of that child), which lifts
+   the cut. A cut child that is still running and finishes later does not count. The open's first seed has no cut ids: a child whose
    link fact has not landed yet still counts. A rebuild that reads a child between its spawn and its link fact cuts it
    by mistake until it runs again; the window is a few milliseconds. A nested child (its entry has an owner) stays
    while its owner chain in the table reaches a launch the active branch links, because its own launch is stored in
@@ -74,7 +75,7 @@ run deltas ──────► pump: workflow_runs_changed ──► run outco
   each change (a few hundred entries at most). There is no rejected-candidate rollback in zcode-rs.
 - Rewind: Node revokes the children whose launch rows the rewind removed. zcode-rs does the same by comparing the
   kernel's subagent table with the active branch (rule 4): an entry of the table that no tool part of the rewritten
-  branch links is cut and does not count, and the table does not bring it back until it runs again.
+  branch links is cut and does not count, and the table does not bring it back until a newer execution of it appears.
 
 ## Acceptance
 

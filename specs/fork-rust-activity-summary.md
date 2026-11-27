@@ -45,7 +45,10 @@ the field, so on Rust the Activity capsule kept showing a finished batch (for ex
      not after `at`;
    - `workIds`: always empty. Background commands are in-process facts and nothing persists them.
      A live boundary (rule 2) is never replaced by the seed. A failed seed sets nothing and the next seed retries.
-     Rule 3 runs on the seeded value like on any other.
+     Rule 3 runs on the seeded value like on any other, with one correction: a cold open redraws a finished
+     background Agent as a running row from its stored `async_launched` display, and an empty kernel table does not
+     settle it. Children the store reports ended are therefore not read as running by rule 3 until the table lists
+     them running.
      Known difference: Node's live boundary is the time the input's row is projected, which is later than
      `admittedAt` for an input that waited in the queue. Stored messages carry no delivery time, so the cold `at`
      is the admission time, and an activity that ended while that input was queued stays visible after a cold

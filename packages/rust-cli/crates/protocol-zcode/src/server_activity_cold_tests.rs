@@ -152,6 +152,77 @@ async fn a_later_seed_keeps_the_live_boundary() {
     assert_eq!(boundary(&live), live_value);
 }
 
+/// The stored `async_launched` display redraws a finished background Agent as a running row; the store's outcome
+/// settles it for the boundary's release rule, so the seeded id stays.
+#[tokio::test]
+async fn a_cold_completed_background_agent_stays_in_the_seeded_boundary() {
+    use rust_cli_kernel_api::ids::ToolUseId;
+    use rust_cli_kernel_api::message::{AssistantMessage, ToolResultContent};
+    let launch = Message::Assistant(AssistantMessage {
+        id: MessageId::new("a1"),
+        content: vec![ContentBlock::ToolUse {
+            id: ToolUseId::new("toolu_c_bg"),
+            name: "Agent".into(),
+            input: json!({"run_in_background": true}),
+        }],
+        model: "m".into(),
+        stop_reason: None,
+        usage: None,
+    });
+    let result = Message::User(UserMessage {
+        id: MessageId::new("r1"),
+        content: vec![ContentBlock::ToolResult {
+            tool_use_id: ToolUseId::new("toolu_c_bg"),
+            content: vec![ToolResultContent::Text {
+                text: "launched".into(),
+            }],
+            is_error: false,
+        }],
+        origin: UserOrigin::ToolResult {
+            assistant: MessageId::new("a1"),
+        },
+        intent: None,
+        stall_execution: None,
+        workflow_meta: None,
+        epilogue_start: None,
+    });
+    let mut view = SessionView::new(
+        meta(),
+        vec![
+            human("u0", Some(100)),
+            launch,
+            result,
+            human("u1", Some(2000)),
+        ],
+        selection(),
+        PermissionMode::Default,
+    );
+    view.tool_displays.insert(
+        ToolUseId::new("toolu_c_bg"),
+        json!({"agent": {
+            "agentId": "agent_c_bg",
+            "childSessionId": "c_bg",
+            "agentType": "general-purpose",
+            "status": "async_launched",
+        }}),
+    );
+    let (_scope, server, handle, queries) = open_view(false, view).await;
+    let (rows, mut child_rows) = docs(&[("c_bg", 1000)]);
+    child_rows["children"][0]["lastAssistant"] =
+        json!({"completedAt": 1500, "finish": "stop", "text": "done"});
+    *queries.subagent_docs.lock_unpoisoned() = Some((rows, child_rows));
+    *handle.table.lock_unpoisoned() = Some(Vec::new());
+    let live = server.live(&SessionId::new("s1")).await.unwrap();
+    settled(&live).await;
+    let manifest = live.sink.snapshot()["subagents"].clone();
+    assert_eq!(
+        manifest["running"][0]["childSessionId"],
+        json!("c_bg"),
+        "{manifest}"
+    );
+    assert_eq!(boundary(&live)["subagentIds"], json!(["c_bg"]));
+}
+
 fn guided(id: &str, admitted_at: Option<u64>) -> Message {
     let mut steer = rust_cli_kernel_api::hooks::queued_command::steer_attachment(
         MessageId::new(id),

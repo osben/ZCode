@@ -717,7 +717,7 @@ pub(crate) struct EndedOutcome {
 #[derive(Debug, Default, PartialEq, Eq)]
 pub(crate) struct Outcomes {
     pub(crate) ended: Vec<EndedOutcome>,
-    pub(crate) cut: Vec<String>,
+    pub(crate) cut: Vec<(String, u64)>,
 }
 
 /// Fork (specs/fork-rust-completed-activity-count.md, specs/fork-rust-activity-summary.md): every ended child of the
@@ -783,7 +783,7 @@ pub(crate) async fn ended_outcomes(
         kept.retain(|entry| {
             let keep = keeps(entry);
             if !keep {
-                cut.push(entry.child.as_str().to_owned());
+                cut.push((entry.child.as_str().to_owned(), entry.execution));
             }
             keep
         });
