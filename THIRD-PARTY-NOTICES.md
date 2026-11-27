@@ -182,6 +182,8 @@ Original copyright, license and NOTICE text is retained below. Identical text is
 
 - @iconify/utils@3.1.0 — MIT
 
+- @isaacs/fs-minipass@4.0.1 — ISC
+
 - @jimp/core@1.6.1 — MIT
 
 - @jimp/diff@1.6.1 — MIT
@@ -247,6 +249,16 @@ Original copyright, license and NOTICE text is retained below. Identical text is
 - @jridgewell/sourcemap-codec@1.5.5 — MIT
 
 - @jridgewell/trace-mapping@0.3.31 — MIT
+
+- @koromix/koffi-darwin-arm64@3.0.2 — MIT
+
+- @koromix/koffi-darwin-x64@3.0.2 — MIT
+
+- @koromix/koffi-linux-arm64@3.0.2 — MIT
+
+- @koromix/koffi-linux-x64@3.0.2 — MIT
+
+- @koromix/koffi-win32-x64@3.0.2 — MIT
 
 - @kurkle/color@0.3.4 — MIT
 
@@ -674,15 +686,15 @@ Original copyright, license and NOTICE text is retained below. Identical text is
 
 - @tokenlens/models@1.3.0 — MIT
 
-- @transcribe-cpp/darwin-arm64-metal@0.3.1 — MIT
+- @transcribe-cpp/darwin-arm64-metal@0.4.2 — MIT
 
-- @transcribe-cpp/darwin-x64-cpu@0.3.1 — MIT
+- @transcribe-cpp/darwin-x64-cpu@0.4.2 — MIT
 
-- @transcribe-cpp/linux-arm64-cpu-vulkan@0.3.1 — MIT
+- @transcribe-cpp/linux-arm64-cpu-vulkan@0.4.2 — MIT
 
-- @transcribe-cpp/linux-x64-cpu-vulkan@0.3.1 — MIT
+- @transcribe-cpp/linux-x64-cpu-vulkan@0.4.2 — MIT
 
-- @transcribe-cpp/win32-x64-cpu-vulkan@0.3.1 — MIT
+- @transcribe-cpp/win32-x64-cpu-vulkan@0.4.2 — MIT
 
 - @ts-morph/common@0.27.0 — MIT
 
@@ -944,7 +956,11 @@ Original copyright, license and NOTICE text is retained below. Identical text is
 
 - chevrotain@12.0.0 — Apache-2.0
 
+- chokidar@4.0.3 — MIT
+
 - chokidar@5.0.0 — MIT
+
+- chownr@3.0.0 — BlueOak-1.0.0
 
 - class-variance-authority@0.7.1 — Apache-2.0
 
@@ -1504,7 +1520,7 @@ Original copyright, license and NOTICE text is retained below. Identical text is
 
 - kleur@4.1.5 — MIT
 
-- koffi@2.15.6 — MIT
+- koffi@3.0.2 — MIT
 
 - langium@4.2.2 — MIT
 
@@ -1701,6 +1717,10 @@ Original copyright, license and NOTICE text is retained below. Identical text is
 - minimatch@10.2.5 — BlueOak-1.0.0
 
 - minimist@1.2.8 — MIT
+
+- minipass@7.1.3 — BlueOak-1.0.0
+
+- minizlib@3.1.0 — MIT
 
 - mitt@3.0.1 — MIT
 
@@ -1938,6 +1958,8 @@ Original copyright, license and NOTICE text is retained below. Identical text is
 
 - readable-stream@2.3.8 — MIT
 
+- readdirp@4.1.2 — MIT
+
 - readdirp@5.0.0 — MIT
 
 - recast@0.23.11 — MIT
@@ -2138,6 +2160,8 @@ Original copyright, license and NOTICE text is retained below. Identical text is
 
 - tailwindcss@4.3.3 — MIT
 
+- tar@7.5.13 — BlueOak-1.0.0
+
 - tiny-invariant@1.3.3 — MIT
 
 - tiny-typed-emitter@2.1.0 — MIT
@@ -2156,7 +2180,7 @@ Original copyright, license and NOTICE text is retained below. Identical text is
 
 - topojson-client@3.1.0 — ISC
 
-- transcribe-cpp@0.3.1 — MIT
+- transcribe-cpp@0.4.2 — MIT
 
 - trim-lines@3.0.1 — MIT
 
@@ -2325,6 +2349,8 @@ Original copyright, license and NOTICE text is retained below. Identical text is
 - y18n@5.0.8 — ISC
 
 - yallist@3.1.1 — ISC
+
+- yallist@5.0.0 — BlueOak-1.0.0
 
 - yaml@2.9.1 — ISC
 
@@ -4562,6 +4588,51 @@ The library is released with MIT license.
 
 ````
 
+### Notice 4ec3d4c66cd87f5c8d8ad911b10f99bf27cb00cdfcff82621956e379186b016b
+
+- @isaacs/fs-minipass@4.0.1: LICENSE
+
+- isexe@2.0.0: LICENSE
+
+- lru-cache@5.1.1: LICENSE
+
+- once@1.4.0: LICENSE
+
+- semver@6.3.1: LICENSE
+
+- semver@7.7.4: LICENSE
+
+- semver@7.8.5: LICENSE
+
+- which@2.0.2: LICENSE
+
+- which@4.0.0: LICENSE
+
+- wrappy@1.0.2: LICENSE
+
+- yallist@3.1.1: LICENSE
+
+
+
+````text
+The ISC License
+
+Copyright (c) Isaac Z. Schlueter and Contributors
+
+Permission to use, copy, modify, and/or distribute this software for any
+purpose with or without fee is hereby granted, provided that the above
+copyright notice and this permission notice appear in all copies.
+
+THE SOFTWARE IS PROVIDED "AS IS" AND THE AUTHOR DISCLAIMS ALL WARRANTIES
+WITH REGARD TO THIS SOFTWARE INCLUDING ALL IMPLIED WARRANTIES OF
+MERCHANTABILITY AND FITNESS. IN NO EVENT SHALL THE AUTHOR BE LIABLE FOR
+ANY SPECIAL, DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES OR ANY DAMAGES
+WHATSOEVER RESULTING FROM LOSS OF USE, DATA OR PROFITS, WHETHER IN AN
+ACTION OF CONTRACT, NEGLIGENCE OR OTHER TORTIOUS ACTION, ARISING OUT OF OR
+IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
+
+````
+
 ### Notice 942eab097945c835cf41abcbf1b9a6659c5d0c3493e60c56796d2e045c219278
 
 - @jimp/core@1.6.1: LICENSE
@@ -4726,6 +4797,48 @@ SOFTWARE.
 # License
 
 MIT
+
+````
+
+### Notice 22bcbbbacd739b026a8dc484f62a31484ce4c4e31f3408b60b29b4e41d62b290
+
+- @koromix/koffi-darwin-arm64@3.0.2: node_modules/koffi/LICENSE.txt
+
+- @koromix/koffi-darwin-x64@3.0.2: node_modules/koffi/LICENSE.txt
+
+- @koromix/koffi-linux-arm64@3.0.2: node_modules/koffi/LICENSE.txt
+
+- @koromix/koffi-linux-x64@3.0.2: node_modules/koffi/LICENSE.txt
+
+- @koromix/koffi-win32-x64@3.0.2: node_modules/koffi/LICENSE.txt
+
+- koffi@3.0.2: LICENSE.txt
+
+
+
+````text
+MIT License
+
+Copyright (C) 2026  Niels Martignène <niels.martignene@protonmail.com>
+
+Permission is hereby granted, free of charge, to any person obtaining a copy of
+this software and associated documentation files (the “Software”), to deal in
+the Software without restriction, including without limitation the rights to use,
+copy, modify, merge, publish, distribute, sublicense, and/or sell copies of the
+Software, and to permit persons to whom the Software is furnished to do so,
+subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED “AS IS”, WITHOUT WARRANTY OF ANY KIND,
+EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES
+OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND
+NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT
+HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY,
+WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING
+FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR
+OTHER DEALINGS IN THE SOFTWARE.
 
 ````
 
@@ -32456,17 +32569,17 @@ SOFTWARE.
 
 ### Notice 86a53633b56f6b029d3cb42158bcc7aac0cdff898aceb13e83b93e368bbc4ac6
 
-- @transcribe-cpp/darwin-arm64-metal@0.3.1: licenses/LICENSE
+- @transcribe-cpp/darwin-arm64-metal@0.4.2: licenses/LICENSE
 
-- @transcribe-cpp/darwin-x64-cpu@0.3.1: licenses/LICENSE
+- @transcribe-cpp/darwin-x64-cpu@0.4.2: licenses/LICENSE
 
-- @transcribe-cpp/linux-arm64-cpu-vulkan@0.3.1: licenses/LICENSE
+- @transcribe-cpp/linux-arm64-cpu-vulkan@0.4.2: licenses/LICENSE
 
-- @transcribe-cpp/linux-x64-cpu-vulkan@0.3.1: licenses/LICENSE
+- @transcribe-cpp/linux-x64-cpu-vulkan@0.4.2: licenses/LICENSE
 
-- @transcribe-cpp/win32-x64-cpu-vulkan@0.3.1: licenses/LICENSE
+- @transcribe-cpp/win32-x64-cpu-vulkan@0.4.2: licenses/LICENSE
 
-- transcribe-cpp@0.3.1: LICENSE
+- transcribe-cpp@0.4.2: LICENSE
 
 
 
@@ -32497,15 +32610,15 @@ SOFTWARE.
 
 ### Notice 94f29bbed6a22c35b992c5c6ebf0e7c92f13b836b90f36f461c9cf2f0f1d010d
 
-- @transcribe-cpp/darwin-arm64-metal@0.3.1: licenses/LICENSE.ggml
+- @transcribe-cpp/darwin-arm64-metal@0.4.2: licenses/LICENSE.ggml
 
-- @transcribe-cpp/darwin-x64-cpu@0.3.1: licenses/LICENSE.ggml
+- @transcribe-cpp/darwin-x64-cpu@0.4.2: licenses/LICENSE.ggml
 
-- @transcribe-cpp/linux-arm64-cpu-vulkan@0.3.1: licenses/LICENSE.ggml
+- @transcribe-cpp/linux-arm64-cpu-vulkan@0.4.2: licenses/LICENSE.ggml
 
-- @transcribe-cpp/linux-x64-cpu-vulkan@0.3.1: licenses/LICENSE.ggml
+- @transcribe-cpp/linux-x64-cpu-vulkan@0.4.2: licenses/LICENSE.ggml
 
-- @transcribe-cpp/win32-x64-cpu-vulkan@0.3.1: licenses/LICENSE.ggml
+- @transcribe-cpp/win32-x64-cpu-vulkan@0.4.2: licenses/LICENSE.ggml
 
 
 
@@ -32536,15 +32649,15 @@ SOFTWARE.
 
 ### Notice 6f20fa7672b00e2e975c291df737cf227addf3ad32e36fef3fe0f416e4664d3d
 
-- @transcribe-cpp/darwin-arm64-metal@0.3.1: licenses/LICENSE.miniz
+- @transcribe-cpp/darwin-arm64-metal@0.4.2: licenses/LICENSE.miniz
 
-- @transcribe-cpp/darwin-x64-cpu@0.3.1: licenses/LICENSE.miniz
+- @transcribe-cpp/darwin-x64-cpu@0.4.2: licenses/LICENSE.miniz
 
-- @transcribe-cpp/linux-arm64-cpu-vulkan@0.3.1: licenses/LICENSE.miniz
+- @transcribe-cpp/linux-arm64-cpu-vulkan@0.4.2: licenses/LICENSE.miniz
 
-- @transcribe-cpp/linux-x64-cpu-vulkan@0.3.1: licenses/LICENSE.miniz
+- @transcribe-cpp/linux-x64-cpu-vulkan@0.4.2: licenses/LICENSE.miniz
 
-- @transcribe-cpp/win32-x64-cpu-vulkan@0.3.1: licenses/LICENSE.miniz
+- @transcribe-cpp/win32-x64-cpu-vulkan@0.4.2: licenses/LICENSE.miniz
 
 
 
@@ -32572,6 +32685,44 @@ LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
 THE SOFTWARE.
 
+````
+
+### Notice 2e63e9a38b6e8fc0c7bc37ce174caca1862870856c6daf5697cfb785e925520b
+
+- @transcribe-cpp/darwin-arm64-metal@0.4.2: licenses/LICENSE.silero_vad
+
+- @transcribe-cpp/darwin-x64-cpu@0.4.2: licenses/LICENSE.silero_vad
+
+- @transcribe-cpp/linux-arm64-cpu-vulkan@0.4.2: licenses/LICENSE.silero_vad
+
+- @transcribe-cpp/linux-x64-cpu-vulkan@0.4.2: licenses/LICENSE.silero_vad
+
+- @transcribe-cpp/win32-x64-cpu-vulkan@0.4.2: licenses/LICENSE.silero_vad
+
+
+
+````text
+MIT License
+
+Copyright (c) 2020-present Silero Team
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
 ````
 
 ### Notice c2a4cfb69592431f4b3a179c114909bb76a979d5748c19ca595c94133c623b12
@@ -36091,6 +36242,8 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SO
 
 ### Notice bdfd5e0edb6089e6586c8f15e6a86fab83ffbeeda3b3b7b33734ccb8c5906965
 
+- chokidar@4.0.3: LICENSE
+
 - chokidar@5.0.0: LICENSE
 
 
@@ -36122,6 +36275,8 @@ THE SOFTWARE.
 
 ### Notice 22748b67aba7858f24730a8dc6aa876d13d666d74178f8aa0e01af41617e75e7
 
+- chokidar@4.0.3: README.md (license section)
+
 - chokidar@5.0.0: README.md (license section)
 
 
@@ -36130,6 +36285,81 @@ THE SOFTWARE.
 ## License
 
 MIT (c) Paul Miller (<https://paulmillr.com>), see [LICENSE](LICENSE) file.
+
+````
+
+### Notice a49c9ba464796f65b59fca3f1e6ca40912df1e859f575383223f7ec6c5baae09
+
+- chownr@3.0.0: LICENSE.md
+
+- yallist@5.0.0: LICENSE.md
+
+
+
+````text
+All packages under `src/` are licensed according to the terms in
+their respective `LICENSE` or `LICENSE.md` files.
+
+The remainder of this project is licensed under the Blue Oak
+Model License, as follows:
+
+-----
+
+# Blue Oak Model License
+
+Version 1.0.0
+
+## Purpose
+
+This license gives everyone as much permission to work with
+this software as possible, while protecting contributors
+from liability.
+
+## Acceptance
+
+In order to receive this license, you must agree to its
+rules.  The rules of this license are both obligations
+under that agreement and conditions to your license.
+You must not do anything with this software that triggers
+a rule that you cannot or will not follow.
+
+## Copyright
+
+Each contributor licenses you to do everything with this
+software that would otherwise infringe that contributor's
+copyright in it.
+
+## Notices
+
+You must ensure that everyone who gets a copy of
+any part of this software from you, with or without
+changes, also gets the text of this license or a link to
+<https://blueoakcouncil.org/license/1.0.0>.
+
+## Excuse
+
+If anyone notifies you in writing that you have not
+complied with [Notices](#notices), you can keep your
+license by taking all practical steps to comply within 30
+days after the notice.  If you do not do so, your license
+ends immediately.
+
+## Patent
+
+Each contributor licenses you to do everything with this
+software that would otherwise infringe any patent claims
+they can license or become able to license.
+
+## Reliability
+
+No contributor can revoke this license.
+
+## No Liability
+
+***As far as the law allows, this software comes as is,
+without any warranty or condition, and no contributor
+will be liable to anyone for any damages related to this
+software or this license, under any kind of legal claim.***
 
 ````
 
@@ -45896,54 +46126,15 @@ SOFTWARE.
 
 ````
 
-### Notice 4ec3d4c66cd87f5c8d8ad911b10f99bf27cb00cdfcff82621956e379186b016b
-
-- isexe@2.0.0: LICENSE
-
-- lru-cache@5.1.1: LICENSE
-
-- once@1.4.0: LICENSE
-
-- semver@6.3.1: LICENSE
-
-- semver@7.7.4: LICENSE
-
-- semver@7.8.5: LICENSE
-
-- which@2.0.2: LICENSE
-
-- which@4.0.0: LICENSE
-
-- wrappy@1.0.2: LICENSE
-
-- yallist@3.1.1: LICENSE
-
-
-
-````text
-The ISC License
-
-Copyright (c) Isaac Z. Schlueter and Contributors
-
-Permission to use, copy, modify, and/or distribute this software for any
-purpose with or without fee is hereby granted, provided that the above
-copyright notice and this permission notice appear in all copies.
-
-THE SOFTWARE IS PROVIDED "AS IS" AND THE AUTHOR DISCLAIMS ALL WARRANTIES
-WITH REGARD TO THIS SOFTWARE INCLUDING ALL IMPLIED WARRANTIES OF
-MERCHANTABILITY AND FITNESS. IN NO EVENT SHALL THE AUTHOR BE LIABLE FOR
-ANY SPECIAL, DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES OR ANY DAMAGES
-WHATSOEVER RESULTING FROM LOSS OF USE, DATA OR PROFITS, WHETHER IN AN
-ACTION OF CONTRACT, NEGLIGENCE OR OTHER TORTIOUS ACTION, ARISING OUT OF OR
-IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
-
-````
-
 ### Notice 8a1af140fdfbf5afd3df27f7e662f989c5b963a300020dfafce42033cae9e004
 
 - isexe@3.1.5: LICENSE.md
 
+- minipass@7.1.3: LICENSE.md
+
 - sax@1.6.0: LICENSE.md
+
+- tar@7.5.13: LICENSE.md
 
 
 
@@ -47638,43 +47829,9 @@ MIT © Fabio Spampinato, Andrew Maney
 
 ````
 
-### Notice 48bfd53f76185bd32bb91393a7e27ab553b77b4b965245ba73f4714c11030a4a
-
-- koffi@2.15.6: LICENSE.txt
-
-- koffi@2.15.6: src/cnoke/LICENSE.txt
-
-
-
-````text
-MIT License
-
-Copyright (C) 2025  Niels Martignène <niels.martignene@protonmail.com>
-
-Permission is hereby granted, free of charge, to any person obtaining a copy of
-this software and associated documentation files (the “Software”), to deal in
-the Software without restriction, including without limitation the rights to use,
-copy, modify, merge, publish, distribute, sublicense, and/or sell copies of the
-Software, and to permit persons to whom the Software is furnished to do so,
-subject to the following conditions:
-
-The above copyright notice and this permission notice shall be included in all
-copies or substantial portions of the Software.
-
-THE SOFTWARE IS PROVIDED “AS IS”, WITHOUT WARRANTY OF ANY KIND,
-EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES
-OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND
-NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT
-HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY,
-WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING
-FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR
-OTHER DEALINGS IN THE SOFTWARE.
-
-````
-
 ### Notice f2ab762f285386aefd2bbb9c3e6befa2ca28a5be7e364151e1c074b56174b657
 
-- koffi@2.15.6: README.md (license section)
+- koffi@3.0.2: README.md (license section)
 
 
 
@@ -47689,7 +47846,7 @@ Find more information here: https://choosealicense.com/licenses/mit/
 
 ### Notice 89024017b88a9f2b763f79b941a4f2db3b4428edfcacdc0b23866b2da633ad0c
 
-- koffi@2.15.6: vendor/node-addon-api/LICENSE.md
+- koffi@3.0.2: vendor/node-addon-api/LICENSE.md
 
 - node-addon-api@7.1.1: LICENSE.md
 
@@ -47710,7 +47867,7 @@ THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLI
 
 ### Notice 23bb020e852abb6189c65da294665dba27321b8de5032d61b917f0b09095d6fb
 
-- koffi@2.15.6: vendor/node-addon-api/README.md (license section)
+- koffi@3.0.2: vendor/node-addon-api/README.md (license section)
 
 
 
@@ -47725,7 +47882,7 @@ Licensed under [MIT](./LICENSE.md)
 
 ### Notice a553508f516031c91f3af1148d44970cb81bbae6c4f091be6835d39cc252238c
 
-- koffi@2.15.6: vendor/node-api-headers/LICENSE
+- koffi@3.0.2: vendor/node-api-headers/LICENSE
 
 
 
@@ -47756,7 +47913,7 @@ SOFTWARE.
 
 ### Notice dcc0c7f42f2693b8dcc0bcbdb054c890333c87ce91994e72513de0c34306d330
 
-- koffi@2.15.6: vendor/node-api-headers/README.md (license section)
+- koffi@3.0.2: vendor/node-api-headers/README.md (license section)
 
 
 
@@ -53236,6 +53393,42 @@ MIT
 
 ````
 
+### Notice df05697a04b8997c79d423930534e59cc18828f6e22d0c8c2d62fcbea1c4f50b
+
+- minizlib@3.1.0: LICENSE
+
+
+
+````text
+Minizlib was created by Isaac Z. Schlueter.
+It is a derivative work of the Node.js project.
+
+"""
+Copyright (c) 2017-2023 Isaac Z. Schlueter and Contributors
+Copyright (c) 2017-2023 Node.js contributors. All rights reserved.
+Copyright (c) 2017-2023 Joyent, Inc. and other Node contributors. All rights reserved.
+
+Permission is hereby granted, free of charge, to any person obtaining a
+copy of this software and associated documentation files (the "Software"),
+to deal in the Software without restriction, including without limitation
+the rights to use, copy, modify, merge, publish, distribute, sublicense,
+and/or sell copies of the Software, and to permit persons to whom the
+Software is furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in
+all copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS
+OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
+MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.
+IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY
+CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT,
+TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE
+SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
+"""
+
+````
+
 ### Notice 1cab22f196264195a4caec8ca5630170fdde76ee8f43346e47021d087332d3b0
 
 - mitt@3.0.1: LICENSE
@@ -57700,6 +57893,8 @@ IN THE SOFTWARE.
 
 ### Notice dffec71d93f273d2af7b54c6c7e7e70b3289c632ec0d7253210ec21ac336d5ac
 
+- readdirp@4.1.2: LICENSE
+
 - readdirp@5.0.0: LICENSE
 
 
@@ -57730,6 +57925,8 @@ SOFTWARE.
 ````
 
 ### Notice d7659b795379812cc8df27e1feb7d6c7570c734b7714b844a561fdb20a949009
+
+- readdirp@4.1.2: README.md (license section)
 
 - readdirp@5.0.0: README.md (license section)
 
@@ -61004,9 +61201,9 @@ THIS SOFTWARE.
 
 ````
 
-### Notice 81a99ad1098885399edc7f812c1bc09a5b1c983e3c84e6e7d4c269e1b9657643
+### Notice e2cc05044e8fe6a2d1ac98543bd2da21681125df1f7d9eec92c8f77047604050
 
-- transcribe-cpp@0.3.1: README.md (license section)
+- transcribe-cpp@0.4.2: README.md (license section)
 
 
 
@@ -61014,7 +61211,7 @@ THIS SOFTWARE.
 ## License
 
 MIT. Bundled native packages include third-party license texts (ggml, miniz,
-and any bundled backend runtimes).
+Silero VAD, and any bundled backend runtimes).
 
 ````
 

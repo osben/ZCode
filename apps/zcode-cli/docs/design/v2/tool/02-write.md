@@ -99,24 +99,28 @@ Failure paths:
 
 These errors keep the original cause. Failures the handler can anticipate are told apart by a numeric `errorCode` (see the next section); permission denials go through the permission chain, and filesystem I/O errors are thrown as they are. None of these are in the table below.
 
-### 模型看到的文字（2026-11-14）
+### Text the model sees (2026-11-14)
 
-下面的失败由 handler 返回 `{ result: false, errorCode, message }`，executor 包成 `<tool_use_error>…</tool_use_error>`；
-App 显示不带标签的原文。检查都在 handler 里、权限之后，时机不变。`<file_path>` 是模型传入的原值。
+For the failures below the handler returns `{ result: false, errorCode, message }` and the executor wraps it in
+`<tool_use_error>…</tool_use_error>`. The App shows the original text without the tags. All checks run in the handler,
+after permissions, at the same point as before. `<file_path>` is the raw value the model passed.
 
-| 条件 | errorCode | 文字 |
+| Condition | errorCode | Text |
 | --- | --- | --- |
-| 已有文件没读过；或最近一次视图是部分视图（Read 只返回了一页、压缩补回时只给了引用、截断后注入上下文的 MEMORY.md） | 2 | `File has not been read yet. Read it first before writing to it.` |
-| 读后被改过 | 3 | `File has been modified since read, either by the user or by a linter. Read it again before attempting to write it.` |
-| 目标是目录 | 17 | `<file_path> is a directory, not a file. To create a file inside it, include the file name in file_path.` |
-| 目标存在但不是普通文件 | 18 | `<file_path> exists but is not a regular file (a device, FIFO or socket). Write only creates or overwrites regular files.` |
+| An existing file was not read, or the latest view is partial (Read returned only one page, compaction restored only a reference, or MEMORY.md was injected into the context truncated) | 2 | `File has not been read yet. Read it first before writing to it.` |
+| Changed after it was read | 3 | `File has been modified since read, either by the user or by a linter. Read it again before attempting to write it.` |
+| The target is a directory | 17 | `<file_path> is a directory, not a file. To create a file inside it, include the file name in file_path.` |
+| The target exists but is not a regular file | 18 | `<file_path> exists but is not a regular file (a device, FIFO or socket). Write only creates or overwrites regular files.` |
 
-截断注入的 MEMORY.md 不单独写“只看到开头，改用 Edit”：ZCode 的 Edit 同样要求先完整读过（03-edit.md），照那句去做
-会再失败一次；“先 Read”在 Write 与 Edit 上都成立。
-目录与非普通文件原来返回文件系统层的 `Cannot read directory as text file: <path>` / `Cannot read non-file path as text: <path>`，
-模型看不出是 `file_path` 写错了。已有文件的编码读不出来时仍抛文件系统错误，文字不变。
+A truncated injected MEMORY.md gets no separate "only the beginning was seen, use Edit instead" text: ZCode's Edit also
+requires a full read first (03-edit.md), so following that advice would fail once more. "Read first" holds for both
+Write and Edit.
+Directories and non-regular files used to return the filesystem-level `Cannot read directory as text file: <path>` /
+`Cannot read non-file path as text: <path>`, and the model could not tell that `file_path` was wrong. When the encoding
+of an existing file cannot be read, a filesystem error is still thrown, with unchanged text.
 
-修复原因：这些失败原来都是抛出的异常，不带 `<tool_use_error>`；Edit 的同类失败一直带标签，两个工具不一致。
+Why this was fixed: these failures used to be thrown exceptions without `<tool_use_error>`, while the same failures in
+Edit always carried the tags, so the two tools disagreed.
 
 ## Implementation status (2026-05-08)
 
