@@ -1,6 +1,6 @@
 # zcode-rs: imported history on `session/create`
 
-Status: implemented on `fix/rust-imported-history` (2026-11-26).
+Status: implemented in zcode-rs (2026-11-26).
 
 ## Background
 

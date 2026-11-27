@@ -1,6 +1,6 @@
 # The `workspace-config/<workspaceId>` topic on zcode-rs
 
-Status: in progress (branch `fix/rust-plugin-trust-workspace-config`).
+Status: implemented in zcode-rs (2026-11-26).
 
 ## Background
 
