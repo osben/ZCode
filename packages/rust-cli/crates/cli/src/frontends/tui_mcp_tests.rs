@@ -20,6 +20,7 @@ fn files(origins: &[(&str, &str, bool)], env: Arc<MemoryEnvironment>) -> McpConf
                     McpOrigin {
                         path: (*path).to_owned(),
                         user: *user,
+                        fallback: path.ends_with(".agents/mcp.json"),
                     },
                 )
             })
@@ -90,4 +91,48 @@ async fn user_and_project_servers_go_to_their_own_files() {
     );
     // 不在配置文件里的（`--mcp-config`、插件）：只改本次运行。
     assert_eq!(files.save(&paths, "plugin", true).await.unwrap(), None);
+}
+
+#[tokio::test]
+async fn a_fallback_server_is_toggled_in_the_agents_file() {
+    let paths_home = tempfile::tempdir().unwrap();
+    let paths = StoragePaths::resolve(&Default::default(), paths_home.path(), paths_home.path());
+    let env = Arc::new(
+        MemoryEnvironment::new(EnvFacts {
+            cwd: EnvPath::new("/Users/dev/project"),
+            platform: "darwin".into(),
+            os_version: "x".into(),
+            shell: "zsh".into(),
+            is_git_repo: false,
+            home: Some(EnvPath::new("/Users/dev")),
+            uid: None,
+        })
+        .with_file(
+            "/Users/dev/project/.agents/mcp.json",
+            r#"{"mcpServers":{"legacy":{"command":"r"}}}"#,
+        ),
+    );
+    let files = files(
+        &[("legacy", "/Users/dev/project/.agents/mcp.json", false)],
+        env.clone(),
+    );
+    let written = files.save(&paths, "legacy", false).await.unwrap();
+    assert_eq!(
+        written.as_deref(),
+        Some("/Users/dev/project/.agents/mcp.json")
+    );
+    let read = env
+        .read_file(
+            &files.workspace,
+            ReadFile {
+                path: EnvPath::new("/Users/dev/project/.agents/mcp.json"),
+            },
+        )
+        .await
+        .unwrap();
+    assert!(
+        String::from_utf8(read.bytes.to_vec())
+            .unwrap()
+            .contains("\"enabled\": false")
+    );
 }

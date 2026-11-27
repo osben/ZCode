@@ -80,7 +80,20 @@ impl WorkspaceConfigLoader for Loader {
         sources.view_host = self.process.view_host;
         sources.node_helper = self.process.node_helper;
 
-        let merged = merge::mcp_layers(&layers, &mut warnings);
+        let mut merged = merge::mcp_layers(&layers, &mut warnings);
+        // Fork: project MCP servers connect only with a workspace trust grant for their current
+        // declaration, exactly like the process assembly (`config::assemble`).
+        let user_object = files.user.object();
+        let trust = mcp_trust::Inspection::read(
+            inputs.files,
+            inputs.workspace,
+            mcp_trust::Target::new(inputs.workspace.root.as_str(), None),
+            (user_object, &files.projects),
+            inputs.paths,
+        )
+        .await;
+        // Node's `.agents/mcp.json` fallback joins the merge before the project filter and the trust filter.
+        trust.merge_fallback(&mut merged, &mut warnings);
         // Only the project-origin servers: the layer's group runs the user servers itself (with the
         // workspace as their cwd base, Node `resolve(workingDirectory, cwd)`); a user server that
         // shadows a same-named project server stays out, as in Node's merge.
@@ -94,17 +107,6 @@ impl WorkspaceConfigLoader for Loader {
                     .is_some_and(|origin| !origin.user)
             })
             .collect();
-        // Fork: project MCP servers connect only with a workspace trust grant for their current
-        // declaration, exactly like the process assembly (`config::assemble`).
-        let user_object = files.user.object();
-        let trust = mcp_trust::Inspection::read(
-            inputs.files,
-            inputs.workspace,
-            mcp_trust::Target::new(inputs.workspace.root.as_str(), None),
-            (user_object, &files.projects),
-            inputs.paths,
-        )
-        .await;
         let admitted = trust.admitted();
         let skipped: Vec<&str> = servers
             .iter()
