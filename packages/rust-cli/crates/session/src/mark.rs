@@ -11,13 +11,16 @@ use rust_cli_kernel_api::store::Fact;
 
 use crate::actor::{Actor, accepted, rejected};
 
-/// The messages a pin addresses: an assistant reply or a typed user input (Node `persistRowPinned`; the App's pin
-/// button shows on those rows only).
+/// The messages a pin addresses: an assistant reply, a typed user input, or a guide sent mid-turn, which is stored as an
+/// attachment and shown as a real user input (Node `persistRowPinned`; the App's pin button shows on those rows only).
 fn pinnable(message: &Message) -> bool {
     match message {
         Message::Assistant(_) => true,
         Message::User(user) => user.origin == UserOrigin::Human,
-        _ => false,
+        Message::Attachment(attachment) => {
+            rust_cli_kernel_api::hooks::queued_command::guided(attachment).is_some()
+        }
+        Message::System(_) => false,
     }
 }
 

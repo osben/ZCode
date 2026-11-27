@@ -39,7 +39,8 @@ Product rules: `docs/ui/conversation-selection-side-chat.md`. Wire shape: `packa
 8. Retry: the same `(sessionId, commandId)` answers the first ack again (status `duplicate`, same child) from the server's
    remembered acks, like every other command. The kernel refuses a second fork with the same command id (`Duplicate`).
 9. Reading the child back (cold open or live): the boundary reminder reads as an attachment of source `selection_side_chat`
-   and reaches the model. The projection skips every message up to and including it, so the pane shows only the side chat's
+   and reaches the model. The projection skips every message up to and including the last boundary (a side chat of a side chat
+   carries both), so the pane shows only the side chat's
    own turns and draws no fork divider. A child without a boundary (not made by Node or Rust) shows all it has.
 
 ## Owners

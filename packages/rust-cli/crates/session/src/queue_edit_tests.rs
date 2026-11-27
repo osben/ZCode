@@ -277,6 +277,23 @@ mod edit_lock {
         }
     }
 
+    /// An App text input (`Command::SubmitWith`); a lease is the explicit start-now input's.
+    fn text_input(id: &str, text: &str, lease: Option<&str>) -> CommandEnvelope {
+        CommandEnvelope {
+            id: CommandId::new(id),
+            command: Command::SubmitWith {
+                intent: None,
+                kind: QueuedKind::Text,
+                text: text.to_owned(),
+                content: Vec::new(),
+                delivery: Delivery::Queue,
+                execution: None,
+                behind_held: false,
+                lease: lease.map(str::to_owned),
+            },
+        }
+    }
+
     fn apply_config(id: &str, commands: &[&str]) -> CommandEnvelope {
         CommandEnvelope {
             id: CommandId::new(id),
@@ -426,6 +443,43 @@ mod edit_lock {
         until_finished(&mut events, 1).await;
         assert!(!requests_with(&model, "first locked").is_empty());
         assert!(!requests_with(&model, "second plain").is_empty());
+    }
+
+    /// Rule 23 (Node B09m): an idle session whose head is locked queues a new text at the tail instead of starting
+    /// it ahead of the locked item; an explicit start-now input (its lease) still starts.
+    #[tokio::test]
+    async fn an_idle_text_behind_a_locked_head_is_queued_and_start_now_still_starts() {
+        let scope = TaskScope::root("test", |_| {});
+        let (_store, model, session) = asking_session(&scope).await;
+        let mut events = session.subscribe(Some(0));
+        session.send(submit("c1", "ask me")).await;
+        let interaction = asked(&mut events).await;
+        session.send(submit("c2", "first locked")).await;
+        session.send(lock_by("l1", "c2", "ed1")).await;
+        session.send(answer("c3", interaction)).await;
+        until_finished(&mut events, 1).await;
+        assert!(!session.view().await.unwrap().running);
+        let before = model.requests().len();
+        assert_eq!(
+            session.send(text_input("c4", "newer", None)).await,
+            Ack::Accepted {
+                result: rust_cli_kernel_api::session_api::CommandResult::Queued,
+            }
+        );
+        assert_eq!(queue_texts(&session).await, ["first locked", "newer"]);
+        assert_eq!(model.requests().len(), before);
+        assert!(!session.view().await.unwrap().running);
+        // The explicit start-now input is not held back by the lock.
+        assert!(matches!(
+            session
+                .send(text_input("c5", "right now", Some("send-now:c5")))
+                .await,
+            Ack::Accepted { .. }
+        ));
+        until_finished(&mut events, 1).await;
+        assert!(!requests_with(&model, "right now").is_empty());
+        assert!(requests_with(&model, "newer").is_empty());
+        assert_eq!(queue_texts(&session).await, ["first locked", "newer"]);
     }
 
     #[tokio::test]

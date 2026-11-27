@@ -56,7 +56,8 @@ cancellable: false, anchorRowId: null}` plus `resultSummary` only when the tail 
    An unchanged list is no patch.
 7. Activity boundary (`specs/fork-rust-activity-summary.md`): `fork/activity_summary.rs::dismissed` already collects every
    work whose status is not `running`, so an ended command is in `workIds` after the next real user message and the UI
-   folds it. A background result row does not set the boundary.
+   folds it. An end event that came in the same batch as the real input counts even though the table refresh after the
+   batch has not marked the work ended yet (`boundary_works_value`). A background result row does not set the boundary.
 
 ```text
 BackgroundWork{work,status} ─► Projection.remember_ended ─┐
