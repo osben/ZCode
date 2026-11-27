@@ -256,8 +256,9 @@ discovery found to the merged project layer, in both loaders: the process assemb
   server and none failed validation; a user server name shadows it; a broken entry claims its name
   without declaring it; a missing or unreadable file declares nothing.
 - The merged servers carry project scope and the origin `<wd>/.zcode/config.json`, so the stdio
-  `cwd` resolves against the working directory like Node's `normalizeProjectMcpServer`, and
-  `/mcp enable` and `/mcp disable` write that file.
+  `cwd` resolves against the working directory like Node's `normalizeProjectMcpServer`. The origin is
+  also the file the TUI's `/mcp enable` and `/mcp disable` would write for such a server. That file
+  does not declare it, and what the writer does with a missing name or file is not verified here.
 - Fail closed: the merge runs before the trust filter. An ungranted or changed declaration is dropped
   there, an enabled one needs a grant for its digest, a disabled one is listed only when granted.
 - A user fallback (`~/.agents/mcp.json`) is not ported here.
@@ -269,6 +270,22 @@ Acceptance: `cli` tests (the workspace layer and the process snapshot take a gra
 and drop an ungranted one, the fallback is ignored when the project file declares servers); E2E
 `plugins/conversation-session-workspace-mcp-trust` and
 `plugins/conversation-session-plugin-mcp-skill-workspace-root` on Rust.
+
+## As built: official plugin servers in `process/childProcesses`
+
+Node registers a server of an official-marketplace plugin with `source.kind: "builtin"`
+(`adapters/src/plugins/mcp.ts`), so `process/childProcesses` lists it as `builtin`. The Rust
+connection table keeps only `(pid, server name)`, so the source is decided at answer time:
+`McpProvenance` (`kernel-api`) is implemented by the extension registry over `WorkspaceMcp`, which asks
+the process group and every workspace group for the plugin id of the server name
+(`McpManager::note_plugin_ids`, filled when a group starts). A name is `builtin` when at least one group
+knows it and every plugin id it finds ends in `@zcode-plugins-official`. A name that two groups
+attribute to different marketplaces stays `plugin`, because the table is keyed by name and cannot tell
+which group started the process. The plugin name still comes from the server name.
+
+Acceptance: an `ext` test (official, third-party, mixed and unknown names across the process group and
+two workspace groups); a `protocol-zcode` test (an official plugin's server is `builtin` with its plugin
+name, a third-party one stays `plugin`).
 
 ## Not in this PR (follow-ups)
 
