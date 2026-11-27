@@ -1821,7 +1821,7 @@ Direction: CLI → Host. See `specs/fork-rust-subagent-runtime-config.md`.
 - With a `ready` snapshot, the session's agents are the built-ins (with the Settings model for `Explore` and `general-purpose`), the plugin agents (with their Settings model) and the snapshot's profiles. Agents disabled in Settings are absent, and profiles keep their full model selection.
 - `built-in-fallback` leaves the built-ins only.
 - A failed read fails the turn.
-- Request shaping and RespondToCoordinator are done (`query` `normalize.rs` marks the latest non-system message; `agents` `toolset.rs` has the tool). Plugin agents of PluginHost plugins load when the Host configured a Node helper. Without a helper, and for plugins whose server needs official auth, `select.rs` still skips the plugin whole, agents included; loading only their agents is an open product decision.
+- Request shaping and RespondToCoordinator are done (`query` `normalize.rs` marks the latest non-system message; `agents` `respond.rs` has the tool). Plugin agents of PluginHost plugins load when the Host configured a Node helper. Without a helper, and for plugins whose server needs official auth, `select.rs` still skips the plugin whole, agents included; loading only their agents is an open product decision.
 
 ## Known differences kept on purpose
 
