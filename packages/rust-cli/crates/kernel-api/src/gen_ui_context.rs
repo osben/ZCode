@@ -108,3 +108,46 @@ pub fn reminder_body(context: &Value) -> Option<String> {
         "{PREFIX}<untrusted_gen_ui_state>\n{data}\n</untrusted_gen_ui_state>"
     ))
 }
+
+const LEGACY_OPEN: &str = "\n\n<untrusted_gen_ui_state>\n";
+const LEGACY_CLOSE: &str = "\n</untrusted_gen_ui_state>";
+
+/// JS `\s` (the `trimEnd` set), which differs from `char::is_whitespace` at U+0085 and U+FEFF.
+fn js_space(c: char) -> bool {
+    c == '\u{feff}' || (c.is_whitespace() && c != '\u{85}')
+}
+
+/// Node `normalizeGenUiInput` for a text whose intent has no `genUiContext`: old App records spliced the page state
+/// into the body as `\n\n<untrusted_gen_ui_state>\n{JSON}\n</untrusted_gen_ui_state>` at the very end (trailing white
+/// space allowed). When the JSON is a valid context (`genUiModelContextSchema`), returns the text without the tail.
+/// A tail that does not parse or validate stays in the text, as in Node (a user's own example is not deleted).
+pub fn strip_legacy_tail(text: &str) -> Option<&str> {
+    let trimmed = text.trim_end_matches(js_space);
+    let json_end = trimmed.strip_suffix(LEGACY_CLOSE)?.len();
+    // The regex is lazy and anchored at the end: the leftmost opening whose body fits before the closing.
+    let start = text
+        .match_indices(LEGACY_OPEN)
+        .map(|(at, _)| at)
+        .find(|at| at + LEGACY_OPEN.len() <= json_end)?;
+    let body = &text[start + LEGACY_OPEN.len()..json_end];
+    let context: Value = serde_json::from_str(body).ok()?;
+    is_context(&context).then_some(&text[..start])
+}
+
+/// `genUiModelContextSchema`: at most 100 strict `{path, state}` entries, then the path and size rules.
+fn is_context(context: &Value) -> bool {
+    let Some(entries) = context.as_array() else {
+        return false;
+    };
+    entries.len() <= 100
+        && entries.iter().all(|entry| {
+            entry
+                .as_object()
+                .is_some_and(|map| map.keys().all(|key| key == "path" || key == "state"))
+        })
+        && validate(context).is_ok()
+}
+
+#[cfg(test)]
+#[path = "gen_ui_context_tests.rs"]
+mod tests;

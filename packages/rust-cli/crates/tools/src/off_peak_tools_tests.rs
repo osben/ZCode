@@ -438,6 +438,59 @@ async fn list_returns_only_the_model_fields_of_each_task() {
     );
 }
 
+/// A port that offers the tools to the sessions in `enabled` only.
+struct Gate {
+    enabled: Mutex<Vec<String>>,
+}
+
+#[async_trait]
+impl OffPeakPort for Gate {
+    fn tools_enabled(&self, session: &SessionId) -> bool {
+        self.enabled
+            .lock()
+            .unwrap()
+            .iter()
+            .any(|id| id == session.as_str())
+    }
+
+    async fn request(&self, _: &SessionId, _: &str, _: Value) -> Answer {
+        Err(OffPeakError::new("unused"))
+    }
+}
+
+fn names(registry: &dyn ToolRegistry, session: &SessionId) -> Vec<String> {
+    registry
+        .snapshot(session)
+        .tools
+        .iter()
+        .map(|tool| tool.name().to_owned())
+        .collect()
+}
+
+/// Node injects `offPeakPort` per session: only a session with the tools on sees OffPeakCreate and OffPeakList.
+#[test]
+fn the_tools_are_offered_per_session() {
+    let gate = Arc::new(Gate {
+        enabled: Mutex::new(vec!["sess_on".to_owned()]),
+    });
+    let inner: Arc<dyn ToolRegistry> = Arc::new(rust_cli_kernel_api::testing::ListTools(vec![]));
+    let registry = OffPeakTools::new(inner, gate.clone());
+    let on = SessionId::new("sess_on");
+    let off = SessionId::new("sess_off");
+    assert_eq!(names(&registry, &on), ["OffPeakCreate", "OffPeakList"]);
+    assert!(names(&registry, &off).is_empty());
+    assert!(registry.find_for(&on, "OffPeakCreate").is_some());
+    assert!(registry.find_for(&off, "OffPeakCreate").is_none());
+    assert!(registry.find_for(&off, "OffPeakList").is_none());
+    assert!(
+        registry.find("OffPeakList").is_none(),
+        "no session, no tool"
+    );
+    assert!(registry.withheld("OffPeakList").is_none());
+    gate.enabled.lock().unwrap().push("sess_off".to_owned());
+    assert_eq!(names(&registry, &off), ["OffPeakCreate", "OffPeakList"]);
+}
+
 #[tokio::test]
 async fn list_refuses_unknown_keys_before_any_request() {
     let host = Host::answering(vec![]);

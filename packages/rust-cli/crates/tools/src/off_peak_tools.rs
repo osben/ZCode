@@ -10,11 +10,13 @@ use std::time::Duration;
 
 use async_trait::async_trait;
 use rust_cli_kernel_api::ids::SessionId;
+use rust_cli_kernel_api::mcp_state::McpConnections;
 use rust_cli_kernel_api::off_peak::{self as port, OffPeakError, OffPeakPort};
+use rust_cli_kernel_api::orchestration::{ToolRegistry, ToolSnapshot};
 use rust_cli_kernel_api::permission::PermissionDecision;
 use rust_cli_kernel_api::tool::{
-    PromptContext, Tool, ToolError, ToolOutput, ToolProgress, ToolUseContext, Validation, failed,
-    invalid, parse,
+    PromptContext, Tool, ToolError, ToolOutput, ToolProgress, ToolUseContext, Validation,
+    answers_to, failed, invalid, parse,
 };
 use rust_cli_kernel_api::tool_names;
 use serde::{Deserialize, Deserializer};
@@ -417,6 +419,80 @@ impl Tool for OffPeakTool {
                     TIMEOUT.as_millis()
                 )))
             })
+    }
+}
+
+/// The registry layer that owns the off-peak tools' visibility (specs/fork-rust-session-context-gaps.md, item 4): a
+/// session's snapshot has them, and `find_for` resolves them, only while the port offers them to that session, like
+/// Node's per-session `offPeakPort`. Lookups without a session never see them.
+pub struct OffPeakTools {
+    inner: Arc<dyn ToolRegistry>,
+    tools: Vec<Arc<dyn Tool>>,
+    port: Arc<dyn OffPeakPort>,
+}
+
+impl OffPeakTools {
+    pub fn new(inner: Arc<dyn ToolRegistry>, port: Arc<dyn OffPeakPort>) -> Self {
+        Self {
+            inner,
+            tools: off_peak_tools(port.clone()),
+            port,
+        }
+    }
+
+    fn named(&self, name: &str) -> Option<&Arc<dyn Tool>> {
+        self.tools
+            .iter()
+            .find(|tool| answers_to(tool.as_ref(), name))
+    }
+}
+
+impl ToolRegistry for OffPeakTools {
+    fn tools(&self) -> Vec<Arc<dyn Tool>> {
+        self.inner.tools()
+    }
+
+    fn find(&self, name: &str) -> Option<Arc<dyn Tool>> {
+        self.inner.find(name)
+    }
+
+    fn find_for(&self, session: &SessionId, name: &str) -> Option<Arc<dyn Tool>> {
+        if let Some(tool) = self.named(name) {
+            return self.port.tools_enabled(session).then(|| tool.clone());
+        }
+        self.inner.find_for(session, name)
+    }
+
+    /// Hidden means not offered, never "withheld for a fallback".
+    fn withheld(&self, name: &str) -> Option<Arc<dyn Tool>> {
+        if self.named(name).is_some() {
+            return None;
+        }
+        self.inner.withheld(name)
+    }
+
+    fn hides(&self, name: &str) -> bool {
+        self.inner.hides(name)
+    }
+
+    fn keeps_order(&self) -> bool {
+        self.inner.keeps_order()
+    }
+
+    fn snapshot(&self, session: &SessionId) -> ToolSnapshot {
+        let mut snapshot = self.inner.snapshot(session);
+        if self.port.tools_enabled(session) {
+            snapshot.tools.extend(self.tools.iter().cloned());
+        }
+        snapshot
+    }
+
+    fn mcp(&self) -> Option<Arc<dyn McpConnections>> {
+        self.inner.mcp()
+    }
+
+    fn mcp_for(&self, session: &SessionId) -> Option<Arc<dyn McpConnections>> {
+        self.inner.mcp_for(session)
     }
 }
 

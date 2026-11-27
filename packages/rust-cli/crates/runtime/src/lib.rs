@@ -374,6 +374,7 @@ impl LocalKernel {
             (&late, operations, &pipeline),
             (&defaults, traits, extensions.node_desktop),
             extensions.code_intelligence.clone(),
+            extensions.off_peak.clone(),
         );
         let agents = Arc::new(assemble::agents(
             &ports,

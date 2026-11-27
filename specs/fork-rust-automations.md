@@ -354,9 +354,12 @@ Policy flip (last): `workspace/updateOffPeakToolPolicy` stores the policy and an
 `appRuntimePreferences.offPeakToolEnabled`). The off-peak tools follow it for sessions without their own
 `offPeakToolEnabled` flag (`OffPeakRuns::tools_enabled`); the port refuses a session whose tools are off.
 
-Known gap (not in this slice): the off-peak tools are registered for every session in the app-server, so the model sees
-OffPeakCreate and OffPeakList even when the policy is off; a call is refused with "not enabled". Node registers them only
-when enabled. Gating registration per session needs the tool list to know the session (follow-up).
+Registration per session: the off-peak tools are not in the base registry. `OffPeakTools` (a registry layer under the deny
+filter, like `LspTools`) adds OffPeakCreate and OffPeakList to a session's snapshot, and resolves them in `find_for`, only
+while `OffPeakPort::tools_enabled(session)` is true (the session's own flag, else the workspace policy, as above). Node
+injects `offPeakPort` into a session's runtime only then, so the model of a session with the tools off never sees them.
+A flip of the policy shows in the next step's snapshot. Lookups without a session (`tools`, `find`) never see the tools.
+Test: `off_peak_tools_tests.rs` `the_tools_are_offered_per_session`. Details: `specs/fork-rust-session-context-gaps.md`.
 
 What is blocked: an off-peak run's model requests must carry the ticket (`x-off-peak-ticket-id`, request auth from
 `modelExecution.requestAuth`), wait for a ticket when none is held, retry on the ticket-expired code
