@@ -174,11 +174,13 @@ Repository:
 ## Follow-ups
 
 - Re-home the status panel features in the capsules (decision 3), after a mockup.
-- `node scripts/licenses.mjs notices` fails on `@koromix/koffi-*@3.0.2`. This predates the sync: #496
-  bumped koffi from 2.15.6 to 3.0.2 without regenerating, and the inventory still says 2.15.6.
-- Chinese left in clean-merged upstream text: `apps/zcode-cli/docs/design/v2/tool/02-write.md` errorCode
-  table, `docs/workspace-hook-trust.md` D24 and §12.9.
-- `docs/chat/composer-voice-input.md` still names `Cmd+Shift+D` for upstream voice input.
+- Done 2026-11-27: `node scripts/licenses.mjs notices` passes again. The five `@koromix/koffi-*@3.0.2` platform
+  packages ship without a LICENSE; `third-party/npm-overrides.json` points them at `koffi@3.0.2`'s `LICENSE.txt`, and
+  the notices and inventory were regenerated (they also picked up the `transcribe-cpp` 0.4.2 and `tar` 7 drift).
+- Done 2026-11-27: the Chinese text in `apps/zcode-cli/docs/design/v2/tool/02-write.md` (errorCode table) and in
+  `docs/specs/workspace-hook-trust.md` (D24 and §12.9) is translated. Quoted Chinese UI labels stay.
+- Done 2026-11-27: `docs/chat/composer-voice-input.md` says `toggleVoiceInput` has no default binding in the fork,
+  because `CmdOrCtrl+Shift+D` belongs to `voiceDictation`.
 - knip: `previewProjectTaskDeletions` and `status-panel-insights` are unused until the follow-ups land.
 - Archive deletion E2E now drives the fork delete dialog (`task-delete-dialog`). Changes against the
   upstream versions of `conversation-session-archive-management.test.ts` and
