@@ -47,13 +47,13 @@ impl McpConfigFiles {
             .read_file(&self.workspace, ReadFile { path: path.clone() })
             .await
             .map_err(|error| error.to_string())?;
-        let text = rust_cli_platform::local::mcp_enabled_text(
-            Some(&read.bytes),
-            &origin.path,
-            server,
-            enabled,
-        )
-        .map_err(|error| error.to_string())?;
+        let write = if origin.fallback {
+            rust_cli_platform::local::fallback_mcp_enabled_text
+        } else {
+            rust_cli_platform::local::mcp_enabled_text
+        };
+        let text = write(Some(&read.bytes), &origin.path, server, enabled)
+            .map_err(|error| error.to_string())?;
         let context = OperationContext::new(
             self.workspace.environment.clone(),
             Generation::new("cli-config"),

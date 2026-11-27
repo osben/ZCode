@@ -475,5 +475,40 @@
       "sourceTreeUrl": "https://api.github.com/repos/TooTallNate/proxy-agents/git/trees/b7e5f7ccce1a3ac5b339cc4c587974e8989cbc16?recursive=1",
       "upstreamLicenseFiles": []
     }
+  },
+  {
+    "package": "@koromix/koffi-darwin-arm64@3.0.2",
+    "file": "third-party/upstream/22bcbbbacd739b026a8dc484f62a31484ce4c4e31f3408b60b29b4e41d62b290.txt",
+    "sha256": "22bcbbbacd739b026a8dc484f62a31484ce4c4e31f3408b60b29b4e41d62b290",
+    "source": "node_modules/koffi/LICENSE.txt",
+    "evidence": "The platform package ships without a LICENSE; koffi@3.0.2 from the same repository and release carries it."
+  },
+  {
+    "package": "@koromix/koffi-darwin-x64@3.0.2",
+    "file": "third-party/upstream/22bcbbbacd739b026a8dc484f62a31484ce4c4e31f3408b60b29b4e41d62b290.txt",
+    "sha256": "22bcbbbacd739b026a8dc484f62a31484ce4c4e31f3408b60b29b4e41d62b290",
+    "source": "node_modules/koffi/LICENSE.txt",
+    "evidence": "The platform package ships without a LICENSE; koffi@3.0.2 from the same repository and release carries it."
+  },
+  {
+    "package": "@koromix/koffi-linux-arm64@3.0.2",
+    "file": "third-party/upstream/22bcbbbacd739b026a8dc484f62a31484ce4c4e31f3408b60b29b4e41d62b290.txt",
+    "sha256": "22bcbbbacd739b026a8dc484f62a31484ce4c4e31f3408b60b29b4e41d62b290",
+    "source": "node_modules/koffi/LICENSE.txt",
+    "evidence": "The platform package ships without a LICENSE; koffi@3.0.2 from the same repository and release carries it."
+  },
+  {
+    "package": "@koromix/koffi-linux-x64@3.0.2",
+    "file": "third-party/upstream/22bcbbbacd739b026a8dc484f62a31484ce4c4e31f3408b60b29b4e41d62b290.txt",
+    "sha256": "22bcbbbacd739b026a8dc484f62a31484ce4c4e31f3408b60b29b4e41d62b290",
+    "source": "node_modules/koffi/LICENSE.txt",
+    "evidence": "The platform package ships without a LICENSE; koffi@3.0.2 from the same repository and release carries it."
+  },
+  {
+    "package": "@koromix/koffi-win32-x64@3.0.2",
+    "file": "third-party/upstream/22bcbbbacd739b026a8dc484f62a31484ce4c4e31f3408b60b29b4e41d62b290.txt",
+    "sha256": "22bcbbbacd739b026a8dc484f62a31484ce4c4e31f3408b60b29b4e41d62b290",
+    "source": "node_modules/koffi/LICENSE.txt",
+    "evidence": "The platform package ships without a LICENSE; koffi@3.0.2 from the same repository and release carries it."
   }
 ]

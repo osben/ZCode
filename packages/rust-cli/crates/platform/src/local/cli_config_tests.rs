@@ -271,3 +271,26 @@ async fn the_compact_threshold_is_set_and_removed() {
         Err(ConfigWriteError::NotObject(..))
     ));
 }
+
+#[test]
+fn the_fallback_shape_toggles_a_server_under_mcp_servers() {
+    let text = fallback_mcp_enabled_text(
+        Some(br#"{"mcpServers":{"docs":{"command":"x"}}}"#),
+        "/w/.agents/mcp.json",
+        "docs",
+        false,
+    )
+    .unwrap();
+    assert!(text.contains("\"enabled\": false"));
+    assert!(text.contains("mcpServers"));
+    // The project shape does not satisfy the fallback writer.
+    assert!(
+        fallback_mcp_enabled_text(
+            Some(br#"{"mcp":{"servers":{"docs":{}}}}"#),
+            "/x",
+            "docs",
+            true
+        )
+        .is_err()
+    );
+}
