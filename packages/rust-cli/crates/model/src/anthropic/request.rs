@@ -73,8 +73,8 @@ pub(crate) fn encode(
     write::messages(&mut messages_text, &messages)?;
     drop(messages);
     let mut body = Map::new();
-    // Node sends `strict` only on a direct first-party model id (`strict-tool-schema.ts`).
-    let strict_allowed = strict_schema::is_first_party_model(&selection.model);
+    // Node sends `strict` only for a model on the AI SDK's structured-output list.
+    let strict_allowed = strict_schema::supports_strict_tools(&selection.model);
     body.insert("model".into(), Value::String(selection.model));
     // 占位：补丁不碰这个键时它留在原位，写出时换成 `messages_text`。
     body.insert("messages".into(), Value::Null);

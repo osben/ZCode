@@ -3,10 +3,11 @@ use serde_json::json;
 use super::*;
 
 #[test]
-fn only_a_bare_claude_model_id_is_first_party() {
-    assert!(is_first_party_model("claude-opus-5-5"));
-    assert!(!is_first_party_model("anthropic/claude-opus-5-5"));
-    assert!(!is_first_party_model("glm-5.3"));
+fn only_a_model_on_the_structured_output_list_keeps_strict() {
+    assert!(supports_strict_tools("claude-opus-4-8"));
+    assert!(supports_strict_tools("claude-haiku-4-5-20251001"));
+    assert!(!supports_strict_tools("claude-opus-5-5"));
+    assert!(!supports_strict_tools("glm-5.3"));
 }
 
 #[test]

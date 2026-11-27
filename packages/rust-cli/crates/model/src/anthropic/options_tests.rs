@@ -50,7 +50,7 @@ fn tool_flags_and_message_output_keep_their_key_order() {
         },
     ]);
     // `strict` goes out only for a first-party model id.
-    request.selection.model = "claude-opus-5-5".to_owned();
+    request.selection.model = "claude-opus-4-8".to_owned();
     request.tools = vec![ToolDefinition {
         contract: Default::default(),
         name: "Search".to_owned(),
@@ -145,27 +145,27 @@ fn strict_is_dropped_for_a_model_or_schema_that_cannot_use_it() {
     };
     let typed =
         json!({"type": "object", "properties": {"result": {"type": "string", "minLength": 1}}});
-    let folded = strict("claude-opus-5-5", typed.clone());
+    let folded = strict("claude-opus-4-8", typed.clone());
     assert!(
         folded.contains(r#""input_schema":{"type":"object","properties":{"result":{"type":"string","description":"at least 1 characters"}},"additionalProperties":false},"strict":true"#),
         "{folded}"
     );
-    // A gateway route id and a non-Claude model get the original schema and no flag.
-    for model in ["anthropic/claude-opus-5-5", "glm-5.3"] {
+    // A model off the structured-output list gets the original schema and no flag.
+    for model in ["claude-opus-5-5", "glm-5.3"] {
         let plain = strict(model, typed.clone());
         assert!(!plain.contains("strict"), "{plain}");
         assert!(plain.contains(r#""minLength":1"#), "{plain}");
     }
     // A schema the subset cannot express goes out as it is, without the flag.
     let open = strict(
-        "claude-opus-5-5",
+        "claude-opus-4-8",
         json!({"type": "object", "properties": {"a": {}}}),
     );
     assert!(!open.contains("strict"), "{open}");
 }
 
 #[test]
-fn a_strict_tool_adds_the_structured_outputs_beta_only_when_strict_is_sent() {
+fn a_strict_tool_adds_no_beta_of_its_own() {
     let encode = |model: &str| {
         let mut request = request(Vec::new());
         request.selection.model = model.to_owned();
@@ -185,23 +185,17 @@ fn a_strict_tool_adds_the_structured_outputs_beta_only_when_strict_is_sent() {
         );
         super::encode(request, super::tests::profile(true), &[], &[]).unwrap()
     };
-    let strict = encode("claude-opus-5-5");
+    let strict = encode("claude-opus-4-8");
     assert!(strict.body.contains(r#""strict":true"#), "{}", strict.body);
+    // The beta of the output-format path is not added for a strict tool.
     assert!(
-        strict
+        !strict
             .betas
             .contains(&crate::anthropic::betas::STRUCTURED_OUTPUTS.to_owned()),
         "{:?}",
         strict.betas
     );
-    // The flag is dropped for a model that cannot use it, and the beta goes with it.
-    let plain = encode("glm-5.3");
+    // A model off the structured-output list drops the flag.
+    let plain = encode("claude-opus-5-5");
     assert!(!plain.body.contains("strict"), "{}", plain.body);
-    assert!(
-        !plain
-            .betas
-            .contains(&crate::anthropic::betas::STRUCTURED_OUTPUTS.to_owned()),
-        "{:?}",
-        plain.betas
-    );
 }

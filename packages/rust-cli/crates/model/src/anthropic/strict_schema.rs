@@ -6,8 +6,8 @@
 //! subset cannot express (`$ref`, `$defs`, `prefixItems`, a schema-valued `additionalProperties`, an empty schema)
 //! makes the whole schema ineligible, and the tool is then sent without `strict`.
 //!
-//! Only a direct first-party model id (a bare `claude-` prefix) uses strict mode. A gateway route id such as
-//! `anthropic/claude-...` does not, since compatible gateways may reject the unknown tool field.
+//! Only a model that supports structured output keeps `strict`: the AI SDK Node uses sets `supportsStrictTools` from its
+//! per-model capability list (substring match), and omits the flag for every other id, an unknown model included.
 
 use serde_json::{Map, Value};
 
@@ -25,9 +25,11 @@ const STRICT_STRING_FORMATS: [&str; 10] = [
     "uuid",
 ];
 
-/// Whether `model` is a direct first-party Anthropic model id.
-pub(crate) fn is_first_party_model(model: &str) -> bool {
-    model.starts_with("claude-")
+/// Whether `model` is on the AI SDK's structured-output list (`getModelCapabilities`), so strict tools are kept.
+pub(crate) fn supports_strict_tools(model: &str) -> bool {
+    rust_cli_base::models::ANTHROPIC_STRUCTURED_OUTPUT_MODELS
+        .iter()
+        .any(|name| model.contains(name))
 }
 
 /// The schema in the strict subset, or None when it has a shape the subset cannot express.

@@ -171,11 +171,10 @@ pub(crate) fn betas(body: &Value, messages: MessageFlags, explicit: &[String]) -
             body["thinking"]["type"] == "adaptive" && body["thinking"].get("display").is_some(),
         ),
         (CACHE_DIAGNOSIS, body.get("diagnostics").is_some()),
-        // structured output（请求带输出格式时追加，titles.md §8.4）；`strict` 的工具（约束解码）同一个 beta。
+        // structured output（请求带输出格式时追加，titles.md §8.4）。
         (
             STRUCTURED_OUTPUTS,
-            body["output_config"].get("format").is_some()
-                || items(&body["tools"]).any(|tool| tool["strict"] == true),
+            body["output_config"].get("format").is_some(),
         ),
         // Node 的 WebSearch 工具版本（AI SDK 随工具加）。
         (

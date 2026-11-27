@@ -6200,17 +6200,17 @@ that the item was already done.
   a session whose turn is gone stayed in it. `run_close` (the turn side's close, run at once for an idle session and from
   the last turn's guard for a busy one) now calls `discard_session` after the closer succeeded. A refused close leaves the
   answers, since the session stays open. Tests: a close drops only the closed session's answers; a refused close keeps them.
-- `strict: true` on the mono `submit_result` (done). Node sets `strict` on the typed declaration, and its adapter sends it only
-  for the Anthropic provider with a first-party model id (a bare `claude-` prefix), with the schema folded into the strict
-  subset (`strict-tool-schema.ts`). Rust: `Tool::strict()` (default false); `SubmitResult` returns true for a mono session;
-  `wire_tools` puts it in `ToolFlags`; the Anthropic encoder (`model/src/anthropic/strict_schema.rs`) folds the schema and
-  keeps the flag for a first-party model id, and sends the original schema without the flag for any other model id or for a
+- `strict: true` on the mono `submit_result` (done). Node sets `strict` on the typed declaration. Its AI SDK keeps the flag only
+  for a model on its structured-output capability list (substring match, `ANTHROPIC_STRUCTURED_OUTPUT_MODELS`; an id such as
+  `claude-opus-5-5` is not on it) and omits it otherwise, with the schema folded into the strict subset
+  (`strict-tool-schema.ts`). Rust: `Tool::strict()` (default false); `SubmitResult` returns true for a mono session;
+  `wire_tools` puts it in `ToolFlags`; the Anthropic encoder (`model/src/anthropic/strict_schema.rs`) keeps the flag and sends the
+  folded schema for a model on that list, and sends the original schema without the flag for any other model id or for a
   schema the subset cannot express (`$ref`, `$defs`, `prefixItems`, a schema-valued `additionalProperties`, an empty schema).
   Folded keywords: `minimum`, `maximum`, `exclusiveMinimum`, `exclusiveMaximum`, `multipleOf`, `minLength`, `maxLength`,
   `pattern`, `minItems`, `maxItems`, `default`, and formats outside the strict list. They move into the description. Node's
-  generic declaration is not strict, and neither is Rust's. The encoder also adds the `structured-outputs-2025-12-15` beta when
-  a tool goes out with `strict` (the same beta the output-format path uses). Not verified against a live Anthropic call, and
-  not checked against what Node's AI SDK sends on the official endpoint: it is the beta Rust already sends for structured output.
+  generic declaration is not strict, and neither is Rust's. A strict tool adds no beta of its own: the structured-outputs beta
+  stays what the existing Node path sends for tools on those models (F71 rule unchanged). Not verified against a live call.
 - The typed declaration's `$schema` (done). Node's `typedSubmitResultInputSchema` ends with
   `$schema: "https://json-schema.org/draft/2020-12/schema"`. The Rust typed declaration now has it. The generic declaration
   is unchanged: Node's comes from zod's generator and also carries `$schema`, but no Rust tool schema built by hand carries
