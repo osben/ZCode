@@ -429,12 +429,26 @@ impl Tool for OffPeakTool {
 /// incognito profile keeps the automation tools. Node injects `offPeakPort` once, when the session's runtime is
 /// created, so the port's answer is read on the session's first lookup and kept. Lookups without a session never see
 /// the tools.
+/// The per-session decisions of [`OffPeakTools`]. A session close drops the session's entry, so a session resumed
+/// afterwards (a new runtime in Node) decides again.
+#[derive(Default)]
+pub struct OffPeakDecisions(Mutex<HashMap<SessionId, bool>>);
+
+impl OffPeakDecisions {
+    pub fn forget(&self, session: &SessionId) {
+        self.0
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .remove(session);
+    }
+}
+
 pub struct OffPeakTools {
     inner: Arc<dyn ToolRegistry>,
     tools: Vec<Arc<dyn Tool>>,
     port: Arc<dyn OffPeakPort>,
     incognito: Arc<dyn IncognitoToolGate>,
-    decided: Mutex<HashMap<SessionId, bool>>,
+    decided: Arc<OffPeakDecisions>,
 }
 
 impl OffPeakTools {
@@ -442,13 +456,14 @@ impl OffPeakTools {
         inner: Arc<dyn ToolRegistry>,
         port: Arc<dyn OffPeakPort>,
         incognito: Arc<dyn IncognitoToolGate>,
+        decided: Arc<OffPeakDecisions>,
     ) -> Self {
         Self {
             inner,
             tools: off_peak_tools(port.clone()),
             port,
             incognito,
-            decided: Mutex::default(),
+            decided,
         }
     }
 
@@ -462,6 +477,7 @@ impl OffPeakTools {
     fn enabled(&self, session: &SessionId) -> bool {
         *self
             .decided
+            .0
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
             .entry(session.clone())

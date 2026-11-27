@@ -356,15 +356,19 @@ pub(crate) fn query_parts(
     (late, operations, pipeline): (&Arc<LateCompactor>, Operations, &Arc<Pipeline>),
     (defaults, traits, node_desktop): (&Defaults, SurfaceTraits, bool),
     code: Option<Arc<dyn rust_cli_kernel_api::lsp::CodeIntelligence>>,
-    off_peak: Option<Arc<dyn rust_cli_kernel_api::off_peak::OffPeakPort>>,
+    off_peak: Option<(
+        Arc<dyn rust_cli_kernel_api::off_peak::OffPeakPort>,
+        Arc<rust_cli_tools::OffPeakDecisions>,
+    )>,
 ) -> QueryParts {
     // Fork: the off-peak tools are offered per session, only where the Host serves `offPeak/*` and has them on for
     // that session (specs/fork-rust-session-context-gaps.md, item 4).
     let base: Arc<dyn ToolRegistry> = match off_peak {
-        Some(port) => Arc::new(rust_cli_tools::OffPeakTools::new(
+        Some((port, decisions)) => Arc::new(rust_cli_tools::OffPeakTools::new(
             ext.registry(),
             port,
             ext.incognito_tools(),
+            decisions,
         )),
         None => ext.registry(),
     };

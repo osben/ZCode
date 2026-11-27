@@ -475,7 +475,7 @@ fn the_tools_are_offered_per_session() {
         enabled: Mutex::new(vec!["sess_on".to_owned()]),
     });
     let inner: Arc<dyn ToolRegistry> = Arc::new(rust_cli_kernel_api::testing::ListTools(vec![]));
-    let registry = OffPeakTools::new(inner, gate.clone(), Arc::new(NoIncognito));
+    let registry = OffPeakTools::new(inner, gate.clone(), Arc::new(NoIncognito), Arc::default());
     let on = SessionId::new("sess_on");
     let off = SessionId::new("sess_off");
     assert_eq!(names(&registry, &on), ["OffPeakCreate", "OffPeakList"]);
@@ -496,6 +496,29 @@ fn the_tools_are_offered_per_session() {
     gate.enabled.lock().unwrap().clear();
     assert_eq!(names(&registry, &on), ["OffPeakCreate", "OffPeakList"]);
     assert!(registry.find_for(&on, "OffPeakCreate").is_some());
+}
+
+/// The decision lives as long as the session's runtime: after the session is unloaded (`forget`) and resumed with the
+/// tools on, the next lookup asks the port again.
+#[test]
+fn a_resumed_session_decides_again() {
+    let gate = Arc::new(Gate {
+        enabled: Mutex::new(vec![]),
+    });
+    let inner: Arc<dyn ToolRegistry> = Arc::new(rust_cli_kernel_api::testing::ListTools(vec![]));
+    let decisions = Arc::new(OffPeakDecisions::default());
+    let registry = OffPeakTools::new(
+        inner,
+        gate.clone(),
+        Arc::new(NoIncognito),
+        decisions.clone(),
+    );
+    let session = SessionId::new("sess_1");
+    assert!(names(&registry, &session).is_empty());
+    gate.enabled.lock().unwrap().push("sess_1".to_owned());
+    assert!(names(&registry, &session).is_empty(), "kept while loaded");
+    decisions.forget(&session);
+    assert_eq!(names(&registry, &session), ["OffPeakCreate", "OffPeakList"]);
 }
 
 struct NoIncognito;
@@ -522,7 +545,7 @@ fn an_incognito_profile_still_hides_the_tools() {
         enabled: Mutex::new(vec!["sess_inc".to_owned(), "sess_plain".to_owned()]),
     });
     let inner: Arc<dyn ToolRegistry> = Arc::new(rust_cli_kernel_api::testing::ListTools(vec![]));
-    let registry = OffPeakTools::new(inner, gate, Arc::new(HidesFor("sess_inc")));
+    let registry = OffPeakTools::new(inner, gate, Arc::new(HidesFor("sess_inc")), Arc::default());
     let incognito = SessionId::new("sess_inc");
     let plain = SessionId::new("sess_plain");
     assert!(names(&registry, &incognito).is_empty());

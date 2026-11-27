@@ -28,7 +28,7 @@ JSON, schema failures, two openings, no tail); `projection_tests.rs` `a_user_row
 See `specs/fork-rust-automations.md` ("Registration per session"). The tools are no longer in the base registry; the
 `OffPeakTools` layer (`tools/src/off_peak_tools.rs`, built in `runtime/src/assemble.rs` `query_parts`) offers them to a
 session when the port enables them for it and its incognito profile keeps the automation tools. The port's answer is
-read once per session, on its first lookup, like Node's `offPeakPort` that is fixed when the runtime is created.
+read once per session, on its first lookup, like Node's `offPeakPort` that is fixed when the runtime is created. A session close (`SessionScoped::released`, also the unload of `session/lifecycle/stop`) drops the entry, so a session resumed afterwards with `offPeakToolEnabled: true` decides again.
 
 Owners and event order:
 
@@ -58,7 +58,7 @@ sequenceDiagram
 ```
 
 Tests: `off_peak_tools_tests.rs` `the_tools_are_offered_per_session` (including a policy flip after the first lookup),
-`an_incognito_profile_still_hides_the_tools`; `commands_tests.rs` `a_v4_create_records_the_sessions_off_peak_flag`.
+`an_incognito_profile_still_hides_the_tools`, `a_resumed_session_decides_again`; `commands_tests.rs` `a_v4_create_records_the_sessions_off_peak_flag`.
 
 `OffPeakRuns::tools_enabled` follows Node: the port is enabled when the recorded session flag is `true` or the workspace
 policy is on, so a recorded `false` never beats a policy that is on. Test: `off_peak_control_tests.rs`

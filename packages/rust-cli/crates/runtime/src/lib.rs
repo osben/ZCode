@@ -267,6 +267,7 @@ impl LocalKernel {
     ) -> Self {
         // Fork (slice 3 layer B): the main loop resolves an off-peak run's ticket through the Host's port.
         let off_peak_port = extensions.off_peak.clone();
+        let off_peak_decisions = Arc::new(rust_cli_tools::OffPeakDecisions::default());
         // Fork: an `acp:` selection never reaches a model provider; side callers fail closed (acp::guard).
         let ports = Ports {
             model: Arc::new(acp::ExternalAgentModelGuard { inner: ports.model }),
@@ -374,7 +375,10 @@ impl LocalKernel {
             (&late, operations, &pipeline),
             (&defaults, traits, extensions.node_desktop),
             extensions.code_intelligence.clone(),
-            extensions.off_peak.clone(),
+            extensions
+                .off_peak
+                .clone()
+                .map(|port| (port, off_peak_decisions.clone())),
         );
         let agents = Arc::new(assemble::agents(
             &ports,
@@ -418,6 +422,7 @@ impl LocalKernel {
                 agents: agents.signals(),
                 acp: acp_host.clone().map(|host| acp::AcpRelease { host }),
                 agent_catalog: agent_catalog.clone(),
+                off_peak: off_peak_decisions,
             },
         });
         // 两处晚绑定（late.rs）：ToolSearch 的目录看 agents 的注册表；任务提醒读 agents 的清单（agents 要用上下文）。
