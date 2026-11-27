@@ -1481,6 +1481,42 @@ async fn a_create_session_whose_first_input_carries_off_peak_is_refused() {
     assert!(kernel.creates.lock().unwrap().is_empty(), "nothing created");
 }
 
+/// Node's v4 create forwards `offPeakToolEnabled: true` to the runtime, which then gets the off-peak port whatever the
+/// workspace policy says. A create without it, or with `false`, leaves the session on the policy.
+#[tokio::test]
+async fn a_v4_create_records_the_sessions_off_peak_flag() {
+    let accepted = rust_cli_kernel_api::session_api::Ack::Accepted {
+        result: rust_cli_kernel_api::session_api::CommandResult::Done,
+    };
+    let (_scope, server, _kernel) = off_peak_server(accepted);
+    server.context.off_peak.set_policy(false);
+    for (session, flag) in [
+        ("on", json!(true)),
+        ("off", json!(false)),
+        ("none", Value::Null),
+    ] {
+        let mut payload = json!({"workspaceId": "/w", "sessionId": session});
+        if !flag.is_null() {
+            payload["offPeakToolEnabled"] = flag;
+        }
+        create_session(
+            &server,
+            &command_envelope("c1", "createSession", None, payload),
+        )
+        .await;
+    }
+    let off_peak = &server.context.off_peak;
+    assert!(off_peak.tools_enabled("on"));
+    assert!(!off_peak.tools_enabled("off"));
+    assert!(!off_peak.tools_enabled("none"));
+    off_peak.set_policy(true);
+    assert!(off_peak.tools_enabled("none"), "no flag follows the policy");
+    assert!(
+        off_peak.tools_enabled("off"),
+        "Node ignores a false flag, so the policy still applies"
+    );
+}
+
 /// Fork (off-peak admission follow-ups): an admitted off-peak input whose submit the kernel rejects leaves no pending run
 /// behind. Only its turn opens a run, and a refused input has no turn.
 #[tokio::test]

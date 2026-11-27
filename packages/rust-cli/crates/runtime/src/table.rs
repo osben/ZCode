@@ -144,6 +144,9 @@ pub(crate) struct SessionScoped {
     pub(crate) agent_catalog: Arc<rust_cli_agents::AgentCatalog>,
     /// The session's last measured request (the kernel's composition store). A closed session's record is dropped.
     pub(crate) compositions: Arc<rust_cli_kernel_api::context_composition::CompositionStore>,
+    /// Fork: the off-peak tools' per-session decision lives as long as the session's runtime (Node injects the port
+    /// when a runtime is created), so a close drops it.
+    pub(crate) off_peak: Arc<rust_cli_tools::OffPeakDecisions>,
 }
 
 impl SessionScoped {
@@ -185,6 +188,7 @@ impl SessionScoped {
         }
         self.agent_catalog.forget(session);
         self.compositions.forget(session);
+        self.off_peak.forget(session);
     }
 }
 

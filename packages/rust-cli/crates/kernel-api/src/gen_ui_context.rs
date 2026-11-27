@@ -108,3 +108,88 @@ pub fn reminder_body(context: &Value) -> Option<String> {
         "{PREFIX}<untrusted_gen_ui_state>\n{data}\n</untrusted_gen_ui_state>"
     ))
 }
+
+const LEGACY_OPEN: &str = "\n\n<untrusted_gen_ui_state>\n";
+const LEGACY_CLOSE: &str = "\n</untrusted_gen_ui_state>";
+
+/// JS `\s` (the `trimEnd` set), which differs from `char::is_whitespace` at U+0085 and U+FEFF.
+fn js_space(c: char) -> bool {
+    c == '\u{feff}' || (c.is_whitespace() && c != '\u{85}')
+}
+
+/// Node `normalizeGenUiInput` for a text whose intent has no `genUiContext`: old App records spliced the page state
+/// into the body as `\n\n<untrusted_gen_ui_state>\n{JSON}\n</untrusted_gen_ui_state>` at the very end (trailing white
+/// space allowed). When the JSON is a valid context (`genUiModelContextSchema`), returns the text without the tail.
+/// A tail that does not parse or validate stays in the text, as in Node (a user's own example is not deleted).
+pub fn strip_legacy_tail(text: &str) -> Option<&str> {
+    let trimmed = text.trim_end_matches(js_space);
+    let json_end = trimmed.strip_suffix(LEGACY_CLOSE)?.len();
+    // The regex is lazy and anchored at the end: the leftmost opening whose body fits before the closing.
+    let start = text
+        .match_indices(LEGACY_OPEN)
+        .map(|(at, _)| at)
+        .find(|at| at + LEGACY_OPEN.len() <= json_end)?;
+    let body = &text[start + LEGACY_OPEN.len()..json_end];
+    let context: Value = serde_json::from_str(&without_lone_surrogates(body)).ok()?;
+    is_context(&context).then_some(&text[..start])
+}
+
+/// JS `JSON.parse` accepts an escaped lone surrogate (`"\ud800"`); serde_json refuses it. The tail is only checked
+/// and cut, never re-sent, so each one becomes U+FFFD before the parse.
+fn without_lone_surrogates(body: &str) -> std::borrow::Cow<'_, str> {
+    if !body.contains("\\u") {
+        return std::borrow::Cow::Borrowed(body);
+    }
+    let unit = |at: usize| {
+        body.get(at..at + 6)
+            .filter(|escape| escape.starts_with("\\u"))
+            .and_then(|escape| u16::from_str_radix(&escape[2..], 16).ok())
+    };
+    let mut out = String::with_capacity(body.len());
+    let mut at = 0;
+    while at < body.len() {
+        let rest = &body[at..];
+        if rest.starts_with("\\\\") {
+            out.push_str("\\\\");
+            at += 2;
+            continue;
+        }
+        match unit(at) {
+            Some(0xD800..=0xDBFF) if matches!(unit(at + 6), Some(0xDC00..=0xDFFF)) => {
+                out.push_str(&body[at..at + 12]);
+                at += 12;
+            }
+            Some(0xD800..=0xDFFF) => {
+                out.push_str("\\ufffd");
+                at += 6;
+            }
+            _ => {
+                let width = rest.chars().next().map_or(1, char::len_utf8);
+                out.push_str(&rest[..width]);
+                at += width;
+            }
+        }
+    }
+    std::borrow::Cow::Owned(out)
+}
+
+/// `genUiModelContextSchema`: at most 100 strict `{path, state}` entries, then the path and size rules.
+fn is_context(context: &Value) -> bool {
+    let Some(entries) = context.as_array() else {
+        return false;
+    };
+    entries.len() <= 100
+        && entries.iter().all(|entry| {
+            // Both keys are required: zod 4 refuses a missing `state` (`expected nonoptional`), `null` is present.
+            entry.as_object().is_some_and(|map| {
+                map.contains_key("path")
+                    && map.contains_key("state")
+                    && map.keys().all(|key| key == "path" || key == "state")
+            })
+        })
+        && validate(context).is_ok()
+}
+
+#[cfg(test)]
+#[path = "gen_ui_context_tests.rs"]
+mod tests;
