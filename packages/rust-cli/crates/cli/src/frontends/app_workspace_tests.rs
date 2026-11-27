@@ -351,8 +351,8 @@ async fn a_trust_grant_admits_the_declaration_and_clears_the_banner() {
         .mcp_trust(&target("k"), "alpha", &digest, true)
         .await;
     assert_eq!(answer, json!({"accepted": true}));
-    // The layer's server admission reads that store, so the committed decision reloads the layer.
-    assert_eq!(fixture.layer.reloaded(), [ROOT.to_owned()]);
+    // Like Node, the decision does not reach the open tasks' MCP: no layer reload (the next session open re-reads).
+    assert!(fixture.layer.reloaded().is_empty());
 
     let statuses = list(&fixture, "k", true).await;
     assert_eq!(fixture.transport.started(), ["alpha"]);

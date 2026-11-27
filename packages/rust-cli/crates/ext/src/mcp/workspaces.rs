@@ -15,6 +15,7 @@ use rust_cli_base::sync::RwLockUnpoisoned;
 use rust_cli_kernel_api::clock::Clock;
 use rust_cli_kernel_api::env::WorkspaceRef;
 use rust_cli_kernel_api::env_registry::EnvironmentRegistry;
+use rust_cli_kernel_api::ids::SessionId;
 use rust_cli_kernel_api::mcp::McpTransport;
 
 use super::config::{McpServer, McpSettings};
@@ -36,6 +37,10 @@ pub(crate) struct WorkspaceMcp {
     machines: Option<Arc<dyn EnvironmentRegistry>>,
     process: Arc<McpManager>,
     groups: RwLock<HashMap<String, Arc<McpManager>>>,
+    /// The group each open session resolved first, by session id (specs/fork-rust-workspace-plugins-mcp.md,
+    /// "As built: a session keeps its group"): a replaced group keeps serving the sessions that hold it, like
+    /// Node's pool per session app.
+    pins: RwLock<HashMap<SessionId, Arc<McpManager>>>,
     /// Fork: print mode is process-wide; groups created later inherit it.
     print: std::sync::atomic::AtomicBool,
 }
@@ -57,6 +62,7 @@ impl WorkspaceMcp {
             machines,
             process,
             groups: RwLock::default(),
+            pins: RwLock::default(),
             print: std::sync::atomic::AtomicBool::new(false),
         }
     }
@@ -94,26 +100,71 @@ impl WorkspaceMcp {
         self.groups.read_unpoisoned().get(key).cloned()
     }
 
-    /// Fork: the group a session reads — its workspace's group when a loaded layer started one,
-    /// else the process group (no workspace, an `Invalid` slot, or the TUI/`-p`).
+    /// Fork: the group a session reads: the group it pinned, else its workspace's group when a loaded layer started
+    /// one (pinned from then on), else the process group (no workspace, an `Invalid` slot, or the TUI/`-p`), which
+    /// is not pinned.
     pub(crate) fn for_session(
         &self,
         sessions: &rust_cli_kernel_api::workspace_key::SessionWorkspaces,
-        session: &rust_cli_kernel_api::ids::SessionId,
+        session: &SessionId,
     ) -> Arc<McpManager> {
-        sessions
-            .get(session)
-            .map(|workspace| {
-                rust_cli_kernel_api::workspace_key::project_key(workspace.root.as_str())
-            })
-            .and_then(|key| self.group(&key))
-            .unwrap_or_else(|| self.process.clone())
+        if let Some(pinned) = self.pins.read_unpoisoned().get(session) {
+            return pinned.clone();
+        }
+        let Some(key) = sessions.get(session).map(|workspace| {
+            rust_cli_kernel_api::workspace_key::project_key(workspace.root.as_str())
+        }) else {
+            return self.process.clone();
+        };
+        // The group is read under the pins lock, so a replace cannot retire it between the read and the pin.
+        let mut pins = self.pins.write_unpoisoned();
+        if let Some(pinned) = pins.get(session) {
+            return pinned.clone();
+        }
+        match self.group(&key) {
+            Some(group) if !Arc::ptr_eq(&group, &self.process) => {
+                pins.insert(session.clone(), group.clone());
+                group
+            }
+            _ => self.process.clone(),
+        }
     }
 
-    /// Starts (or replaces) the group of `key` with the workspace's server list. A replaced group's
-    /// connections stop ([`McpManager::shutdown`]), so a config change reloads the whole group like
-    /// Node re-reads the app's config; the sessions of the workspace see the new set on their next
-    /// snapshot. The print startup wait of a resumed workspace runs in the print entry's prewarm
+    /// A session closed: its pin goes, and a retired group it was the last to hold shuts down. The current group of
+    /// a key never shuts down here.
+    pub(crate) fn release(&self, session: &SessionId) {
+        let mut pins = self.pins.write_unpoisoned();
+        let Some(group) = pins.remove(session) else {
+            return;
+        };
+        let current = self
+            .groups
+            .read_unpoisoned()
+            .values()
+            .any(|current| Arc::ptr_eq(current, &group));
+        let held = pins.values().any(|other| Arc::ptr_eq(other, &group));
+        drop(pins);
+        if !current && !held {
+            group.shutdown();
+        }
+    }
+
+    /// A group that is no longer current for its key: it shuts down unless an open session holds it (that
+    /// session's close shuts it down, [`Self::release`]).
+    fn retire(&self, group: Arc<McpManager>) {
+        let held = self
+            .pins
+            .read_unpoisoned()
+            .values()
+            .any(|pinned| Arc::ptr_eq(pinned, &group));
+        if !held {
+            group.shutdown();
+        }
+    }
+
+    /// Starts (or replaces) the group of `key` with the workspace's server list. Sessions that open
+    /// later read the new group; a replaced group keeps serving the open sessions that pinned it and
+    /// stops after the last of them closes ([`Self::retire`]), like Node's pool per session app. The print startup wait of a resumed workspace runs in the print entry's prewarm
     /// (`frontends/print.rs`), where it stays cancellable against the stop token.
     #[cfg(test)]
     pub(crate) fn start(&self, key: &str, workspace: WorkspaceRef, servers: Vec<McpServer>) {
@@ -147,12 +198,15 @@ impl WorkspaceMcp {
         }
         manager.note_plugin_ids(plugin_ids);
         manager.start(workspace, servers);
-        if let Some(previous) = self
+        // Lock order: pins, then groups (as `for_session`), so a session cannot pin the group being retired.
+        let pins = self.pins.write_unpoisoned();
+        let previous = self
             .groups
             .write_unpoisoned()
-            .insert(key.to_owned(), Arc::new(manager))
-        {
-            previous.shutdown();
+            .insert(key.to_owned(), Arc::new(manager));
+        drop(pins);
+        if let Some(previous) = previous {
+            self.retire(previous);
         }
     }
 
@@ -162,8 +216,11 @@ impl WorkspaceMcp {
         if key == PROCESS {
             return;
         }
-        if let Some(manager) = self.groups.write_unpoisoned().remove(key) {
-            manager.shutdown();
+        let pins = self.pins.write_unpoisoned();
+        let removed = self.groups.write_unpoisoned().remove(key);
+        drop(pins);
+        if let Some(manager) = removed {
+            self.retire(manager);
         }
     }
 }

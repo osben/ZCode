@@ -622,3 +622,26 @@ async fn the_open_after_a_prewarm_reuses_its_read_once() {
     layer.load(&workspace()).await;
     assert_eq!(names(&mcp, "/w"), ["re-read"]);
 }
+
+/// A reload whose read equals the installed one installs nothing, like a session-open re-read
+/// (specs/fork-rust-workspace-plugins-mcp.md, "As built: layer reload"): a hook trust write keeps the
+/// workspace group the open sessions hold, and a session close releases the group it pinned.
+#[tokio::test]
+async fn an_equal_reload_keeps_the_group() {
+    let scope = TaskScope::root("test", |_| {});
+    let fake: Arc<FakeMcp> = Arc::new(FakeMcp::default());
+    let (mcp, layer) = layer(&fake, &scope);
+    layer.set_loader(Arc::new(Seq(std::sync::Mutex::new(
+        [
+            Some(config_with_server("same")),
+            Some(config_with_server("same")),
+        ]
+        .into(),
+    ))));
+
+    layer.load(&workspace()).await;
+    let before = mcp.group("/w").expect("the group started");
+    layer.reload(&workspace()).await;
+    assert!(Arc::ptr_eq(&before, &mcp.group("/w").unwrap()));
+    assert_eq!(names(&mcp, "/w"), ["same"]);
+}

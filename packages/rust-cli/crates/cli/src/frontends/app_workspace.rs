@@ -699,12 +699,10 @@ impl WorkspaceAdmin for AppWorkspace {
             .decide(still_declared, record, trusted)
             .await
         {
-            Ok(()) => {
-                // The layer's server admission reads that store, so the committed decision
-                // reloads the workspace's layer (its project servers wait for exactly this grant).
-                self.reload_layer(target).await;
-                json!({"accepted": true})
-            }
+            // No layer reload: like Node, a decision only refreshes the banners, and the next session open reads the
+            // record (specs/fork-rust-workspace-plugins-mcp.md, "As built: layer reload"). A reload connected a newly
+            // trusted server in the open tasks at once.
+            Ok(()) => json!({"accepted": true}),
             Err(error) => {
                 if !matches!(error, McpTrustError::Changed) {
                     tracing::warn!(error = ?error, "workspace MCP trust decision failed");
