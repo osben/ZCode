@@ -255,3 +255,53 @@ fn a_turn_side_without_a_closer_refuses_to_close() {
     assert!(error.to_string().contains("no runtime closer"), "{error}");
     drop(mailbox);
 }
+
+/// Builds a turn side and returns the answer store its mailbox handle shares.
+fn turns_and_parked(
+    refusals: usize,
+) -> (
+    MailboxTurns,
+    ActorMailbox,
+    Arc<crate::parked_answers::ParkedAnswers>,
+) {
+    let closed = Arc::new(Mutex::new(Vec::new()));
+    let (_release_tx, release_rx) = channel::<()>();
+    let (mailbox, handle) = ActorMailbox::new();
+    let parked = handle.parked();
+    let runner = Arc::new(GatedRunner {
+        release: Mutex::new(release_rx),
+    });
+    let closer = Arc::new(RecordingCloser {
+        closed,
+        refusals: Mutex::new(refusals),
+    });
+    (
+        MailboxTurns::with_closer(runner, handle, closer),
+        mailbox,
+        parked,
+    )
+}
+
+/// An answer delivered for a session whose turn is gone waits for a take that never comes. Closing the session drops it
+/// and leaves the answers of other sessions alone.
+#[test]
+fn a_session_close_drops_its_parked_answers() {
+    let (mut turns, _mailbox, parked) = turns_and_parked(0);
+    parked.deliver("ses_gone", "dwfq-1", "late answer");
+    parked.deliver("ses_other", "dwfq-2", "other answer");
+    turns.close_session("ses_gone").expect("close");
+    assert_eq!(
+        parked.len(),
+        1,
+        "only the closed session's answer is dropped"
+    );
+}
+
+/// A refused close leaves the session open, so its parked answers stay.
+#[test]
+fn a_refused_close_keeps_the_parked_answers() {
+    let (mut turns, _mailbox, parked) = turns_and_parked(1);
+    parked.deliver("ses_gone", "dwfq-1", "late answer");
+    assert!(turns.close_session("ses_gone").is_err());
+    assert_eq!(parked.len(), 1);
+}

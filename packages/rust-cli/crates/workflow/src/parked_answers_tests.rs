@@ -154,3 +154,11 @@ fn a_cancel_check_does_not_override_an_answer_that_is_already_there() {
         Ok("yes".to_owned())
     );
 }
+
+#[test]
+fn the_owners_withdrawals_are_listed_for_the_readers_of_the_run() {
+    let parked = ParkedAnswers::new();
+    parked.deliver("sess", "q1", "answered");
+    parked.reject("sess", "q2", "withdrawn");
+    assert_eq!(parked.withdrawn(), vec!["q2".to_owned()]);
+}
