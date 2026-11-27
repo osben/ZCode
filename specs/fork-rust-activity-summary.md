@@ -34,11 +34,12 @@ the field, so on Rust the Activity capsule kept showing a finished batch (for ex
 5. Cold seed: a session opened from storage (a new process) has no boundary yet. When the stored history holds a
    real input and the session's own boundary is still unset, the full-history seed of
    `specs/fork-rust-completed-activity-count.md` (rule 2) also sets it, in the same pump task and frame as the count:
-   - `at`: the admission time (`admittedAt`, ms) of the input that opens the last turn, read from the stored input
-     intent. An input with no intent (typed in the TUI or the CLI) has no time: `at` is then the session's creation
+   - `at`: the admission time (`admittedAt`, ms) of the last real input, read from its stored input intent. A typed
+     message and a steer absorbed into a running turn (a guided row) both count. An input with no intent (typed in the TUI or the CLI) has no time: `at` is then the session's creation
      time, so children that ended after it stay visible;
-   - `subagentIds`: the ended children of the active branch (the store classification) whose ended time is not after
-     `at`;
+   - `subagentIds`: the ended children of the active branch (the store classification) whose own completion time is not after
+     `at`. A background Agent's tool part ends at its launch acknowledgement, so the child's last completion wins
+     over the part's end when both exist;
    - `workflowRunIds`: the journaled runs whose physical status is neither `running` nor `pending` and whose last
      event (or last update, when it has no event) is not after `at`;
    - `workIds`: always empty. Background commands are in-process facts and nothing persists them.

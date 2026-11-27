@@ -542,6 +542,7 @@ fn pagination_round_trips_the_cursors() {
     let item = |id: &str, ended_at: u64| EndedItem {
         child_session_id: id.to_owned(),
         ended_at,
+        completed_at: None,
         value: json!({"childSessionId": id, "endedAt": ended_at}),
     };
     // Sorted as the projection leaves it: newest first, id descending on ties.

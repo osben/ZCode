@@ -152,6 +152,56 @@ async fn a_later_seed_keeps_the_live_boundary() {
     assert_eq!(boundary(&live), live_value);
 }
 
+fn guided(id: &str, admitted_at: Option<u64>) -> Message {
+    let mut steer = rust_cli_kernel_api::hooks::queued_command::steer_attachment(
+        MessageId::new(id),
+        "also this",
+        rust_cli_kernel_api::hooks::SteerSender::User,
+        Some("cmd_steer"),
+        None,
+    );
+    if let (Some(at), Value::Object(data)) = (admitted_at, &mut steer.data) {
+        data.insert(
+            rust_cli_kernel_api::hooks::queued_command::INTENT_KEY.to_owned(),
+            json!({"admittedAt": at}),
+        );
+    }
+    Message::Attachment(steer)
+}
+
+/// A steer absorbed into a running turn is a guided real input row: it moves the cold boundary like a typed input.
+#[tokio::test]
+async fn a_cold_open_counts_a_guided_steer_as_the_last_input() {
+    let (_scope, _server, _handle, _queries, live) = open_cold(
+        vec![human("u1", Some(500)), guided("s1", Some(3000))],
+        &[("c_between", 2000), ("c_after", 3500)],
+    )
+    .await;
+    let value = boundary(&live);
+    assert_eq!(value["at"], json!(3000), "{value}");
+    assert_eq!(value["subagentIds"], json!(["c_between"]), "{value}");
+}
+
+/// A background Agent's tool part ends at its launch acknowledgement; the child's own completion decides.
+#[tokio::test]
+async fn a_cold_background_child_completed_after_the_input_is_not_dismissed() {
+    let view = SessionView::new(
+        meta(),
+        vec![human("u1", Some(2000))],
+        selection(),
+        PermissionMode::Default,
+    );
+    let (_scope, server, handle, queries) = open_view(false, view).await;
+    let (rows, mut child_rows) = docs(&[("c_bg", 1000)]);
+    child_rows["children"][0]["lastAssistant"] =
+        json!({"completedAt": 3000, "finish": "stop", "text": "done"});
+    *queries.subagent_docs.lock_unpoisoned() = Some((rows, child_rows));
+    *handle.table.lock_unpoisoned() = Some(Vec::new());
+    let live = server.live(&SessionId::new("s1")).await.unwrap();
+    settled(&live).await;
+    assert_eq!(boundary(&live)["subagentIds"], json!([]));
+}
+
 /// Rule 4 of the count spec: a child that succeeded in this process and whose launch a rewind cut is not counted, and
 /// the kernel table does not bring it back.
 #[tokio::test]

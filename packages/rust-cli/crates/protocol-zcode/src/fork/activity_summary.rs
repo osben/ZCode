@@ -57,7 +57,7 @@ pub(crate) fn cold_dismissed(
 ) -> Value {
     let subagent_ids: Vec<&str> = ended
         .iter()
-        .filter(|item| item.ended_at <= at)
+        .filter(|item| item.completed_at.unwrap_or(item.ended_at) <= at)
         .map(|item| item.child.as_str())
         .collect();
     let run_ids: Vec<&str> = runs

@@ -301,7 +301,13 @@ fn ends_turn(assistant: &rust_cli_kernel_api::message::AssistantMessage) -> bool
 /// from its input intent (`admittedAt`); the session's creation time when that input has no intent (a TUI or CLI
 /// input). `None` when the history holds no real input. Stored messages carry no time of their own.
 pub(crate) fn last_input_at(view: &SessionView) -> Option<u64> {
-    let user = view
+    let admitted_at = |intent: Option<&rust_cli_kernel_api::input_intent::InputIntent>| {
+        intent
+            .and_then(|intent| intent.get("admittedAt"))
+            .and_then(serde_json::Value::as_u64)
+    };
+    // A steer absorbed into a running turn is a guided real input row too (projection/rows.rs).
+    let admitted = view
         .messages
         .iter()
         .rev()
@@ -311,15 +317,16 @@ pub(crate) fn last_input_at(view: &SessionView) -> Option<u64> {
                     && !INTERRUPT_TEXTS.contains(&super::text_of(&user.content).as_str())
                     && super::rows::workflow_launch_of(user).is_none() =>
             {
-                Some(user)
+                Some(admitted_at(user.intent.as_deref()))
+            }
+            Message::Attachment(attachment)
+                if rust_cli_kernel_api::hooks::queued_command::guided(attachment).is_some() =>
+            {
+                let intent = rust_cli_kernel_api::hooks::queued_command::intent(attachment);
+                Some(admitted_at(intent.as_ref()))
             }
             _ => None,
         })?;
-    let admitted = user
-        .intent
-        .as_deref()
-        .and_then(|intent| intent.get("admittedAt"))
-        .and_then(serde_json::Value::as_u64);
     Some(admitted.unwrap_or(view.meta.created_at_ms))
 }
 

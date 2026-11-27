@@ -110,7 +110,18 @@ fn ended(child: &str, ended_at: u64) -> crate::fork::subagents::EndedOutcome {
         child: child.to_owned(),
         status: "success".to_owned(),
         ended_at,
+        completed_at: None,
     }
+}
+
+#[test]
+fn the_cold_boundary_prefers_the_childs_own_completion_time() {
+    let mut launched_early = ended("c-bg", 900);
+    launched_early.completed_at = Some(1500);
+    assert_eq!(
+        cold_dismissed(1000, &[launched_early], &[])["subagentIds"],
+        json!([])
+    );
 }
 
 fn journaled(run_id: &str, status: &str, updated_at: i64) -> (String, String, i64) {

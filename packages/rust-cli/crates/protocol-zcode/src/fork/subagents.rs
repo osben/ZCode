@@ -490,6 +490,7 @@ struct Projection {
 struct EndedItem {
     child_session_id: String,
     ended_at: u64,
+    completed_at: Option<u64>,
     value: Value,
 }
 
@@ -592,6 +593,7 @@ fn project(input: ProjectionInput<'_>) -> Projection {
                 projection.ended.push(EndedItem {
                     child_session_id: candidate.child_session_id.clone(),
                     ended_at,
+                    completed_at: outcome.ended_at,
                     value: common,
                 });
             }
@@ -706,6 +708,9 @@ pub(crate) struct EndedOutcome {
     pub(crate) child: String,
     pub(crate) status: String,
     pub(crate) ended_at: u64,
+    /// The child's own last completion time. `ended_at` prefers the Agent tool part's end, which for a background
+    /// launch is the launch acknowledgement, so the cold Activity boundary reads this one.
+    pub(crate) completed_at: Option<u64>,
 }
 
 /// [`ended_outcomes`]: the ended children, and the kernel table entries a rewritten history cut.
@@ -771,6 +776,7 @@ pub(crate) async fn ended_outcomes(
             status: item.value["status"].as_str().unwrap_or("lost").to_owned(),
             child: item.child_session_id,
             ended_at: item.ended_at,
+            completed_at: item.completed_at,
         })
         .collect();
     Ok(Outcomes { ended, cut })
