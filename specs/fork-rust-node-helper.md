@@ -228,7 +228,7 @@ All MCP servers of such a plugin are helper-hosted, because Node resolves a ment
 
 Why plugin-level MCP Apps go through the helper too: the panel and the model must reach the same server instance, and only Node's adapter and `mcp-ui` code speak the panel protocol. The two MCP App E2E fixtures (`e2e-mcp-viewer`, `e2e-mcp-mention`) are inline plugins of this kind.
 
-**Not ported yet: MCP Apps on servers Rust runs itself** (a user or project MCP server whose tools carry `_meta.ui`). Forwarded session methods that name such a server are refused with `proto.forkRustAgent.mcpUiServerNotHelperHosted` (`-32602`, `data.reasonCode`).
+**MCP Apps on servers Rust runs itself** (a user or project MCP server whose tools carry `_meta.ui`) are served by Rust (`protocol-zcode` `fork/mcp_ui_rust.rs`, see "MCP Apps on Rust-hosted servers"). A method forwarded to the helper that names a server the helper does not host is refused with `proto.forkRustAgent.mcpUiServerNotHelperHosted` (`-32602`, `data.reasonCode`).
 
 **One source of server configuration.** Rust marks a helper-hosted server with `McpTransportConfig::NodeHelper` and sends only its name (`plugin:<plugin>:<server>`, the same in both runtimes). The helper takes the server's config from its own Node plugin resolution of the workspace (`resolveZCodePlugins`, resolved once per helper process). So the model's connection and a panel's connection are the same pool entry, and Rust never re-encodes Node's config.
 

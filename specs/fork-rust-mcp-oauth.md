@@ -1,6 +1,6 @@
 # Rust MCP OAuth (zcode-rs) — parity with Node
 
-Status: draft, PR1 scope only. Node is the reference; Rust must read and write the same shared state.
+Status: PR1 to PR4 merged (#508, #509, #510, #515). Node is the reference; Rust must read and write the same shared state.
 
 ## Background
 
@@ -389,10 +389,7 @@ sequenceDiagram
 - Deviation: the header does not cross the executor wire (`exec-server` maps `Http` to `Io`); a remote
   executor's 401/403 reaches the hooks as text only, with no refresh and no scope challenge.
 
-Still deferred (not in PR3):
-
-- `resource` (RFC 8707) on the refresh request.
-- Plugin rows (#501) do not carry `oauth` or `url`, so they get neither refresh nor flow.
+Deferred from PR3 and closed in PR4: `resource` (RFC 8707) on the refresh request, and OAuth for plugin rows (#501). See "As built in PR4".
 
 ## PR4: plugin MCP OAuth and the PR3 deviations (as specified)
 
