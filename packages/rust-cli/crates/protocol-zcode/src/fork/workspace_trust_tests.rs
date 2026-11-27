@@ -532,3 +532,74 @@ async fn an_mcp_app_resource_is_never_authorized() {
     .expect_err("no MCP App instances");
     assert_eq!(error.message, "MCP App instance is no longer authorized");
 }
+
+/// A worktree task is listed under its project but runs in its worktree: its banners read the worktree (Node builds
+/// them in the session runtime, whose working directory is the cwd), and a decision for the worktree refreshes it
+/// (specs/fork-rust-managed-worktree-trust-identity.md rule 7).
+#[tokio::test]
+async fn a_worktree_task_reads_its_banners_in_its_worktree() {
+    const WORKTREE: &str = "/Users/dev/.zcode/worktrees/ab12/repo";
+    let admin = Arc::new(FakeAdmin {
+        accept: true,
+        ..FakeAdmin::default()
+    });
+    *admin.banners.lock_unpoisoned() = admission(None, Some(hook(1)));
+    let (_scope, server) = fixture(Some(admin.clone()));
+    let live = server.live(&SessionId::new("s1")).await.unwrap();
+    // The activation is queued before the input: the input's refresh reads after it.
+    let sink = live.sink.clone();
+    live.run(Box::pin(async move {
+        sink.set_worktree(crate::worktree::Facts {
+            preparing: None,
+            execution: Some(crate::worktree::Execution {
+                path: WORKTREE.to_owned(),
+                branch: None,
+                missing: false,
+            }),
+        })
+        .await;
+    }));
+    refresh_after_input(&server, &SessionId::new("s1"));
+    let reads = || -> Vec<Value> {
+        admin
+            .calls
+            .lock_unpoisoned()
+            .iter()
+            .filter_map(|call| call.get("admission").cloned())
+            .collect()
+    };
+    tokio::time::timeout(std::time::Duration::from_secs(5), async {
+        while reads().is_empty() {
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .expect("the input's refresh reads");
+    assert_eq!(reads(), [json!(WORKTREE)]);
+    settled(&live).await;
+    assert_eq!(live.sink.snapshot()["workspaceHookAdmission"], hook(1));
+
+    // A grant made for the worktree (the Settings page of the task) clears the task's banner.
+    *admin.banners.lock_unpoisoned() = Admission::default();
+    call(
+        &server,
+        "workspace/hooks/trustGrant",
+        json!({"workspace": workspace(WORKTREE), "bundleDigest": "b1", "hookDeclarationDigest": "d1"}),
+    )
+    .await
+    .expect("ported")
+    .expect("answered");
+    settled(&live).await;
+    assert_eq!(reads(), [json!(WORKTREE), json!(WORKTREE)]);
+    assert_eq!(live.sink.snapshot()["workspaceHookAdmission"], Value::Null);
+    // A decision for the project still reaches the task listed under it, read in its worktree.
+    call(
+        &server,
+        "workspace/hooks/trustGrant",
+        json!({"workspace": workspace(ROOT), "bundleDigest": "b1", "hookDeclarationDigest": "d1"}),
+    )
+    .await
+    .expect("ported")
+    .expect("answered");
+    assert_eq!(reads().last(), Some(&json!(WORKTREE)));
+}

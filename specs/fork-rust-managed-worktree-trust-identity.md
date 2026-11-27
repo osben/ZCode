@@ -44,6 +44,12 @@ MCP digest contains the working directory. Rust MCP trust stays as it is.
 6. One resolver (`cli/src/config/trust_identity.rs`) serves the hook trust (`WorkspaceHooks::inspect`: the session
    loader, the process assembly, the App hook review and its grants, `zcode hooks trust`) and the plugin trust
    (`plugin_dirs`).
+7. A session's trust banners (`workspaceHookAdmission`, `workspaceMcpAdmission`) and its hook review read the
+   session's cwd: the execution worktree it runs in, else the root it was opened on (Node builds them in the session
+   runtime, whose working directory is the cwd). The listed workspace, which a worktree session shares with its
+   project, is not used. The refresh after an input reads the cwd after any worktree activation queued before it, so
+   the first input of a new worktree task already reads the worktree. A grant or revoke for a workspace refreshes the
+   open sessions whose cwd or listed workspace is that path, each with a read of its own cwd.
 
 ```text
 session root (worktree path) ──► trust_identity::resolve ──► source path (or the root itself)
@@ -61,10 +67,11 @@ session root (worktree path) ──► trust_identity::resolve ──► source 
   the worktree, and a hook grant made in the worktree is written under the source path.
 - Node's `resolveWorkspaceHookTrustIdentity` gives the same answers on the same layout (checked once with tsx: root,
   subdirectory, relative CRLF pointers, wrong `commondir`, uppercase bucket, bare common dir).
-- HK20 (`conversation-session/hooks/conversation-session-hook-trust-worktree`) passes on Node in the box. On Rust it
-  still fails at HK20-a, before any worktree step: Rust hook digests lack Node's script entry binding (D24 in
-  `docs/specs/workspace-hook-trust.md`), so the Settings grant does not match the Rust digest. HK06, HK07, HK18 and
-  HK19 fail on Rust for the same reason. HK20 is the acceptance once D24 is ported.
+- HK20 (`conversation-session/hooks/conversation-session-hook-trust-worktree`) passes on Node and on Rust in the box,
+  with D24 ported (`specs/fork-rust-hook-script-entry.md`) and the banners read at the session cwd (rule 7). HK05,
+  HK06, HK07, HK18 and HK19 pass on Rust too.
+- A protocol test opens a worktree task, queues its worktree and checks the banner refresh reads the worktree path, and
+  that a grant for the worktree or for the source project refreshes that session.
 
 ## Known differences
 

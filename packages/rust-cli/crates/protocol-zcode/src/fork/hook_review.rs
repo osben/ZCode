@@ -224,7 +224,10 @@ fn scope<'a>(server: &'a Server, live: &'a Arc<Bridged<Live>>, session: &str) ->
     if excludes(live.sink.incognito().as_ref(), IncognitoKey::Hooks) {
         return None;
     }
-    let path = server.context.workspace_of(session)?;
+    // The session's cwd: a worktree task reviews its worktree (specs/fork-rust-managed-worktree-trust-identity.md
+    // rule 7). A session without a registered workspace has none.
+    server.context.workspace_of(session)?;
+    let path = live.sink.cwd();
     Some(Scope {
         server,
         live,
