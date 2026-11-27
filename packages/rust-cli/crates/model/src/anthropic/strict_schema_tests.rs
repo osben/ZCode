@@ -7,6 +7,9 @@ fn only_a_model_on_the_structured_output_list_keeps_strict() {
     assert!(supports_strict_tools("claude-opus-4-8"));
     assert!(supports_strict_tools("claude-haiku-4-5-20251001"));
     assert!(!supports_strict_tools("claude-opus-5-5"));
+    // Routed ids contain a listed name but are not first-party ids.
+    assert!(!supports_strict_tools("anthropic/claude-sonnet-4-6"));
+    assert!(!supports_strict_tools("us.anthropic.claude-sonnet-4-6"));
     assert!(!supports_strict_tools("glm-5.3"));
 }
 

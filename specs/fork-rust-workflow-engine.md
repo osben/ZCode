@@ -6202,8 +6202,9 @@ that the item was already done.
   answers, since the session stays open. Tests: a close drops only the closed session's answers; a refused close keeps them.
 - `strict: true` on the mono `submit_result` (done). Node sets `strict` on the typed declaration. Its AI SDK keeps the flag only
   for a model on its structured-output capability list (substring match, `ANTHROPIC_STRUCTURED_OUTPUT_MODELS`; an id such as
-  `claude-opus-5-5` is not on it) and omits it otherwise, with the schema folded into the strict subset
-  (`strict-tool-schema.ts`). Rust: `Tool::strict()` (default false); `SubmitResult` returns true for a mono session;
+  `claude-opus-5-5` is not on it) and omits it otherwise. Node's adapter also requires a bare `claude-` id
+  (`isAnthropicFirstPartyModelId`), so `anthropic/claude-sonnet-4-6` and `us.anthropic.claude-sonnet-4-6` never get it. The
+  schema is folded into the strict subset (`strict-tool-schema.ts`). Rust: `Tool::strict()` (default false); `SubmitResult` returns true for a mono session;
   `wire_tools` puts it in `ToolFlags`; the Anthropic encoder (`model/src/anthropic/strict_schema.rs`) keeps the flag and sends the
   folded schema for a model on that list, and sends the original schema without the flag for any other model id or for a
   schema the subset cannot express (`$ref`, `$defs`, `prefixItems`, a schema-valued `additionalProperties`, an empty schema).
@@ -6228,7 +6229,13 @@ that the item was already done.
   pin a failing turn. A failure that fails the ask was already covered (reconcile). A transient failure that is redriven was not:
   Node's `onTurnRejected` withdraws before it decides what the failure means, and the Rust owner left the question parked.
   `turn_failed` now withdraws first through `EscalationBook::withdraw_pending`, which keeps the ask active for the redrive.
-  The red run of the redrive test showed the question was not rejected.
+  The red run of the redrive test showed the question was not rejected. Node's pending list is its in-memory escalation
+  registry, which a withdrawal edits and which emits no event. Rust's `GetWorkflowRun` and the run snapshot replay the journal
+  and the projection, where `escalation-raised` stays until `escalation-resolved` or `run-settled`. So `ParkedAnswers` now
+  records the qids the owner withdrew (`withdrawn()`), and `run_detail_for` and `run_snapshot_of` drop them from the state
+  (and so from the roster built from it). No journal event is added, since the journal is shared with Node. The same stale
+  listing existed for the older withdrawal paths (cancelled ask, refused start) and is closed by the same filter. Limit: the
+  filter is in-memory, so it covers a live run only, as Node's registry does; a cold read of a non-terminal run is unchanged.
 
 **Divergences.** 940: Rust's hand-built tool schemas for `submit_result` (generic) and `escalate` carry no `$schema`, while
 Node's zod-generated ones do. Not changed here, since it touches every tool schema and the prompt-cache bytes.

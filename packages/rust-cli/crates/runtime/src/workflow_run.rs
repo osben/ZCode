@@ -1141,6 +1141,18 @@ impl WorkflowRunService {
 
     /// Fork (W7-11, 9.44): one run's snapshot from its parent's projection (the reducer's run object, with
     /// `pendingQuestions` and the holes), read from memory. `None` when the session has no projection or no such run.
+    /// The question ids the run's owner withdrew (a failed or redriven turn, a cancelled ask). Node's pending list is an
+    /// in-memory registry that a withdrawal edits, but the journal and the projection built from it never see one, so the
+    /// readers of a live run leave these out.
+    pub(crate) fn withdrawn_questions_of(&self, run_id: &str) -> Vec<String> {
+        let state = self.inner.state.lock_unpoisoned();
+        state
+            .runs
+            .get(run_id)
+            .map(|entry| entry.handle.parked().withdrawn())
+            .unwrap_or_default()
+    }
+
     pub fn run_snapshot_of(&self, parent_session_id: &str, run_id: &str) -> Option<Value> {
         let projection = {
             let sessions = self.inner.sessions.lock_unpoisoned();
@@ -1153,9 +1165,14 @@ impl WorkflowRunService {
             .runs
             .iter()
             .find(|run| run.get("runId").and_then(Value::as_str) == Some(run_id))
-            .map(|run| Value::Object(run.clone()));
+            .map(|run| run.clone());
         drop(state);
-        found
+        found.map(|run| {
+            Value::Object(rust_cli_workflow::run_store::without_withdrawn_questions(
+                run,
+                &self.withdrawn_questions_of(run_id),
+            ))
+        })
     }
 }
 
