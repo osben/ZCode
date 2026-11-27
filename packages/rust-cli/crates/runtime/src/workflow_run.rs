@@ -1165,7 +1165,7 @@ impl WorkflowRunService {
             .runs
             .iter()
             .find(|run| run.get("runId").and_then(Value::as_str) == Some(run_id))
-            .map(|run| run.clone());
+            .cloned();
         drop(state);
         found.map(|run| {
             Value::Object(rust_cli_workflow::run_store::without_withdrawn_questions(
