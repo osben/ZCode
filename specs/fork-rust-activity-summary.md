@@ -46,6 +46,10 @@ the field, so on Rust the Activity capsule kept showing a finished batch (for ex
    - `workIds`: always empty. Background commands are in-process facts and nothing persists them.
      A live boundary (rule 2) is never replaced by the seed. A failed seed sets nothing and the next seed retries.
      Rule 3 runs on the seeded value like on any other.
+     Known difference: Node's live boundary is the time the input's row is projected, which is later than
+     `admittedAt` for an input that waited in the queue. Stored messages carry no delivery time, so the cold `at`
+     is the admission time, and an activity that ended while that input was queued stays visible after a cold
+     open. Closing it needs a persisted delivery time in fork storage (an open storage decision).
 6. Records are never deleted; the UI only folds finished details and shows the history directory.
 
 ```text
