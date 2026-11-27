@@ -516,6 +516,33 @@ impl Server {
     async fn read_presentation(&self, params: &Value) -> Value {
         let workspace = params["workspace"].clone();
         let path = workspace["workspacePath"].as_str().unwrap_or_default();
+        let commands = self.slash_catalog(path).await;
+        json!({"workspace": workspace, "mode": self.defaults.mode.node_name(),
+            "slashCommands": commands})
+    }
+
+    /// Fork (specs/fork-rust-workspace-config-topic.md): the value of a `workspace-config/<workspaceId>` snapshot. Node
+    /// builds it from the first open session of the workspace (`buildLiveWorkspaceConfigStateV4`): that session's mode
+    /// and the slash-command catalog under its cwd; with no open session the state is empty. Several sessions: the
+    /// smallest session id, since the session table has no insertion order.
+    pub(crate) async fn workspace_config(&self, workspace: &str) -> Value {
+        let chosen = self
+            .bridge
+            .sessions()
+            .into_iter()
+            .filter(|bridged| bridged.sink.listed_workspace() == workspace)
+            .min_by(|a, b| a.handle.id().as_str().cmp(b.handle.id().as_str()));
+        let Some(live) = chosen else {
+            return crate::fork::workspace_config::empty();
+        };
+        let (_, mode, _) = live.sink.current_config();
+        let commands = self.slash_catalog(&live.sink.cwd()).await;
+        crate::fork::workspace_config::state(Some(mode.node_name()), commands)
+    }
+
+    /// The presentation catalog's slash commands under `path`: shared by `workspace/readPresentation` and the
+    /// workspace-config topic, as in Node (`listProtocolSlashCommands`).
+    async fn slash_catalog(&self, path: &str) -> Vec<Value> {
         // W9b-2 (9.57): the built-ins come first, as Node's catalog does, and `workflow` follows the cached gate fact.
         let workflow_enabled =
             resolve_gate(None, None, &self.dynamic_workflow_preferences()).enabled;
@@ -534,9 +561,7 @@ impl Server {
                 }
                 (value, builtin)
             });
-        let commands = crate::fork::slash_builtins::catalog_commands(workflow_enabled, custom);
-        json!({"workspace": workspace, "mode": self.defaults.mode.node_name(),
-            "slashCommands": commands})
+        crate::fork::slash_builtins::catalog_commands(workflow_enabled, custom)
     }
 
     async fn close_session(&self, params: &Value) -> Value {

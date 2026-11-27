@@ -765,6 +765,12 @@ impl Live {
         self.state().projection.auto_drain()
     }
 
+    /// Fork: the workspace key the session is listed under (Node `record.workspace.workspaceKey`), the id of its
+    /// sessions-index and workspace-config topics.
+    pub fn listed_workspace(&self) -> &str {
+        &self.workspace
+    }
+
     /// Fork: the session's cwd (Node `record.workspace.workspacePath`): the execution worktree it runs in, else the
     /// root it was opened on. `workspace` is the listed key, which a worktree session shares with its project, so it
     /// is not the cwd.

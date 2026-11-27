@@ -15,6 +15,8 @@ mod file_summary;
 pub(crate) mod slash_builtins;
 /// Fork (W9a, 9.53): the v4 run controls `startSavedWorkflow` and `amendWorkflowRunSettings`.
 pub(crate) mod workflow_run_commands;
+// Fork: the `workspace-config/<workspaceId>` snapshot value (specs/fork-rust-workspace-config-topic.md).
+pub(crate) mod workspace_config;
 // Fork: specs/fork-rust-node-helper.md F3, "Helper → Rust requests".
 pub(crate) mod helper_answers;
 mod helper_elicitation;

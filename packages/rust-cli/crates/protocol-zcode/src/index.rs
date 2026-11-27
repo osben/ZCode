@@ -1,7 +1,8 @@
 //! 会话列表（`sessions-index/<workspaceId>`）与工作区配置（`workspace-config/<workspaceId>`）两种主题的发布者。
 //!
 //! 会话列表的快照 = 存储里这个工作区的会话 + 本进程打开着的会话的实时行；之后每次实时行变了发一个 `session.upserted`。
-//! 工作区配置在 P1 只有快照（配置项与斜杠命令为空，斜杠命令由 `workspace/readPresentation` 给）。
+//! 工作区配置只有快照，没有增量（Node 也不发）：内容由订阅时的 `Server::workspace_config` 给出
+//! （specs/fork-rust-workspace-config-topic.md）。
 
 use rust_cli_base::sync::LockUnpoisoned;
 use std::collections::HashMap;
@@ -183,8 +184,14 @@ impl Topics {
             json!({"protocolVersion": 1, "workspaceId": workspace, "logEpoch": entry.log.epoch(),
                 "sessions": sessions})
         } else {
+            // Fork (specs/fork-rust-workspace-config-topic.md): the subscribe hands over the workspace's state as the one
+            // `stored` row; none means the empty state.
+            let config = stored
+                .into_iter()
+                .next()
+                .unwrap_or_else(crate::fork::workspace_config::empty);
             json!({"protocolVersion": 1, "workspaceId": workspace, "logEpoch": entry.log.epoch(),
-                "config": {"configOptions": [], "slashCommands": []}})
+                "config": config})
         };
         Some(Outgoing {
             topic: topic.to_owned(),

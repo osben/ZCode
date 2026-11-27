@@ -34,6 +34,32 @@ fn row(session: &str) -> Value {
     })
 }
 
+const CONFIG_TOPIC: &str = "workspace-config//w";
+
+/// Fork (specs/fork-rust-workspace-config-topic.md rule 1): the snapshot of a config topic carries the state the
+/// subscribe handed over, and the empty state when it handed none.
+#[tokio::test]
+async fn a_config_snapshot_carries_the_state_it_was_given() {
+    let topics = topics();
+    topics.subscribe(CONFIG_TOPIC, "sub-1", "conn-1");
+    let state = json!({"configOptions": [{"id": "mode"}], "slashCommands": [{"name": "goal"}]});
+    let given = topics
+        .snapshot(CONFIG_TOPIC, "sub-1", vec![state.clone()], Purpose::Initial)
+        .expect("the subscription is registered");
+    assert_eq!(given.payload["kind"], "snapshot");
+    assert_eq!(given.payload["snapshot"]["config"], state);
+    assert_eq!(given.payload["snapshot"]["workspaceId"], "/w");
+
+    topics.subscribe(CONFIG_TOPIC, "sub-2", "conn-2");
+    let none = topics
+        .snapshot(CONFIG_TOPIC, "sub-2", Vec::new(), Purpose::Initial)
+        .expect("the subscription is registered");
+    assert_eq!(
+        none.payload["snapshot"]["config"],
+        json!({"configOptions": [], "slashCommands": []})
+    );
+}
+
 /// Removing a session answers the started subscriber with `session.removed`, and the row is gone
 /// from the topic's own state, so a subscriber arriving afterwards gets a snapshot without it
 /// (the stored half excludes soft-deleted sessions, so it cannot reappear from there either).
