@@ -358,3 +358,74 @@ fn a_rebuilt_projection_seeds_its_totals_from_the_history() {
     assert_eq!(cache["totalInputTokens"], 200);
     assert_eq!(cache["totalCacheReadTokens"], 50);
 }
+
+fn boundary(id: &str, head: &str, anchor: &str, tail: &str) -> Message {
+    use rust_cli_kernel_api::message::{
+        CompactBoundary, CompactTrigger, PreservedSegment, SystemMessage,
+    };
+    Message::System(SystemMessage::CompactBoundary(CompactBoundary {
+        id: MessageId::new(id),
+        trigger: CompactTrigger::Manual,
+        pre_tokens: 100,
+        summary: MessageId::new("s"),
+        preserved: Some(PreservedSegment {
+            head: MessageId::new(head),
+            anchor: MessageId::new(anchor),
+            tail: MessageId::new(tail),
+        }),
+        discovered_tools: Vec::new(),
+    }))
+}
+
+/// The next request after a seed: the published request count and input total.
+fn seeded_totals(view: &rust_cli_kernel_api::session_api::SessionView) -> (Value, Value) {
+    let mut view = view.clone();
+    view.context_usage = Some(rust_cli_kernel_api::compaction::ContextOccupancy {
+        used_tokens: 5,
+        max_tokens: 10,
+        compact_at: Some(8),
+        window_tokens: Some(12),
+    });
+    let mut projection = Projection::from_view(&view, Followup::Queue, Vec::new());
+    projection.apply(
+        &event(
+            1,
+            completed(call(QuerySource::MainThread, Some(usage(50, 0, 0, 0)), &[])),
+        ),
+        0,
+    );
+    let cache = window(&projection)["cache"].clone();
+    (
+        cache["hitRateRequestCount"].clone(),
+        cache["totalInputTokens"].clone(),
+    )
+}
+
+/// Rule 6 (Node `mainTurnCacheHitAggregateFromMessages`): a preserved request counts with its original usage, which
+/// the active view of a live session cleared.
+#[test]
+fn a_live_seed_counts_a_preserved_request_with_its_original_usage() {
+    let history = vec![
+        user("u1", "hi"),
+        assistant_with("a1", Some(usage(100, 5, 0, 50))),
+        boundary("b", "u1", "s", "a1"),
+        user("s", "summary"),
+        user("u2", "next"),
+    ];
+    assert_eq!(seeded_totals(&view(history)), (json!(2), json!(200)));
+}
+
+/// Rule 6: after a cold open the preserved copy carries no usage; the store hands the original separately.
+#[test]
+fn a_cold_seed_reads_the_preserved_usage_from_the_store() {
+    let history = vec![
+        boundary("b", "u1", "s", "a1"),
+        user("s", "summary"),
+        user("u1", "hi"),
+        assistant_with("a1", Some(usage(0, 0, 0, 0))),
+        user("u2", "next"),
+    ];
+    let mut view = view(history);
+    view.preserved_usage = vec![(MessageId::new("a1"), usage(100, 5, 0, 50))];
+    assert_eq!(seeded_totals(&view), (json!(2), json!(200)));
+}

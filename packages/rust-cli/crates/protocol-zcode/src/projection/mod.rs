@@ -417,7 +417,10 @@ impl Projection {
             levels,
             context: view.context_usage,
             total: Usage::default(),
-            context_facts: context_facts::ContextFacts::seeded(&view.messages),
+            context_facts: context_facts::ContextFacts::seeded(
+                &view.messages,
+                &view.preserved_usage,
+            ),
             queue: view.queue.clone(),
             pending: Vec::new(),
             turn: None,

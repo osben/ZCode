@@ -356,6 +356,7 @@ impl Setup {
                 hook_rows: self.hook_rows,
             },
             SessionState {
+                preserved_usage: Vec::new(),
                 commands: Default::default(),
                 meta,
                 messages: self.messages,

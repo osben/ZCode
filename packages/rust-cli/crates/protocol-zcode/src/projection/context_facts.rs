@@ -2,7 +2,10 @@
 //! each main-turn `ModelComplete`: `cache` (`recordMainTurnCacheHitUsage`) and `breakdown`
 //! (`contextUsageBreakdown`). The owner is the projection; the kernel keeps no copy.
 
+use std::collections::HashMap;
+
 use rust_cli_kernel_api::history;
+use rust_cli_kernel_api::ids::MessageId;
 use rust_cli_kernel_api::message::{Message, Usage};
 use rust_cli_kernel_api::metering::{CallStatus, ModelCall};
 use rust_cli_kernel_api::model::QuerySource;
@@ -47,13 +50,30 @@ fn rate(part: u64, whole: u64) -> Value {
 impl ContextFacts {
     /// Node `mainTurnCacheHitAggregateFromMessages`: the totals continue the active history's assistant requests. Nothing
     /// is published until a request completes, as in Node.
-    pub fn seeded(messages: &[Message]) -> Self {
+    ///
+    /// Active history decides membership only: a compaction's preserved segment has its usage cleared there, so the
+    /// counts come from the original usage, the stored one of a cold open (`preserved`) or else the same message
+    /// earlier in `messages` (a live session keeps it before the boundary).
+    pub fn seeded(messages: &[Message], preserved: &[(MessageId, Usage)]) -> Self {
+        let mut original: HashMap<&MessageId, &Usage> =
+            preserved.iter().map(|(id, usage)| (id, usage)).collect();
+        for message in messages {
+            if let Message::Assistant(assistant) = message
+                && let Some(usage) = &assistant.usage
+            {
+                original.entry(&assistant.id).or_insert(usage);
+            }
+        }
         let mut totals = Totals::default();
         for message in history::active(messages) {
             let Message::Assistant(assistant) = message.as_ref() else {
                 continue;
             };
-            if let Some((input, read, write)) = assistant.usage.as_ref().and_then(request_counts) {
+            if let Some((input, read, write)) = original
+                .get(&assistant.id)
+                .copied()
+                .and_then(request_counts)
+            {
                 totals.requests += 1;
                 totals.input += input;
                 totals.read += read;

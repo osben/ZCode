@@ -361,6 +361,7 @@ pub(super) async fn tool_session_with(
             hook_rows,
         },
         SessionState {
+            preserved_usage: Vec::new(),
             commands: Default::default(),
             meta: meta(),
             messages: Vec::new(),

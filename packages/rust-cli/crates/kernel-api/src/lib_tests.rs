@@ -113,6 +113,7 @@ fn loaded_sessions_round_trip_with_open_work() {
         turn: None,
         last_turn_failed: true,
         earlier: vec![assistant()],
+        preserved_usage: Vec::new(),
         title_pending: true,
         title_source: None,
         permission_grant: Some("int_1".to_owned()),

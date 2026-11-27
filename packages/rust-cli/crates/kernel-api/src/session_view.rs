@@ -19,6 +19,7 @@ impl SessionView {
             title_source: None,
             permission_grant: None,
             messages,
+            preserved_usage: Vec::new(),
             selection,
             mode,
             plan: false,

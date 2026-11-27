@@ -264,6 +264,7 @@ async fn session_with_hooks(
             hook_rows,
         },
         SessionState {
+            preserved_usage: Vec::new(),
             commands: Default::default(),
             meta: meta(),
             messages: history,

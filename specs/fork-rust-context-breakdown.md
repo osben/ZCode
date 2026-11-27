@@ -66,7 +66,12 @@ so the context usage panel on Rust had no cache line, no per-part breakdown and 
    the same way.
 6. Seed: `Projection::from_view_at` (cold open, rewind, edit, retry) sums the active-history assistant messages that
    carry usage, the same set Node rebuilds on resume. The seed alone publishes no `cache`: like Node, `cache` appears
-   with the next completed main request.
+   with the next completed main request. Active history decides membership only; the counts are the original stored
+   tokens (Node `mainTurnCacheHitAggregateFromMessages`, `turn-model-step-usage.ts:80-119`). A compaction's preserved
+   segment has its usage cleared in the active view (live: `history::active`, cold: node-records `invalidated`), so the
+   seed reads each preserved message's original usage: live from the same message earlier in the session's history,
+   cold from `LoadedSession.preserved_usage` (the stored rows before invalidation). Before: a reopened compacted session
+   left the preserved requests out of `hitRateRequestCount` and the totals.
 7. A published `cache` and `breakdown` stay until the next completed main request replaces them, through `ContextUsage` updates
    and model switches. `KernelEvent::CompactDone` drops both (the compacted history has no measured request yet); the
    running totals are kept, as Node keeps its aggregate.
@@ -95,6 +100,7 @@ hitRateRequestCount: 1, totalInputTokens: 150, totalCacheReadTokens: 30, totalCa
 - `microcompactThresholdTokens` is `null` in the snapshot and in `state.updated`, with and without a threshold.
 - `CompactDone` removes `cache` and `breakdown`; a later `ContextUsage` does not bring them back.
 - A rebuilt projection seeds its totals from the history, so the next request's `hitRate` covers it.
+- After a compaction with a preserved segment, the seed counts the preserved requests with their original usage, live and after a cold open (`node-store` load returns it).
 - Every emitted `contextWindow` passes the strict zod schemas (field names and integer counts).
 
 Coverage: `crates/protocol-zcode/src/projection/context_breakdown_tests.rs`,

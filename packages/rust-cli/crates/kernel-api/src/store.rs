@@ -341,6 +341,11 @@ pub struct LoadedSession {
     /// 模型侧的历史只是 `messages`；界面显示 `earlier ++ messages`。没有压缩点时为空（serde 缺省为空、为空时不写出）。
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub earlier: Vec<Message>,
+    /// Fork: the original usage of each assistant message in the last compaction's preserved segment. `messages` holds
+    /// those messages with the usage cleared (Node `invalidateRuntimeTokenUsage`); the context usage cache totals read the
+    /// original (Node `mainTurnCacheHitAggregateFromMessages`, specs/fork-rust-context-breakdown.md rule 6).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub preserved_usage: Vec<(MessageId, crate::message::Usage)>,
     /// Fork: the stored `anchor.sourceCommandId` of each typed user message ([`crate::session_api::SessionView::commands`]).
     #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
     pub commands: std::collections::BTreeMap<MessageId, CommandId>,
