@@ -282,6 +282,7 @@ impl Ext {
         self.skills.set_plugin_roots(loaded.skill_roots());
         let mut servers = self.config.mcp.servers.clone();
         servers.extend(loaded.mcp_servers());
+        self.mcp.note_plugin_ids(loaded.mcp_plugin_ids());
         self.mcp.start(workspace, servers);
         self.mcp.register_disabled(self.config.mcp_disabled.clone());
         loaded

@@ -460,6 +460,13 @@ impl Projection {
         projection
     }
 
+    /// Fork: the settled-or-running card of tool call `tool_use`, as the rows hold it.
+    pub fn tool_card_of(&self, tool_use: &str) -> Option<&Map<String, Value>> {
+        self.index
+            .get(&tool_key(tool_use))
+            .map(|at| &self.rows[*at])
+    }
+
     pub fn revision(&self) -> u64 {
         self.revision
     }

@@ -88,6 +88,9 @@ struct State {
     facts: Vec<Value>,
     /// Fork: model request metrics waiting for the next write, in order (`v4/telemetry/model-request-metrics`).
     metrics: Vec<Value>,
+    /// Fork (specs/fork-rust-plugin-ui-tool-result.md): `v4/plugin-ui/tool-result` params waiting for the next write,
+    /// in event order. Sent before the frames of that write, as Node sends it at ingest and flushes frames later.
+    plugin_ui: Vec<Value>,
     /// Fork (9.61): the session's `workflowRuns`, folded from the run progress deltas, for the row's `workflowActivity`.
     workflow_runs: Option<rust_cli_node_store::WorkflowRunsState>,
     /// Fork (specs/fork-rust-activity-summary.md): the session's `activitySummaryDismissed`, set by a real user input
@@ -105,6 +108,7 @@ struct Outgoing {
     summary: Option<Value>,
     facts: Vec<Value>,
     metrics: Vec<Value>,
+    plugin_ui: Vec<Value>,
 }
 
 /// Fork: starts watch `id` on a subagent child's runs for the parent's telemetry (child, watch ID, whether the child
@@ -237,6 +241,7 @@ impl Live {
                 watches: std::collections::HashMap::new(),
                 facts: Vec::new(),
                 metrics: Vec::new(),
+                plugin_ui: Vec::new(),
                 workflow_runs: None,
                 activity_summary: None,
                 completed_activity,
@@ -363,6 +368,7 @@ impl Live {
                     summary: None,
                     facts: std::mem::take(&mut state.facts),
                     metrics: std::mem::take(&mut state.metrics),
+                    plugin_ui: std::mem::take(&mut state.plugin_ui),
                 },
                 read.reopen,
             )
@@ -1171,6 +1177,7 @@ impl Live {
             .collect();
         let facts = std::mem::take(&mut state.facts);
         let metrics = std::mem::take(&mut state.metrics);
+        let plugin_ui = std::mem::take(&mut state.plugin_ui);
         let row = self.summary_of(state);
         let mut comparable = row.clone();
         comparable["lastActivityAt"] = json!(0);
@@ -1183,11 +1190,18 @@ impl Live {
             summary,
             facts,
             metrics,
+            plugin_ui,
         }
     }
 
     async fn write(&self, outgoing: Outgoing) {
         let topic = self.topic();
+        for params in outgoing.plugin_ui {
+            self.context
+                .peer
+                .notify(crate::fork::plugin_ui_result::METHOD, &params)
+                .await;
+        }
         for (subscription, range, payload) in outgoing.frames {
             self.context
                 .frame(&topic, &subscription, range, payload, Purpose::Online)
@@ -1392,6 +1406,17 @@ impl SessionSink for Live {
             state.activity_summary = Some(boundary);
         }
         state.log.record(deltas);
+        // Fork (specs/fork-rust-plugin-ui-tool-result.md): a live MCP UI tool result opens its panel on the host. A
+        // subagent's child session reports nothing here, as for the telemetry facts.
+        if let KernelEvent::ToolDone { tool_use, .. } = &event.event
+            && state.telemetry.is_some()
+            && let Some(params) = state
+                .projection
+                .tool_card_of(tool_use.as_str())
+                .and_then(|row| crate::fork::plugin_ui_result::of_row(self.session.as_str(), row))
+        {
+            state.plugin_ui.push(params);
+        }
         // Fork (9.44, closes 412): the session's blocked-run reminder clock follows its turn edges (Node
         // `noteWorkflowReminderTurn`). Only the edges this stream sees: a session with no open stream sends none.
         if let Some(reminders) = self.context.workflow_reminders() {
@@ -1561,3 +1586,7 @@ fn publish_completed_activity(state: &mut State) {
 #[cfg(test)]
 #[path = "live_launch_tests.rs"]
 mod launch_tests;
+
+#[cfg(test)]
+#[path = "live_plugin_ui_tests.rs"]
+mod plugin_ui_tests;

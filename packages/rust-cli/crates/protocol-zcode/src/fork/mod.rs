@@ -37,6 +37,7 @@ pub(crate) mod mcp_ui_app_tools;
 mod message_marks;
 pub(crate) mod methods;
 pub mod node_helper;
+pub(crate) mod plugin_ui_result;
 mod queue;
 mod release_under_directory;
 pub(crate) use queue::settle_running_turn;

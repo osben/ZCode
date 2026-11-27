@@ -72,6 +72,10 @@ pub(crate) struct McpTool {
     read_only: bool,
     /// Fork: `annotations.destructiveHint == true` (Node counts only a literal `true`).
     destructive: bool,
+    /// Fork: the tool's listed description as the display shows it, and its UI descriptor from the listed `_meta`
+    /// (specs/fork-rust-plugin-ui-tool-result.md).
+    listed_description: Option<String>,
+    ui: Option<super::display::ToolUi>,
     manager: Weak<Inner>,
 }
 
@@ -136,6 +140,11 @@ impl McpTool {
                 tool: original,
                 always_load,
             },
+            listed_description: listed
+                .get("description")
+                .and_then(Value::as_str)
+                .map(str::to_owned),
+            ui: super::display::tool_ui(meta),
             manager,
         }
     }
@@ -295,7 +304,7 @@ impl Tool for McpTool {
             return Ok(ToolOutput {
                 content: vec![ToolResultContent::Text { text: message }],
                 is_error: true,
-                display: Value::Null,
+                display: self.display(&manager, &value),
             });
         }
         let content = result::transform(&value, server).ok_or_else(|| {
@@ -307,8 +316,25 @@ impl Tool for McpTool {
         Ok(ToolOutput {
             content: result::truncate(content, settings.max_output_tokens),
             is_error: false,
-            display: Value::Null,
+            display: self.display(&manager, &value),
         })
+    }
+}
+
+impl McpTool {
+    /// Fork: Node's `createMcpToolDisplay` over the raw result (specs/fork-rust-plugin-ui-tool-result.md, rule 1).
+    fn display(&self, manager: &Inner, output: &Value) -> Value {
+        let plugin_id = manager.plugin_id_of(&self.info.server);
+        super::display::display(
+            &super::display::Presentation {
+                server: &self.info.server,
+                tool: &self.info.tool,
+                description: self.listed_description.as_deref(),
+                plugin_id: plugin_id.as_deref(),
+                ui: self.ui.as_ref(),
+            },
+            output,
+        )
     }
 }
 
@@ -353,3 +379,7 @@ pub(crate) fn call_meta(tool_use: &str, helper: Option<HelperCall<'_>>) -> Value
 #[cfg(test)]
 #[path = "tool_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "tool_display_tests.rs"]
+mod display_tests;

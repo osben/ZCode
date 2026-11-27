@@ -414,7 +414,8 @@ impl WorkspaceLayer {
             } => {
                 // A replaced group's connections stop inside `start` (`McpManager::shutdown`).
                 slots.servers.insert(key.to_owned(), servers.clone());
-                self.mcp.start(key, workspace, servers);
+                self.mcp
+                    .start_with_plugins(key, workspace, servers, plugins.mcp_plugin_ids());
                 if let Some(sink) = self.hooks.get() {
                     sink(key, &plugins);
                 }

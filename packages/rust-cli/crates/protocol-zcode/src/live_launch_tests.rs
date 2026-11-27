@@ -27,8 +27,8 @@ use crate::wire::Purpose;
 
 const TOPIC: &str = "sessions-index//w";
 
-struct Handle {
-    id: SessionId,
+pub(super) struct Handle {
+    pub(super) id: SessionId,
 }
 
 #[async_trait]
@@ -53,7 +53,7 @@ impl HandleOverride for Handle {
     }
 }
 
-fn view() -> SessionView {
+pub(super) fn view() -> SessionView {
     let meta = SessionMeta {
         id: SessionId::new("s1"),
         kind: SessionKind::Interactive,
@@ -88,7 +88,7 @@ fn launch_record() -> Message {
     })
 }
 
-fn event(seq: u64, event: KernelEvent) -> SequencedEvent {
+pub(super) fn event(seq: u64, event: KernelEvent) -> SequencedEvent {
     SequencedEvent {
         seq,
         event,

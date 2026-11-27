@@ -197,3 +197,38 @@ async fn plugin_plain_fields_keep_sensitive_names_literal() {
     assert_eq!(url, "https://mcp.example.com/${E2E_PLUGIN_SECRET}");
     assert_eq!(headers["authorization"], "Bearer s3cret");
 }
+
+/// Fork (specs/fork-rust-plugin-ui-tool-result.md, rule 4): a plugin's server maps to the plugin's id, not its name.
+#[test]
+fn each_declared_server_maps_to_its_plugins_id() {
+    let server = |name: &str| McpServer {
+        name: name.to_owned(),
+        scope: crate::mcp::McpScope::Plugin,
+        transport: McpTransportConfig::stdio("node".to_owned(), Vec::new()),
+        options: Default::default(),
+        oauth: None,
+        machine: Default::default(),
+    };
+    let plugin = |id: &str, name: &str, servers: Vec<McpServer>| Plugin {
+        id: id.to_owned(),
+        name: name.to_owned(),
+        dir: "/p".to_owned(),
+        manifest: serde_json::Value::Null,
+        skill_dirs: Vec::new(),
+        mcp_servers: servers,
+        agent_files: Vec::new(),
+        hooks: Vec::new(),
+    };
+    let plugins = Plugins(vec![
+        plugin(
+            "viewer@market",
+            "viewer",
+            vec![server("plugin:viewer:docs")],
+        ),
+        plugin("other@inline", "other", Vec::new()),
+    ]);
+    assert_eq!(
+        plugins.mcp_plugin_ids(),
+        [("plugin:viewer:docs".to_owned(), "viewer@market".to_owned())]
+    );
+}

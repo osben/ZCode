@@ -172,9 +172,17 @@ pub(crate) struct Inner {
     resources_seen: AtomicBool,
     /// Fork (F3 "Lazy start"): some server waits in [`Server::deferred`].
     deferred: AtomicBool,
+    /// Fork (specs/fork-rust-plugin-ui-tool-result.md): the owning plugin's id of each plugin-declared server, for the
+    /// `ui.pluginId` of a tool result's display. Only grows: a server name is `plugin:<plugin>:<server>`.
+    plugin_ids: Mutex<BTreeMap<String, String>>,
 }
 
 impl Inner {
+    /// Fork: the plugin id that declared `server` (None for a server no plugin declares).
+    pub(crate) fn plugin_id_of(&self, server: &str) -> Option<String> {
+        self.plugin_ids.lock_unpoisoned().get(server).cloned()
+    }
+
     fn servers(&self) -> MutexGuard<'_, BTreeMap<String, Server>> {
         self.servers.lock_unpoisoned()
     }
@@ -602,6 +610,7 @@ impl McpManager {
             clock,
             declared: Mutex::default(),
             noted_names: Mutex::default(),
+            plugin_ids: Mutex::default(),
             print: AtomicBool::new(false),
             resources_seen: AtomicBool::new(false),
             deferred: AtomicBool::new(false),
@@ -623,6 +632,12 @@ impl McpManager {
     /// print 会话（`-p`、stream-json）：连上过的 stdio 服务器断开时不记失败，等下次调用再连（ext.md §3.3.3）。
     pub fn set_print_session(&self, print: bool) {
         self.0.print.store(print, Ordering::Relaxed);
+    }
+
+    /// Fork (specs/fork-rust-plugin-ui-tool-result.md): records which plugin declared which server (server name to plugin
+    /// id), before the servers start, so a tool result's display names its plugin.
+    pub fn note_plugin_ids(&self, ids: impl IntoIterator<Item = (String, String)>) {
+        self.0.plugin_ids.lock_unpoisoned().extend(ids);
     }
 
     /// 开始连接（每个服务器一个常驻任务，不等待）。同名的服务器只连一次。

@@ -115,8 +115,21 @@ impl WorkspaceMcp {
     /// Node re-reads the app's config; the sessions of the workspace see the new set on their next
     /// snapshot. The print startup wait of a resumed workspace runs in the print entry's prewarm
     /// (`frontends/print.rs`), where it stays cancellable against the stop token.
+    #[cfg(test)]
     pub(crate) fn start(&self, key: &str, workspace: WorkspaceRef, servers: Vec<McpServer>) {
+        self.start_with_plugins(key, workspace, servers, Vec::new());
+    }
+
+    /// Fork: [`Self::start`] with the plugin id of each plugin-declared server (`McpManager::note_plugin_ids`).
+    pub(crate) fn start_with_plugins(
+        &self,
+        key: &str,
+        workspace: WorkspaceRef,
+        servers: Vec<McpServer>,
+        plugin_ids: Vec<(String, String)>,
+    ) {
         if key == PROCESS {
+            self.process.note_plugin_ids(plugin_ids);
             self.process.start(workspace, servers);
             return;
         }
@@ -132,6 +145,7 @@ impl WorkspaceMcp {
         if self.print.load(std::sync::atomic::Ordering::Relaxed) {
             manager.set_print_session(true);
         }
+        manager.note_plugin_ids(plugin_ids);
         manager.start(workspace, servers);
         if let Some(previous) = self
             .groups

@@ -81,6 +81,19 @@ impl Plugins {
             .collect()
     }
 
+    /// Fork (specs/fork-rust-plugin-ui-tool-result.md): each plugin-declared MCP server's name with its plugin's id.
+    pub fn mcp_plugin_ids(&self) -> Vec<(String, String)> {
+        self.0
+            .iter()
+            .flat_map(|plugin| {
+                plugin
+                    .mcp_servers
+                    .iter()
+                    .map(|server| (server.name.clone(), plugin.id.clone()))
+            })
+            .collect()
+    }
+
     pub fn mcp_servers(&self) -> Vec<McpServer> {
         self.0
             .iter()
