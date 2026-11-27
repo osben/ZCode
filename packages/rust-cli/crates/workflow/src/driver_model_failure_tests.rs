@@ -519,3 +519,29 @@ fn a_quota_stop_with_retry_after_carries_its_reset_time() {
         .expect("resetAt is written");
     assert_eq!(reset_at, FIXED_NOW_MS + 3_600_000);
 }
+
+/// Node `onTurnRejected` withdraws the session's parked questions before it decides what the failure means, so a turn that
+/// is redriven after a transient failure does not leave a question nobody will read (divergence 607).
+#[test]
+fn a_redriven_turn_failure_withdraws_the_parked_question_too() {
+    use crate::driver_owner_tests::request;
+    use crate::escalation::EscalateOutcome;
+    let (mut owner, sessions, _actor, session) = running_ask();
+    let (_mailbox, clock) = attach(&mut owner, 0.5);
+    let qid = match owner
+        .escalate(&session, request("which?"))
+        .expect("escalate")
+    {
+        EscalateOutcome::Parked { qid } => qid,
+        other => panic!("expected a park, got {other:?}"),
+    };
+    owner
+        .turn_failed(&session, &TurnFailure::model("reset", network_error()))
+        .expect("the failure is handled");
+    assert_eq!(clock.delays(), vec![1_500], "the turn is redriven");
+    assert_eq!(
+        sessions.0.borrow().rejected,
+        vec![(session.clone(), qid.clone())]
+    );
+    assert_eq!(owner.answer(&qid, "late").expect("answer"), None);
+}

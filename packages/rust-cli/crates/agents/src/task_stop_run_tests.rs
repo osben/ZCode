@@ -11,6 +11,7 @@ use rust_cli_kernel_api::workflow_run::{
     CancelInitiator, DynamicWorkflowRunError, DynamicWorkflowRunPort, DynamicWorkflowRunSessions,
 };
 use serde_json::{Value, json};
+use tokio::sync::Notify;
 
 use crate::test_support::{harness, text};
 
@@ -248,4 +249,105 @@ async fn a_failed_run_port_is_surfaced_not_reported_as_no_task() {
         "{}",
         text(&output)
     );
+}
+
+/// One run port per session, as the run service hands them out.
+struct PerSession(Vec<(&'static str, Arc<Runs>)>);
+
+impl DynamicWorkflowRunSessions for PerSession {
+    fn for_session(&self, session: &SessionId) -> Arc<dyn DynamicWorkflowRunPort> {
+        self.0
+            .iter()
+            .find(|(id, _)| *id == session.as_str())
+            .map_or_else(|| Runs::live(&[]), |(_, runs)| runs.clone())
+    }
+}
+
+/// Divergence 610: Node's subagent runtimes share the parent's task registry, so the top-level session stops a run that
+/// one of its subagents started. The subagent's own session is the one that owns the run in the run service.
+#[tokio::test]
+async fn the_main_thread_stops_a_run_started_by_its_subagent() {
+    let harness = harness(Some(Arc::new(Notify::new())));
+    harness
+        .call(
+            "sess_parent",
+            "Agent",
+            json!({"description": "Run owner", "prompt": "Start a run."}),
+        )
+        .await;
+    harness.started(1).await;
+    let parent = Runs::live(&[]);
+    let child = Runs::live(&["wf_child_run"]);
+    assert!(harness.agents.set_run_sessions(Arc::new(PerSession(vec![
+        ("sess_parent", parent.clone()),
+        ("sess_subagent_agent_1", child.clone()),
+    ]))));
+    let output = harness
+        .call(
+            "sess_parent",
+            "TaskStop",
+            json!({"task_id": "wf_child_run"}),
+        )
+        .await;
+    assert!(!output.is_error, "{}", text(&output));
+    assert!(text(&output).contains("local_dynamic_workflow"));
+    assert_eq!(
+        child.recorded(),
+        vec![("wf_child_run".to_owned(), CancelInitiator::Model)]
+    );
+    assert!(parent.recorded().is_empty());
+}
+
+/// A session outside the top-level session's tree does not see the subagent's run.
+#[tokio::test]
+async fn another_session_does_not_see_a_subagents_run() {
+    let harness = harness(Some(Arc::new(Notify::new())));
+    harness
+        .call(
+            "sess_parent",
+            "Agent",
+            json!({"description": "Run owner", "prompt": "Start a run."}),
+        )
+        .await;
+    harness.started(1).await;
+    let child = Runs::live(&["wf_child_run"]);
+    assert!(harness.agents.set_run_sessions(Arc::new(PerSession(vec![(
+        "sess_subagent_agent_1",
+        child.clone()
+    )]))));
+    let output = harness
+        .call("sess_other", "TaskStop", json!({"task_id": "wf_child_run"}))
+        .await;
+    assert!(output.is_error);
+    assert!(text(&output).contains("No task found"), "{}", text(&output));
+    assert!(child.recorded().is_empty());
+}
+
+/// A subagent stops only the runs of its own session, as it does for commands (L18).
+#[tokio::test]
+async fn a_subagent_does_not_stop_a_run_of_its_parent() {
+    let harness = harness(Some(Arc::new(Notify::new())));
+    harness
+        .call(
+            "sess_parent",
+            "Agent",
+            json!({"description": "Run owner", "prompt": "Start a run."}),
+        )
+        .await;
+    harness.started(1).await;
+    let parent = Runs::live(&["wf_parent_run"]);
+    assert!(
+        harness
+            .agents
+            .set_run_sessions(Arc::new(PerSession(vec![("sess_parent", parent.clone())])))
+    );
+    let output = harness
+        .call(
+            "sess_subagent_agent_1",
+            "TaskStop",
+            json!({"task_id": "wf_parent_run"}),
+        )
+        .await;
+    assert!(output.is_error);
+    assert!(parent.recorded().is_empty());
 }

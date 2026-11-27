@@ -1080,6 +1080,17 @@ impl<J: JournalPort, S: ActorSessions> ActorDriverOwner<J, S> {
         let Some(ask) = self.active.get(session).cloned() else {
             return Ok(());
         };
+        // Node `onTurnRejected` withdraws first, whatever the failure turns out to mean: the dead turn's blocked escalate
+        // is failed, and the question leaves the snapshot. The ask stays active for a redrive.
+        let mut withdrawal: Option<anyhow::Error> = None;
+        for qid in self.book.withdraw_pending(session) {
+            if let Err(error) = self.engine.driver.sessions.reject_parked(session, &qid) {
+                withdrawal.get_or_insert(error);
+            }
+        }
+        if let Some(error) = withdrawal {
+            tracing::warn!(session, error = %format!("{error:#}"), "a parked question was not rejected after its turn failed");
+        }
         let Some(model) = failure.model.as_ref() else {
             let result = self.engine.ask_failed(
                 &ask.instance,
