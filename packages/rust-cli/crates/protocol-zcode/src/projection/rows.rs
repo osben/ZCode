@@ -94,6 +94,20 @@ impl Projection {
                     .filter(|intent| intent.shows_intent_text())
                     .and_then(|intent| intent.text())
                     .map_or_else(|| text_of(&user.content), str::to_owned);
+                // Node `normalizeGenUiInput`: an old App record keeps the page state as a tail of the body. An intent
+                // that carries `genUiContext` holds the state itself and its text is already clean.
+                let text = if intent.is_some_and(|intent| {
+                    intent
+                        .get(rust_cli_kernel_api::input_intent::GEN_UI_CONTEXT)
+                        .is_some()
+                }) {
+                    text
+                } else {
+                    match rust_cli_kernel_api::gen_ui_context::strip_legacy_tail(&text) {
+                        Some(stripped) => stripped.to_owned(),
+                        None => text,
+                    }
+                };
                 if let Some(quotes) = intent.and_then(InputIntent::quotes) {
                     row.insert("conversationQuotes".into(), json!(quotes));
                 }

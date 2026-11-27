@@ -146,7 +146,7 @@ pub use grep::GrepTool;
 pub use lsp_tool::{LspTool, LspTools};
 pub use monitor::MonitorTool;
 pub use notebook_edit::NotebookEditTool;
-pub use off_peak_tools::off_peak_tools;
+pub use off_peak_tools::{OffPeakDecisions, OffPeakTools, off_peak_tools};
 pub use pipeline::Pipeline;
 pub use plan_mode::{EnterPlanModeTool, ExitPlanModeTool};
 pub use policy_filter::PolicyFiltered;
