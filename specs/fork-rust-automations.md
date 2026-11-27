@@ -322,6 +322,31 @@ Divergences kept: the run's background tasks and queued notifications are not ob
 turn end); the run opens at admission, not at turn start; the renewal is a `Retrying` notice (Node emits
 `waiting_ticket`).
 
+**Scoped renewal, event order (2026-11-27).** The run owns the ticket and its credentials (`OffPeakRuns`); the Host owns the
+account token. Each send of a scoped ticket asks the Host first, so a rotated token is never resent.
+
+```mermaid
+sequenceDiagram
+  participant H as Host
+  participant R as Run (OffPeakRuns)
+  participant P as Platform.endpoint
+  participant T as Transport attempt
+  H->>R: replace_ticket {ticketId, requestAuth{apiKey, accountScope}}
+  loop every send, including a retry after a non-auth failure
+    T->>P: endpoint(ticket)
+    P->>R: acquire() -> ticket id + SuppliedAuth{scope}
+    P->>H: requestProviderRuntimeHeaders {expectedAccountScope}
+    H-->>P: plan token + accountScope
+    P->>P: scope differs or token blank -> project_token_scope_invalidated
+    P-->>T: endpoint with X-Coding-Plan-Api-Key = fresh token
+    T->>T: send
+  end
+  Note over T,P: a 401 asks once more, and also names rejectedProjectTokenFingerprint (the rejected plan token)
+```
+
+A rejected scoped send is judged by its Coding Plan token, not by the ticket's own key (which does not change), as in Node's
+`AccountRequestRetry`.
+
 **Review follow-ups (2026-11-17).** The ticket source registers its wait on the run's `changed` notify before it reads
 the state (`enable()`), so a change between the read and the wait is not missed. `ticket_needed` is sent by a task of its
 own (`LifecycleSink` over the peer), so dropping the attempt mid-send cannot lose the request; an undelivered notification
@@ -329,9 +354,18 @@ own (`LifecycleSink` over the peer), so dropping the attempt mid-send cannot los
 `ModelError::Cancelled`, not as an authentication failure; the Node code stays the run's state. `replace_ticket` judges
 the run by the runtime's facts (`main_running` is "the run's turn is open"), so a renewal answered after its turn ended
 completes the run. A renewal still pending when its turn ends waits for the Host's answer, as Node does (Node's binding
-release does not clear a pending renewal). A renewal that names `apiKeyId` or `accountScope` is refused: Node routes a
-zhipu account by `apiKeyId` and checks `accountScope`, and neither is implemented in Rust yet. A renewal with neither a key
-nor headers installs no credentials, so the ordinary source supplies them. Session delete, tree erase and the deletion execution end the
+release does not clear a pending renewal). A renewal that names `accountScope` keeps it with its credentials
+(`SuppliedAuth.account_scope`). Each attempt on such a ticket asks the Host for the account's current token
+(`interaction/requestProviderRuntimeHeaders`, `expectedAccountScope` set to the ticket's scope, no rejected
+fingerprint), as Node's `refreshOffPeakRequestAuth` does. The answer must carry a non-blank token and the same scope,
+otherwise the attempt fails as `project_token_scope_invalidated`. The token replaces the ticket's
+`X-Coding-Plan-Api-Key` header (matched without case); the ticket's own key and other headers stay. Without a Host
+source the attempt fails as "Off-peak request auth owner is unavailable". A renewal that names `apiKeyId` is accepted and
+the id is dropped: in Node it only feeds the endpoint routing port, and the fork's routing edition is direct (it returns
+`routed:false` for every request, `apps/zcode-cli/docs/design/v2/model/provider-endpoint-routing.md`), so the id has no
+effect there either. If the routing edition is ever pointed back at the gateway table, the id must be threaded to the
+transport. A renewal with neither a key nor headers nor a scope installs no credentials, so the ordinary source supplies
+them. Session delete, tree erase and the deletion execution end the
 removed sessions' runs (their final notifications go to the Host) and drop their flags and admitted inputs
 (`off_peak_control::forget_sessions`). An admitted input is taken only by its own session's turn,
 and admission checks the runs under the same lock. In the transport, a refusal renews only when its attempt named a

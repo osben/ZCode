@@ -268,21 +268,26 @@ fn a_renewal_with_no_key_or_headers_leaves_the_ordinary_source_its_credentials()
     assert_eq!(ticket.auth, None);
 }
 
-/// A renewal that carries an account identity this agent does not apply (`apiKeyId` routing, `accountScope` check) is
-/// refused, not installed with its key silently dropped: the attempt would then use the wrong account.
+/// A renewal that names `accountScope` keeps it with its credentials: every attempt refreshes the account's token
+/// against that scope (Node `refreshOffPeakRequestAuth`). `apiKeyId` only routes the request, and the fork's direct
+/// endpoint edition never routes, so it is accepted and carries no effect.
 #[test]
-fn a_renewal_with_an_account_identity_this_agent_cannot_apply_is_refused() {
+fn a_renewal_keeps_the_account_scope_and_accepts_the_key_id() {
     let runs = runs_with_one();
     let _ = runs.expire_ticket("sess_1", "exe_1", "tkt_1");
     assert!(
-        !runs
-            .control(
-                "sess_1",
-                &replace_with(json!({"apiKey": "k", "apiKeyId": "key-1"}))
-            )
-            .accepted
+        runs.control(
+            "sess_1",
+            &replace_with(json!({"apiKey": "k", "apiKeyId": "key-1", "accountScope": "scope-1"}))
+        )
+        .accepted
     );
-    assert!(matches!(runs.poll_ticket("sess_1", "exe_1"), Poll::Pending));
+    let Poll::Ready(ticket) = runs.poll_ticket("sess_1", "exe_1") else {
+        panic!("the renewed ticket is usable");
+    };
+    let auth = ticket.auth.expect("the renewal's credentials");
+    assert_eq!(auth.account_scope.as_deref(), Some("scope-1"));
+    assert_eq!(auth.api_key.unwrap().expose(), "k");
 }
 
 /// A deleted session leaves no run, flag or admission behind: its attempts end and the policy is the default again.

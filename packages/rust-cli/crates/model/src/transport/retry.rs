@@ -90,6 +90,7 @@ impl Connect {
                 Some(Ok(endpoint)) => {
                     self.endpoint.credential = endpoint.credential;
                     self.endpoint.headers = endpoint.headers;
+                    self.endpoint_fresh = true;
                 }
             }
         }
@@ -165,6 +166,7 @@ impl Connect {
             Some(Ok(endpoint)) => {
                 self.endpoint.credential = endpoint.credential;
                 self.endpoint.headers = endpoint.headers;
+                self.endpoint_fresh = true;
             }
         }
         // The refused send's model-io ordinal (`attempt + renewals`, before this renewal counts).

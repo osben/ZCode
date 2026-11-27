@@ -231,6 +231,7 @@ impl rust_cli_kernel_api::provider::HeaderSource for Supplied {
         Ok(rust_cli_kernel_api::provider::SuppliedAuth {
             api_key: Some(RedactedString::new(format!("sk-host-{count}"))),
             headers: vec![("x-host-sign".to_owned(), RedactedString::new("signed"))],
+            account_scope: None,
         })
     }
 }
@@ -655,6 +656,7 @@ impl rust_cli_kernel_api::off_peak_ticket::OffPeakTicketSource for Ticketed {
             .then(|| rust_cli_kernel_api::provider::SuppliedAuth {
                 api_key: Some(RedactedString::new("sk-ticket")),
                 headers: vec![("x-ticket-sign".to_owned(), RedactedString::new("signed"))],
+                account_scope: None,
             });
         Ok(rust_cli_kernel_api::off_peak_ticket::Ticket { id, auth })
     }
@@ -818,5 +820,184 @@ async fn a_ticket_key_rejected_again_ends_the_request_as_rejected() {
     assert!(
         matches!(again, Err(ModelError::Authentication { ref message }) if message.contains("was rejected")),
         "{again:?}"
+    );
+}
+
+/// Off-peak renewal with an account scope (Node `refreshOffPeakRequestAuth`): the run's credentials name the account
+/// they belong to, and every attempt refreshes that account's short-lived token from the Host.
+struct Scoped {
+    /// The scope the Host answers with.
+    answers: &'static str,
+    asked: std::sync::Mutex<Vec<rust_cli_kernel_api::provider::HeaderRequest>>,
+}
+
+#[async_trait]
+impl rust_cli_kernel_api::provider::HeaderSource for Scoped {
+    async fn request_auth(
+        &self,
+        request: rust_cli_kernel_api::provider::HeaderRequest,
+    ) -> Result<rust_cli_kernel_api::provider::SuppliedAuth, ModelError> {
+        self.asked.lock().unwrap().push(request);
+        Ok(rust_cli_kernel_api::provider::SuppliedAuth {
+            api_key: Some(RedactedString::new("pat-fresh")),
+            headers: Vec::new(),
+            account_scope: Some(self.answers.to_owned()),
+        })
+    }
+}
+
+struct ScopedTicket;
+
+#[async_trait]
+impl rust_cli_kernel_api::off_peak_ticket::OffPeakTicketSource for ScopedTicket {
+    async fn acquire(&self) -> Result<rust_cli_kernel_api::off_peak_ticket::Ticket, ModelError> {
+        Ok(rust_cli_kernel_api::off_peak_ticket::Ticket {
+            id: "tkt_1".to_owned(),
+            auth: Some(rust_cli_kernel_api::provider::SuppliedAuth {
+                api_key: Some(RedactedString::new("sk-ticket")),
+                headers: vec![
+                    (
+                        "x-coding-plan-api-key".to_owned(),
+                        RedactedString::new("pat-stale"),
+                    ),
+                    ("x-ticket-sign".to_owned(), RedactedString::new("signed")),
+                ],
+                account_scope: Some("scope-1".to_owned()),
+            }),
+        })
+    }
+
+    fn refused_as_expired(&self, _provider: &str, _error: &ModelError) -> bool {
+        false
+    }
+
+    async fn expired(&self, _ticket_id: &str) -> Result<(), ModelError> {
+        Ok(())
+    }
+}
+
+async fn scoped_endpoint(
+    dir: &std::path::Path,
+    answers: &'static str,
+) -> (Result<ModelEndpoint, ModelError>, Arc<Scoped>) {
+    let (platform, paths) = platform(dir).await;
+    let source = Arc::new(Scoped {
+        answers,
+        asked: std::sync::Mutex::new(Vec::new()),
+    });
+    let platform = platform.with_header_source(source.clone());
+    write(
+        paths.credentials().as_path(),
+        json!({
+            account::identity_key(ZAI): IDENTITY,
+            account::source_key(ZAI): "manual",
+            account::manual_key(ZAI, IDENTITY): "sk-own",
+        })
+        .to_string(),
+    )
+    .await;
+    let select = selection(ZAI, models::GLM_5_3_ACCOUNT, Some("high"));
+    let ticket = rust_cli_kernel_api::off_peak_ticket::TicketSource(Arc::new(ScopedTicket));
+    let endpoint = platform
+        .endpoint(EndpointQuery {
+            ticket: Some(&ticket),
+            session: Some(&rust_cli_kernel_api::ids::SessionId::new("session_1")),
+            ..EndpointQuery::new(&select)
+        })
+        .await;
+    (endpoint, source)
+}
+
+/// A ticket whose credentials name an account scope asks the Host for the account's fresh token under that scope, and
+/// the token replaces the ticket's own `X-Coding-Plan-Api-Key` (one header, whatever its case).
+#[tokio::test]
+async fn a_scoped_ticket_refreshes_the_coding_plan_token_on_every_attempt() {
+    let dir = tempfile::tempdir().unwrap();
+    let (endpoint, source) = scoped_endpoint(dir.path(), "scope-1").await;
+    let endpoint = endpoint.unwrap();
+    let asked = source.asked.lock().unwrap().clone();
+    assert_eq!(asked.len(), 1);
+    assert_eq!(asked[0].expected_account_scope.as_deref(), Some("scope-1"));
+    assert_eq!(asked[0].rejected_fingerprint, None);
+    let tokens: Vec<_> = endpoint
+        .headers
+        .iter()
+        .filter(|(name, _)| name.eq_ignore_ascii_case("x-coding-plan-api-key"))
+        .collect();
+    assert_eq!(tokens.len(), 1);
+    assert_eq!(tokens[0].0, "X-Coding-Plan-Api-Key");
+    assert_eq!(tokens[0].1.expose(), "pat-fresh");
+    assert_eq!(
+        endpoint.credential,
+        Credential::ApiKey(RedactedString::new("sk-ticket")),
+        "the ticket's own key stays"
+    );
+    assert_eq!(
+        header_value(&endpoint, "x-ticket-sign").as_deref(),
+        Some("signed")
+    );
+}
+
+/// The Host answered for another account: the attempt fails (Node `project_token_scope_invalidated`), it never sends
+/// with the other account's token.
+#[tokio::test]
+async fn a_scoped_ticket_refuses_an_answer_for_another_account() {
+    let dir = tempfile::tempdir().unwrap();
+    let (endpoint, _source) = scoped_endpoint(dir.path(), "scope-2").await;
+    assert!(matches!(
+        endpoint,
+        Err(ModelError::Authentication { message }) if message == "project_token_scope_invalidated"
+    ));
+}
+
+/// After the server rejects the Coding Plan token, the endpoint is resolved again with the rejected endpoint. The
+/// ticket's own key is unchanged then, so it must not count as "the same credential rejected" (Node judges the plan
+/// token of an off-peak run), and the Host is told which plan token was rejected.
+#[tokio::test]
+async fn a_scoped_ticket_retry_after_a_rejection_names_the_rejected_plan_token() {
+    let dir = tempfile::tempdir().unwrap();
+    let (platform, paths) = platform(dir.path()).await;
+    let source = Arc::new(Scoped {
+        answers: "scope-1",
+        asked: std::sync::Mutex::new(Vec::new()),
+    });
+    let platform = platform.with_header_source(source.clone());
+    write(
+        paths.credentials().as_path(),
+        json!({
+            account::identity_key(ZAI): IDENTITY,
+            account::source_key(ZAI): "manual",
+            account::manual_key(ZAI, IDENTITY): "sk-own",
+        })
+        .to_string(),
+    )
+    .await;
+    let select = selection(ZAI, models::GLM_5_3_ACCOUNT, Some("high"));
+    let ticket = rust_cli_kernel_api::off_peak_ticket::TicketSource(Arc::new(ScopedTicket));
+    let session = rust_cli_kernel_api::ids::SessionId::new("session_1");
+    let first = platform
+        .endpoint(EndpointQuery {
+            ticket: Some(&ticket),
+            session: Some(&session),
+            ..EndpointQuery::new(&select)
+        })
+        .await
+        .unwrap();
+    let second = platform
+        .endpoint(EndpointQuery {
+            ticket: Some(&ticket),
+            rejected: Some(&first),
+            session: Some(&session),
+            ..EndpointQuery::new(&select)
+        })
+        .await
+        .expect("the unchanged ticket key is not a rejected credential");
+    assert_eq!(second.credential, first.credential);
+    let asked = source.asked.lock().unwrap().clone();
+    assert_eq!(asked.len(), 2);
+    assert_eq!(asked[0].rejected_fingerprint, None);
+    assert_eq!(
+        asked[1].rejected_fingerprint.as_deref(),
+        Some(token::fingerprint("pat-fresh").as_str())
     );
 }

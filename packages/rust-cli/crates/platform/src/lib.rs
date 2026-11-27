@@ -257,6 +257,7 @@ impl Platform {
                     },
                     session: session.cloned(),
                     rejected_fingerprint: rejected.map(|key| token::fingerprint(key.expose())),
+                    expected_account_scope: None,
                 })
                 .await?;
             return Ok((supplied.api_key, supplied.headers));
@@ -275,11 +276,63 @@ impl Platform {
                     access: HeaderAccess::ChatGptPlan,
                     session: session.cloned(),
                     rejected_fingerprint: rejected.map(|key| token::fingerprint(key.expose())),
+                    expected_account_scope: None,
                 })
                 .await?;
             return Ok((supplied.api_key, supplied.headers));
         }
         Ok((Some(self.credential(template, rejected).await?), Vec::new()))
+    }
+
+    /// Fork: Node `refreshOffPeakRequestAuth`. The credentials of a renewed ticket pin the login scope they belong to; the
+    /// short-lived Coding Plan token is not part of the pinned snapshot, so each attempt asks the Host for the account's
+    /// current one under that scope and swaps it into `X-Coding-Plan-Api-Key`. An answer for another account, or with no
+    /// token, fails the attempt. Credentials without a scope are used as they are.
+    async fn refresh_ticket_auth(
+        &self,
+        template: &Template,
+        selection: &ModelSelection,
+        session: Option<&rust_cli_kernel_api::ids::SessionId>,
+        auth: rust_cli_kernel_api::provider::SuppliedAuth,
+        rejected_plan: Option<&RedactedString>,
+    ) -> Result<(Option<RedactedString>, Vec<(String, RedactedString)>), ModelError> {
+        let Some(scope) = auth.account_scope.clone() else {
+            return Ok((auth.api_key, auth.headers));
+        };
+        let owner = match (&template.access, &self.header_source) {
+            (Access::Account { account_type, mode }, Some(source)) => {
+                Some((account_type, mode, source))
+            }
+            _ => None,
+        };
+        let Some((account_type, mode, source)) = owner else {
+            return Err(ModelError::Authentication {
+                message: "Off-peak request auth owner is unavailable".to_owned(),
+            });
+        };
+        let fresh = source
+            .request_auth(HeaderRequest {
+                selection: selection.clone(),
+                access: HeaderAccess::Zhipu {
+                    account_type: account_type.clone(),
+                    mode: mode.clone(),
+                },
+                session: session.cloned(),
+                rejected_fingerprint: rejected_plan.map(|key| token::fingerprint(key.expose())),
+                expected_account_scope: Some(scope.clone()),
+            })
+            .await?;
+        let token = fresh
+            .api_key
+            .filter(|key| !key.expose().trim().is_empty())
+            .filter(|_| fresh.account_scope.as_deref() == Some(scope.as_str()))
+            .ok_or_else(|| ModelError::Authentication {
+                message: "project_token_scope_invalidated".to_owned(),
+            })?;
+        let mut headers = auth.headers;
+        headers.retain(|(name, _)| !name.eq_ignore_ascii_case(CODING_PLAN_KEY_HEADER));
+        headers.push((CODING_PLAN_KEY_HEADER.to_owned(), token));
+        Ok((auth.api_key, headers))
     }
 
     async fn credential(
@@ -381,6 +434,7 @@ impl ModelEndpoints for Platform {
         };
         // Fork (slice 3 layer B): a ticket of an off-peak run supplies the credentials before the ordinary source (Node
         // `this.requestAuth ?? initial.requestAuthSource`). Without one the path below is the ordinary one.
+        let mut scoped = false;
         let (ticket_id, ticket_auth) = match ticket {
             Some(source) => {
                 let granted = source.0.acquire().await?;
@@ -389,7 +443,20 @@ impl ModelEndpoints for Platform {
             None => (None, None),
         };
         let (key, supplied) = match ticket_auth {
-            Some(auth) => (auth.api_key, auth.headers),
+            Some(auth) => {
+                // A scoped off-peak ticket judges the rejected Coding Plan token, not the ticket's own key (Node
+                // `AccountRequestRetry.#token` reads `x-coding-plan-api-key` in off-peak mode).
+                let rejected_plan = rejected.and_then(|endpoint| {
+                    endpoint
+                        .headers
+                        .iter()
+                        .find(|(name, _)| name.eq_ignore_ascii_case(CODING_PLAN_KEY_HEADER))
+                        .map(|(_, value)| value)
+                });
+                scoped = auth.account_scope.is_some();
+                self.refresh_ticket_auth(template, selection, session, auth, rejected_plan)
+                    .await?
+            }
             None => {
                 self.request_auth(template, selection, previous, session)
                     .await?
@@ -397,6 +464,7 @@ impl ModelEndpoints for Platform {
         };
         // 被拒的凭据重新读到的还是同一个（手工 key 不会自己变）：不再重试，直接报鉴权失败。
         if let (Some(previous), Some(key)) = (previous, &key)
+            && !scoped
             && previous.expose() == key.expose()
         {
             return Err(ModelError::Authentication {
@@ -461,6 +529,9 @@ impl ModelEndpoints for Platform {
             .map(|template| template.capabilities)
     }
 }
+
+/// The header that carries the account's short-lived Coding Plan token (Node `X-Coding-Plan-Api-Key`).
+const CODING_PLAN_KEY_HEADER: &str = "X-Coding-Plan-Api-Key";
 
 /// Fork: standalone `zcode-rs` has no Host to ask for a ChatGPT Plan token (specs/fork-rust-chatgpt-plan.md rule 8).
 const CHATGPT_PLAN_HOST_REQUIRED: &str =
