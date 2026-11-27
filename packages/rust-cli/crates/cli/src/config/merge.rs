@@ -196,6 +196,9 @@ pub(crate) struct McpOrigin {
     pub(crate) path: String,
     /// 用户级文件（经 platform 写）；否则是项目级文件（经执行环境写）。
     pub(crate) user: bool,
+    /// The file is `<wd>/.agents/mcp.json` (top-level `mcpServers`): toggles write that shape, and the stdio `cwd`
+    /// base is the working directory, not the file's directory.
+    pub(crate) fallback: bool,
 }
 
 /// 合并后的 `mcp.servers`：启用的、停用的（`enabled: false`），以及每个名字的来源文件。
@@ -239,6 +242,7 @@ pub(crate) fn mcp_layers(layers: &[Layer<'_>], warnings: &mut Vec<String>) -> Mc
                 McpOrigin {
                     path: layer.path.to_owned(),
                     user: layer.source == RuleSource::UserSettings,
+                    fallback: false,
                 },
             );
             merged.insert(found.server.name.clone(), found);
@@ -269,7 +273,11 @@ pub(crate) fn resolve_project_cwds(
             continue;
         };
         if let McpTransportConfig::Stdio { cwd, .. } = &mut server.transport {
-            let base = super::mcp_trust::base_dir(&origin.path);
+            let base = if origin.fallback {
+                super::mcp_trust::fallback_base_dir(&origin.path)
+            } else {
+                super::mcp_trust::base_dir(&origin.path)
+            };
             *cwd = Some(super::mcp_trust::absolute_or_resolved(
                 &base,
                 cwd.as_deref().unwrap_or("."),

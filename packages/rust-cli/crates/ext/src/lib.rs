@@ -206,6 +206,11 @@ impl Ext {
         self.registry.clone()
     }
 
+    /// Fork (`process/childProcesses`): where the servers the connection table lists came from.
+    pub fn mcp_provenance(&self) -> Arc<dyn rust_cli_kernel_api::mcp::McpProvenance> {
+        self.registry.clone()
+    }
+
     /// Fork: the MCP group a session reads (its workspace's, else the process one).
     pub fn mcp_for_session(
         &self,
@@ -491,6 +496,12 @@ impl ToolRegistry for ExtRegistry {
 
     fn mcp_for(&self, session: &SessionId) -> Option<Arc<dyn McpConnections>> {
         Some(self.session_mcp(session))
+    }
+}
+
+impl rust_cli_kernel_api::mcp::McpProvenance for ExtRegistry {
+    fn official_plugin_server(&self, server: &str) -> bool {
+        self.workspace_mcp.official_plugin_server(server)
     }
 }
 

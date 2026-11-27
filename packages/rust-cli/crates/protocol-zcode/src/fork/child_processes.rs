@@ -15,9 +15,10 @@ const NODE_REPL: &str = "node_repl";
 /// `resolveOfficialPluginNameByHostMcpServerName`).
 const NODE_REPL_PLUGIN: &str = "browser-use";
 
-/// Node `resolveMcpSource`.
-fn source(server: &str) -> &'static str {
-    if server == NODE_REPL {
+/// Node `resolveMcpSource`, after the server's config source: a server of an official-marketplace plugin is
+/// registered with `source.kind: "builtin"` (`adapters/src/plugins/mcp.ts`), so it is `builtin` here.
+fn source(server: &str, official: bool) -> &'static str {
+    if server == NODE_REPL || official {
         "builtin"
     } else if server.starts_with(PLUGIN_PREFIX) {
         "plugin"
@@ -35,11 +36,11 @@ fn plugin_name(server: &str) -> Option<&str> {
     (server == NODE_REPL).then_some(NODE_REPL_PLUGIN)
 }
 
-fn row(process: &McpProcess) -> Value {
+fn row(process: &McpProcess, official: bool) -> Value {
     let mut row = json!({
         "pid": process.pid,
         "serverName": process.server,
-        "mcpSource": source(&process.server),
+        "mcpSource": source(&process.server, official),
     });
     if let Some(name) = plugin_name(&process.server) {
         row["pluginName"] = json!(name);
@@ -53,7 +54,12 @@ pub(super) fn child_processes(server: &Server) -> Value {
         .mcp_processes()
         .iter()
         .filter(|process| process.pid > 0)
-        .map(row)
+        .map(|process| {
+            row(
+                process,
+                server.context.official_plugin_server(&process.server),
+            )
+        })
         .collect();
     json!({ "processes": processes })
 }

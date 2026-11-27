@@ -11,7 +11,7 @@ use std::cmp::Ordering;
 use std::collections::BTreeSet;
 
 use rust_cli_base::js::json::{properties, stringify};
-use rust_cli_ext::mcp::normalize_node_server;
+use rust_cli_ext::mcp::{McpScope, normalize_node_server, parse_node_servers};
 use rust_cli_kernel_api::env::{EnvError, EnvPath, ReadFile, WorkspaceRef};
 use rust_cli_kernel_api::env_files::{PathStyle, StatFile};
 use rust_cli_kernel_api::machine::Files;
@@ -21,6 +21,7 @@ use serde_json::{Map, Value, json};
 
 use super::files::ProjectFile;
 use super::mcp_trust_display::display;
+use super::merge::{McpLayers, McpOrigin};
 
 /// The fallback declaration file, relative to the working directory.
 pub(crate) const FALLBACK_DIR: &str = ".agents";
@@ -257,6 +258,12 @@ fn user_server_names(user: Option<&Map<String, Value>>) -> BTreeSet<String> {
                 .collect()
         })
         .unwrap_or_default()
+}
+
+/// The working directory a fallback file `<wd>/.agents/mcp.json` belongs to.
+pub(super) fn fallback_base_dir(path: &str) -> String {
+    let style = PathStyle::infer(path);
+    style.dirname(&style.dirname(path))
 }
 
 /// Node `getProjectConfigBaseDir`: the file's directory, or its parent when that directory is `.zcode`.
@@ -740,6 +747,47 @@ impl Inspection {
 
     pub(crate) fn allows(&self, name: &str, config: &Map<String, Value>) -> bool {
         allows(&self.target, self.discovery(), &self.load, name, config)
+    }
+
+    /// Node's session MCP fallback (`dynamic-mcp-config.ts`): `<wd>/.agents/mcp.json` servers join the merge as
+    /// project servers declared by `<wd>/.zcode/config.json`. Discovery already applies Node's rules (only when
+    /// the project files name no valid server, user names shadow, a broken file or entry claims its name); this
+    /// adds what it found. The trust filter that follows each merge drops the ungranted ones, so an untrusted
+    /// fallback never connects.
+    pub(crate) fn merge_fallback(&self, merged: &mut McpLayers, warnings: &mut Vec<String>) {
+        let Ok(discovery) = self.discovery() else {
+            return;
+        };
+        let fallback_paths = vec![self.target.fallback_path()];
+        let mut table = Map::new();
+        for (name, declaration) in &discovery.declarations {
+            if declaration.source_paths == fallback_paths && !merged.origins.contains_key(name) {
+                table.insert(name.clone(), Value::Object(declaration.config.clone()));
+            }
+        }
+        if table.is_empty() {
+            return;
+        }
+        let origin = self.target.fallback_path();
+        let (found, found_warnings) = parse_node_servers(&Value::Object(table), McpScope::Project);
+        warnings.extend(found_warnings.into_iter().map(|w| format!("{origin}: {w}")));
+        for found in found {
+            merged.origins.insert(
+                found.server.name.clone(),
+                McpOrigin {
+                    path: origin.clone(),
+                    user: false,
+                    fallback: true,
+                },
+            );
+            if found.enabled {
+                merged.servers.push(found.server);
+            } else {
+                merged.disabled.push(found.server);
+            }
+        }
+        merged.servers.sort_by(|a, b| a.name.cmp(&b.name));
+        merged.disabled.sort_by(|a, b| a.name.cmp(&b.name));
     }
 }
 

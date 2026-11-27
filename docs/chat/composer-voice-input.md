@@ -35,7 +35,7 @@
 
 ### 快捷键
 
-默认 `CmdOrCtrl+Shift+D`（macOS ⌘⇧D，Windows / Linux Ctrl+Shift+D），命令 ID `toggleVoiceInput`，可在设置页改绑。命令表、让位规则见 `docs/desktop/shortcut-settings-spec.md` §5、§12.7。
+命令 ID `toggleVoiceInput`。本 fork 中默认不绑定：`CmdOrCtrl+Shift+D`（macOS ⌘⇧D）归 fork 的 `voiceDictation`（`packages/shared/src/shortcutCommands.ts`，见 `specs/upstream-sync-4.0.0.md`）；用户可在设置页自行分配。上游默认是 `CmdOrCtrl+Shift+D`。命令表、让位规则见 `docs/desktop/shortcut-settings-spec.md` §5、§12.7。
 
 - 按一次与点击麦克风按钮相同（`toggle`）：空闲时开始录音，录音中结束录音。Escape 取消不变。
 - 「识别中」时与按钮一致，完全不响应：不拦截按键，不移动焦点。

@@ -420,39 +420,46 @@ input { workspacePath, workspaceIdentity? }
 
 **Reason:** committed config in a worktree comes from the same source as the source repository. The back-link validation guarantees no arbitrary directory can impersonate a source repository, since an attacker would need to write the source repository's `.git` directory. Without inheritance the user would have to review the same Hooks again for every new worktree.
 
-### D24. Trust 绑定直接入口脚本内容（2026-11-13）
+### D24. Trust binds the content of the direct entry script (2026-11-13)
 
-**背景：** 声明 `bash .zcode/hook.sh` 被信任后，只替换 `.zcode/hook.sh` 的内容，declaration digest 不变，
-旧 Trust 继续放行新脚本（ZP-20261110-06）。
+**Background:** after the declaration `bash .zcode/hook.sh` is trusted, replacing only the content of `.zcode/hook.sh`
+leaves the declaration digest unchanged, so the old Trust keeps admitting the new script (ZP-20261110-06).
 
-**采纳：**
+**Adopted:**
 
-- 能识别直接入口脚本的声明（规则见 §12.9），把入口的相对路径和内容状态加入 declaration digest。
-  内容变化后，下一次 discovery 得到新 digest，该条回到 `stale_digest`，用户在设置页或 CLI 重新信任后恢复。
-- 入口脚本不存在或无法读取完整内容时，没有可供审核的内容：拒绝建立 Trust，也拒绝派发
-  （reason `workspace_hook_script_unavailable`）。文件出现后按实际内容生成 digest，由用户首次信任。
-  “脚本不存在时命令预期会失败”不作为放行依据。
-- 每次 dispatch 前，在实际执行 cwd 下复核同一个入口。已信任的脚本被删除、无法读取或内容变化时，本次
-  `HookRunBlocked`，不创建进程（§14.6）。所以会话进行中替换或删除脚本也不会执行。
-- 无法识别入口的声明保持原有的声明级 Trust：digest 不变，不复核，不阻断，不新增逐次审批。
-  这是已知限制，写在 §12.8 和用户文档中。
-- Runner 的启动方式不变。command Hook 仍交给 shell，process Hook 仍按 argv 执行。识别结果只用于
-  digest 和复核，不改写执行内容。
-- 只绑定入口位置。其他参数（日志、状态、数据文件）不读取，也不进入 digest。Hook 写自己的数据文件不会使 Trust 失效。
-- 能识别入口的现有声明在升级后 digest 改变，需要重新信任一次。不能识别的声明不受影响。
+- For a declaration whose direct entry script can be recognized (rules in §12.9), the entry's relative path and content
+  state go into the declaration digest. After the content changes, the next discovery produces a new digest, the item
+  returns to `stale_digest`, and it recovers once the user trusts it again in Settings or the CLI.
+- When the entry script does not exist or its full content cannot be read, there is nothing to review: Trust cannot be
+  established and dispatch is refused (reason `workspace_hook_script_unavailable`). Once the file appears, the digest
+  is built from its actual content and the user trusts it for the first time. "The command is expected to fail when the
+  script is missing" is not a reason to admit it.
+- Before every dispatch the same entry is checked again under the actual execution cwd. When a trusted script was
+  deleted, cannot be read or changed, that run is `HookRunBlocked` and no process is created (§14.6). So replacing or
+  deleting the script mid-session does not run it either.
+- A declaration whose entry cannot be recognized keeps the existing declaration-level Trust: the digest is unchanged,
+  there is no recheck, no block and no new per-run approval. This is a known limitation, recorded in §12.8 and in the
+  user docs.
+- How the Runner starts hooks does not change. A command Hook still goes to the shell, a process Hook still runs by
+  argv. The recognition result is used only for the digest and the recheck; it never rewrites what runs.
+- Only the entry location is bound. Other arguments (logs, state, data files) are not read and do not enter the digest.
+  A Hook writing its own data files does not invalidate its Trust.
+- Existing declarations with a recognizable entry get a new digest after the upgrade and need to be trusted once more.
+  Declarations without a recognizable entry are not affected.
 
-**未采纳：**
+**Not adopted:**
 
-| 方案                                  | 理由                                                                                          |
-| ------------------------------------- | --------------------------------------------------------------------------------------------- |
-| 无法识别入口时禁止持久 Trust          | 等于为现有 Hook 新增逐次审批或阻断，超出工单要求（重新授权）；也会迫使实现解析通用 Shell 语法 |
-| Runner 改为按识别出的脚本计划启动     | 改动执行语义和兼容面，曾导致解释器参数、变量展开和路径语义的多轮返工                          |
-| 识别命令中所有像路径的参数            | 会误绑定日志、状态等数据文件，Hook 写文件后 Trust 自行失效                                    |
-| hash 整个 `.zcode/` 目录              | 无关文件变化也要求重新信任；目录外的脚本仍不覆盖                                              |
-| 只在会话开始时绑定，dispatch 时不复核 | 会话中 `git pull` 或 Agent 改写脚本后，后续 Hook 执行新代码                                   |
+| Option                                                      | Reason                                                                                                                                                                    |
+| ----------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Forbid persistent Trust when the entry cannot be recognized | Adds per-run approval or blocking to existing Hooks, beyond what the ticket asks (re-authorization); it would also force the implementation to parse general shell syntax |
+| Have the Runner start the recognized script plan instead    | Changes execution semantics and compatibility; it already caused several rounds of rework on interpreter arguments, variable expansion and path semantics                 |
+| Recognize every path-like argument in the command           | Would bind log and state data files by mistake, so a Hook writing a file invalidates its own Trust                                                                        |
+| Hash the whole `.zcode/` directory                          | Unrelated file changes would also require re-trust, and scripts outside the directory are still not covered                                                               |
+| Bind only at session start, no recheck at dispatch          | After a mid-session `git pull` or an Agent rewriting the script, later Hook runs execute new code                                                                         |
 
-**剩余风险：** 无法识别入口的声明、入口脚本再加载的文件、工作区外的文件，以及复核完成到子进程打开文件之间的窗口，
-都不在保证范围内。审核行仍只展示声明，用语保持 §12.8。
+**Remaining risk:** declarations without a recognizable entry, files the entry script loads in turn, files outside the
+workspace, and the window between the recheck and the child process opening the file are not covered. The review row
+still shows only the declaration, with the wording from §12.8.
 
 ---
 
@@ -644,9 +651,9 @@ interface CanonicalWorkspaceHookEntry {
   // Presentation-only, not in the declaration digest.
   statusMessage?: string;
 
-  // 能识别的直接入口脚本（§12.9）；识别不到时缺省。进入 declaration digest。
+  // The recognizable direct entry script (§12.9); absent when none is recognized. Part of the declaration digest.
   scriptEntry?: {
-    path: string; // 相对执行 cwd 的 POSIX 路径
+    path: string; // POSIX path relative to the execution cwd
     state: { kind: "file"; sha256: string } | { kind: "missing" } | { kind: "unverifiable" };
   };
 
@@ -798,69 +805,99 @@ A declaration whose direct entry can be identified already binds the entry scrip
 
 So UI wording must still be "Trust / 信任当前 Hook 声明" (trust the current Hook declaration), never "trust all current Hook code" or "script verified unchanged".
 
-### 12.9 直接入口脚本绑定（D24）
+### 12.9 Direct entry script binding (D24)
 
-识别只看声明本身，不执行 shell，不读取参数指向的文件。识别结果是可选的 `scriptEntry`。
+Recognition looks only at the declaration itself. It does not run a shell and does not read the files that arguments
+point to. The result is the optional `scriptEntry`.
 
-**入口识别：**
+**Entry recognition:**
 
-| 声明类型                           | 入口                                                                                                                                                      |
-| ---------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `process`                          | `command` 是脚本路径时取 `command`（Windows 上须带扩展名）；`command` 是受支持的解释器且 `args[0]` 是脚本路径时取 `args[0]`                               |
-| `command`（`shell` 缺省或 `true`） | **仅 macOS / Linux**。命令按 ASCII 空格与 tab 切分后，第 1 个 token 是脚本路径时取它；第 1 个 token 是受支持的解释器且第 2 个 token 是脚本路径时取第 2 个 |
-| `command`（自定义 `shell` 字符串） | 不识别                                                                                                                                                    |
+| Declaration type                     | Entry                                                                                                                                                                                                     |
+| ------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `process`                            | `command` when it is a script path (on Windows it must carry an extension); `args[0]` when `command` is a supported interpreter and `args[0]` is a script path                                            |
+| `command` (`shell` absent or `true`) | **macOS / Linux only.** The command is split on ASCII space and tab. The first token when it is a script path; the second token when the first is a supported interpreter and the second is a script path |
+| `command` (custom `shell` string)    | Not recognized                                                                                                                                                                                            |
 
-- 受支持的解释器按名字精确匹配，不带路径：`sh`、`bash`、`zsh`、`node`、`python`、`python3`、`ruby`、`perl`。
-  解释器后面的第一个参数以 `-` 开头（启动选项、`-c`、`-m`）时不识别。
-- command 字符串中，除下面的目录变量前缀外，只要出现安全字符集 `[A-Za-z0-9_./@+=:,-]` 以外的字符
-  （引号、`$`、`%`、`;`、`|`、`&`、`<`、`>`、反引号、括号、`*`、`?`、`~`、`\`、换行、NBSP 等非 ASCII 空白），整条不识别。
-  只按 shell 默认分词使用的 ASCII 空格与 tab 切分，其余空白字符留在 token 内被拒绝，保证识别结果与 shell 的分词一致。
-- 脚本路径允许以目录变量开头。process 写法用 `${ZCODE_PROJECT_DIR}/`（Runtime 按文本展开为 cwd，作为单个 argv）；
-  command 写法只接受 `"$ZCODE_PROJECT_DIR"/`（由 shell 在引号内展开，cwd 含空格或元字符也不会被拆开）；两者都含对应的
-  `CLAUDE_PROJECT_DIR` 写法。command 中未加引号的 `$VAR/`、文本替换的 `${VAR}/` 与 `"${VAR}"/` 不识别：前者会被 shell
-  按空格拆开，后两者替换进命令后 cwd 中的 `"`、`$`、反引号仍会被 shell 解释。去掉前缀后按相对 cwd 处理。
-- 直接执行位置（第 1 个 token 或 process `command`）的路径必须含 `/` 或带目录变量前缀；裸名字走 PATH 查找，不识别。
-  解释器后面的脚本可以是裸文件名，但必须带扩展名（`bash hook.sh`）；无扩展名的名字可能是子命令（`node inspect x.js`
-  加载的是 `x.js`），不识别。
-- 去掉目录变量前缀后，脚本路径只接受 `[A-Za-z0-9_./-]`，且不能为空、以 `/` 开头或含 `..` 段。`KEY=val cmd` 赋值前缀、
-  Windows 盘符相对路径 `C:x`、NTFS 备用数据流 `x:y` 等写法都在集合外。其后的参数（如 `--log=out.log`）仍按上面的安全字符集检查。
-- **Windows 上 `command` 类型一律不识别入口**，回到声明级信任。`cmd.exe` 把 `/` 当开关、先在 cwd 查找同名 `.cmd`/`.bat`、
-  按 PATHEXT 补扩展名、展开 `%VAR%`、把 `,` `=` 当分隔符，识别结果无法保证与实际执行的文件一致。需要内容绑定时改用 process 写法，
-  例如 `{ "type": "process", "command": "node", "args": [".zcode/hook.js"] }`。Windows 上 process 直接执行的路径须带扩展名，
-  否则同样会按 PATHEXT 补全。判定平台是 Hook 实际执行的机器；远程工作区的 Settings 也在远端计算，两侧一致。
-- **维护约束**：识别规则只能收窄，不能为兼容更多写法而加入新的 shell 语法近似。发现识别结果与实际执行不一致的写法时，
-  把它移出识别范围（回到声明级信任），而不是补充规则。
-- 不识别的声明没有 `scriptEntry`，按原有声明级 Trust 处理（D24）。
+- Supported interpreters match by exact name, without a path: `sh`, `bash`, `zsh`, `node`, `python`, `python3`, `ruby`,
+  `perl`. When the first argument after the interpreter starts with `-` (startup options, `-c`, `-m`), nothing is
+  recognized.
+- In a command string, apart from the directory variable prefixes below, any character outside the safe set
+  `[A-Za-z0-9_./@+=:,-]` (quotes, `$`, `%`, `;`, `|`, `&`, `<`, `>`, backtick, parentheses, `*`, `?`, `~`, `\`, newline,
+  and non-ASCII whitespace such as NBSP) makes the whole command unrecognized. Splitting uses only the ASCII space and tab
+  that default shell word splitting uses; any other whitespace stays inside its token and is rejected, so the result
+  matches the shell's own word splitting.
+- A script path may start with a directory variable. The process form uses `${ZCODE_PROJECT_DIR}/` (the Runtime expands
+  it as text to the cwd, as a single argv). The command form accepts only `"$ZCODE_PROJECT_DIR"/` (the shell expands it
+  inside quotes, so a cwd with spaces or metacharacters is not split). Both also accept the matching
+  `CLAUDE_PROJECT_DIR` forms. In a command, an unquoted `$VAR/`, a text-substituted `${VAR}/` and `"${VAR}"/` are not
+  recognized: the shell splits the first on spaces, and in the other two a `"`, `$` or backtick in the cwd would still
+  be interpreted by the shell after substitution. After the prefix is removed, the path is treated as relative to the
+  cwd.
+- A path in the direct execution position (the first token, or a process `command`) must contain `/` or carry a
+  directory variable prefix; a bare name goes through PATH lookup and is not recognized. A script after an interpreter
+  may be a bare file name but must carry an extension (`bash hook.sh`); a name without an extension may be a subcommand
+  (`node inspect x.js` loads `x.js`), so it is not recognized.
+- After the directory variable prefix is removed, the script path accepts only `[A-Za-z0-9_./-]`, and it must not be
+  empty, start with `/` or contain a `..` segment. A `KEY=val cmd` assignment prefix, a Windows drive-relative path
+  `C:x`, an NTFS alternate data stream `x:y` and similar forms fall outside the set. Later arguments (such as
+  `--log=out.log`) are still checked against the safe set above.
+- **On Windows, no entry is recognized for the `command` type**; it falls back to declaration-level Trust. `cmd.exe`
+  treats `/` as a switch, first looks for a same-named `.cmd`/`.bat` in the cwd, completes extensions from PATHEXT,
+  expands `%VAR%` and treats `,` and `=` as separators, so the recognized file cannot be guaranteed to match the file
+  that runs. When content binding is needed, use the process form, for example
+  `{ "type": "process", "command": "node", "args": [".zcode/hook.js"] }`. On Windows a path that process runs directly
+  must carry an extension, otherwise PATHEXT completion applies as well. The platform that decides is the machine where
+  the Hook actually runs; Settings for a remote workspace is also computed on the remote side, so both sides agree.
+- **Maintenance rule:** recognition rules may only narrow. Do not add new approximations of shell syntax to accept more
+  forms. When a form is found whose recognized file differs from what runs, move it out of recognition (back to
+  declaration-level Trust) instead of adding a rule.
+- A declaration that is not recognized has no `scriptEntry` and keeps the existing declaration-level Trust (D24).
 
-**内容状态：** 路径按 `cwd + "/" + path` 打开，不做词法归一，让解析结果与子进程打开文件时一致（符号链接按操作系统语义跟随）。
+**Content state:** the path is opened as `cwd + "/" + path`, without lexical normalization, so the result matches what
+the child process opens (symbolic links are followed by operating system rules).
 
-| 状态           | 条件                                                                 |
-| -------------- | -------------------------------------------------------------------- |
-| `file`         | 普通文件，流式读取完成；记录内容 sha256                              |
-| `missing`      | `ENOENT` / `ENOTDIR`                                                 |
-| `unverifiable` | 目录、FIFO 等非普通文件，读取出错，超过单文件 16 MiB，或超过读取预算 |
+| State          | Condition                                                                                                         |
+| -------------- | ----------------------------------------------------------------------------------------------------------------- |
+| `file`         | A regular file, streamed to the end; its content sha256 is recorded                                               |
+| `missing`      | `ENOENT` / `ENOTDIR`                                                                                              |
+| `unverifiable` | A directory, FIFO or other non-regular file, a read error, a single file over 16 MiB, or the read budget exceeded |
 
-- 只有 `file` 状态可以建立 Trust 和派发。`missing` 与 `unverifiable` 的条目称为**入口不可用**：
-  - Admission 固定为 blocked，reason `workspace_hook_script_unavailable`，不进入 pending trust 计数，即使存在匹配 record 也不放行；
-    Trust store 损坏时原因按 store 报告（`workspace_hooks_blocked_untrusted`），store 优先；
-  - 设置页该行开关锁定关闭，不显示“信任”按钮，改为说明“入口脚本不存在或无法读取”（5 种语言）；
-  - Review response、Settings 预信任和 `zcode hooks trust` 选中入口不可用的条目时整条命令拒绝，不写 Trust store；
-    `--all-current` 只要包含入口不可用的条目也整体拒绝，并列出这些条目。
-- `missing` 与 `unverifiable` 仍进入 digest（只记状态类型，不记错误细节），保证它们的 digest 与任何 `file` 状态的 digest 不同。
-- 文件出现或恢复可读后，下一次 discovery 按实际内容生成 `file` 状态和新 digest，该条变为 pending，由用户首次信任。
-- 读取全部使用异步 IO。discovery 阶段所有入口共用 5 秒截止时间；到期时调用方不再等待，未完成的入口记为 `unverifiable`，迟到结果被忽略，迟到打开的文件句柄照常关闭（stat/open 本身不响应取消，只发取消信号不足以结束等待）。
-  同时读取的入口最多 8 个，避免大量 Hook 一次打开过多文件（EMFILE）。`handle.stat()` 这类无法取消的挂起调用
-  会占用句柄直到操作系统返回，数量受同一上限约束。
-- Settings（`hooksService`）、CLI Runtime（`createConfigWithPluginMigrations`）、审核中的 toggle 重建和
-  `zcode hooks trust` 必须调用同一个 shared 函数，在 workspace 根目录下计算 `scriptEntry`，保证 digest parity（D20）。
-  同步的 `createConfig` 不读文件，能识别入口的条目一律记为 `unverifiable`，因此按入口不可用处理，不会退回无 `scriptEntry` 的旧 digest。
-- 受管 worktree（D23）中入口路径相对 cwd 记录。脚本已提交且内容相同时，源仓库与 worktree 得到同一 digest。
+- Only the `file` state can establish Trust and dispatch. Items in `missing` and `unverifiable` are called **entry
+  unavailable**:
+  - Admission is always blocked with reason `workspace_hook_script_unavailable`. It does not count toward pending trust,
+    and a matching record does not admit it. When the Trust store is corrupt, the reason is reported for the store
+    (`workspace_hooks_blocked_untrusted`); the store wins.
+  - In Settings the row's toggle is locked off, the "信任" (Trust) button is not shown, and the row says that the entry
+    script does not exist or cannot be read (5 languages).
+  - A review response, a Settings pre-trust or `zcode hooks trust` that selects an entry-unavailable item refuses the
+    whole command and writes nothing to the Trust store. `--all-current` is refused as a whole as soon as it includes
+    an entry-unavailable item, and lists those items.
+- `missing` and `unverifiable` still enter the digest (the state kind only, no error details), so their digest differs
+  from any `file` state digest.
+- Once the file appears or becomes readable again, the next discovery builds a `file` state and a new digest from the
+  actual content; the item becomes pending and the user trusts it for the first time.
+- All reads use async IO. During discovery all entries share one 5 second deadline. When it passes, the caller stops
+  waiting, unfinished entries are recorded as `unverifiable`, late results are ignored, and a file handle opened late is
+  still closed (stat/open do not respond to cancellation, so sending a cancel signal is not enough to end the wait).
+  At most 8 entries are read at the same time, so many Hooks do not open too many files at once (EMFILE). Hung calls
+  that cannot be cancelled, such as `handle.stat()`, hold their handle until the operating system returns, and they
+  count toward the same limit.
+- Settings (`hooksService`), the CLI Runtime (`createConfigWithPluginMigrations`), the toggle rebuild during review and
+  `zcode hooks trust` must call the same shared function, which computes `scriptEntry` under the workspace root, to keep
+  digest parity (D20). The synchronous `createConfig` does not read files: every item with a recognizable entry is
+  recorded as `unverifiable` there, so it is treated as entry unavailable and never falls back to the old digest without
+  `scriptEntry`.
+- In a managed worktree (D23) the entry path is recorded relative to the cwd. When the script is committed with the same
+  content, the source repository and the worktree get the same digest.
 
-**dispatch 复核：** 有 `scriptEntry` 且已通过 admission（因此 snapshot 记录必为 `file`）的项目 Hook，每次 dispatch 前在实际执行 cwd 下按同一规则重新计算内容状态（流程见 §14.6）：
+**Dispatch recheck:** for a project Hook that has a `scriptEntry` and passed admission (so its snapshot record is always
+`file`), the content state is computed again by the same rules under the actual execution cwd before every dispatch
+(flow in §14.6):
 
-- 重新计算结果为 `file` 且 sha256 与记录相同：继续；
-- 结果为 `file` 但 sha256 不同：阻断，reason `workspace_hook_declaration_changed`；
-- 结果为 `missing` 或 `unverifiable`（脚本被删除、无法读取）：阻断，reason `workspace_hook_script_unavailable`。
+- The result is `file` with the recorded sha256: continue.
+- The result is `file` with a different sha256: block, reason `workspace_hook_declaration_changed`.
+- The result is `missing` or `unverifiable` (the script was deleted or cannot be read): block, reason
+  `workspace_hook_script_unavailable`.
 
 ---
 

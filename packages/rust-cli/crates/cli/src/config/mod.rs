@@ -364,11 +364,7 @@ pub(crate) async fn assemble(inputs: &ConfigInputs<'_>) -> ConfigSnapshot {
     if let Some((source, texts)) = &permission.disallowed {
         rules.extend(sourced(*source, RuleBehavior::Deny, texts));
     }
-    let merge::McpLayers {
-        servers: mcp_servers,
-        disabled: mcp_disabled,
-        origins: mcp_origins,
-    } = merge::mcp_layers(&layers, &mut warnings);
+    let mut mcp_merged = merge::mcp_layers(&layers, &mut warnings);
     // Fork: project MCP servers connect only with a workspace trust grant for their current declaration
     // (specs/fork-rust-agent-parity.md, "Workspace MCP trust"), like Node's guarded session MCP port.
     let trust = mcp_trust::Inspection::read(
@@ -379,6 +375,12 @@ pub(crate) async fn assemble(inputs: &ConfigInputs<'_>) -> ConfigSnapshot {
         inputs.paths,
     )
     .await;
+    trust.merge_fallback(&mut mcp_merged, &mut warnings);
+    let merge::McpLayers {
+        servers: mcp_servers,
+        disabled: mcp_disabled,
+        origins: mcp_origins,
+    } = mcp_merged;
     let (admitted, granted) = (trust.admitted(), trust.granted());
     let untrusted = |server: &McpServer, allowed: &std::collections::BTreeSet<String>| {
         server.scope == McpScope::Project && !allowed.contains(&server.name)
