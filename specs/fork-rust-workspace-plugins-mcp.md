@@ -240,6 +240,36 @@ shuts a retired group only after its last pin, never the current group); a layer
 reload installs nothing); the `cli` test that an accepted MCP trust decision reloads nothing; E2E
 `plugins/conversation-session-workspace-mcp-trust` on Rust.
 
+## As built: the `.agents/mcp.json` fallback joins sessions
+
+Node reads `<wd>/.agents/mcp.json` (`mcpServers`) as the fallback of `<wd>/.zcode/config.json`
+(`dynamic-mcp-config.ts`, `config-loader.ts`). Its servers are workspace servers, so they go through
+the same trust gate as servers declared in the project file. Rust used to read the file only for the
+trust review (`mcp_trust::discover`), so a granted fallback server was listed in Settings but never
+joined a session.
+
+Now `Inspection::merge_fallback` (`cli/src/config/mcp_trust.rs`) adds the fallback declarations
+discovery found to the merged project layer, in both loaders: the process assembly
+(`config::assemble`) and the workspace layer loader (`WorkspaceLayer`, `workspace_layer.rs`).
+
+- The rules stay those of discovery: the fallback applies only when the project files name no valid
+  server and none failed validation; a user server name shadows it; a broken entry claims its name
+  without declaring it; a missing or unreadable file declares nothing.
+- The merged servers carry project scope and the origin `<wd>/.zcode/config.json`, so the stdio
+  `cwd` resolves against the working directory like Node's `normalizeProjectMcpServer`, and
+  `/mcp enable` and `/mcp disable` write that file.
+- Fail closed: the merge runs before the trust filter. An ungranted or changed declaration is dropped
+  there, an enabled one needs a grant for its digest, a disabled one is listed only when granted.
+- A user fallback (`~/.agents/mcp.json`) is not ported here.
+- The session pin from "As built: a session keeps its group" is unchanged. The fallback file is read
+  with the other layer inputs on each session open, the layer compares the result with the installed
+  group, and an equal read installs nothing.
+
+Acceptance: `cli` tests (the workspace layer and the process snapshot take a granted fallback server
+and drop an ungranted one, the fallback is ignored when the project file declares servers); E2E
+`plugins/conversation-session-workspace-mcp-trust` and
+`plugins/conversation-session-plugin-mcp-skill-workspace-root` on Rust.
+
 ## Not in this PR (follow-ups)
 
 - ~~Per-workspace `HelperCatalog` admission and helper-hosted plugin servers per workspace~~ — closed:
