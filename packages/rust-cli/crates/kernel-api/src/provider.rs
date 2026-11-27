@@ -270,6 +270,10 @@ pub struct HeaderRequest {
     pub session: Option<crate::ids::SessionId>,
     /// 刚被模型服务拒绝（401）的凭据的 sha256（小写十六进制）；第一次请求为 None。
     pub rejected_fingerprint: Option<String>,
+    /// Fork (specs/fork-rust-automations.md, off-peak renewal): the `accountScope` the answer must belong to (Node
+    /// `expectedAccountScope`). The Host refuses to answer for another account; the caller still checks the answer's
+    /// [`SuppliedAuth::account_scope`].
+    pub expected_account_scope: Option<String>,
 }
 
 /// Fork: the account kind of a [`HeaderRequest`].
@@ -286,6 +290,9 @@ pub enum HeaderAccess {
 pub struct SuppliedAuth {
     pub api_key: Option<RedactedString>,
     pub headers: Vec<(String, RedactedString)>,
+    /// Fork: the login scope the credentials belong to (Node `ModelRequestAuth.accountScope`). A renewal's scope pins the
+    /// account whose short-lived token every attempt of the run refreshes.
+    pub account_scope: Option<String>,
 }
 
 /// 账号模型每请求鉴权的来源。

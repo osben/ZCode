@@ -390,8 +390,15 @@ app-server keeps `HostCredentialCipher` (product rule 1).
 - OS store failures are logged once (`credentials.key_store.failed`, the store's error, no value) and reported as
   `Unavailable`. The OS entry is built once per cipher, like Node's memoized `AsyncEntry`: a store that restarts or
   goes away is not reconnected until the process restarts (Node parity; a failed build is retried).
-- Not ported: read-time migration of `enc:v1:` values to `enc:v2:` (`migrateCredentialRecord`). Rust rewrites a
-  value only when it writes that key. The file is shared with the desktop app, which reads both formats.
+- Not ported, on purpose (checked 2026-11-27): read-time migration of `enc:v1:` values to `enc:v2:`
+  (`migrateCredentialRecord`). Rust rewrites a value only when it writes that key. The file is shared with the desktop
+  app, which reads both formats. The migration is not Main-only: Node runs it in the agent's shared store
+  (`adapters/src/auth/shared-credentials.ts`, `readCurrent` and every `commit`) and in the desktop `credentialService`,
+  for every value that does not start with `enc:v2:` (plaintext too). It runs inside the credential recovery-generation
+  barrier (`<file>.recovery-generation`, `withCredentialGeneration`) and writes through `writeCredentialRecordLocked`,
+  which refuses a fresh `enc:v2:os` value when the OS source is not pinned and takes the keyring lock after the file
+  lock. Rust has neither the generation barrier nor that write check, so a Rust migration would write the shared file
+  under weaker guards than Node. It stays unported until the barrier exists in `platform`.
 - Tests never construct the OS keyring: the key store is injected (`KeyStore` trait). Parity vectors come from the
   Node implementation (fixed key, fixed IV) in both directions.
 - `zcode login` without any key source (headless Linux without Secret Service) fails as `Unavailable` with Node's
@@ -422,7 +429,8 @@ app-server keeps `HostCredentialCipher` (product rule 1).
   selected default after startup at process level. The entitlement path is covered by the platform
   integration test `desktop_encrypted_credentials_entitle_the_account_models`. A process test needs the account
   HTTP fake served from the cli test; follow-up.
-- Standalone read-time `enc:v1:` → `enc:v2:` migration is not ported (F4).
+- Standalone read-time `enc:v1:` → `enc:v2:` migration is not ported (F4); see the note above for what it needs
+  (recovery-generation barrier and the pinned-source write check).
 - The OS store itself (Keychain, Secret Service, Credential Manager) is not exercised by automated tests: they inject
   `KeyStore`, and the crates and entry shape are taken from `@napi-rs/keyring` 2.1.2's source and lockfile. A manual
   check that standalone Rust reads the desktop app's Keychain item is pending.

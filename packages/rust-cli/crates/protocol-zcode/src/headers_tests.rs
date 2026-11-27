@@ -31,6 +31,7 @@ fn request(session: Option<&str>) -> HeaderRequest {
         },
         session: session.map(SessionId::new),
         rejected_fingerprint: Some("a".repeat(64)),
+        expected_account_scope: None,
     }
 }
 
@@ -269,6 +270,7 @@ mod chatgpt {
             session: Some(SessionId::new("session_1")),
             rejected_fingerprint: rejected
                 .map(|key| rust_cli_base::hash::sha256_hex(key.as_bytes())),
+            expected_account_scope: None,
         }
     }
 
@@ -324,6 +326,24 @@ mod chatgpt {
 
     fn granted(key: &str, scope: char) -> Value {
         json!({"headersApplied": true, "requestAuth": {"apiKey": key, "accountScope": scope.to_string().repeat(64)}})
+    }
+
+    /// Off-peak renewal (specs/fork-rust-automations.md): a zhipu request that names the run's account scope sends it as
+    /// `expectedAccountScope`, and the answer's scope comes back for the caller to check.
+    #[tokio::test]
+    async fn a_zhipu_request_sends_the_expected_scope_and_returns_the_answers() {
+        let (source, mut host) = start();
+        let mut asked = request(Some("session_1"));
+        asked.rejected_fingerprint = None;
+        asked.expected_account_scope = Some("c".repeat(64));
+        let asking = {
+            let source = source.clone();
+            tokio::spawn(async move { source.request_auth(asked).await })
+        };
+        let params = host.answer(granted("tok-9", 'c')).await;
+        assert_eq!(params["expectedAccountScope"], "c".repeat(64));
+        let supplied = asking.await.unwrap().unwrap();
+        assert_eq!(supplied.account_scope, Some("c".repeat(64)));
     }
 
     /// R6 and R7: no zhipu access on the wire; a renewal names the rejected token and its remembered scope.

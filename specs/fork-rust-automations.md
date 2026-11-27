@@ -329,9 +329,18 @@ own (`LifecycleSink` over the peer), so dropping the attempt mid-send cannot los
 `ModelError::Cancelled`, not as an authentication failure; the Node code stays the run's state. `replace_ticket` judges
 the run by the runtime's facts (`main_running` is "the run's turn is open"), so a renewal answered after its turn ended
 completes the run. A renewal still pending when its turn ends waits for the Host's answer, as Node does (Node's binding
-release does not clear a pending renewal). A renewal that names `apiKeyId` or `accountScope` is refused: Node routes a
-zhipu account by `apiKeyId` and checks `accountScope`, and neither is implemented in Rust yet. A renewal with neither a key
-nor headers installs no credentials, so the ordinary source supplies them. Session delete, tree erase and the deletion execution end the
+release does not clear a pending renewal). A renewal that names `accountScope` keeps it with its credentials
+(`SuppliedAuth.account_scope`). Each attempt on such a ticket asks the Host for the account's current token
+(`interaction/requestProviderRuntimeHeaders`, `expectedAccountScope` set to the ticket's scope, no rejected
+fingerprint), as Node's `refreshOffPeakRequestAuth` does. The answer must carry a non-blank token and the same scope,
+otherwise the attempt fails as `project_token_scope_invalidated`. The token replaces the ticket's
+`X-Coding-Plan-Api-Key` header (matched without case); the ticket's own key and other headers stay. Without a Host
+source the attempt fails as "Off-peak request auth owner is unavailable". A renewal that names `apiKeyId` is accepted and
+the id is dropped: in Node it only feeds the endpoint routing port, and the fork's routing edition is direct (it returns
+`routed:false` for every request, `apps/zcode-cli/docs/design/v2/model/provider-endpoint-routing.md`), so the id has no
+effect there either. If the routing edition is ever pointed back at the gateway table, the id must be threaded to the
+transport. A renewal with neither a key nor headers nor a scope installs no credentials, so the ordinary source supplies
+them. Session delete, tree erase and the deletion execution end the
 removed sessions' runs (their final notifications go to the Host) and drop their flags and admitted inputs
 (`off_peak_control::forget_sessions`). An admitted input is taken only by its own session's turn,
 and admission checks the runs under the same lock. In the transport, a refusal renews only when its attempt named a

@@ -172,7 +172,7 @@ impl OffPeakRuns {
             Some("replace_ticket") => {
                 let auth = &params["requestAuth"];
                 let accepted = match (params["renewalId"].as_u64(), params["ticketId"].as_str()) {
-                    (Some(renewal), Some(ticket)) if account_identity_applied(auth) => {
+                    (Some(renewal), Some(ticket)) => {
                         // The runtime's facts now (Node `readWork`): the turn is open only while `turn` is set.
                         let work = WorkSnapshot {
                             main_running: run.turn.is_some(),
@@ -186,15 +186,6 @@ impl OffPeakRuns {
                             run.request_auth = supplied_auth(auth);
                         }
                         accepted
-                    }
-                    (Some(_), Some(_)) => {
-                        // Refused, not installed without the identity: the attempt would send with another account.
-                        tracing::warn!(
-                            event = "off_peak.ticket_auth_unsupported",
-                            session,
-                            "the renewal names an account identity this agent cannot apply; refused"
-                        );
-                        false
                     }
                     _ => false,
                 };
@@ -471,15 +462,10 @@ fn lifecycle_outcome(outcome: &TurnOutcome) -> Outcome {
     }
 }
 
-/// Whether a `replace_ticket`'s credentials carry no account identity this agent cannot apply. Node routes a zhipu
-/// account's request by `apiKeyId` and checks `accountScope` against the account; neither is implemented here, so a
-/// renewal that names either is refused rather than sent with the wrong account.
-fn account_identity_applied(auth: &Value) -> bool {
-    auth["apiKeyId"].is_null() && auth["accountScope"].is_null()
-}
-
 /// The credentials of a `replace_ticket` (Node `ModelRequestAuth`): the key and the headers. None when the answer
 /// carries neither, so the ordinary request auth source keeps supplying the credentials (an empty set would suppress it).
+/// `accountScope` rides along: the platform refreshes the account's token against it on every attempt. `apiKeyId` is not
+/// kept: it only routes the request, and the fork's endpoint edition is direct (it never rewrites an endpoint).
 fn supplied_auth(auth: &Value) -> Option<SuppliedAuth> {
     let api_key = auth["apiKey"].as_str().map(RedactedString::new);
     let headers: Vec<(String, RedactedString)> = auth["headers"]
@@ -493,7 +479,12 @@ fn supplied_auth(auth: &Value) -> Option<SuppliedAuth> {
                 .collect()
         })
         .unwrap_or_default();
-    (api_key.is_some() || !headers.is_empty()).then_some(SuppliedAuth { api_key, headers })
+    let account_scope = auth["accountScope"].as_str().map(str::to_owned);
+    (api_key.is_some() || !headers.is_empty() || account_scope.is_some()).then_some(SuppliedAuth {
+        api_key,
+        headers,
+        account_scope,
+    })
 }
 
 fn notifications(run: &mut Run) -> Vec<Value> {

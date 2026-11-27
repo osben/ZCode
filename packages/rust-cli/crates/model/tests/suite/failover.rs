@@ -269,6 +269,7 @@ impl rust_cli_kernel_api::off_peak_ticket::OffPeakTicketSource for Tickets {
             auth: Some(rust_cli_kernel_api::provider::SuppliedAuth {
                 api_key: Some(RedactedString::new(format!("token-{issued}"))),
                 headers: Vec::new(),
+                account_scope: None,
             }),
         })
     }

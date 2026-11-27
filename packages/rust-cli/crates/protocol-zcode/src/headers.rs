@@ -162,7 +162,8 @@ impl HeaderSource for HostHeaders {
                 self.scope_of(fingerprint)
                     .ok_or_else(|| failed(SCOPE_INVALIDATED))?,
             ),
-            _ => None,
+            // An off-peak run names the scope of the account it started under (Node `expectedAccountScope`).
+            _ => request.expected_account_scope.clone(),
         };
         let mut params = json!({
             "requestId": request_id,
@@ -233,8 +234,8 @@ impl HeaderSource for HostHeaders {
             })
             .unwrap_or_default();
         let api_key = auth["apiKey"].as_str().map(RedactedString::new);
+        let scope = auth["accountScope"].as_str();
         if chatgpt {
-            let scope = auth["accountScope"].as_str();
             if expected.is_some() && scope != expected.as_deref() {
                 return Err(failed(SCOPE_INVALIDATED));
             }
@@ -242,7 +243,11 @@ impl HeaderSource for HostHeaders {
                 self.remember(hash::sha256_hex(key.expose().as_bytes()), scope.to_owned());
             }
         }
-        Ok(SuppliedAuth { api_key, headers })
+        Ok(SuppliedAuth {
+            api_key,
+            headers,
+            account_scope: scope.map(str::to_owned),
+        })
     }
 }
 
