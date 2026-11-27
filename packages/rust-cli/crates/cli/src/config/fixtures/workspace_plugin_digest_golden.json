@@ -1,0 +1,64 @@
+[
+  {
+    "name": "manifest_only",
+    "root": "plugins/demo",
+    "files": {
+      ".zcode-plugin/plugin.json": "{\n  \"name\": \"demo\",\n  \"version\": \"1.0.0\"\n}"
+    },
+    "pluginRoot": "plugins/demo",
+    "declarationDigest": "0a11f0b5ab48f1cdca56597f5b49a993777e6466fe1b04e8acd013566fe7c5ae"
+  },
+  {
+    "name": "manifest_hooks_mcp",
+    "root": "plugins/demo",
+    "files": {
+      ".zcode-plugin/plugin.json": "{\n  \"name\": \"demo\",\n  \"version\": \"1.0.0\"\n}",
+      "hooks/hooks.json": "{\"hooks\":{}}\n",
+      ".mcp.json": "{\"mcpServers\":{\"ping\":{\"command\":\"node\",\"args\":[\"ping.js\"]}}}\n",
+      "skills/x/SKILL.md": "not in the digest\n"
+    },
+    "pluginRoot": "plugins/demo",
+    "declarationDigest": "bfbc270ae9c48e58c5e2c3366f2b21224e9bde5c38947cfd760c704daaf76d54"
+  },
+  {
+    "name": "nested_mcp_servers",
+    "root": "tools/p",
+    "files": {
+      ".zcode-plugin/plugin.json": "{\n  \"name\": \"demo\",\n  \"version\": \"1.0.0\",\n  \"hooks\": \"./extra/hooks.json\",\n  \"mcpServers\": [\n    [\n      \"./mcp/a.json\",\n      [\n        \"mcp/b.json\",\n        \"/abs/c.json\"\n      ]\n    ],\n    \"../outside.json\",\n    \"./.mcp.json\",\n    7\n  ]\n}",
+      "extra/hooks.json": "{}",
+      "mcp/a.json": "{\"a\":1}",
+      ".mcp.json": "{}"
+    },
+    "pluginRoot": "tools/p",
+    "declarationDigest": "4acbbcb9ebdbae07859af361249a5bee698485b3ec0c13d4ad889319090b6f38"
+  },
+  {
+    "name": "crlf_and_unicode",
+    "root": "plugins/demo",
+    "files": {
+      ".zcode-plugin/plugin.json": "{\r\n  \"name\": \"demo\",\r\n  \"version\": \"1.0.0\",\r\n  \"description\": \"Привет   \\u001b tab\\t\"\r\n}",
+      "hooks/hooks.json": "{\r\n}\r\n"
+    },
+    "pluginRoot": "plugins/demo",
+    "declarationDigest": "430c25c0a22df15b29eda2b8f732996d81d5ffd33a962836fb03f35408092f4a"
+  },
+  {
+    "name": "claude_manifest",
+    "root": "plugins/claude",
+    "files": {
+      ".claude-plugin/plugin.json": "{\n  \"name\": \"demo\",\n  \"version\": \"1.0.0\"\n}",
+      ".codex-plugin/plugin.json": "{\n  \"name\": \"other\",\n  \"version\": \"1.0.0\"\n}"
+    },
+    "pluginRoot": "plugins/claude",
+    "declarationDigest": "f6b1ef542fd8ecf351e5298e872def0cd6854dc9a54293f4f926efaf2d7e80e2"
+  },
+  {
+    "name": "workspace_root",
+    "root": ".",
+    "files": {
+      ".zcode-plugin/plugin.json": "{\n  \"name\": \"demo\",\n  \"version\": \"1.0.0\"\n}"
+    },
+    "pluginRoot": ".",
+    "declarationDigest": "3c0814aedfa693282090dd133f5f52166e967032bc3ee5f4612d49bdbaaa8e92"
+  }
+]

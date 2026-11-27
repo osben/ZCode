@@ -221,13 +221,14 @@ is what a reload does today. Cost: one config + plugin inventory read per sessio
   for enable/disable (the App's trust triggers are too): a toggled user-scope server still reaches
   workspace groups only with its startup-snapshot state, because the layer's user-scope server
   list is a process-startup read.
-- ~~The LSP path's project `plugins.dirs`~~ — closed: `plugin_view` applies the Node rule (project
-  dirs never load; the inventory roots resolve from the trusted layers only), and the workspace
-  loader reuses the view instead of its own copy.
+- ~~The LSP path's project `plugins.dirs`~~ — closed: `plugin_view` applies the Node rule (a project
+  dir loads only with a workspace plugin trust record for its current declaration,
+  `fork-rust-plugin-workspace-trust.md` part 2; the inventory roots resolve from the trusted layers only),
+  and the workspace loader reuses the view instead of its own copy.
 
 ## Acceptance
 
-- Acceptance: a project config declaring `plugins.dirs` or a `storage.dir` into a checked-in
+- Acceptance: a project config declaring an untrusted `plugins.dirs` or a `storage.dir` into a checked-in
   directory changes neither the workspace layer's nor `lsp/status`'s plugin set (the trusted-layer
   resolution of `plugin_view`).
 - Rust unit tests (ext, cli, protocol-zcode):
