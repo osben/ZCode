@@ -2630,6 +2630,15 @@ fn a_queue_item_shows_its_edit_lock_and_its_attachment_chips() {
         queue["items"][0]["editLock"],
         json!({"editorId": "ed1", "clientId": "client-desk", "inputOrigin": "desktop"})
     );
+    // Rule 22 (Node `queueHeadEditLocked`): an idle session with a locked head routes new input to the queue.
+    let routing = deltas
+        .iter()
+        .find_map(|delta| delta["patch"].get("inputRouting"))
+        .unwrap();
+    assert_eq!(
+        routing,
+        &json!({"mode": "enqueue", "reasonCode": "queueHeadEditLocked"})
+    );
     // Released: the item carries no lock field at all.
     let deltas = feed.apply(KernelEvent::QueueChanged {
         items: vec![queued(None)],
@@ -2639,6 +2648,11 @@ fn a_queue_item_shows_its_edit_lock_and_its_attachment_chips() {
         .find_map(|delta| delta["patch"].get("queue"))
         .unwrap();
     assert!(queue["items"][0].get("editLock").is_none());
+    let routing = deltas
+        .iter()
+        .find_map(|delta| delta["patch"].get("inputRouting"))
+        .unwrap();
+    assert_eq!(routing, &json!({"mode": "startNow"}));
 
     feed.projection.remember_input(
         "c1",

@@ -561,3 +561,23 @@ fn a_command_that_runs_again_replaces_its_ended_item() {
     assert!(work.get("endedAt").is_none());
     assert!(work.get("resultSummary").is_none());
 }
+
+/// Rule 7: an end event that came before the deferred ledger refresh already counts for the activity boundary, so a real
+/// user input in the same batch folds the command.
+#[test]
+fn the_boundary_counts_an_end_the_table_has_not_caught_up_with() {
+    let mut feed = Feed::new();
+    started(&mut feed, "b1");
+    feed.apply(KernelEvent::BackgroundWork {
+        work: "b1".into(),
+        status: BackgroundStatus::Completed,
+    });
+    assert_eq!(
+        feed.projection.background_works_value()[0]["status"],
+        "running"
+    );
+    assert_eq!(
+        feed.projection.boundary_works_value()[0]["status"],
+        "resultPending"
+    );
+}

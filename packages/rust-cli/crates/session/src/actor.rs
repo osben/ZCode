@@ -855,8 +855,16 @@ impl Actor {
                     .inbox
                     .foreground_owner()
                     .is_some_and(|owner| lease.as_deref() != Some(owner));
-                let queue =
-                    foreign || (behind_held && self.inbox.held() && self.inbox.has_inputs());
+                // Fork (Node B09m `queueHeadEditLocked`): while the head is locked for editing an idle session would
+                // start a new text ahead of it; it goes to the tail instead. Only a plain text: an explicit start-now
+                // input (its lease), a goal and a compaction keep their admission, as only Node's sendText checks it.
+                let behind_lock = kind == rust_cli_kernel_api::session_api::QueuedKind::Text
+                    && lease.is_none()
+                    && !self.inbox.held()
+                    && self.inbox.head_locked();
+                let queue = foreign
+                    || behind_lock
+                    || (behind_held && self.inbox.held() && self.inbox.has_inputs());
                 self.submit_with(
                     id,
                     kind,

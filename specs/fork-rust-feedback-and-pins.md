@@ -82,6 +82,8 @@ is therefore by `assistantResponseId`:
 - the pin also goes to the **last** row: Node writes it on its shared row, and the App's action toolbar reads
   `latestAssistantTextRow.pinnedAt`, so on the first row a pinned reply would show as unpinned;
 - a `userInput` row with `origin` `realUser` is matched by `entityId` = the user message id.
+- a guide sent mid-turn is a `userInput` row with `origin` `realUser` and `guided: true`; Rust stores it as an attachment
+  (a `user` record in the shared DB), and it takes a pin like a typed input (Node's guard checks only the origin).
 
 Clearing removes the field from the row. A change that equals the row's value emits no delta.
 

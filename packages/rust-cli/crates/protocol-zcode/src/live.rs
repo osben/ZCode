@@ -1526,7 +1526,7 @@ fn snapshot_of(state: &State, seq: u64) -> Value {
 
 /// Fork (specs/fork-rust-activity-summary.md rule 2): the boundary over what the session shows at `at`.
 fn activity_boundary(state: &State, at: u64) -> Value {
-    let works = state.projection.background_works_value();
+    let works = state.projection.boundary_works_value();
     let subagents = state.projection.subagents_value();
     let runs = state
         .workflow_runs

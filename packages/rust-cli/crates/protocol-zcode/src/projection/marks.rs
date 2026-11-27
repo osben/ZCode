@@ -26,7 +26,6 @@ fn text_row_of(row: &Map<String, Value>, message: &str) -> bool {
 fn user_row_of(row: &Map<String, Value>, message: &str) -> bool {
     RowKind::of(row) == Some(RowKind::UserInput)
         && row["origin"] == "realUser"
-        && row.get("guided").is_none()
         && row["entityId"] == message
 }
 

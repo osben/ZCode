@@ -213,9 +213,20 @@ impl Followup {
 /// client's clear/keep choice, `heldQueueInputRequiresChoice`).
 /// `verifying`: a goal completion verification runs (Node `goalVerifierAcceptsFutureInput`: it is not a steerable
 /// turn, so input queues in guide mode too).
-pub fn input_routing(phase: Phase, followup: Followup, held: bool, verifying: bool) -> Value {
+/// `head_locked`: the queue drains and its head is locked for editing (Node `queueHeadEditLocked`): an idle session
+/// only waits for the edit, so new input goes to the tail instead of starting ahead of the locked item.
+pub fn input_routing(
+    phase: Phase,
+    followup: Followup,
+    held: bool,
+    verifying: bool,
+    head_locked: bool,
+) -> Value {
     if verifying {
         return json!({"mode": "enqueue", "reasonCode": "goalVerifierAcceptsFutureInput"});
+    }
+    if head_locked && phase != Phase::Running {
+        return json!({"mode": "enqueue", "reasonCode": "queueHeadEditLocked"});
     }
     if held && matches!(phase, Phase::CompletedSuccess | Phase::CompletedInterrupted) {
         return json!({"mode": "choice", "reasonCode": "heldQueueInputRequiresChoice"});

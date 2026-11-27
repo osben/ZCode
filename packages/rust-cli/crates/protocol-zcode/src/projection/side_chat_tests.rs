@@ -66,3 +66,23 @@ fn only_a_boundary_hides_history() {
         ["kept"]
     );
 }
+
+/// A side chat opened from a side chat inherits both boundaries: its pane starts after the last one.
+#[test]
+fn a_nested_side_chat_starts_after_its_own_boundary() {
+    let mut inner = boundary();
+    if let Message::Attachment(attachment) = &mut inner {
+        attachment.id = MessageId::new("msg_boundary_2");
+    }
+    let child = view(vec![
+        user("msg_u1", "parent question"),
+        boundary(),
+        user("msg_u2", "first side question"),
+        inner,
+        user("msg_u3", "nested side question"),
+    ]);
+    assert_eq!(
+        texts(&Projection::from_view(&child, Followup::Queue, Vec::new())),
+        ["nested side question"]
+    );
+}

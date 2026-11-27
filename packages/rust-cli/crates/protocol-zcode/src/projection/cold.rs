@@ -64,11 +64,12 @@ pub(super) fn rows(projection: &mut Projection, view: &SessionView) {
     // Fork (D2): the user message of the turn being projected; its stored screenshot goes before the turn closes.
     let mut anchor: Option<String> = None;
     // Fork: a selection side chat inherits its parent's history for the model only; the pane starts after the boundary
-    // reminder (Node marks the inherited rows hidden; specs/fork-rust-selection-side-chat.md).
+    // reminder (Node marks the inherited rows hidden; specs/fork-rust-selection-side-chat.md). A side chat of a side chat
+    // inherits its parent's boundary too: the last one ends the inherited part.
     let inherited = view
         .messages
         .iter()
-        .position(|message| {
+        .rposition(|message| {
             matches!(message, Message::Attachment(attachment)
                 if attachment.source == rust_cli_kernel_api::store::SELECTION_SIDE_CHAT_SOURCE)
         })
@@ -215,7 +216,11 @@ pub(super) fn rows(projection: &mut Projection, view: &SessionView) {
                 projection.compacted(boundary.trigger, boundary.pre_tokens, at, &mut out);
             }
             // 附件不投成行（P1）; fork: an absorbed steer is a guided user row of the current turn (rows.rs).
-            Message::Attachment(_) => projection.message(message, at, 0, &mut out),
+            Message::Attachment(_) => {
+                projection.message(message, at, 0, &mut out);
+                // Fork: the stored pin of a guide sent mid-turn.
+                cold_marks(projection, view, message);
+            }
         }
     }
     projection.seed_turn_model(turns);

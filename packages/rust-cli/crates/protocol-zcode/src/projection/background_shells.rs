@@ -152,6 +152,24 @@ impl Projection {
         )
     }
 
+    /// Fork: the works the activity boundary reads (specs/fork-rust-background-and-context-usage.md rule 7). A command
+    /// whose end event came in the same batch as the real user input is still `running` in the table until the deferred
+    /// ledger refresh; its reported end counts here so the boundary folds it.
+    pub(crate) fn boundary_works_value(&self) -> Value {
+        let mut works = self.background_works_value();
+        if let Some(items) = works.as_array_mut() {
+            for work in items.iter_mut().filter(|work| work["status"] == "running") {
+                let ended = work["workId"]
+                    .as_str()
+                    .and_then(|id| self.shells.ended.get(id));
+                if let Some(status) = ended {
+                    work["status"] = json!(summary_status(status));
+                }
+            }
+        }
+        works
+    }
+
     /// Fork: the kernel's background ledger was re-read, without runs (the commands and the subagents only). A test
     /// helper: the session's refresh always reads the runs too (`background_table`).
     #[cfg(test)]

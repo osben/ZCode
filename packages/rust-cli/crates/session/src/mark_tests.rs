@@ -199,3 +199,50 @@ async fn a_message_before_the_compaction_can_be_marked() {
         [Mark::Pinned(Some(1_000)), Mark::Pinned(None)]
     );
 }
+
+/// A guide sent mid-turn is stored as an attachment and shown as a real user input: it can be pinned, not liked. Other
+/// attachments take no mark.
+#[tokio::test]
+async fn a_guide_can_be_pinned_and_other_attachments_cannot() {
+    use rust_cli_kernel_api::hooks::{SteerSender, queued_command};
+    let guide = MessageId::new("msg_guide");
+    let other = MessageId::new("msg_other");
+    let mut setup = Setup::new(Arc::new(ScriptedModel::new(Vec::new())));
+    setup.messages = vec![
+        Message::Attachment(queued_command::steer_attachment(
+            guide.clone(),
+            "also check the logs",
+            SteerSender::User,
+            Some("c_guide"),
+            None,
+        )),
+        Message::Attachment(rust_cli_kernel_api::message::AttachmentMessage {
+            id: other.clone(),
+            source: "todo_reminder".to_owned(),
+            text: "<system-reminder>x</system-reminder>".to_owned(),
+            data: serde_json::Value::Null,
+        }),
+    ];
+    let built = setup.build().await;
+    let stale = Ack::Rejected {
+        reason: MARK_STALE.to_owned(),
+    };
+    assert!(accepted(
+        &send(&built, "p1", &guide, MarkRequest::Pin(true)).await
+    ));
+    assert_eq!(
+        send(
+            &built,
+            "f1",
+            &guide,
+            MarkRequest::Feedback(Some(Feedback::Like))
+        )
+        .await,
+        stale
+    );
+    assert_eq!(
+        send(&built, "p2", &other, MarkRequest::Pin(true)).await,
+        stale
+    );
+    assert_eq!(marked(&built), [Mark::Pinned(Some(1_000))]);
+}
