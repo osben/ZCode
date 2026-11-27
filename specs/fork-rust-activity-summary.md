@@ -42,8 +42,8 @@ the field, so on Rust the Activity capsule kept showing a finished batch (for ex
    - `workflowRunIds`: the journaled runs whose physical status is neither `running` nor `pending` and whose last
      event (or last update, when it has no event) is not after `at`;
    - `workIds`: always empty. Background commands are in-process facts and nothing persists them.
-   A live boundary (rule 2) is never replaced by the seed. A failed seed sets nothing and the next seed retries.
-   Rule 3 runs on the seeded value like on any other.
+     A live boundary (rule 2) is never replaced by the seed. A failed seed sets nothing and the next seed retries.
+     Rule 3 runs on the seeded value like on any other.
 6. Records are never deleted; the UI only folds finished details and shows the history directory.
 
 ```text
