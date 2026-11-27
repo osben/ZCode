@@ -204,7 +204,7 @@ The table lists, for each family, what is delegated to the helper, the Rust-side
 
 ### F1+F2 forwarded methods
 
-- Plugins: `plugins/list`, `plugins/overview`, `plugins/describe`, `plugins/install`, `plugins/uninstall`, `plugins/update`, `plugins/setEnabled`, `plugins/configure`, `plugins/resetConfig`, `plugins/validate`, `plugins/restoreBuiltin`, `plugins/marketplace/add`, `plugins/marketplace/remove`, `plugins/marketplace/update`, `plugins/resolveSuggestedReference`, `plugins/cancelOperation`, `plugins/readUserOptions`, `plugins/listUiSurfaces`, `plugins/referenceCatalog`, `plugins/referenceCatalogWithCategory`.
+- Plugins: `plugins/list`, `plugins/overview`, `plugins/describe`, `plugins/install`, `plugins/uninstall`, `plugins/update`, `plugins/setEnabled`, `plugins/workspaceTrust`, `plugins/configure`, `plugins/resetConfig`, `plugins/validate`, `plugins/restoreBuiltin`, `plugins/marketplace/add`, `plugins/marketplace/remove`, `plugins/marketplace/update`, `plugins/resolveSuggestedReference`, `plugins/cancelOperation`, `plugins/readUserOptions`, `plugins/listUiSurfaces`, `plugins/referenceCatalog`, `plugins/referenceCatalogWithCategory`.
 - Saved workflows: `workflows/list`, `workflows/get`, `workflows/updateMeta`, `workflows/delete`, `workflows/runs`, `workflows/move`, `workflows/save`, `workflows/forRun`.
 - Run history: `v4/conversation/workflowRuns`, `workflowRunEvents`, `workflowRunArtifacts`, `workflowRunArtifactData`, `workflowRunArtifactRead`, `workflowRunWorkspace`, `workflowRunNodeResult`.
   - Answered from the journal and the artifact store directly, with the gateway's limits. The helper never builds the run service (its constructor reconciles orphan runs, a journal write) and never cold-resumes a session.

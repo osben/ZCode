@@ -38,6 +38,8 @@ pub(crate) const FORWARDED_METHODS: &[&str] = &[
     "plugins/uninstall",
     "plugins/update",
     "plugins/setEnabled",
+    // Trust for a project directory plugin (specs/fork-rust-plugin-workspace-trust.md).
+    "plugins/workspaceTrust",
     "plugins/configure",
     "plugins/resetConfig",
     "plugins/validate",

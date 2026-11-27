@@ -157,6 +157,56 @@ describe("fork: Node helper for the Rust agent", () => {
     await helper.done;
   }, 60_000);
 
+  it("trusts a project directory plugin through plugins/workspaceTrust", async () => {
+    // specs/fork-rust-plugin-workspace-trust.md: the helper is the process that lists the plugin as
+    // pending and writes the user-domain record, so both calls must reach the same handler as Node's.
+    const home = await tempHome();
+    const pluginRoot = join(home.workspace, "plugins", "demo");
+    await mkdir(join(pluginRoot, ".claude-plugin"), { recursive: true });
+    await mkdir(join(home.workspace, ".zcode"), { recursive: true });
+    await writeFile(
+      join(home.workspace, ".zcode", "config.json"),
+      JSON.stringify({ plugins: { dirs: ["./plugins/demo"] } }),
+    );
+    await writeFile(join(pluginRoot, ".claude-plugin", "plugin.json"), JSON.stringify({ name: "demo" }));
+    const helper = startHelper(home.env, home.workspace);
+    const workspace = { workspacePath: home.workspace, workspaceKey: home.workspace };
+    const initialized = await helper.request("helper/initialize", {
+      protocolVersion: FORK_RUST_HELPER_PROTOCOL_VERSION,
+    });
+    expect(initialized.result?.methods).toContain("plugins/workspaceTrust");
+    const find = async () => {
+      const listed = await helper.request("plugins/list", { workspace });
+      expect(listed.error).toBeUndefined();
+      const plugins = listed.result?.plugins as Array<{ id: string; workspaceTrust?: Record<string, string> }>;
+      return plugins.find((plugin) => plugin.id === "demo@inline");
+    };
+
+    const pending = await find();
+    expect(pending?.workspaceTrust).toMatchObject({ state: "pending", pluginRoot: "plugins/demo" });
+    const digest = pending!.workspaceTrust!.declarationDigest;
+
+    const stale = await helper.request("plugins/workspaceTrust", {
+      workspace,
+      pluginRoot: "plugins/demo",
+      declarationDigest: "0".repeat(64),
+      trusted: true,
+    });
+    expect(stale.result).toEqual({ accepted: false, reasonCode: "workspace_plugin_declaration_changed" });
+
+    const trusted = await helper.request("plugins/workspaceTrust", {
+      workspace,
+      pluginRoot: "plugins/demo",
+      declarationDigest: digest,
+      trusted: true,
+    });
+    expect(trusted.result).toEqual({ accepted: true });
+    expect((await find())?.workspaceTrust).toMatchObject({ state: "trusted", declarationDigest: digest });
+
+    helper.close();
+    await helper.done;
+  }, 60_000);
+
   it("reads run history from the journal without building the run service or touching the run", async () => {
     const home = await tempHome();
     const store = await createSqliteSessionStore({ dbPath: home.dbPath });

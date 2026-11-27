@@ -41,6 +41,7 @@ import {
   resetPluginConfig,
   restoreBuiltinPlugin,
   setPluginEnabled,
+  setPluginWorkspaceTrust,
   uninstallPlugin,
   updatePlugin,
   updatePluginMarketplace,
@@ -153,6 +154,8 @@ export class ForkRustHelperServer {
       [zcodeProtocolMethods.pluginsSetEnabled]: withSignal((params, signal) =>
         setPluginEnabled(context, params, signal),
       ),
+      [zcodeProtocolMethods.pluginsWorkspaceTrust]: (params) =>
+        setPluginWorkspaceTrust(context, params),
       [zcodeProtocolMethods.pluginsConfigure]: (params) => configurePlugin(context, params),
       [zcodeProtocolMethods.pluginsResetConfig]: (params) => resetPluginConfig(context, params),
       [zcodeProtocolMethods.pluginsValidate]: (params) => validatePlugin(context, params),
