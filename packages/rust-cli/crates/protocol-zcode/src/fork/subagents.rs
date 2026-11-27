@@ -490,6 +490,7 @@ struct Projection {
 struct EndedItem {
     child_session_id: String,
     ended_at: u64,
+    completed_at: Option<u64>,
     value: Value,
 }
 
@@ -592,6 +593,7 @@ fn project(input: ProjectionInput<'_>) -> Projection {
                 projection.ended.push(EndedItem {
                     child_session_id: candidate.child_session_id.clone(),
                     ended_at,
+                    completed_at: outcome.ended_at,
                     value: common,
                 });
             }
@@ -700,16 +702,40 @@ async fn children_of(
     serde_json::from_value(children).map_err(|error| format!("subagent children: {error}"))
 }
 
-/// Fork (specs/fork-rust-activity-summary.md, `completedActivityCount`): every ended child of the open session's active
-/// branch with its ended status, the same classification `session/subagents` pages through, with no page limit. `live`
-/// is the kernel's subagent table; the session is open, so its parent is live. A failed read is an error: the caller
-/// must not take a partial list as the full history. A session not saved yet has no children.
+/// One ended child of the active branch: its id, ended status (`success`, `failed`, ...) and ended time (ms).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct EndedOutcome {
+    pub(crate) child: String,
+    pub(crate) status: String,
+    pub(crate) ended_at: u64,
+    /// The child's own last completion time. `ended_at` prefers the Agent tool part's end, which for a background
+    /// launch is the launch acknowledgement, so the cold Activity boundary reads this one.
+    pub(crate) completed_at: Option<u64>,
+}
+
+/// [`ended_outcomes`]: the ended children, and the kernel table entries a rewritten history cut.
+#[derive(Debug, Default, PartialEq, Eq)]
+pub(crate) struct Outcomes {
+    pub(crate) ended: Vec<EndedOutcome>,
+    pub(crate) cut: Vec<(String, u64)>,
+}
+
+/// Fork (specs/fork-rust-completed-activity-count.md, specs/fork-rust-activity-summary.md): every ended child of the
+/// open session's active branch with its ended status and time, the same classification `session/subagents` pages
+/// through, with no page limit. `live` is the kernel's subagent table; the session is open, so its parent is live. A
+/// failed read is an error: the caller must not take a partial list as the full history. A session not saved yet has
+/// no children.
+///
+/// `rewritten` is a read after the history was rewritten (a rewind): a table entry that no tool part of the active
+/// branch links is a child whose launch was cut. It is left out (Node revokes the children of the removed launch
+/// rows) and its id is returned in `cut`, so the table cannot bring it back.
 pub(crate) async fn ended_outcomes(
     queries: &dyn rust_cli_kernel_api::store::StoreQueries,
     session: &SessionId,
     live: &[SubagentEntry],
     now_ms: u64,
-) -> Result<Vec<(String, String)>, String> {
+    rewritten: bool,
+) -> Result<Outcomes, String> {
     // A new session has no parent row until its first message is written (node-store answers
     // `parent: null`, the in-memory store NotFound): its history is empty, not unknown, so the
     // total starts at 0 like Node's new session.
@@ -720,22 +746,67 @@ pub(crate) async fn ended_outcomes(
         Err(rust_cli_kernel_api::store::StoreError::NotFound { .. }) => ParentDoc::default(),
         Err(error) => return Err(error.to_string()),
     };
-    let children = children_of(queries, &rows, live).await?;
+    let mut kept: Vec<SubagentEntry> = live.to_vec();
+    let mut cut = Vec::new();
+    if rewritten {
+        let linked: Vec<Candidate> = collect_candidates(&rows.parts);
+        // A nested child's launch is stored in its owner's session, not in the root's parts: it stays while its
+        // owner chain ends in a launch the active branch links.
+        let linked_entry = |entry: &SubagentEntry| {
+            linked.iter().any(|candidate| {
+                candidate.child_session_id == entry.child.as_str()
+                    || candidate.agent_id == entry.agent.as_str()
+            })
+        };
+        let by_agent: HashMap<&str, &SubagentEntry> = live
+            .iter()
+            .map(|entry| (entry.agent.as_str(), entry))
+            .collect();
+        let keeps = |entry: &SubagentEntry| {
+            let mut current = entry;
+            // The table is a tree; the step bound only guards a corrupt cycle.
+            for _ in 0..=live.len() {
+                if linked_entry(current) {
+                    return true;
+                }
+                match current
+                    .owner
+                    .as_ref()
+                    .and_then(|owner| by_agent.get(owner.as_str()))
+                {
+                    Some(owner) => current = owner,
+                    None => return false,
+                }
+            }
+            false
+        };
+        kept.retain(|entry| {
+            let keep = keeps(entry);
+            if !keep {
+                cut.push((entry.child.as_str().to_owned(), entry.execution));
+            }
+            keep
+        });
+    }
+    let children = children_of(queries, &rows, &kept).await?;
     let projection = project(ProjectionInput {
         parts: &rows.parts,
         children: &children.children,
-        live,
+        live: &kept,
         parent_live: true,
         now_ms,
     });
-    Ok(projection
+    let ended = projection
         .ended
         .into_iter()
-        .map(|item| {
-            let status = item.value["status"].as_str().unwrap_or("lost").to_owned();
-            (item.child_session_id, status)
+        .map(|item| EndedOutcome {
+            status: item.value["status"].as_str().unwrap_or("lost").to_owned(),
+            child: item.child_session_id,
+            ended_at: item.ended_at,
+            completed_at: item.completed_at,
         })
-        .collect())
+        .collect();
+    Ok(Outcomes { ended, cut })
 }
 
 /// `session/subagents` (Node `listSessionSubagents`): params validated like the zod schema,

@@ -27,12 +27,15 @@ pub(crate) struct Seed {
     pub workflow_children: Vec<String>,
     /// Every ended child on the session's active branch with its ended status (`success`, `failed`, ...).
     pub children: Vec<(String, String)>,
+    /// Children of the kernel's subagent table whose launch a rewind cut: the table cannot count them again.
+    pub cut: Vec<(String, u64)>,
 }
 
 #[derive(Debug, Default)]
 pub(crate) struct CompletedActivity {
     unknown: bool,
     children: HashMap<String, String>,
+    cut: HashMap<String, u64>,
     runs: HashMap<String, (String, i64)>,
     workflow_children: HashSet<String>,
 }
@@ -56,6 +59,7 @@ impl CompletedActivity {
         };
         self.unknown = false;
         self.children = seed.children.into_iter().collect();
+        self.cut = seed.cut.into_iter().collect::<HashMap<_, _>>();
         for (run_id, status, sequence) in seed.runs {
             self.run(&run_id, &status, sequence);
         }
@@ -65,6 +69,7 @@ impl CompletedActivity {
     /// A child's live outcome: `Some(status)` once it ended, `None` while it runs (again).
     pub(crate) fn child(&mut self, child_id: &str, status: Option<&str>) {
         match status {
+            Some(_) if self.cut.contains_key(child_id) => {}
             Some(status) => {
                 self.children.insert(child_id.to_owned(), status.to_owned());
             }
@@ -97,6 +102,14 @@ impl CompletedActivity {
     /// The kernel's subagent table: a running entry is no outcome (again), an ended one is its terminal status.
     pub(crate) fn table(&mut self, entries: &[SubagentEntry]) {
         for entry in entries {
+            // A cut child stays out for the execution the rewind cut; a newer execution is a resume.
+            if self
+                .cut
+                .get(entry.child.as_str())
+                .is_some_and(|cut_at| entry.execution > *cut_at)
+            {
+                self.cut.remove(entry.child.as_str());
+            }
             self.child(entry.child.as_str(), table_status(entry.status));
         }
     }
@@ -159,15 +172,29 @@ fn table_status(status: SubagentStatus) -> Option<&'static str> {
     }
 }
 
+/// What one full-history read gives: the success total's [`Seed`] and the facts the cold Activity boundary needs
+/// (specs/fork-rust-activity-summary.md, rule 5).
+#[derive(Debug, Default)]
+pub(crate) struct History {
+    pub(crate) seed: Seed,
+    /// Every ended standalone child of the active branch (a workflow actor session is left out).
+    pub(crate) ended: Vec<crate::fork::subagents::EndedOutcome>,
+    /// Every journaled run: `(runId, physical status, last event or update time in ms)`.
+    pub(crate) run_times: Vec<(String, String, i64)>,
+}
+
 /// The full-history read (rule 2 of the spec): the journal's Activity index and the store's ended children. `runs` is
-/// `None` when the host keeps no run service (no runs at all). `None` when any read failed: the count is then unknown.
+/// `None` when the host keeps no run service (no runs at all). `rewritten` is a read after a rewind: the kernel table
+/// entries of cut children are left out and listed in the seed's `cut`. `None` when any read failed: the count is then
+/// unknown.
 pub(crate) async fn read_seed(
     queries: &dyn StoreQueries,
     session: &SessionId,
     live: &[SubagentEntry],
     runs: Option<std::sync::Arc<dyn DynamicWorkflowRunPort>>,
     now_ms: u64,
-) -> Option<Seed> {
+    rewritten: bool,
+) -> Option<History> {
     let history = match runs {
         Some(port) => match port.activity_history().await {
             Ok(history) => history,
@@ -178,23 +205,50 @@ pub(crate) async fn read_seed(
         },
         None => rust_cli_kernel_api::workflow_run::ActivityHistory::default(),
     };
-    let children = match crate::fork::subagents::ended_outcomes(queries, session, live, now_ms)
-        .await
+    let outcomes = match crate::fork::subagents::ended_outcomes(
+        queries, session, live, now_ms, rewritten,
+    )
+    .await
     {
-        Ok(children) => children,
+        Ok(outcomes) => outcomes,
         Err(error) => {
             tracing::warn!(event = "protocol.activity_count.children_failed", session = %session.as_str(), error = %error, "the session's subagent outcomes were not read; the success total is unknown");
             return None;
         }
     };
-    Some(Seed {
-        runs: history
-            .runs
-            .into_iter()
-            .map(|run| (run.run_id, run.status, run.sequence))
-            .collect(),
-        workflow_children: history.child_session_ids,
-        children,
+    let workflow_children: HashSet<&str> = history
+        .child_session_ids
+        .iter()
+        .map(String::as_str)
+        .collect();
+    let ended = outcomes
+        .ended
+        .iter()
+        .filter(|item| !workflow_children.contains(item.child.as_str()))
+        .cloned()
+        .collect();
+    let run_times = history
+        .runs
+        .iter()
+        .map(|run| (run.run_id.clone(), run.status.clone(), run.updated_at))
+        .collect();
+    Some(History {
+        seed: Seed {
+            runs: history
+                .runs
+                .into_iter()
+                .map(|run| (run.run_id, run.status, run.sequence))
+                .collect(),
+            workflow_children: history.child_session_ids,
+            children: outcomes
+                .ended
+                .into_iter()
+                .map(|item| (item.child, item.status))
+                .collect(),
+            cut: outcomes.cut,
+        },
+        ended,
+        run_times,
     })
 }
 

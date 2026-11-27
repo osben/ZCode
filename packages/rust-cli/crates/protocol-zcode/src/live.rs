@@ -100,6 +100,14 @@ struct State {
     /// value last sent to the subscribers (the snapshot always carries the current one).
     completed_activity: crate::fork::completed_activity::CompletedActivity,
     completed_sent: Option<u64>,
+    /// Fork (specs/fork-rust-activity-summary.md, rule 5): the time of the stored history's last real input, which
+    /// the cold seed of `activitySummaryDismissed` needs; `None` for a session with no stored input.
+    stored_input_at: Option<u64>,
+    /// Fork (specs/fork-rust-activity-summary.md, rule 5): children the store reports ended. A cold open redraws a
+    /// finished background Agent as a running row from its stored `async_launched` display, and an empty kernel
+    /// table does not settle it, so rule 3 must not read that row as running. The table lifts an id when it lists
+    /// the child running.
+    settled_children: std::collections::HashSet<String>,
 }
 
 /// 锁里算好、锁外写出的东西：（订阅、区间、payload）与变了的会话列表行。
@@ -246,6 +254,8 @@ impl Live {
                 activity_summary: None,
                 completed_activity,
                 completed_sent,
+                stored_input_at: crate::projection::last_input_at(view),
+                settled_children: std::collections::HashSet::new(),
             }),
             context,
             topics,
@@ -857,6 +867,11 @@ impl Live {
                 state.child_runs.table(&entries)
             };
             state.completed_activity.table(&entries);
+            for entry in &entries {
+                if entry.status == rust_cli_kernel_api::panels::SubagentStatus::Running {
+                    state.settled_children.remove(entry.child.as_str());
+                }
+            }
             let deltas = state.projection.subagent_table(&entries, now);
             let spawned = if deltas.is_empty() {
                 Vec::new()
@@ -883,12 +898,15 @@ impl Live {
 
     /// Fork (specs/fork-rust-completed-activity-count.md, rule 2): read the full history and seed the success total.
     /// In the session's pump task, so no subagent table change or run delta lands between the read and the seed.
-    pub async fn seed_completed_activity(&self) {
+    ///
+    /// `rewritten` is the read after a rebuild: the table entries of children the rewind cut are left out. The same
+    /// read sets a cold session's Activity boundary when it has none (specs/fork-rust-activity-summary.md, rule 5).
+    pub async fn seed_completed_activity(&self, rewritten: bool) {
         let Some(queries) = self.activity_queries.lock_unpoisoned().clone() else {
             return;
         };
         let session = rust_cli_kernel_api::ids::SessionId::new(self.session.as_str());
-        let seed = match self.handle.subagents().await {
+        let history = match self.handle.subagents().await {
             Ok(entries) => {
                 let runs = self
                     .context
@@ -900,6 +918,7 @@ impl Live {
                     &entries,
                     runs,
                     self.context.now(),
+                    rewritten,
                 )
                 .await
             }
@@ -910,7 +929,23 @@ impl Live {
         };
         let outgoing = {
             let mut state = self.state();
+            let (seed, facts) = match history {
+                Some(history) => (Some(history.seed), Some((history.ended, history.run_times))),
+                None => (None, None),
+            };
             state.completed_activity.seed(seed);
+            if let Some((ended, _)) = &facts {
+                state.settled_children = ended.iter().map(|item| item.child.clone()).collect();
+            }
+            if state.activity_summary.is_none()
+                && let (Some(at), Some((ended, runs))) = (state.stored_input_at, facts)
+            {
+                let boundary = crate::fork::activity_summary::cold_dismissed(at, &ended, &runs);
+                state.log.record(vec![
+                    json!({"op": "state.updated", "patch": {"activitySummaryDismissed": &boundary}}),
+                ]);
+                state.activity_summary = Some(boundary);
+            }
             self.collect(&mut state)
         };
         self.write(outgoing).await;
@@ -1155,7 +1190,7 @@ impl Live {
         self.subagents_changed().await;
         self.shells_changed().await;
         // Fork: a rewind cuts children from the active branch; the success total is read again.
-        self.seed_completed_activity().await;
+        self.seed_completed_activity(true).await;
         self.rebuilds.send_modify(|count| *count += 1);
     }
 
@@ -1549,7 +1584,14 @@ fn release_running_activity(state: &mut State) {
         return;
     };
     let works = state.projection.background_works_value();
-    let subagents = state.projection.subagents_value();
+    let mut subagents = state.projection.subagents_value();
+    if let Some(running) = subagents.get_mut("running").and_then(Value::as_array_mut) {
+        running.retain(|child| {
+            !child["childSessionId"]
+                .as_str()
+                .is_some_and(|id| state.settled_children.contains(id))
+        });
+    }
     let runs = state
         .workflow_runs
         .as_ref()

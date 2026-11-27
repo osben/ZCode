@@ -231,13 +231,14 @@ pub struct BackgroundRunWork {
     pub ended_at_ms: Option<i64>,
 }
 
-/// Fork: one run of [`ActivityHistory`]: the journal's `dwf_run.status` and the run's last event sequence (`-1` when it
-/// has none).
+/// Fork: one run of [`ActivityHistory`]: the journal's `dwf_run.status`, the run's last event sequence (`-1` when it
+/// has none) and the time (ms) of its last event, or of its last update when it has no event.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ActivityRun {
     pub run_id: String,
     pub status: String,
     pub sequence: i64,
+    pub updated_at: i64,
 }
 
 /// Fork: Node `DynamicWorkflowActivityHistory`, the full Activity index of one session: every journaled run and every

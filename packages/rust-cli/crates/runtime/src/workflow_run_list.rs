@@ -860,6 +860,7 @@ impl WorkflowRunService {
                     run_id: run.run_id,
                     status: run.status,
                     sequence: run.sequence,
+                    updated_at: run.updated_at,
                 })
                 .collect(),
             child_session_ids: history.child_session_ids,

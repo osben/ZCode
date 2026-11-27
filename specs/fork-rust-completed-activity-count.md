@@ -37,7 +37,17 @@ up, and a resume of the same id takes it out of the count until it succeeds agai
      and its actors' sessions join the workflow-child set. A fact older than the known sequence is ignored, so a seed
      read before a newer live delta cannot undo it. A run that leaves the bounded preview keeps its last known outcome.
 4. Re-seed: every session rebuild (rewind, rewritten history) reads the full seed again. Child outcomes are replaced
-   by the seed (a child whose launch was cut is gone), runs merge by sequence, workflow children only grow.
+   by the seed, runs merge by sequence, workflow children only grow. A rebuild's seed leaves out the kernel table
+   entries that no tool part of the active branch links (children whose launch the rewind cut, even when they ended in
+   this process) and records each id with the entry's execution number as cut. A cut id is ignored by later table
+   changes, running or ended, until the table lists it with a newer execution (a resume of that child), which lifts
+   the cut. A cut child that is still running and finishes later does not count. The open's first seed has no cut ids: a child whose
+   link fact has not landed yet still counts. A rebuild that reads a child between its spawn and its link fact cuts it
+   by mistake until it runs again; the window is a few milliseconds. A nested child (its entry has an owner) stays
+   while its owner chain in the table reaches a launch the active branch links, because its own launch is stored in
+   its owner's session.
+   Known gap: a child resumed by `SendMessage` after its launch was cut is linked only by the resume, and the store's
+   subagent rows do not return `SendMessage` parts, so a later rewind that keeps the resume cuts it again.
 
 ## Delivery
 
@@ -63,16 +73,17 @@ run deltas ──────► pump: workflow_runs_changed ──► run outco
   revoking ids by removed message.
 - Node updates the count incrementally inside its projection transaction; zcode-rs derives it from the keyed maps on
   each change (a few hundred entries at most). There is no rejected-candidate rollback in zcode-rs.
-- Rewind: Node revokes the children whose launch rows the rewind removed. zcode-rs re-reads the store's active-branch
-  classification, which also takes the ids the kernel's live subagent table still holds. A child that ended in this
-  process and whose launch was cut can stay counted until the session is reopened. The count then matches the
-  `session/subagents` list the panel shows. Matching Node needs the kernel table to drop rewound children (open).
+- Rewind: Node revokes the children whose launch rows the rewind removed. zcode-rs does the same by comparing the
+  kernel's subagent table with the active branch (rule 4): an entry of the table that no tool part of the rewritten
+  branch links is cut and does not count, and the table does not bring it back until a newer execution of it appears.
 
 ## Acceptance
 
 - 9 completed runs, then failed and stopped ones: still 9.
 - 105 successful children, more than the 100-item preview: 105.
 - A resumed run or child leaves the count until it succeeds again.
+- A child that succeeded in this process and whose launch a rewind cut: not counted after the rewind, and a repeated
+  table read does not bring it back.
 - The same event replayed: no change.
 - A workflow actor session that succeeded is not counted on top of its run.
 - An unreadable journal or store: null, never a partial number.
@@ -81,5 +92,6 @@ run deltas ──────► pump: workflow_runs_changed ──► run outco
 
 Coverage: `packages/rust-cli/crates/protocol-zcode/src/fork/completed_activity_tests.rs` (count rules),
 `packages/rust-cli/crates/protocol-zcode/src/fork/subagents_tests.rs` (`ended_outcomes`),
+`packages/rust-cli/crates/protocol-zcode/src/server_activity_cold_tests.rs` (rewind),
 `packages/rust-cli/crates/node-store/src/repo/dwf/activity_history_tests.rs` (journal index),
 `packages/rust-cli/crates/runtime/src/workflow_run_store_tests.rs` (the port read), and the `Live` wiring tests.
