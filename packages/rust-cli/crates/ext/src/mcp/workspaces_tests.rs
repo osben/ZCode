@@ -190,3 +190,38 @@ async fn an_unpinned_group_shuts_down_when_replaced() {
     ));
     mcp.release(&other);
 }
+
+/// `process/childProcesses` reports a server of an official-marketplace plugin as built in (Node registers it with
+/// `source.kind: "builtin"`): any group's plugin id decides, a mixed answer and an unknown name do not qualify.
+#[tokio::test]
+async fn an_official_plugin_server_is_known_across_groups() {
+    let scope = TaskScope::root("test", |_| {});
+    let fake: Arc<FakeMcp> = Arc::new(FakeMcp::default());
+    let mcp = groups(&fake, &scope);
+    let official = rust_cli_base::names::OFFICIAL_MARKETPLACE;
+    let id = |plugin: &str, marketplace: &str| {
+        (
+            format!("plugin:{plugin}:k"),
+            format!("{plugin}@{marketplace}"),
+        )
+    };
+
+    mcp.start_with_plugins(PROCESS, workspace(), Vec::new(), vec![id("docs", official)]);
+    mcp.start_with_plugins(
+        "/work/a",
+        workspace(),
+        Vec::new(),
+        vec![id("local", "my-market"), id("shared", official)],
+    );
+    mcp.start_with_plugins(
+        "/work/b",
+        workspace(),
+        Vec::new(),
+        vec![id("shared", "my-market")],
+    );
+
+    assert!(mcp.official_plugin_server("plugin:docs:k"));
+    assert!(!mcp.official_plugin_server("plugin:local:k"));
+    assert!(!mcp.official_plugin_server("plugin:shared:k"));
+    assert!(!mcp.official_plugin_server("github"));
+}

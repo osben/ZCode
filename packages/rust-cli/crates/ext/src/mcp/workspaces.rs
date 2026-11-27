@@ -92,6 +92,19 @@ impl WorkspaceMcp {
         &self.process
     }
 
+    /// Fork (`process/childProcesses`): whether `server` is declared by an official-marketplace plugin. The process
+    /// group and every workspace group are asked, since the connection table is process-wide and keyed by name;
+    /// a name that two groups attribute to different marketplaces is not official (fail to the plain `plugin`).
+    pub(crate) fn official_plugin_server(&self, server: &str) -> bool {
+        let suffix = format!("@{}", rust_cli_base::names::OFFICIAL_MARKETPLACE);
+        let groups = self.groups.read_unpoisoned();
+        let mut ids = std::iter::once(&self.process)
+            .chain(groups.values())
+            .filter_map(|group| group.0.plugin_id_of(server))
+            .peekable();
+        ids.peek().is_some() && ids.all(|id| id.ends_with(&suffix))
+    }
+
     /// The group of `key`, if a loaded layer started one.
     pub(crate) fn group(&self, key: &str) -> Option<Arc<McpManager>> {
         if key == PROCESS {
