@@ -42,7 +42,11 @@ up, and a resume of the same id takes it out of the count until it succeeds agai
    this process) and records their ids as cut. A cut id is ignored by later table changes until the table shows it
    running again (a resume of that child), which lifts the cut. The open's first seed has no cut ids: a child whose
    link fact has not landed yet still counts. A rebuild that reads a child between its spawn and its link fact cuts it
-   by mistake until it runs again; the window is a few milliseconds.
+   by mistake until it runs again; the window is a few milliseconds. A nested child (its entry has an owner) stays
+   while its owner chain in the table reaches a launch the active branch links, because its own launch is stored in
+   its owner's session.
+   Known gap: a child resumed by `SendMessage` after its launch was cut is linked only by the resume, and the store's
+   subagent rows do not return `SendMessage` parts, so a later rewind that keeps the resume cuts it again.
 
 ## Delivery
 

@@ -750,15 +750,42 @@ pub(crate) async fn ended_outcomes(
     let mut cut = Vec::new();
     if rewritten {
         let linked: Vec<Candidate> = collect_candidates(&rows.parts);
-        kept.retain(|entry| {
-            let is_linked = linked.iter().any(|candidate| {
+        // A nested child's launch is stored in its owner's session, not in the root's parts: it stays while its
+        // owner chain ends in a launch the active branch links.
+        let linked_entry = |entry: &SubagentEntry| {
+            linked.iter().any(|candidate| {
                 candidate.child_session_id == entry.child.as_str()
                     || candidate.agent_id == entry.agent.as_str()
-            });
-            if !is_linked {
+            })
+        };
+        let by_agent: HashMap<&str, &SubagentEntry> = live
+            .iter()
+            .map(|entry| (entry.agent.as_str(), entry))
+            .collect();
+        let keeps = |entry: &SubagentEntry| {
+            let mut current = entry;
+            // The table is a tree; the step bound only guards a corrupt cycle.
+            for _ in 0..=live.len() {
+                if linked_entry(current) {
+                    return true;
+                }
+                match current
+                    .owner
+                    .as_ref()
+                    .and_then(|owner| by_agent.get(owner.as_str()))
+                {
+                    Some(owner) => current = owner,
+                    None => return false,
+                }
+            }
+            false
+        };
+        kept.retain(|entry| {
+            let keep = keeps(entry);
+            if !keep {
                 cut.push(entry.child.as_str().to_owned());
             }
-            is_linked
+            keep
         });
     }
     let children = children_of(queries, &rows, &kept).await?;

@@ -837,6 +837,67 @@ async fn ended_outcomes_classify_every_child_with_no_page_limit() {
 }
 
 #[tokio::test]
+async fn a_nested_child_of_a_retained_launch_is_not_cut() {
+    // The grandchild's launch is stored in the child's session, not in the root's parts: it follows its owner.
+    let queries = HistoryQueries {
+        saved: true,
+        parts: json!([agent_part("c_kept", "completed")]),
+        children: json!([
+            child_row("c_kept"),
+            child_row("c_nested"),
+            child_row("c_orphan")
+        ]),
+    };
+    let mut kept = entry(
+        SubagentStatus::Completed,
+        "c_kept",
+        false,
+        false,
+        10,
+        Some(3),
+    );
+    kept.agent = AgentId::new("agent_c_kept");
+    let mut nested = entry(
+        SubagentStatus::Completed,
+        "c_nested",
+        false,
+        false,
+        10,
+        Some(3),
+    );
+    nested.agent = AgentId::new("agent_c_nested");
+    nested.owner = Some(AgentId::new("agent_c_kept"));
+    // Its owner is a root launch the rewind cut: it goes with it.
+    let mut orphan = entry(
+        SubagentStatus::Completed,
+        "c_orphan",
+        false,
+        false,
+        10,
+        Some(3),
+    );
+    orphan.agent = AgentId::new("agent_c_orphan");
+    orphan.owner = Some(AgentId::new("agent_c_gone"));
+    let outcomes = ended_outcomes(
+        &queries,
+        &SessionId::new("ses_p"),
+        &[kept, nested, orphan],
+        10_000,
+        true,
+    )
+    .await
+    .expect("readable");
+    let mut ids: Vec<&str> = outcomes
+        .ended
+        .iter()
+        .map(|item| item.child.as_str())
+        .collect();
+    ids.sort_unstable();
+    assert_eq!(ids, ["c_kept", "c_nested"]);
+    assert_eq!(outcomes.cut, ["c_orphan"]);
+}
+
+#[tokio::test]
 async fn a_rewritten_history_cuts_the_table_entries_no_part_links() {
     let queries = HistoryQueries {
         saved: true,

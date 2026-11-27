@@ -41,7 +41,8 @@ the field, so on Rust the Activity capsule kept showing a finished batch (for ex
      `at`. A background Agent's tool part ends at its launch acknowledgement, so the child's last completion wins
      over the part's end when both exist;
    - `workflowRunIds`: the journaled runs whose physical status is neither `running` nor `pending` and whose last
-     event (or last update, when it has no event) is not after `at`;
+     event or last row update (later of the two; a settlement written by startup reconciliation appends no event) is
+     not after `at`;
    - `workIds`: always empty. Background commands are in-process facts and nothing persists them.
      A live boundary (rule 2) is never replaced by the seed. A failed seed sets nothing and the next seed retries.
      Rule 3 runs on the seeded value like on any other.

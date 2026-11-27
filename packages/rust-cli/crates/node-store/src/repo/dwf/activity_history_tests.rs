@@ -132,3 +132,16 @@ fn history_carries_the_time_of_each_runs_last_event_or_its_last_update() {
         "no event: the run row's update time"
     );
 }
+
+#[test]
+fn history_time_includes_a_settlement_written_without_an_event() {
+    // Startup reconciliation interrupts a run through the row, with no journal event.
+    let conn = database();
+    add_session(&conn, "ses_p");
+    create_run(&conn, &run("run_cut", "ses_p", RunStatus::Running), 10).unwrap();
+    append_event(&conn, "run_cut", &json!({"type": "run-started"}), 11).unwrap();
+    interrupt_unsettled_run(&conn, "run_cut", &Settlement::default(), 40).unwrap();
+
+    let history = activity_history(&conn, "ses_p").unwrap();
+    assert_eq!(history.runs[0].updated_at, 40);
+}

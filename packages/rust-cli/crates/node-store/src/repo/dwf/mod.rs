@@ -323,7 +323,8 @@ pub fn list_runs_by_parent_session(
 }
 
 /// Fork: one run of [`ActivityHistory`]: its id, the physical `dwf_run.status`, its last event sequence (`-1` when
-/// it has none) and the time (ms) of its last event, or of its last update when it has no event.
+/// it has none) and the time (ms) of its last event or last row update, whichever is later (a settlement written by
+/// startup reconciliation appends no event).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ActivityRun {
     pub run_id: String,
@@ -346,7 +347,7 @@ pub fn activity_history(conn: &Connection, parent_session_id: &str) -> Result<Ac
     let mut runs = conn.prepare(
         "select r.id, r.status,
            coalesce((select max(e.sequence) from dwf_event e where e.run_id = r.id), -1),
-           coalesce((select max(e.time_created) from dwf_event e where e.run_id = r.id), r.time_updated)
+           max(coalesce((select max(e.time_created) from dwf_event e where e.run_id = r.id), 0), r.time_updated)
          from dwf_run r where r.parent_session_id = ?1",
     )?;
     let runs = runs
