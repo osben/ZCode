@@ -526,6 +526,24 @@ pub struct Admission {
     pub title: Option<String>,
 }
 
+/// Fork: one message of an imported session (`session/create` `importedHistory.messages`, source `claudeCode`).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ImportedMessage {
+    /// `true` for an assistant message, `false` for a user one (the only two roles the protocol admits).
+    pub assistant: bool,
+    pub content: String,
+    pub timestamp: Option<u64>,
+}
+
+/// Fork: the history a `session/create` with `importedHistory` stores (specs/fork-rust-imported-history.md).
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct ImportedHistory {
+    pub title: Option<String>,
+    pub created_at: Option<u64>,
+    pub updated_at: Option<u64>,
+    pub messages: Vec<ImportedMessage>,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum StoreError {
@@ -1162,6 +1180,19 @@ pub trait StoreQueries: Send + Sync {
         _input: &str,
     ) -> Result<Admission, StoreError> {
         Ok(Admission::default())
+    }
+
+    /// Fork: Node `persistImportedSessionHistory` for the `claudeCode` source: persists the session (a draft gets its
+    /// row), sets its title (`custom`) and times, and writes the history as message and part rows. The caller opens
+    /// the session again afterwards, so the history is loaded. Stores without it answer `Unsupported`.
+    async fn import_history(
+        &self,
+        _session: &SessionId,
+        _history: &ImportedHistory,
+    ) -> Result<(), StoreError> {
+        Err(StoreError::Unsupported {
+            what: "imported history".to_owned(),
+        })
     }
 
     /// Fork: the workspace key the session's row is listed under (Node `workspaceID ?? directory`, the

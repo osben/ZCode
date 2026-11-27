@@ -304,7 +304,7 @@ pub(crate) fn persist_for_input(
 /// input, the row is created now as "New session" (`titleSource: "default"`, which the first
 /// input's title replaces), and the buffered config is written now too, as Node backfills the
 /// session selection at its first persistence.
-fn materialize<T>(
+pub(crate) fn materialize<T>(
     conn: &mut Connection,
     drafts: &mut Drafts,
     session: &SessionId,
