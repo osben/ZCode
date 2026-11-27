@@ -97,7 +97,7 @@ pub struct OffPeakRuns {
     /// Admitted off-peak inputs whose turn has not started, by command id. A run is opened when its turn starts (Node
     /// `prepareOffPeakTurn`), so a refused or dropped input never leaves a run behind.
     pending: Mutex<HashMap<String, PendingRun>>,
-    /// The workspace policy (`workspace/updateOffPeakToolPolicy`): the default of a session without its own flag.
+    /// The workspace policy (`workspace/updateOffPeakToolPolicy`): the default of a session without a `true` flag.
     policy: AtomicBool,
     /// `offPeakToolEnabled` of the sessions created or resumed with one (Node records it on the session at create).
     session_flags: Mutex<HashMap<String, bool>>,
@@ -426,15 +426,17 @@ impl OffPeakRuns {
             .map(|run| run.session.clone())
     }
 
-    /// Whether the off-peak tools are offered to `session`: its own flag when it was created or resumed with one, the
-    /// workspace policy otherwise.
+    /// Whether the off-peak tools are offered to `session`: Node gives the runtime its off-peak port when the create or
+    /// resume flag is `true` or the workspace policy is on, so a recorded `false` never beats a policy that is on.
     pub fn tools_enabled(&self, session: &str) -> bool {
-        self.session_flags
+        let flagged = self
+            .session_flags
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
             .get(session)
             .copied()
-            .unwrap_or_else(|| self.policy.load(Ordering::SeqCst))
+            .unwrap_or(false);
+        flagged || self.policy.load(Ordering::SeqCst)
     }
 
     pub fn set_session_enabled(&self, session: &str, enabled: bool) {

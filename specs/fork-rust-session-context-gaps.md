@@ -60,9 +60,9 @@ sequenceDiagram
 Tests: `off_peak_tools_tests.rs` `the_tools_are_offered_per_session` (including a policy flip after the first lookup),
 `an_incognito_profile_still_hides_the_tools`; `commands_tests.rs` `a_v4_create_records_the_sessions_off_peak_flag`.
 
-Known difference: `OffPeakRuns::tools_enabled` lets a recorded `false` (legacy `session/create` params) win over a
-policy that is on, while Node enables the port when either is true. That method is in `off_peak_control.rs`, owned by
-another track.
+`OffPeakRuns::tools_enabled` follows Node: the port is enabled when the recorded session flag is `true` or the workspace
+policy is on, so a recorded `false` never beats a policy that is on. Test: `off_peak_control_tests.rs`
+`the_tools_follow_the_session_flag_and_fall_back_to_the_policy`.
 
 Not ported in this round, with the reason:
 

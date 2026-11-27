@@ -351,8 +351,9 @@ request selection (`main_request`). `submitted_execution` persists no selection 
 model, and the next ordinary turn's, is the user's own. Test: `an_off_peak_input_does_not_persist_its_model`.
 
 Policy flip (last): `workspace/updateOffPeakToolPolicy` stores the policy and answers `enabled` as stored (Node
-`appRuntimePreferences.offPeakToolEnabled`). The off-peak tools follow it for sessions without their own
-`offPeakToolEnabled` flag (`OffPeakRuns::tools_enabled`); the port refuses a session whose tools are off.
+`appRuntimePreferences.offPeakToolEnabled`). A session has the off-peak tools when its
+`offPeakToolEnabled` flag is `true` or the policy is on (`OffPeakRuns::tools_enabled`; a recorded `false` never beats a
+policy that is on, as in Node); the port refuses a session whose tools are off.
 
 Registration per session: the off-peak tools are not in the base registry. `OffPeakTools` (a registry layer between the
 extensions and the deny filter, like `LspTools`) adds OffPeakCreate and OffPeakList to a session's snapshot, and resolves
