@@ -15,6 +15,7 @@ use crate::driver_rules::NUDGE_PROMPT;
 use crate::engine::SubmitVerdict;
 use crate::model::Ref;
 use crate::model_failure::TurnFailure;
+use crate::parked_answers::ParkedAnswers;
 use anyhow::{Result, anyhow};
 use std::any::Any;
 use std::collections::{HashMap, HashSet};
@@ -124,7 +125,15 @@ struct TurnLedger {
 }
 
 /// Runs the runtime close of `session`. A refused close leaves the session's request, so a later request tries again.
-fn run_close(ledger: &Mutex<TurnLedger>, closer: &dyn SessionCloser, session: &str) -> Result<()> {
+/// A close that went through drops the answers still parked for the session: its turns have landed, so nothing will
+/// take them. Node has no such step (its turn deferreds die with the session's driver state); the store here outlives
+/// the turn threads, so the close is where a leftover slot is released.
+fn run_close(
+    ledger: &Mutex<TurnLedger>,
+    closer: &dyn SessionCloser,
+    parked: &ParkedAnswers,
+    session: &str,
+) -> Result<()> {
     let result = closer.close(session);
     if result.is_err() {
         ledger
@@ -132,6 +141,8 @@ fn run_close(ledger: &Mutex<TurnLedger>, closer: &dyn SessionCloser, session: &s
             .unwrap_or_else(PoisonError::into_inner)
             .requested
             .remove(session);
+    } else {
+        parked.discard_session(session);
     }
     result
 }
@@ -141,6 +152,7 @@ fn run_close(ledger: &Mutex<TurnLedger>, closer: &dyn SessionCloser, session: &s
 struct TurnGuard {
     ledger: Arc<Mutex<TurnLedger>>,
     closer: Arc<dyn SessionCloser>,
+    parked: Arc<ParkedAnswers>,
     session: String,
 }
 
@@ -160,7 +172,14 @@ impl Drop for TurnGuard {
             }
             finished && ledger.closing.remove(&self.session)
         };
-        if close && let Err(error) = run_close(&self.ledger, self.closer.as_ref(), &self.session) {
+        if close
+            && let Err(error) = run_close(
+                &self.ledger,
+                self.closer.as_ref(),
+                &self.parked,
+                &self.session,
+            )
+        {
             let message = format!("{error:#}");
             tracing::warn!(session = %self.session, error = %message, "an actor's session did not close after its turn");
             self.ledger
@@ -226,6 +245,7 @@ impl ActorTurns for MailboxTurns {
         let turn = TurnGuard {
             ledger: self.ledger.clone(),
             closer: self.closer.clone(),
+            parked: self.handle.parked(),
             session: session.clone(),
         };
         thread::Builder::new()
@@ -288,7 +308,12 @@ impl ActorTurns for MailboxTurns {
             }
         };
         if idle {
-            run_close(&self.ledger, self.closer.as_ref(), session)
+            run_close(
+                &self.ledger,
+                self.closer.as_ref(),
+                &self.handle.parked(),
+                session,
+            )
         } else {
             Ok(())
         }
