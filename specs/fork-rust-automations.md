@@ -354,12 +354,18 @@ Policy flip (last): `workspace/updateOffPeakToolPolicy` stores the policy and an
 `appRuntimePreferences.offPeakToolEnabled`). The off-peak tools follow it for sessions without their own
 `offPeakToolEnabled` flag (`OffPeakRuns::tools_enabled`); the port refuses a session whose tools are off.
 
-Registration per session: the off-peak tools are not in the base registry. `OffPeakTools` (a registry layer under the deny
-filter, like `LspTools`) adds OffPeakCreate and OffPeakList to a session's snapshot, and resolves them in `find_for`, only
-while `OffPeakPort::tools_enabled(session)` is true (the session's own flag, else the workspace policy, as above). Node
-injects `offPeakPort` into a session's runtime only then, so the model of a session with the tools off never sees them.
-A flip of the policy shows in the next step's snapshot. Lookups without a session (`tools`, `find`) never see the tools.
-Test: `off_peak_tools_tests.rs` `the_tools_are_offered_per_session`. Details: `specs/fork-rust-session-context-gaps.md`.
+Registration per session: the off-peak tools are not in the base registry. `OffPeakTools` (a registry layer between the
+extensions and the deny filter, like `LspTools`) adds OffPeakCreate and OffPeakList to a session's snapshot, and resolves
+them in `find_for`, only when `OffPeakPort::tools_enabled(session)` is true and the session's incognito profile keeps
+the automation tools (`IncognitoToolGate::hides`, so `automationTools: false` still removes them). Node creates a
+session's runtime with `offPeakPort` when the create or resume params carry `offPeakToolEnabled: true` or the workspace
+policy is on at that moment, and never changes it afterwards. The layer therefore asks the port once, on the session's
+first lookup, and keeps the answer: a later policy flip changes only sessions that ask afterwards. A v4 `createSession`
+(also a prepared activation) records `offPeakToolEnabled: true` before the session opens (`commands.rs`
+`record_off_peak_flag`); Node forwards only `true` there, so a `false` leaves the session on the policy. Lookups without
+a session (`tools`, `find`) never see the tools. Tests: `off_peak_tools_tests.rs` `the_tools_are_offered_per_session`,
+`an_incognito_profile_still_hides_the_tools`; `commands_tests.rs` `a_v4_create_records_the_sessions_off_peak_flag`.
+Details: `specs/fork-rust-session-context-gaps.md`.
 
 What is blocked: an off-peak run's model requests must carry the ticket (`x-off-peak-ticket-id`, request auth from
 `modelExecution.requestAuth`), wait for a ticket when none is held, retry on the ticket-expired code

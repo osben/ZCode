@@ -5,11 +5,13 @@
 //! provider contracts (name, description, input schema) are generated from Node's TypeScript
 //! (`scripts/fork-rust-agent/off-peak-tools.mts`).
 
-use std::sync::{Arc, OnceLock};
+use std::collections::HashMap;
+use std::sync::{Arc, Mutex, OnceLock};
 use std::time::Duration;
 
 use async_trait::async_trait;
 use rust_cli_kernel_api::ids::SessionId;
+use rust_cli_kernel_api::incognito::IncognitoToolGate;
 use rust_cli_kernel_api::mcp_state::McpConnections;
 use rust_cli_kernel_api::off_peak::{self as port, OffPeakError, OffPeakPort};
 use rust_cli_kernel_api::orchestration::{ToolRegistry, ToolSnapshot};
@@ -423,20 +425,30 @@ impl Tool for OffPeakTool {
 }
 
 /// The registry layer that owns the off-peak tools' visibility (specs/fork-rust-session-context-gaps.md, item 4): a
-/// session's snapshot has them, and `find_for` resolves them, only while the port offers them to that session, like
-/// Node's per-session `offPeakPort`. Lookups without a session never see them.
+/// session's snapshot has them, and `find_for` resolves them, only when the port offers them to that session and its
+/// incognito profile keeps the automation tools. Node injects `offPeakPort` once, when the session's runtime is
+/// created, so the port's answer is read on the session's first lookup and kept. Lookups without a session never see
+/// the tools.
 pub struct OffPeakTools {
     inner: Arc<dyn ToolRegistry>,
     tools: Vec<Arc<dyn Tool>>,
     port: Arc<dyn OffPeakPort>,
+    incognito: Arc<dyn IncognitoToolGate>,
+    decided: Mutex<HashMap<SessionId, bool>>,
 }
 
 impl OffPeakTools {
-    pub fn new(inner: Arc<dyn ToolRegistry>, port: Arc<dyn OffPeakPort>) -> Self {
+    pub fn new(
+        inner: Arc<dyn ToolRegistry>,
+        port: Arc<dyn OffPeakPort>,
+        incognito: Arc<dyn IncognitoToolGate>,
+    ) -> Self {
         Self {
             inner,
             tools: off_peak_tools(port.clone()),
             port,
+            incognito,
+            decided: Mutex::default(),
         }
     }
 
@@ -444,6 +456,20 @@ impl OffPeakTools {
         self.tools
             .iter()
             .find(|tool| answers_to(tool.as_ref(), name))
+    }
+
+    /// The port's answer for `session`, asked once.
+    fn enabled(&self, session: &SessionId) -> bool {
+        *self
+            .decided
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .entry(session.clone())
+            .or_insert_with(|| self.port.tools_enabled(session))
+    }
+
+    fn offered(&self, session: &SessionId, tool: &dyn Tool) -> bool {
+        self.enabled(session) && !self.incognito.hides(session, tool)
     }
 }
 
@@ -458,7 +484,7 @@ impl ToolRegistry for OffPeakTools {
 
     fn find_for(&self, session: &SessionId, name: &str) -> Option<Arc<dyn Tool>> {
         if let Some(tool) = self.named(name) {
-            return self.port.tools_enabled(session).then(|| tool.clone());
+            return self.offered(session, tool.as_ref()).then(|| tool.clone());
         }
         self.inner.find_for(session, name)
     }
@@ -481,9 +507,12 @@ impl ToolRegistry for OffPeakTools {
 
     fn snapshot(&self, session: &SessionId) -> ToolSnapshot {
         let mut snapshot = self.inner.snapshot(session);
-        if self.port.tools_enabled(session) {
-            snapshot.tools.extend(self.tools.iter().cloned());
-        }
+        snapshot.tools.extend(
+            self.tools
+                .iter()
+                .filter(|tool| self.offered(session, tool.as_ref()))
+                .cloned(),
+        );
         snapshot
     }
 

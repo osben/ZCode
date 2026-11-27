@@ -13,7 +13,7 @@ stays in the text (a user's own example is not deleted). The regex is lazy and a
 `/\n\n<untrusted_gen_ui_state>\n([^]*?)\n<\/untrusted_gen_ui_state>\s*$/u`.
 
 Rust owner: `kernel-api/src/gen_ui_context.rs` `strip_legacy_tail` (the leftmost opening whose body fits before the
-closing at the end; trailing white space is the JS `\s` set; the schema is the strict `{path, state}` entries, at most
+closing at the end; escaped lone surrogates are accepted as in `JSON.parse`; trailing white space is the JS `\s` set; the schema is the strict `{path, state}` entries, both keys required (zod 4 refuses a missing `state`), at most
 100, then the path and size rules of `validate`). `protocol-zcode/src/projection/rows.rs` applies it to the text of a
 stored human user message when its intent has no `genUiContext`, so a cold or live row shows the typed text.
 
@@ -27,8 +27,42 @@ JSON, schema failures, two openings, no tail); `projection_tests.rs` `a_user_row
 
 See `specs/fork-rust-automations.md` ("Registration per session"). The tools are no longer in the base registry; the
 `OffPeakTools` layer (`tools/src/off_peak_tools.rs`, built in `runtime/src/assemble.rs` `query_parts`) offers them to a
-session only while `OffPeakPort::tools_enabled(session)` holds. Test: `off_peak_tools_tests.rs`
-`the_tools_are_offered_per_session`.
+session when the port enables them for it and its incognito profile keeps the automation tools. The port's answer is
+read once per session, on its first lookup, like Node's `offPeakPort` that is fixed when the runtime is created.
+
+Owners and event order:
+
+- The session flag and the workspace policy are owned by `OffPeakRuns` (`off_peak_control.rs`, another track). The
+  flag is written by the create path (v4 `createSession` and legacy `session/create` / `session/resume`); the policy
+  by `workspace/updateOffPeakToolPolicy`.
+- `OffPeakTools` owns the per-session decision. It reads the port once and never writes the flag.
+- The incognito profile is read on every lookup (it is fixed for the session too).
+
+```mermaid
+sequenceDiagram
+    participant H as Host
+    participant C as create path (commands.rs)
+    participant R as OffPeakRuns (flag, policy)
+    participant L as OffPeakTools layer
+    participant Q as query loop
+    H->>R: updateOffPeakToolPolicy(enabled)
+    H->>C: createSession {offPeakToolEnabled: true}
+    C->>R: set_session_enabled(session, true)
+    C-->>H: session opens
+    Q->>L: snapshot(session) (first lookup)
+    L->>R: tools_enabled(session) (asked once, kept)
+    L-->>Q: tools if enabled and not hidden by incognito
+    H->>R: updateOffPeakToolPolicy(false)
+    Q->>L: find_for(session, OffPeakCreate)
+    L-->>Q: the kept answer, same as the snapshot
+```
+
+Tests: `off_peak_tools_tests.rs` `the_tools_are_offered_per_session` (including a policy flip after the first lookup),
+`an_incognito_profile_still_hides_the_tools`; `commands_tests.rs` `a_v4_create_records_the_sessions_off_peak_flag`.
+
+Known difference: `OffPeakRuns::tools_enabled` lets a recorded `false` (legacy `session/create` params) win over a
+policy that is on, while Node enables the port when either is true. That method is in `off_peak_control.rs`, owned by
+another track.
 
 Not ported in this round, with the reason:
 

@@ -39,6 +39,8 @@ fn an_entry_that_fails_the_schema_stays() {
         "[{\"path\":\"relative.html\",\"state\":1}]",
         "[{\"path\":\"/a/b.html\",\"state\":1,\"extra\":2}]",
         "[{\"state\":1}]",
+        // Node's schema (zod 4) requires the `state` key, `null` included.
+        "[{\"path\":\"/a/b.html\"}]",
     ] {
         let text = format!("x\n\n<untrusted_gen_ui_state>\n{body}\n</untrusted_gen_ui_state>");
         assert_eq!(strip_legacy_tail(&text), None, "{body}");
@@ -50,6 +52,29 @@ fn the_leftmost_opening_is_the_one_cut() {
     // The lazy regex starts at the first opening; its body then holds the second opening and is not JSON.
     let text = format!("a{TAIL}b{TAIL}");
     assert_eq!(strip_legacy_tail(&text), None);
+}
+
+#[test]
+fn a_null_state_is_a_present_state() {
+    let text = "x\n\n<untrusted_gen_ui_state>\n[{\"path\":\"/a/b.html\",\"state\":null}]\n</untrusted_gen_ui_state>";
+    assert_eq!(strip_legacy_tail(text), Some("x"));
+}
+
+/// JS `JSON.parse` accepts an escaped lone surrogate; serde_json does not.
+#[test]
+fn an_escaped_lone_surrogate_does_not_keep_the_tail() {
+    for state in [
+        r#""\ud800""#,
+        r#""\udc00""#,
+        r#""a\ud800A""#,
+        r#""😀""#,
+        r#""\\ud800""#,
+    ] {
+        let text = format!(
+            "x\n\n<untrusted_gen_ui_state>\n[{{\"path\":\"/a/b.html\",\"state\":{state}}}]\n</untrusted_gen_ui_state>"
+        );
+        assert_eq!(strip_legacy_tail(&text), Some("x"), "{state}");
+    }
 }
 
 #[test]
