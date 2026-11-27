@@ -17,6 +17,7 @@ use rust_cli_kernel_api::ids::MessageId;
 use rust_cli_kernel_api::message::{
     ContentBlock, Message, SystemMessage, ToolResultContent, UserOrigin,
 };
+use rust_cli_kernel_api::metering::ContextBreakdownItem;
 use rust_cli_kernel_api::model::{ApiMessage, ApiRole, SystemBlock, ToolDefinition, ToolFlags};
 use serde_json::{Map, Value, json};
 use std::collections::{BTreeMap, HashMap};
@@ -481,8 +482,17 @@ fn insert_if_set(object: &mut Map<String, Value>, key: &str, value: Option<Value
     }
 }
 
+/// Node `parseMcpToolName`: `mcp__<server>__<tool>` with a non-empty server and tool part.
+fn is_mcp_tool(name: &str) -> bool {
+    let Some(rest) = name.strip_prefix(MCP_PREFIX) else {
+        return false;
+    };
+    let mut parts = rest.split("__");
+    parts.next().is_some_and(|server| !server.is_empty()) && parts.next().is_some()
+}
+
 fn tool_category(name: &str) -> CategoryId {
-    if name.starts_with(MCP_PREFIX) {
+    if is_mcp_tool(name) {
         CategoryId::McpToolSchemas
     } else if name.starts_with(APP_PREFIX) {
         CategoryId::AppToolSchemas
@@ -495,6 +505,19 @@ fn tool_category(name: &str) -> CategoryId {
 pub fn usage_sources(breakdown: &Breakdown) -> Vec<(UsageSource, u64, u64)> {
     let mut totals = [(0u64, 0u64); 7];
     for category in &breakdown.categories {
+        if category.id == CategoryId::DeferredToolSchemas {
+            // Fork: Node projects a deferred tool by its own origin (`toolOrigin`), so an MCP tool is not counted as built-in.
+            for item in &category.items {
+                let source = if is_mcp_tool(&item.name) {
+                    UsageSource::McpToolSchemas
+                } else {
+                    UsageSource::SystemToolSchemas
+                };
+                totals[source as usize].0 += item.chars;
+                totals[source as usize].1 += item.tokens;
+            }
+            continue;
+        }
         let index = category.id.usage_source() as usize;
         totals[index].0 += category.chars;
         totals[index].1 += category.tokens;
@@ -504,6 +527,19 @@ pub fn usage_sources(breakdown: &Breakdown) -> Vec<(UsageSource, u64, u64)> {
         .zip(totals)
         .filter(|(_, (_, tokens))| *tokens > 0)
         .map(|(source, (chars, tokens))| (source, chars, tokens))
+        .collect()
+}
+
+/// Fork (specs/fork-rust-context-breakdown.md): Node `buildContextUsageBreakdownFromSnapshot` over the coarse sources:
+/// each non-zero source with chars above 0, in ring order.
+pub fn usage_breakdown(breakdown: &Breakdown) -> Vec<ContextBreakdownItem> {
+    usage_sources(breakdown)
+        .into_iter()
+        .filter(|(_, chars, _)| *chars > 0)
+        .map(|(source, chars, _)| ContextBreakdownItem {
+            source: source.as_str().to_owned(),
+            chars,
+        })
         .collect()
 }
 
@@ -643,6 +679,10 @@ pub fn record(
 #[cfg(test)]
 #[path = "composition_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "composition_breakdown_tests.rs"]
+mod breakdown_tests;
 
 #[cfg(test)]
 #[path = "composition_projection_tests.rs"]
