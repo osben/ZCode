@@ -387,6 +387,7 @@ impl Start {
             resent: false,
             renewed: false,
             renewals: 0,
+            endpoint_fresh: true,
             notified: false,
             limits,
             cancel,
@@ -465,6 +466,10 @@ pub(crate) struct Connect {
     /// Fork (slice 3 layer B): the ticket renewals this request has made. A renewal is a send that spends no retry
     /// budget, so the send ordinal of the model-io trace is `attempt + renewals`, which stays unique per send.
     renewals: u32,
+    /// Fork: the endpoint was resolved right before this send (the first send, or a renewal that named the rejected
+    /// credential). Every other send of a ticket resolves it again at the send boundary, after the backoff and admission
+    /// waits and on every resend path (retry, watchdog, G), as Node refreshes before each HTTP attempt.
+    endpoint_fresh: bool,
     /// 发过 `Retrying` 通知、还没有产出 `Resumed`。
     notified: bool,
     /// 这个端点上的看门狗上限。
@@ -502,6 +507,32 @@ impl Connect {
             {
                 Ok(ticket) => self.admission = Some(ticket),
                 Err(error) => return Outcome::Failed(error),
+            }
+        }
+        // Fork: a send on a ticket that was not just resolved asks for the ticket's credentials again (see `endpoint_fresh`).
+        if !std::mem::replace(&mut self.endpoint_fresh, false)
+            && let Some(source) = self.ticket.as_ref()
+        {
+            let fresh = self.route.endpoints.endpoint(EndpointQuery {
+                selection: &self.selection,
+                rejected: None,
+                output_limit: self.output_limit,
+                session: self.session.as_ref(),
+                ticket: Some(source),
+            });
+            match self.cancel.run_until_cancelled(fresh).await {
+                None => {
+                    self.settle_attempt(AttemptSignal::Ended);
+                    return Outcome::Failed(ModelError::Cancelled);
+                }
+                Some(Err(error)) => {
+                    self.settle_attempt(AttemptSignal::of_error(&error));
+                    return Outcome::Failed(error);
+                }
+                Some(Ok(endpoint)) => {
+                    self.endpoint.credential = endpoint.credential;
+                    self.endpoint.headers = endpoint.headers;
+                }
             }
         }
         // 每次发送都按当前端点合并各层的头：凭据续期之后换新，`x-request-id` 每次换新（F64）。
