@@ -212,6 +212,14 @@ pub trait McpProcesses: Send + Sync {
     fn processes(&self) -> Vec<McpProcess>;
 }
 
+/// Fork: where an MCP server came from, for `process/childProcesses` (Node registers a server of an
+/// official-marketplace plugin with `source.kind: "builtin"`).
+pub trait McpProvenance: Send + Sync {
+    /// Whether every plugin that declares `server` in a running MCP group is from the official marketplace. A
+    /// server no group knows a plugin for is not.
+    fn official_plugin_server(&self, server: &str) -> bool;
+}
+
 /// 没有 MCP 传输时的空实现：连接一律失败。
 pub struct NoMcpTransport;
 

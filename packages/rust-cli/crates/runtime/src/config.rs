@@ -74,6 +74,11 @@ impl LocalKernel {
         self.ext.mcp_app_host()
     }
 
+    /// Fork (`process/childProcesses`): where the extension layer's MCP servers came from.
+    pub fn mcp_provenance(&self) -> std::sync::Arc<dyn rust_cli_kernel_api::mcp::McpProvenance> {
+        self.ext.mcp_provenance()
+    }
+
     /// Fork: the layer host, for the App's admin (its trust paths reload a workspace's layer).
     pub fn workspace_layer_host(
         &self,

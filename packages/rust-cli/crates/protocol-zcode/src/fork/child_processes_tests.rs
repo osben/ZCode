@@ -5,7 +5,7 @@ use std::sync::Arc;
 use async_trait::async_trait;
 use rust_cli_base::TaskScope;
 use rust_cli_kernel_api::ids::{EnvironmentId, SessionId};
-use rust_cli_kernel_api::mcp::{McpProcess, McpProcesses};
+use rust_cli_kernel_api::mcp::{McpProcess, McpProcesses, McpProvenance};
 use rust_cli_kernel_api::permission::PermissionMode;
 use rust_cli_kernel_api::session_api::{CreateSession, Kernel, KernelError, SessionHandle};
 use rust_cli_kernel_api::store::{SessionFilter, SessionSummary, StoreQueries};
@@ -56,6 +56,15 @@ impl McpProcesses for Fixed {
     }
 }
 
+/// The servers of official-marketplace plugins.
+struct Official(&'static [&'static str]);
+
+impl McpProvenance for Official {
+    fn official_plugin_server(&self, server: &str) -> bool {
+        self.0.contains(&server)
+    }
+}
+
 fn process(pid: u32, server: &str) -> McpProcess {
     McpProcess {
         pid,
@@ -64,12 +73,23 @@ fn process(pid: u32, server: &str) -> McpProcess {
 }
 
 async fn answer(source: Option<Vec<McpProcess>>, params: Value) -> Value {
+    answer_with(source, None, params).await
+}
+
+async fn answer_with(
+    source: Option<Vec<McpProcess>>,
+    provenance: Option<Official>,
+    params: Value,
+) -> Value {
     let scope = TaskScope::root("test", |_| {});
     let (out, _reader) = tokio::io::duplex(1 << 16);
     let (peer, _writer) = connection::start(out, &scope.spawner(), Options::default());
     let context = Arc::new(Context::new(peer, Arc::new(FixedClock(5))));
     if let Some(processes) = source {
         context.set_mcp_processes(Arc::new(Fixed(processes)));
+    }
+    if let Some(provenance) = provenance {
+        context.set_mcp_provenance(Arc::new(provenance));
     }
     let kernel = Arc::new(NoKernel);
     let server = Arc::new(Server::new(
@@ -127,4 +147,26 @@ async fn params_are_not_read_and_pid_zero_is_skipped() {
 #[tokio::test]
 async fn without_a_source_the_list_is_empty() {
     assert_eq!(answer(None, json!({})).await, json!({"processes": []}));
+}
+
+/// Node registers an official-marketplace plugin's server with `source.kind: "builtin"`, so the Host counts it as
+/// built in; the plugin name still comes from the server name. A third-party plugin's server stays `plugin`.
+#[tokio::test]
+async fn an_official_marketplace_plugin_server_is_builtin() {
+    let processes = vec![
+        process(31, "plugin:docs:viewer"),
+        process(32, "plugin:demo:api"),
+    ];
+    assert_eq!(
+        answer_with(
+            Some(processes),
+            Some(Official(&["plugin:docs:viewer"])),
+            json!({})
+        )
+        .await,
+        json!({"processes": [
+            {"pid": 31, "serverName": "plugin:docs:viewer", "mcpSource": "builtin", "pluginName": "docs"},
+            {"pid": 32, "serverName": "plugin:demo:api", "mcpSource": "plugin", "pluginName": "demo"},
+        ]})
+    );
 }

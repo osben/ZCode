@@ -185,3 +185,119 @@ async fn a_granted_project_server_loads_through_the_trust_store() {
         .collect();
     assert_eq!(loaded, [("project-server", McpScope::Project)]);
 }
+
+/// A loader over a temp home so the trust store is real; the helper below grants one declaration by name.
+fn granting_loader(files: &[(&str, &str)]) -> (tempfile::TempDir, Loader) {
+    let home = tempfile::tempdir().unwrap();
+    let files: Arc<dyn FilesPort> = Arc::new(env(files));
+    let paths = StoragePaths::resolve(&Default::default(), home.path(), home.path());
+    let loader = Loader {
+        files: files.clone(),
+        controller: files,
+        paths,
+        process_env: Default::default(),
+        flag: None,
+        project_is_local: true,
+        process: PluginSources::default(),
+        strict: false,
+    };
+    (home, loader)
+}
+
+async fn grant(loader: &Loader, workspace: &WorkspaceRef, name: &str) {
+    let inputs = ConfigInputs {
+        files: loader.files.as_ref(),
+        workspace,
+        paths: &loader.paths,
+        process_env: &loader.process_env,
+        flag: loader.flag.as_ref(),
+        project_is_local: loader.project_is_local,
+    };
+    let read = super::super::read_files(&inputs).await;
+    let inspection = mcp_trust::Inspection::read(
+        loader.files.as_ref(),
+        workspace,
+        mcp_trust::Target::new(workspace.root.as_str(), None),
+        (read.user.object(), &read.projects),
+        &loader.paths,
+    )
+    .await;
+    let digest = inspection
+        .discovery()
+        .unwrap()
+        .get(name)
+        .unwrap()
+        .digest
+        .clone();
+    inspection
+        .store
+        .decide(
+            async || rust_cli_platform::local::StillDeclared::Yes,
+            rust_cli_platform::local::McpTrustRecord {
+                workspace_identity: inspection.target.identity.clone(),
+                server_name: name.to_owned(),
+                declaration_digest: digest,
+                granted_at: "2026-11-13T00:00:00.000Z".to_owned(),
+            },
+            true,
+        )
+        .await
+        .unwrap();
+}
+
+const FALLBACK_FILES: [(&str, &str); 2] = [
+    ("/Users/dev/repo/.git/HEAD", "ref"),
+    (
+        "/Users/dev/repo/.agents/mcp.json",
+        r#"{"mcpServers": {
+            "legacy": {"type": "stdio", "command": "node", "args": ["l.js"], "cwd": "tools"},
+            "off": {"type": "stdio", "command": "node", "args": [], "enabled": false}
+        }}"#,
+    ),
+];
+
+/// Node `createDynamicMcpConfigSource` reads `<wd>/.agents/mcp.json` as the fallback of `<wd>/.zcode/config.json`:
+/// a trusted fallback server joins the session group like a project server, an untrusted one stays out.
+#[tokio::test]
+async fn a_trusted_agents_mcp_fallback_server_joins_the_group() {
+    let (_home, loader) = granting_loader(&FALLBACK_FILES);
+    let workspace = workspace("/Users/dev/repo");
+
+    let config = loader.load(&workspace).await.unwrap();
+    assert!(
+        config.servers.is_empty(),
+        "an ungranted fallback server must not connect"
+    );
+
+    grant(&loader, &workspace, "legacy").await;
+
+    let config = loader.load(&workspace).await.unwrap();
+    let loaded: Vec<_> = config
+        .servers
+        .iter()
+        .map(|server| (server.name.as_str(), server.scope))
+        .collect();
+    assert_eq!(loaded, [("legacy", McpScope::Project)]);
+    let cwd = match &config.servers[0].transport {
+        rust_cli_kernel_api::mcp::McpTransportConfig::Stdio { cwd, .. } => cwd.clone(),
+        other => panic!("unexpected transport {other:?}"),
+    };
+    assert_eq!(cwd.as_deref(), Some("/Users/dev/repo/tools"));
+}
+
+/// Node applies the fallback only when the project config declares no server: a project server wins.
+#[tokio::test]
+async fn the_fallback_is_ignored_when_the_project_config_declares_servers() {
+    let mut files = FALLBACK_FILES.to_vec();
+    files.push((
+        "/Users/dev/repo/.zcode/config.json",
+        r#"{"mcp": {"servers": {"proj": {"type": "stdio", "command": "node", "args": []}}}}"#,
+    ));
+    let (_home, loader) = granting_loader(&files);
+    let workspace = workspace("/Users/dev/repo");
+    grant(&loader, &workspace, "proj").await;
+
+    let config = loader.load(&workspace).await.unwrap();
+    let names: Vec<_> = config.servers.iter().map(|s| s.name.as_str()).collect();
+    assert_eq!(names, ["proj"]);
+}

@@ -275,6 +275,8 @@ async fn serve(
     // Fork (specs/fork-rust-node-helper.md, F7 PR 1): the panels of the servers Rust runs read their connections
     // through the kernel's extension layer, the one that owns the connections the model calls use.
     context.set_mcp_app_host(built.kernel.mcp_app_host());
+    // Fork: the connection table lists a server of an official-marketplace plugin as `builtin`, like Node.
+    context.set_mcp_provenance(built.kernel.mcp_provenance());
     // Fork: workspace trust from the App (specs/fork-rust-agent-parity.md, "Workspace MCP trust"): set before the
     // handler is installed, so the first request already sees it.
     let opened = &built.opened;

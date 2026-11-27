@@ -5,7 +5,7 @@ use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
 use rust_cli_kernel_api::clock::Clock;
-use rust_cli_kernel_api::mcp::{McpProcess, McpProcesses};
+use rust_cli_kernel_api::mcp::{McpProcess, McpProcesses, McpProvenance};
 use rust_cli_kernel_api::model::ModelPort;
 use rust_cli_kernel_api::provider::{CatalogModel, ModelDirectory};
 use rust_cli_protocol_core::connection::Peer;
@@ -80,6 +80,7 @@ pub struct Context {
     model_port: std::sync::OnceLock<Arc<dyn ModelPort>>,
     /// Fork: the live stdio MCP server processes (`process/childProcesses`); set once by the app-server.
     mcp_processes: std::sync::OnceLock<Arc<dyn McpProcesses>>,
+    mcp_provenance: std::sync::OnceLock<Arc<dyn McpProvenance>>,
     /// Fork: the language-server host behind `lsp/*` (specs/fork-rust-lsp.md); without it they answer -32000.
     language_servers: std::sync::OnceLock<Arc<dyn rust_cli_kernel_api::lsp::LanguageServers>>,
     /// Fork: the ACP agents' session config (`setExternalAgentConfigOption` and the subscribe seed); set once by the
@@ -315,6 +316,18 @@ impl Context {
         let _ = self.mcp_processes.set(processes);
     }
 
+    /// Fork: where the listed servers came from (the extension layer's MCP groups).
+    pub fn set_mcp_provenance(&self, provenance: Arc<dyn McpProvenance>) {
+        let _ = self.mcp_provenance.set(provenance);
+    }
+
+    /// Fork: whether an official-marketplace plugin declares `server`; false without a source.
+    pub(crate) fn official_plugin_server(&self, server: &str) -> bool {
+        self.mcp_provenance
+            .get()
+            .is_some_and(|provenance| provenance.official_plugin_server(server))
+    }
+
     /// Fork: the live stdio MCP server processes, empty without a source.
     pub(crate) fn mcp_processes(&self) -> Vec<McpProcess> {
         self.mcp_processes
@@ -362,6 +375,7 @@ impl Context {
             workflow_runs: std::sync::OnceLock::new(),
             model_port: std::sync::OnceLock::new(),
             mcp_processes: std::sync::OnceLock::new(),
+            mcp_provenance: std::sync::OnceLock::new(),
             language_servers: std::sync::OnceLock::new(),
             external_agent_configs: std::sync::OnceLock::new(),
         }
