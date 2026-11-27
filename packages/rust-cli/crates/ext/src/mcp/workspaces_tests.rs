@@ -225,3 +225,25 @@ async fn an_official_plugin_server_is_known_across_groups() {
     assert!(!mcp.official_plugin_server("plugin:shared:k"));
     assert!(!mcp.official_plugin_server("github"));
 }
+
+/// A group replaced while a session holds it keeps its processes, so its plugin ids still count.
+#[tokio::test]
+async fn a_pinned_retired_group_still_decides_provenance() {
+    let scope = TaskScope::root("test", |_| {});
+    let fake: Arc<FakeMcp> = Arc::new(FakeMcp::default());
+    let mcp = groups(&fake, &scope);
+    let official = rust_cli_base::names::OFFICIAL_MARKETPLACE;
+    mcp.start_with_plugins(
+        "/work/a",
+        workspace(),
+        Vec::new(),
+        vec![("plugin:docs:k".to_owned(), format!("docs@{official}"))],
+    );
+    let sessions = rust_cli_kernel_api::workspace_key::SessionWorkspaces::default();
+    let session = session_in(&sessions, "a", "/work/a");
+    let _ = mcp.for_session(&sessions, &session);
+    mcp.start_with_plugins("/work/a", workspace(), Vec::new(), Vec::new());
+    assert!(mcp.official_plugin_server("plugin:docs:k"));
+    mcp.release(&session);
+    assert!(!mcp.official_plugin_server("plugin:docs:k"));
+}

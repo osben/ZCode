@@ -255,10 +255,11 @@ discovery found to the merged project layer, in both loaders: the process assemb
 - The rules stay those of discovery: the fallback applies only when the project files name no valid
   server and none failed validation; a user server name shadows it; a broken entry claims its name
   without declaring it; a missing or unreadable file declares nothing.
-- The merged servers carry project scope and the origin `<wd>/.zcode/config.json`, so the stdio
-  `cwd` resolves against the working directory like Node's `normalizeProjectMcpServer`. The origin is
-  also the file the TUI's `/mcp enable` and `/mcp disable` would write for such a server. That file
-  does not declare it, and what the writer does with a missing name or file is not verified here.
+- The merged servers carry project scope and the origin `<wd>/.agents/mcp.json`, the file that declares
+  them (`McpOrigin.fallback`). The stdio `cwd` base is the working directory like Node's
+  `normalizeProjectMcpServer`, not that file's directory. `/mcp enable|disable` and the Settings toggle
+  write `enabled` under the file's top-level `mcpServers` (`fallback_mcp_enabled_text`). Node has no
+  such verbs, so this is a fork extension.
 - Fail closed: the merge runs before the trust filter. An ungranted or changed declaration is dropped
   there, an enabled one needs a grant for its digest, a disabled one is listed only when granted.
 - A user fallback (`~/.agents/mcp.json`) is not ported here.
@@ -279,7 +280,7 @@ connection table keeps only `(pid, server name)`, so the source is decided at an
 `McpProvenance` (`kernel-api`) is implemented by the extension registry over `WorkspaceMcp`, which asks
 the process group and every workspace group for the plugin id of the server name
 (`McpManager::note_plugin_ids`, filled when a group starts). A name is `builtin` when at least one group
-knows it and every plugin id it finds ends in `@zcode-plugins-official`. A name that two groups
+(the process group, a workspace group, or a retired group a session still pins) knows it and every plugin id it finds ends in `@zcode-plugins-official`. A name that two groups
 attribute to different marketplaces stays `plugin`, because the table is keyed by name and cannot tell
 which group started the process. The plugin name still comes from the server name.
 

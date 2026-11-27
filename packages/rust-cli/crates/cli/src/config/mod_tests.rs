@@ -303,10 +303,10 @@ async fn the_agents_mcp_fallback_joins_the_snapshot_when_granted() {
         names(&snapshot.mcp_disabled),
         [("off".to_owned(), McpScope::Project)]
     );
-    assert_eq!(
-        snapshot.mcp_origins["legacy"].path,
-        "/Users/dev/repo/.zcode/config.json"
-    );
+    // The origin is the file that declares the server, so a toggle writes it; the cwd base stays the repo.
+    let origin = &snapshot.mcp_origins["legacy"];
+    assert_eq!(origin.path, "/Users/dev/repo/.agents/mcp.json");
+    assert!(origin.fallback);
 }
 
 #[tokio::test]

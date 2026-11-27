@@ -97,9 +97,13 @@ impl WorkspaceMcp {
     /// a name that two groups attribute to different marketplaces is not official (fail to the plain `plugin`).
     pub(crate) fn official_plugin_server(&self, server: &str) -> bool {
         let suffix = format!("@{}", rust_cli_base::names::OFFICIAL_MARKETPLACE);
+        // Lock order as `for_session`: pins, then groups. A retired group that an open session pinned keeps
+        // running its processes, so it still decides their provenance.
+        let pins = self.pins.read_unpoisoned();
         let groups = self.groups.read_unpoisoned();
         let mut ids = std::iter::once(&self.process)
             .chain(groups.values())
+            .chain(pins.values())
             .filter_map(|group| group.0.plugin_id_of(server))
             .peekable();
         ids.peek().is_some() && ids.all(|id| id.ends_with(&suffix))

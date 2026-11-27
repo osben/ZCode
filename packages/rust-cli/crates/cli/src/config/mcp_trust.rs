@@ -260,6 +260,12 @@ fn user_server_names(user: Option<&Map<String, Value>>) -> BTreeSet<String> {
         .unwrap_or_default()
 }
 
+/// The working directory a fallback file `<wd>/.agents/mcp.json` belongs to.
+pub(super) fn fallback_base_dir(path: &str) -> String {
+    let style = PathStyle::infer(path);
+    style.dirname(&style.dirname(path))
+}
+
 /// Node `getProjectConfigBaseDir`: the file's directory, or its parent when that directory is `.zcode`.
 pub(super) fn base_dir(path: &str) -> String {
     let style = PathStyle::infer(path);
@@ -762,11 +768,7 @@ impl Inspection {
         if table.is_empty() {
             return;
         }
-        let style = PathStyle::infer(&self.target.working_directory);
-        let origin = style.join(
-            &self.target.working_directory,
-            &[rust_cli_base::names::DOT_DIR, "config.json"],
-        );
+        let origin = self.target.fallback_path();
         let (found, found_warnings) = parse_node_servers(&Value::Object(table), McpScope::Project);
         warnings.extend(found_warnings.into_iter().map(|w| format!("{origin}: {w}")));
         for found in found {
@@ -775,6 +777,7 @@ impl Inspection {
                 McpOrigin {
                     path: origin.clone(),
                     user: false,
+                    fallback: true,
                 },
             );
             if found.enabled {

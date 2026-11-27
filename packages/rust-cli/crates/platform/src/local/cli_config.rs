@@ -173,6 +173,27 @@ pub fn mcp_enabled_text(
     name: &str,
     enabled: bool,
 ) -> Result<String, ConfigWriteError> {
+    enabled_text(bytes, shown, name, enabled, false)
+}
+
+/// The same write for a server declared in `<wd>/.agents/mcp.json`, whose table is the top-level `mcpServers`
+/// (Node's session MCP fallback shape) instead of `mcp.servers`.
+pub fn fallback_mcp_enabled_text(
+    bytes: Option<&[u8]>,
+    shown: &str,
+    name: &str,
+    enabled: bool,
+) -> Result<String, ConfigWriteError> {
+    enabled_text(bytes, shown, name, enabled, true)
+}
+
+fn enabled_text(
+    bytes: Option<&[u8]>,
+    shown: &str,
+    name: &str,
+    enabled: bool,
+    fallback: bool,
+) -> Result<String, ConfigWriteError> {
     let missing = || ConfigWriteError::NoMcpServer(name.to_owned(), shown.to_owned());
     let mut object = match bytes.map(serde_json::from_slice::<Value>) {
         None => return Err(missing()),
@@ -180,9 +201,12 @@ pub fn mcp_enabled_text(
         Some(Ok(_)) => return Err(ConfigWriteError::NotObject(shown.to_owned())),
         Some(Err(_)) => return Err(ConfigWriteError::Parse(shown.to_owned())),
     };
-    let server = object
-        .get_mut("mcp")
-        .and_then(|mcp| mcp.get_mut("servers"))
+    let servers = if fallback {
+        object.get_mut("mcpServers")
+    } else {
+        object.get_mut("mcp").and_then(|mcp| mcp.get_mut("servers"))
+    };
+    let server = servers
         .and_then(|servers| servers.get_mut(name))
         .and_then(Value::as_object_mut)
         .ok_or_else(missing)?;
