@@ -986,6 +986,12 @@ async fn input_prediction_budget_follows_the_model_limit() {
     assert_eq!(requests[0].max_tokens, 256);
     assert_eq!(requests[1].max_tokens, 100);
     assert_eq!(requests[1].options.provider_max_output_tokens, Some(100));
+    // The prediction query source has its own side source (usage and request headers name `input_prediction`).
+    assert!(
+        requests
+            .iter()
+            .all(|request| request.source == QuerySource::Side(SideSource::InputPrediction))
+    );
 }
 
 /// A reply without a stop reason reads `unknown` (the stored rows' and the AI SDK's name), `StopReason::Unknown`

@@ -85,6 +85,8 @@ pub struct Server {
     pub(crate) lifecycles: crate::lifecycle::Lifecycles,
     /// Fork: running `workspace/generateText` calls by operation id (crate::fork::WorkspaceOperations).
     pub(crate) workspace_operations: crate::fork::WorkspaceOperations,
+    /// Fork: the in-flight predictions and the cache of `v4/conversation/inputPrediction`.
+    pub(crate) input_prediction: crate::fork::input_prediction::Handler,
 }
 
 pub(crate) fn kernel_error(error: &KernelError) -> RpcError {
@@ -164,6 +166,7 @@ impl Server {
             prepared_incognito: Mutex::new(HashMap::new()),
             lifecycles: crate::lifecycle::Lifecycles::default(),
             workspace_operations: crate::fork::WorkspaceOperations::default(),
+            input_prediction: crate::fork::input_prediction::Handler::default(),
         }
     }
 

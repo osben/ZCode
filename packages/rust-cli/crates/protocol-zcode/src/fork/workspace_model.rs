@@ -33,9 +33,9 @@ const PROBE_USER: &str = "hi";
 /// Node `CONNECTIVITY_PROBE_MAX_OUTPUT_TOKENS`.
 const PROBE_MAX_OUTPUT: u64 = 512;
 /// Node `auxiliaryModelOptions`: the output budget of auxiliary calls.
-const AUXILIARY_MAX_OUTPUT: u64 = 5_000;
+pub(super) const AUXILIARY_MAX_OUTPUT: u64 = 5_000;
 /// The output limit of a model whose configuration declares none.
-const UNKNOWN_MAX_OUTPUT: u32 = rust_cli_prompts::models::UNKNOWN_MAX_OUTPUT_TOKENS;
+pub(super) const UNKNOWN_MAX_OUTPUT: u32 = rust_cli_prompts::models::UNKNOWN_MAX_OUTPUT_TOKENS;
 /// Node `validateOptions` (`adapters/src/model/model.ts`): a caller budget above the model limit is rejected.
 const BUDGET_OUT_OF_RANGE: &str = "maxOutputTokens is outside the model option range";
 const PROBE_UNFINISHED: &str = "模型连通性测试流在 finish 事件前结束";
@@ -199,10 +199,10 @@ fn required<'a>(value: &'a Value, field: &str) -> Result<&'a str, RpcError> {
 }
 
 /// The App's `modelSelectionSchema`, trimmed.
-struct Wanted {
-    provider: String,
-    model: String,
-    reasoning: Option<String>,
+pub(super) struct Wanted {
+    pub(super) provider: String,
+    pub(super) model: String,
+    pub(super) reasoning: Option<String>,
 }
 
 impl Wanted {
@@ -226,7 +226,7 @@ impl Wanted {
 }
 
 /// The directory entry of the selection (Node `validateSelection`'s first two checks).
-async fn entry(context: &Context, wanted: &Wanted) -> Result<CatalogModel, RpcError> {
+pub(super) async fn entry(context: &Context, wanted: &Wanted) -> Result<CatalogModel, RpcError> {
     let catalog = context.catalog().await;
     if !catalog
         .iter()
@@ -252,7 +252,7 @@ async fn entry(context: &Context, wanted: &Wanted) -> Result<CatalogModel, RpcEr
         })
 }
 
-fn selection(entry: &CatalogModel, reasoning: Option<String>) -> ModelSelection {
+pub(super) fn selection(entry: &CatalogModel, reasoning: Option<String>) -> ModelSelection {
     ModelSelection {
         provider: entry.provider.clone(),
         model: entry.model.clone(),
@@ -266,12 +266,12 @@ fn selection(entry: &CatalogModel, reasoning: Option<String>) -> ModelSelection 
 
 /// The model's output limit; the catalog reports 0 when the configuration declares no
 /// `optionSpecs.maxOutputTokens.max`, which is unknown, not zero.
-fn limit(entry: &CatalogModel) -> Option<u64> {
+pub(super) fn limit(entry: &CatalogModel) -> Option<u64> {
     (entry.max_output_tokens > 0).then_some(entry.max_output_tokens)
 }
 
 /// A fixed budget (probe, auxiliary) capped by the model's known limit (Node `Math.min(budget, spec.max)`).
-fn capped(entry: &CatalogModel, budget: u64) -> u64 {
+pub(super) fn capped(entry: &CatalogModel, budget: u64) -> u64 {
     limit(entry).map_or(budget, |max| budget.min(max))
 }
 
@@ -286,12 +286,12 @@ fn within(entry: &CatalogModel, budget: u64) -> Result<u64, RpcError> {
 }
 
 /// `max_tokens` is a `u32` on the wire.
-fn tokens(value: u64) -> u32 {
+pub(super) fn tokens(value: u64) -> u32 {
     u32::try_from(value).unwrap_or(u32::MAX)
 }
 
 /// A side request whose output budget the provider patch also uses (Node binds `maxOutputTokens` on the model).
-fn budgeted(mut request: ModelRequest, budget: Option<u64>) -> ModelRequest {
+pub(super) fn budgeted(mut request: ModelRequest, budget: Option<u64>) -> ModelRequest {
     if let Some(budget) = budget {
         request.max_tokens = tokens(budget);
         request.options.provider_max_output_tokens = Some(tokens(budget));
@@ -302,11 +302,11 @@ fn budgeted(mut request: ModelRequest, budget: Option<u64>) -> ModelRequest {
 /// What one streamed reply left: text and tool calls in block order, the last usage, the stop reason, and whether the
 /// stream reached `message_stop` (the AI SDK `finish` event).
 #[derive(Default)]
-struct Collected {
+pub(super) struct Collected {
     blocks: BTreeMap<usize, Block>,
     usage: Usage,
     stop: Option<StopReason>,
-    finished: bool,
+    pub(super) finished: bool,
 }
 
 enum Block {
@@ -353,7 +353,7 @@ impl Collected {
         }
     }
 
-    fn text(&self) -> String {
+    pub(super) fn text(&self) -> String {
         self.blocks
             .values()
             .filter_map(|block| match block {
@@ -419,11 +419,22 @@ async fn run(
     request: ModelRequest,
     operation: Option<&Operation<'_>>,
 ) -> Result<Collected, RpcError> {
+    let token = operation.map_or_else(CancellationToken::new, |operation| operation.token.clone());
+    run_cancellable(server, request, token, operation.is_none()).await
+}
+
+/// One streamed side request that stops with `token`. `bounded` adds Node's 60 s limit for a caller that has no
+/// cancellable operation; input prediction passes false and brings its own 20 s limit.
+pub(super) async fn run_cancellable(
+    server: &Server,
+    request: ModelRequest,
+    token: CancellationToken,
+    bounded: bool,
+) -> Result<Collected, RpcError> {
     let port = server
         .context
         .model_port()
         .ok_or_else(|| protocol_error("model_request_failed", "Model request failed."))?;
-    let token = operation.map_or_else(CancellationToken::new, |operation| operation.token.clone());
     if token.is_cancelled() {
         return Err(model_failure(&ModelError::Cancelled));
     }
@@ -441,7 +452,7 @@ async fn run(
         }
         Ok(collected)
     };
-    if operation.is_some() {
+    if !bounded {
         return collect.await;
     }
     match tokio::time::timeout(TIMEOUT, collect).await {
@@ -548,6 +559,8 @@ pub(super) async fn generate_text(server: &Server, params: &Value) -> Result<Val
     };
     let source = if query_source == GIT_COMMIT_MESSAGE {
         SideSource::GitCommitMessage
+    } else if query_source == INPUT_PREDICTION {
+        SideSource::InputPrediction
     } else {
         SideSource::WorkspaceText
     };
