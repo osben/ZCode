@@ -297,6 +297,32 @@ fn ends_turn(assistant: &rust_cli_kernel_api::message::AssistantMessage) -> bool
         .any(|block| matches!(block, ContentBlock::ToolUse { .. }))
 }
 
+/// Fork (specs/fork-rust-activity-summary.md, rule 5): the time (ms) of the last real user input of a stored history,
+/// from its input intent (`admittedAt`); the session's creation time when that input has no intent (a TUI or CLI
+/// input). `None` when the history holds no real input. Stored messages carry no time of their own.
+pub(crate) fn last_input_at(view: &SessionView) -> Option<u64> {
+    let user = view
+        .messages
+        .iter()
+        .rev()
+        .find_map(|message| match message {
+            Message::User(user)
+                if user.origin == UserOrigin::Human
+                    && !INTERRUPT_TEXTS.contains(&super::text_of(&user.content).as_str())
+                    && super::rows::workflow_launch_of(user).is_none() =>
+            {
+                Some(user)
+            }
+            _ => None,
+        })?;
+    let admitted = user
+        .intent
+        .as_deref()
+        .and_then(|intent| intent.get("admittedAt"))
+        .and_then(serde_json::Value::as_u64);
+    Some(admitted.unwrap_or(view.meta.created_at_ms))
+}
+
 /// The index of the message that opens the last turn, by the same rule as [`rows`].
 fn last_opening(messages: &[Message]) -> Option<usize> {
     let mut turn_ended = true;

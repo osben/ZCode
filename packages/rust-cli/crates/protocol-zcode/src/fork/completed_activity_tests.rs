@@ -22,6 +22,7 @@ fn seeded(
             .iter()
             .map(|(id, status)| ((*id).to_owned(), (*status).to_owned()))
             .collect(),
+        cut: Vec::new(),
     }));
     count
 }
@@ -145,6 +146,38 @@ fn a_reseed_replaces_the_child_outcomes() {
         children: vec![("c1".to_owned(), "success".to_owned())],
         ..Seed::default()
     }));
+    assert_eq!(count.count(), Some(1));
+}
+
+#[test]
+fn a_cut_child_stays_out_until_it_runs_again() {
+    // Rewind: the kernel table still holds a child whose launch the rewind removed.
+    let mut count = seeded(&[], &[], &[("c1", "success"), ("c2", "success")]);
+    count.seed(Some(Seed {
+        children: vec![("c1".to_owned(), "success".to_owned())],
+        cut: vec!["c2".to_owned()],
+        ..Seed::default()
+    }));
+    count.child("c2", Some("success"));
+    assert_eq!(
+        count.count(),
+        Some(1),
+        "the table cannot bring a cut child back"
+    );
+    count.child("c2", None);
+    count.child("c2", Some("success"));
+    assert_eq!(count.count(), Some(2), "a resume lifts the cut");
+}
+
+#[test]
+fn the_next_seed_replaces_the_cut_ids() {
+    let mut count = CompletedActivity::default();
+    count.seed(Some(Seed {
+        cut: vec!["c2".to_owned()],
+        ..Seed::default()
+    }));
+    count.seed(Some(Seed::default()));
+    count.child("c2", Some("success"));
     assert_eq!(count.count(), Some(1));
 }
 

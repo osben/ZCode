@@ -107,3 +107,28 @@ fn history_of_a_parent_with_no_runs_is_empty() {
         ActivityHistory::default()
     );
 }
+
+#[test]
+fn history_carries_the_time_of_each_runs_last_event_or_its_last_update() {
+    let conn = database();
+    add_session(&conn, "ses_p");
+    create_run(&conn, &run("run_ev", "ses_p", RunStatus::Completed), 10).unwrap();
+    create_run(&conn, &run("run_bare", "ses_p", RunStatus::Stopped), 20).unwrap();
+    append_event(&conn, "run_ev", &json!({"type": "run-started"}), 11).unwrap();
+    append_event(&conn, "run_ev", &json!({"type": "run-settled"}), 15).unwrap();
+
+    let history = activity_history(&conn, "ses_p").unwrap();
+    let at = |id: &str| {
+        history
+            .runs
+            .iter()
+            .find(|item| item.run_id == id)
+            .map(|item| item.updated_at)
+    };
+    assert_eq!(at("run_ev"), Some(15));
+    assert_eq!(
+        at("run_bare"),
+        Some(20),
+        "no event: the run row's update time"
+    );
+}

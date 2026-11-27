@@ -322,13 +322,14 @@ pub fn list_runs_by_parent_session(
         .map_err(Into::into)
 }
 
-/// Fork: one run of [`ActivityHistory`]: its id, the physical `dwf_run.status` and its last event sequence (`-1` when
-/// it has none).
+/// Fork: one run of [`ActivityHistory`]: its id, the physical `dwf_run.status`, its last event sequence (`-1` when
+/// it has none) and the time (ms) of its last event, or of its last update when it has no event.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ActivityRun {
     pub run_id: String,
     pub status: String,
     pub sequence: i64,
+    pub updated_at: i64,
 }
 
 /// Fork: the full Activity index of one parent session (Node `DynamicWorkflowActivityHistory`): every run with its
@@ -344,7 +345,8 @@ pub struct ActivityHistory {
 pub fn activity_history(conn: &Connection, parent_session_id: &str) -> Result<ActivityHistory> {
     let mut runs = conn.prepare(
         "select r.id, r.status,
-           coalesce((select max(e.sequence) from dwf_event e where e.run_id = r.id), -1)
+           coalesce((select max(e.sequence) from dwf_event e where e.run_id = r.id), -1),
+           coalesce((select max(e.time_created) from dwf_event e where e.run_id = r.id), r.time_updated)
          from dwf_run r where r.parent_session_id = ?1",
     )?;
     let runs = runs
@@ -353,6 +355,7 @@ pub fn activity_history(conn: &Connection, parent_session_id: &str) -> Result<Ac
                 run_id: row.get(0)?,
                 status: row.get(1)?,
                 sequence: row.get(2)?,
+                updated_at: row.get(3)?,
             })
         })?
         .collect::<rusqlite::Result<Vec<_>>>()?;
