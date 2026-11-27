@@ -163,3 +163,45 @@ fn strict_is_dropped_for_a_model_or_schema_that_cannot_use_it() {
     );
     assert!(!open.contains("strict"), "{open}");
 }
+
+#[test]
+fn a_strict_tool_adds_the_structured_outputs_beta_only_when_strict_is_sent() {
+    let encode = |model: &str| {
+        let mut request = request(Vec::new());
+        request.selection.model = model.to_owned();
+        request.tools = vec![ToolDefinition {
+            contract: Default::default(),
+            name: "Submit".to_owned(),
+            description: "d".to_owned(),
+            input_schema: json!({"type": "object", "properties": {"result": {"type": "string"}}}),
+            cache_control: None,
+        }];
+        request.options.tool_flags.insert(
+            "Submit".to_owned(),
+            ToolFlags {
+                strict: true,
+                ..ToolFlags::default()
+            },
+        );
+        super::encode(request, super::tests::profile(true), &[], &[]).unwrap()
+    };
+    let strict = encode("claude-opus-5-5");
+    assert!(strict.body.contains(r#""strict":true"#), "{}", strict.body);
+    assert!(
+        strict
+            .betas
+            .contains(&crate::anthropic::betas::STRUCTURED_OUTPUTS.to_owned()),
+        "{:?}",
+        strict.betas
+    );
+    // The flag is dropped for a model that cannot use it, and the beta goes with it.
+    let plain = encode("glm-5.3");
+    assert!(!plain.body.contains("strict"), "{}", plain.body);
+    assert!(
+        !plain
+            .betas
+            .contains(&crate::anthropic::betas::STRUCTURED_OUTPUTS.to_owned()),
+        "{:?}",
+        plain.betas
+    );
+}

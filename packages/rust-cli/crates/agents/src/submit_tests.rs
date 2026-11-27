@@ -202,6 +202,22 @@ fn only_an_actor_with_a_port_gets_the_actor_tools() {
 }
 
 #[test]
+fn the_actor_tool_set_of_a_mono_port_carries_strict_on_submit_result_only() {
+    // The flag must survive `tools_for`, which is what a child's tool set is built from.
+    let port: Arc<dyn ActorPort> = ScriptedPort::replying(Ok(ActorSubmit::Accepted));
+    let submit_port = crate::actor_turn::SubmitPort {
+        port,
+        submit_schema: Some(json!({"type": "string"})),
+    };
+    let tools = submit::tools_for(Some(&submit_port));
+    let strict: Vec<(&str, bool)> = tools
+        .iter()
+        .map(|tool| (tool.name(), tool.strict()))
+        .collect();
+    assert_eq!(strict, vec![("submit_result", true), ("escalate", false)]);
+}
+
+#[test]
 fn only_a_mono_declaration_asks_for_strict_decoding() {
     // Node: `...(typed ? { strict: true } : {})`.
     let port: Arc<dyn ActorPort> = ScriptedPort::replying(Ok(ActorSubmit::Accepted));

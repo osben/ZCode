@@ -4154,11 +4154,11 @@ Divergences:
 604. Node's GUI cancel of a settled run returns `background_task_not_running` (`cancelBackgroundTask` turns `alreadyTerminal` into a reason). Here GUI and TaskStop both refuse a settled run with the same text, from the journal row.
 605. Settlement is asynchronous. `cancel` returns true once the stop is posted; the run settles on its owner's thread. Node awaits only the abort, so a TaskStop result can come before the row's `stopped` write.
 606. Parked questions are read from the projection before the stop. A question parked just before the stop, whose projection has not caught up, is not withdrawn. A later answer to it is `unknown_question`, not `run_not_in_flight`. Node reads its registry directly.
-607. Withdrawals happen only through the stop path. Node also withdraws a question when its ask is cancelled or its turn fails (`withdraw` in the escalation registry). Closed in 9.68: the owner already did this (`reconcile`, `refuse_start` and `start_ask` in `driver_owner.rs` withdraw through the book and reject on the turn side), and 9.68 pins the failing-turn case with a test.
+607. Withdrawals happen only through the stop path. Node also withdraws a question when its ask is cancelled or its turn fails (`withdraw` in the escalation registry). Closed in 9.68: the owner already withdrew on a cancelled ask, a refused start and the next ask (`reconcile`, `refuse_start` and `start_ask` in `driver_owner.rs`). A turn failure that is redriven did not withdraw, and now does.
 608. The `superseded` initiator is refused as unsupported by `cancel`. The amend path stops its predecessor itself (9.43).
 609. Listing runs in the background registry is not built: runs are not in the `backgroundWorks` projection or in `/tasks`, so the GUI shows no card for a run. A run is cancelled only by its id (`cancelBackgroundWork` or TaskStop). It needs the run's lifecycle events in the projection, which fall with the W8b notifications.
 
-610. Closed in 9.68 (the main thread now sees its subagents' runs). Run ownership is the exact calling session, not its session tree. `command_sessions` and `visible` widen the other target types to the tree (L18), but the run lookup does not. A run started from a subagent's session is therefore not stoppable from the top-level session. Not verified against Node's registry scope; recorded as a deliberate narrower scope until checked.
+610. Closed in 9.68. Run lookup was the exact calling session. It now follows `command_sessions` (the caller's session, and for the main thread each subagent session of its tree), so a run started by a subagent can be stopped from the top-level session.
 
 Review round (ocr on #607, fifteen findings). Fixed with tests where practical:
 
@@ -4489,7 +4489,8 @@ in the terminal module, and the two would be edited together only if Node's rule
 744. Divergence 609 is closed for the snapshot only. The run is cancelled by its id through TaskStop (9.48), as before.
 745. Divergence 610, checked. Node's subagent runtimes receive the parent's `runtimeTaskRegistry` (`runtime/methods/subagent.ts:99`), so
      Node's TaskStop and `cancelBackgroundWork` see the runs of the whole session tree from the top session. Rust keeps the exact session
-     (9.48). Not changed: tree membership needs a lookup in the run path that the run service does not hold, and it is a separate PR.
+     (9.48). Closed in 9.68: the agents side asks one run port per session of the tree (`command_sessions`), so the run service needs no
+     tree lookup.
 746. Not verified against a live Node run. The checks are source reads and the Rust tests.
 747. The retry text changed. A refused retune (`workflow_run_settled`, `workflow_run_not_retunable`) told the model to call AmendWorkflow
      again. Here a call with only `max_concurrency` always retunes, so that retry refused again, forever. The text now names `name`
@@ -6207,7 +6208,9 @@ that the item was already done.
   schema the subset cannot express (`$ref`, `$defs`, `prefixItems`, a schema-valued `additionalProperties`, an empty schema).
   Folded keywords: `minimum`, `maximum`, `exclusiveMinimum`, `exclusiveMaximum`, `multipleOf`, `minLength`, `maxLength`,
   `pattern`, `minItems`, `maxItems`, `default`, and formats outside the strict list. They move into the description. Node's
-  generic declaration is not strict, and neither is Rust's.
+  generic declaration is not strict, and neither is Rust's. The encoder also adds the `structured-outputs-2025-12-15` beta when
+  a tool goes out with `strict` (the same beta the output-format path uses). Not verified against a live Anthropic call, and
+  not checked against what Node's AI SDK sends on the official endpoint: it is the beta Rust already sends for structured output.
 - The typed declaration's `$schema` (done). Node's `typedSubmitResultInputSchema` ends with
   `$schema: "https://json-schema.org/draft/2020-12/schema"`. The Rust typed declaration now has it. The generic declaration
   is unchanged: Node's comes from zod's generator and also carries `$schema`, but no Rust tool schema built by hand carries
@@ -6216,12 +6219,16 @@ that the item was already done.
   for the main thread, each subagent session of its top-level session. A subagent sees only its own session's runs, as it
   does for commands (L18). Node's subagent runtimes share the parent's task registry, so the main thread sees them. Tests: the
   main thread stops a run its subagent started; another session does not see it; a subagent does not stop its parent's run.
+  Limit: `command_sessions` lists only the subagents still in the live table. A run started by a subagent whose entry has left
+  the table is not reachable from the main thread.
 - Divergence 513 (docs only). The owner exemption was already built (`workflow_fill_hole.rs`, `check_permissions`, with tests).
   The module doc and the text of 513 said "not built". Both are fixed.
-- Divergence 607 (docs and one test). The owner already withdraws questions when an ask is cancelled, when its turn fails,
-  when its start is refused and when the next ask starts (`reconcile`, `refuse_start`, `start_ask` in `driver_owner.rs`). Only
-  the spec text was stale. A test pins the failing-turn case: the blocked escalate is rejected and a later answer finds
-  nothing.
+- Divergence 607 (one fix, one test of the old behaviour). The owner already withdraws questions when an ask is cancelled, when
+  its start is refused and when the next ask starts (`reconcile`, `refuse_start`, `start_ask` in `driver_owner.rs`). Two tests
+  pin a failing turn. A failure that fails the ask was already covered (reconcile). A transient failure that is redriven was not:
+  Node's `onTurnRejected` withdraws before it decides what the failure means, and the Rust owner left the question parked.
+  `turn_failed` now withdraws first through `EscalationBook::withdraw_pending`, which keeps the ask active for the redrive.
+  The red run of the redrive test showed the question was not rejected.
 
 **Divergences.** 940: Rust's hand-built tool schemas for `submit_result` (generic) and `escalate` carry no `$schema`, while
 Node's zod-generated ones do. Not changed here, since it touches every tool schema and the prompt-cache bytes.
