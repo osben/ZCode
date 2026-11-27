@@ -189,11 +189,6 @@ pub(crate) fn base_tools(
     };
     let bash = bash_settings(defaults, extensions, traits);
     // Fork: under the desktop Host the Cron tools are Node's, scheduling in the Host's store.
-    // Fork: the off-peak tools exist only where the Host serves `offPeak/*` (specs/fork-rust-automations.md, slice 3).
-    let off_peak_tools: Vec<Arc<dyn rust_cli_kernel_api::tool::Tool>> = match &extensions.off_peak {
-        Some(port) => rust_cli_tools::off_peak_tools(port.clone()),
-        None => Vec::new(),
-    };
     let cron_tools = match &extensions.automation {
         Some(port) => rust_cli_tools::automation_tools(port.clone()),
         None => rust_cli_tools::cron_tools(&cron, extensions.monitor),
@@ -220,7 +215,6 @@ pub(crate) fn base_tools(
             ))
             .with_tools(rust_cli_tools::web_tools(side_model(), ports.clock.clone()))
             .with_tools(cron_tools)
-            .with_tools(off_peak_tools)
             // `/loop` 动态模式的自定节奏（L17，tools-more.md §17.2）：默认注册、不延迟。
             .with_tools(vec![Arc::new(rust_cli_tools::ScheduleWakeupTool::new(
                 &cron,
@@ -362,15 +356,30 @@ pub(crate) fn query_parts(
     (late, operations, pipeline): (&Arc<LateCompactor>, Operations, &Arc<Pipeline>),
     (defaults, traits, node_desktop): (&Defaults, SurfaceTraits, bool),
     code: Option<Arc<dyn rust_cli_kernel_api::lsp::CodeIntelligence>>,
+    off_peak: Option<(
+        Arc<dyn rust_cli_kernel_api::off_peak::OffPeakPort>,
+        Arc<rust_cli_tools::OffPeakDecisions>,
+    )>,
 ) -> QueryParts {
+    // Fork: the off-peak tools are offered per session, only where the Host serves `offPeak/*` and has them on for
+    // that session (specs/fork-rust-session-context-gaps.md, item 4).
+    let base: Arc<dyn ToolRegistry> = match off_peak {
+        Some((port, decisions)) => Arc::new(rust_cli_tools::OffPeakTools::new(
+            ext.registry(),
+            port,
+            ext.incognito_tools(),
+            decisions,
+        )),
+        None => ext.registry(),
+    };
     QueryParts {
         model: ports.model.clone(),
         context: context.clone(),
         tools: Arc::new(rust_cli_tools::PolicyFiltered::new(
             match code {
                 // Fork: the `LSP` tool sits under the deny filter, offered per session (specs/fork-rust-lsp.md).
-                Some(code) => Arc::new(rust_cli_tools::LspTools::new(ext.registry(), code)),
-                None => ext.registry(),
+                Some(code) => Arc::new(rust_cli_tools::LspTools::new(base, code)),
+                None => base,
             },
             gate.clone(),
         )),

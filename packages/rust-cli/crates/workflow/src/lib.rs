@@ -82,6 +82,8 @@ mod driver_owner_tests;
 #[cfg(test)]
 mod driver_stall_quota_tests;
 #[cfg(test)]
+mod driver_withdraw_tests;
+#[cfg(test)]
 mod engine_tests;
 #[cfg(test)]
 mod escalation_tests;

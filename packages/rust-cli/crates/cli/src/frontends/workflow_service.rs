@@ -179,9 +179,10 @@ impl RunStore for LazyRunStore {
         run_id: &str,
         default_concurrency: Option<f64>,
         live_here: bool,
+        withdrawn: &[String],
     ) -> Result<Option<rust_cli_workflow::run_store::RunDetail>> {
         self.get()?
-            .run_detail_for(run_id, default_concurrency, live_here)
+            .run_detail_for(run_id, default_concurrency, live_here, withdrawn)
     }
 
     fn session_progress(

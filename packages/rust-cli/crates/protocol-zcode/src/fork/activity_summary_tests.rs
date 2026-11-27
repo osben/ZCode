@@ -105,6 +105,61 @@ fn an_item_that_runs_again_leaves_the_boundary() {
     );
 }
 
+fn ended(child: &str, ended_at: u64) -> crate::fork::subagents::EndedOutcome {
+    crate::fork::subagents::EndedOutcome {
+        child: child.to_owned(),
+        status: "success".to_owned(),
+        ended_at,
+        completed_at: None,
+    }
+}
+
+#[test]
+fn the_cold_boundary_prefers_the_childs_own_completion_time() {
+    let mut launched_early = ended("c-bg", 900);
+    launched_early.completed_at = Some(1500);
+    assert_eq!(
+        cold_dismissed(1000, &[launched_early], &[])["subagentIds"],
+        json!([])
+    );
+}
+
+fn journaled(run_id: &str, status: &str, updated_at: i64) -> (String, String, i64) {
+    (run_id.to_owned(), status.to_owned(), updated_at)
+}
+
+#[test]
+fn the_cold_boundary_takes_what_had_ended_by_the_last_input() {
+    let children = [
+        ended("c-before", 900),
+        ended("c-at", 1000),
+        ended("c-after", 1001),
+    ];
+    let runs = [
+        journaled("r-before", "cancelled", 800),
+        journaled("r-after", "completed", 1500),
+        journaled("r-live", "running", 100),
+        journaled("r-wait", "pending", 100),
+    ];
+    assert_eq!(
+        cold_dismissed(1000, &children, &runs),
+        json!({
+            "at": 1000,
+            "workIds": [],
+            "subagentIds": ["c-before", "c-at"],
+            "workflowRunIds": ["r-before"]
+        })
+    );
+}
+
+#[test]
+fn a_cold_boundary_of_a_session_with_no_activity_has_all_four_keys() {
+    assert_eq!(
+        cold_dismissed(7, &[], &[]),
+        json!({"at": 7, "workIds": [], "subagentIds": [], "workflowRunIds": []})
+    );
+}
+
 #[test]
 fn a_boundary_with_nothing_running_again_is_left_alone() {
     let boundary =

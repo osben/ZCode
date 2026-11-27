@@ -10,6 +10,7 @@ pub use background_shells::ShellEnd;
 mod bash_progress;
 mod browser_screenshot;
 mod cold;
+pub(crate) use cold::last_input_at;
 mod context_facts;
 pub mod elicitation;
 mod external_agent_config;

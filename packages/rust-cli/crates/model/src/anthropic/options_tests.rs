@@ -49,6 +49,8 @@ fn tool_flags_and_message_output_keep_their_key_order() {
             }),
         },
     ]);
+    // `strict` goes out only for a first-party model id.
+    request.selection.model = "claude-opus-4-8".to_owned();
     request.tools = vec![ToolDefinition {
         contract: Default::default(),
         name: "Search".to_owned(),
@@ -66,7 +68,7 @@ fn tool_flags_and_message_output_keep_their_key_order() {
     );
     let body = body(request.clone()).unwrap();
     assert!(
-        body.contains(r#"{"name":"Search","description":"d","input_schema":{"type":"object"},"strict":true,"defer_loading":true,"cache_control":{"type":"ephemeral"}}"#),
+        body.contains(r#"{"name":"Search","description":"d","input_schema":{"type":"object","additionalProperties":false,"properties":{}},"strict":true,"defer_loading":true,"cache_control":{"type":"ephemeral"}}"#),
         "{body}"
     );
     assert!(
@@ -118,4 +120,82 @@ fn output_format_goes_after_effort() {
         encoded.contains(r#""output_config":{"format":{"type":"json_schema","#),
         "{encoded}"
     );
+}
+
+#[test]
+fn strict_is_dropped_for_a_model_or_schema_that_cannot_use_it() {
+    let strict = |model: &str, schema: serde_json::Value| {
+        let mut request = request(Vec::new());
+        request.selection.model = model.to_owned();
+        request.tools = vec![ToolDefinition {
+            contract: Default::default(),
+            name: "Submit".to_owned(),
+            description: "d".to_owned(),
+            input_schema: schema,
+            cache_control: None,
+        }];
+        request.options.tool_flags.insert(
+            "Submit".to_owned(),
+            ToolFlags {
+                strict: true,
+                ..ToolFlags::default()
+            },
+        );
+        body(request).unwrap()
+    };
+    let typed =
+        json!({"type": "object", "properties": {"result": {"type": "string", "minLength": 1}}});
+    let folded = strict("claude-opus-4-8", typed.clone());
+    assert!(
+        folded.contains(r#""input_schema":{"type":"object","properties":{"result":{"type":"string","description":"at least 1 characters"}},"additionalProperties":false},"strict":true"#),
+        "{folded}"
+    );
+    // A model off the structured-output list gets the original schema and no flag.
+    for model in ["claude-opus-5-5", "glm-5.3"] {
+        let plain = strict(model, typed.clone());
+        assert!(!plain.contains("strict"), "{plain}");
+        assert!(plain.contains(r#""minLength":1"#), "{plain}");
+    }
+    // A schema the subset cannot express goes out as it is, without the flag.
+    let open = strict(
+        "claude-opus-4-8",
+        json!({"type": "object", "properties": {"a": {}}}),
+    );
+    assert!(!open.contains("strict"), "{open}");
+}
+
+#[test]
+fn a_strict_tool_adds_no_beta_of_its_own() {
+    let encode = |model: &str| {
+        let mut request = request(Vec::new());
+        request.selection.model = model.to_owned();
+        request.tools = vec![ToolDefinition {
+            contract: Default::default(),
+            name: "Submit".to_owned(),
+            description: "d".to_owned(),
+            input_schema: json!({"type": "object", "properties": {"result": {"type": "string"}}}),
+            cache_control: None,
+        }];
+        request.options.tool_flags.insert(
+            "Submit".to_owned(),
+            ToolFlags {
+                strict: true,
+                ..ToolFlags::default()
+            },
+        );
+        super::encode(request, super::tests::profile(true), &[], &[]).unwrap()
+    };
+    let strict = encode("claude-opus-4-8");
+    assert!(strict.body.contains(r#""strict":true"#), "{}", strict.body);
+    // The beta of the output-format path is not added for a strict tool.
+    assert!(
+        !strict
+            .betas
+            .contains(&crate::anthropic::betas::STRUCTURED_OUTPUTS.to_owned()),
+        "{:?}",
+        strict.betas
+    );
+    // A model off the structured-output list drops the flag.
+    let plain = encode("claude-opus-5-5");
+    assert!(!plain.body.contains("strict"), "{}", plain.body);
 }

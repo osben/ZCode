@@ -101,8 +101,9 @@ pub trait RunStore: Send + Sync {
         run_id: &str,
         default_concurrency: Option<f64>,
         live_here: bool,
+        withdrawn: &[String],
     ) -> Result<Option<RunDetail>> {
-        let _ = live_here;
+        let _ = (live_here, withdrawn);
         self.run_detail(run_id, default_concurrency)
     }
 
@@ -246,7 +247,7 @@ impl RunStore for SqliteRunStore {
         run_id: &str,
         default_concurrency: Option<f64>,
     ) -> Result<Option<RunDetail>> {
-        self.run_detail_for(run_id, default_concurrency, true)
+        self.run_detail_for(run_id, default_concurrency, true, &[])
     }
 
     fn activity_history(&self, parent_session_id: &str) -> Result<dwf::ActivityHistory> {
@@ -302,6 +303,7 @@ impl RunStore for SqliteRunStore {
         run_id: &str,
         default_concurrency: Option<f64>,
         live_here: bool,
+        withdrawn: &[String],
     ) -> Result<Option<RunDetail>> {
         // The row, its timestamps, its events, its node rows and its actor rows are read in one read transaction, so they share
         // one WAL snapshot: the engine writes the journal through its own connection, and an autocommit read per query could
@@ -340,6 +342,7 @@ impl RunStore for SqliteRunStore {
                 .into_iter()
                 .find(|run| run.get("runId").and_then(serde_json::Value::as_str) == Some(run_id))
         });
+        let state = state.map(|state| without_withdrawn_questions(state, withdrawn));
         let terminal = matches!(
             record.status,
             dwf::RunStatus::Completed | dwf::RunStatus::Errored | dwf::RunStatus::Stopped
@@ -364,6 +367,30 @@ impl RunStore for SqliteRunStore {
             published_artifacts,
         }))
     }
+}
+
+/// Drops the questions the owner withdrew from a replayed run state. Node's pending list is its in-memory registry, which a
+/// withdrawal edits; the journal never records one, so the replay would keep advertising the question.
+pub fn without_withdrawn_questions(
+    mut state: serde_json::Map<String, serde_json::Value>,
+    withdrawn: &[String],
+) -> serde_json::Map<String, serde_json::Value> {
+    if withdrawn.is_empty() {
+        return state;
+    }
+    let Some(serde_json::Value::Array(list)) = state.get_mut("pendingQuestions") else {
+        return state;
+    };
+    list.retain(|question| {
+        question
+            .get("qid")
+            .and_then(serde_json::Value::as_str)
+            .is_none_or(|qid| !withdrawn.iter().any(|gone| gone == qid))
+    });
+    if list.is_empty() {
+        state.shift_remove("pendingQuestions");
+    }
+    state
 }
 
 /// The latest record of each published artifact, kept at its first publication's position (the projection's upsert order).

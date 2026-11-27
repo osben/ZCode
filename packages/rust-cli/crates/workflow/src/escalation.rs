@@ -205,6 +205,12 @@ impl EscalationBook {
         self.by_qid.get(qid).cloned()
     }
 
+    /// A turn of the session was rejected (Node `onTurnRejected`): withdraw its parked questions, since nobody will read
+    /// their answers, but leave the ask active, because the turn may be redriven. Returns the withdrawn ids.
+    pub fn withdraw_pending(&mut self, session: &str) -> Vec<String> {
+        self.withdraw(session)
+    }
+
     /// Withdraw every parked question of a session and retire its ids (Node `withdrawSessionEscalations`).
     fn withdraw(&mut self, session: &str) -> Vec<String> {
         let Some(state) = self.sessions.get_mut(session) else {

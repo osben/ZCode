@@ -235,6 +235,12 @@ pub trait Tool: Send + Sync {
         false
     }
 
+    /// Node `ToolContract.strict`: the declaration asks for constrained decoding of the call's input. The Anthropic adapter
+    /// sends `strict: true` with a folded schema for a first-party model id and drops the flag everywhere else.
+    fn strict(&self) -> bool {
+        false
+    }
+
     /// 工具描述；文本来自 `prompts/` 数据文件。
     fn description(&self, context: &PromptContext) -> String;
 

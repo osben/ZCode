@@ -860,6 +860,7 @@ impl WorkflowRunService {
                     run_id: run.run_id,
                     status: run.status,
                     sequence: run.sequence,
+                    updated_at: run.updated_at,
                 })
                 .collect(),
             child_session_ids: history.child_session_ids,
@@ -1014,7 +1015,12 @@ impl WorkflowRunService {
             .map(|progress| progress.default_concurrency);
         let live_here = live.is_some();
         let Some(detail) = store
-            .run_detail_for(run_id, default, live_here)
+            .run_detail_for(
+                run_id,
+                default,
+                live_here,
+                &self.withdrawn_questions_of(run_id),
+            )
             .map_err(store_error)?
         else {
             // The gap form: this session's launched run whose row is not written yet (Node's registry gap copy).

@@ -98,8 +98,9 @@ fn a_finished_run_leaves_a_new_one_free_to_start() {
         .unwrap();
 }
 
-/// Node `offPeakToolEnabled`: a session's create or resume flag wins, the workspace policy is the default. The policy
-/// answer itself stays `enabled: false` until the flip.
+/// Node `server-operations.ts` injects `offPeakPort` when the create or resume flag is `true` OR the workspace policy is
+/// on, so a recorded `false` never beats a policy that is on. The policy answer itself stays `enabled: false` until the
+/// flip.
 #[test]
 fn the_tools_follow_the_session_flag_and_fall_back_to_the_policy() {
     let runs = OffPeakRuns::default();
@@ -112,14 +113,23 @@ fn the_tools_follow_the_session_flag_and_fall_back_to_the_policy() {
     runs.set_session_enabled("sess_1", false);
     assert!(
         !runs.tools_enabled("sess_1"),
-        "an explicit false overrides the policy"
+        "a false flag with the policy off is off"
     );
     runs.set_policy(true);
     assert!(
         runs.tools_enabled("sess_2"),
         "a session without a flag takes the policy"
     );
-    assert!(!runs.tools_enabled("sess_1"));
+    assert!(
+        runs.tools_enabled("sess_1"),
+        "a recorded false does not beat a policy that is on"
+    );
+    runs.set_policy(false);
+    runs.set_session_enabled("sess_3", true);
+    assert!(
+        runs.tools_enabled("sess_3"),
+        "a true flag wins over the policy"
+    );
 }
 
 /// Fork (slice 3 layer B): the open run is found by its execution from any session (a subagent of the turn asks with its

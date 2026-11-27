@@ -5,7 +5,8 @@
 //!
 //! The declaration follows the session's profile. A mono session declares its schema (Node `typedSubmitResultInputSchema`):
 //! `result` is that schema, required, with no other key allowed. A generic session's `result` takes any JSON, and its ask's
-//! epilogue says the shape. Not built, recorded in the spec: Node's `strict: true` flag for the Anthropic adapter.
+//! epilogue says the shape. A mono declaration also asks for `strict` (Node `typed ? { strict: true }`); the Anthropic adapter
+//! folds the schema and sends the flag for a first-party model id only.
 
 use std::sync::Arc;
 
@@ -97,6 +98,7 @@ impl Tool for SubmitResult {
                     "properties": {"result": result},
                     "required": ["result"],
                     "additionalProperties": false,
+                    "$schema": "https://json-schema.org/draft/2020-12/schema",
                 })
             }
             None => json!({
@@ -106,6 +108,12 @@ impl Tool for SubmitResult {
                 "additionalProperties": false,
             }),
         }
+    }
+
+    /// Node `...(typed ? { strict: true } : {})`: a mono session's declaration asks for constrained decoding. The model
+    /// adapter decides whether it can be honoured (first-party model id, schema in the strict subset).
+    fn strict(&self) -> bool {
+        self.submit_schema.is_some()
     }
 
     fn cancel_message(&self) -> Option<std::borrow::Cow<'_, str>> {

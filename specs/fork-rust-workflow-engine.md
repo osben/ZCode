@@ -1086,14 +1086,14 @@ The runtime adapter (`MailboxPort::escalate`) sends the question on the blocking
 
 Tests: the store's four cases (answer before wait; wait then answer; withdrawal with its reason; per-question slots); the turn side's answer and withdrawal through `MailboxTurns`; the tool's answer, refusal, context, required question and failed port; and an end-to-end runtime test (a scripted turn escalates, the owner parks it, the owner answers the parked question, and the turn receives the answer). The identity override is pinned by a journal test: the caller sends another actor and persona, and the `escalation-raised` event holds the session's. The store's slots are tagged with their session, and `cancel_turn` drops that session's slots, which nobody waited for, while other sessions keep theirs (test: a cancelled session's answer is dropped, another's is kept). Limit: the store has no hook for a session closing, because the actor port has no close call. A withdrawal that the owner sends after the cancel is not dropped, since the cancel ran first. Box: workflow lib 131, agents lib 293, runtime lib 147 pass; fmt and clippy clean.
 
-As built (2c-3b part 2c-1, the mono declaration): the turn's input is one `workflow::actor_turns::TurnInput` (text, epilogue boundary, and the mono session's submit schema, or None for a generic one). `TurnRunner::run_turn`, `ActorSessions::start_turn`, and the queued start take it. The owner sets the schema from the session's profile, only for a typed ask. A nudged turn keeps the schema. The bridge puts it in the turn's `ActorRun::port` (a `SubmitPort`, which holds the port and the schema together, so a schema cannot exist without a port), and `LiveAgent::actor_port` carries that per turn, refreshed like the asks and the port. The submit tool declares it as Node's `{description: "The structured result for this ask.", ...resultSchema}` under `result`: the schema's own keys come after the description, so a description in the schema wins, and `result` is required, with `additionalProperties` false. A generic session's declaration is unchanged. A nudge keeps the schema; only its text and boundary change. Tests: the mono and generic declarations (agents); a mono turn carries its schema and a generic one carries none (owner); a mono session's schema reaches both turns of its ask through the bridge (runtime). Deviation: Node adds `strict: true` for the Anthropic adapter. That needs the provider adapter, and it is not built here. Box: workflow lib 132, agents lib 294, runtime lib 148 pass; fmt and clippy clean.
+As built (2c-3b part 2c-1, the mono declaration): the turn's input is one `workflow::actor_turns::TurnInput` (text, epilogue boundary, and the mono session's submit schema, or None for a generic one). `TurnRunner::run_turn`, `ActorSessions::start_turn`, and the queued start take it. The owner sets the schema from the session's profile, only for a typed ask. A nudged turn keeps the schema. The bridge puts it in the turn's `ActorRun::port` (a `SubmitPort`, which holds the port and the schema together, so a schema cannot exist without a port), and `LiveAgent::actor_port` carries that per turn, refreshed like the asks and the port. The submit tool declares it as Node's `{description: "The structured result for this ask.", ...resultSchema}` under `result`: the schema's own keys come after the description, so a description in the schema wins, and `result` is required, with `additionalProperties` false. A generic session's declaration is unchanged. A nudge keeps the schema; only its text and boundary change. Tests: the mono and generic declarations (agents); a mono turn carries its schema and a generic one carries none (owner); a mono session's schema reaches both turns of its ask through the bridge (runtime). Deviation (closed in 9.68): Node adds `strict: true` for the Anthropic adapter. It was not built here. Box: workflow lib 132, agents lib 294, runtime lib 148 pass; fmt and clippy clean.
 
 As built (2c-3b part 2c-2, the epilogue boundary on the user message): `kernel_api::message::UserMessage::epilogue_start` (UTF-16 units; serde default, omitted when None). node-store writes it into the message row's `metadata.epilogueStart`, in the same object as `inputIntent`, as Node's `message-persistence.ts` does (`epilogueStart !== undefined`): `Some(0)` is stored, and `None` stores nothing. `spawn::resume` takes the boundary; the actor's turn passes `ActorRun::epilogue_start`, and the bridge passes `Some(turn.epilogue_start)`. The other resume callers pass None. Tests: the store round trip (a boundary of 5, a zero boundary, none, and a boundary beside the intent), and an entry test that the turn's user message carries its boundary. Box: node-store lib 335, agents lib 295, runtime lib 148 pass; fmt and clippy clean. Red: the store test was written before the write, but its red run was not captured (the change was made in one pass).
 
 Follow-ups (not built):
 
-- `strict: true` on the mono `submit_result` declaration. Node sets it so the Anthropic adapter enforces the schema natively. It needs the provider adapter to honour the flag, so the declaration does not carry it yet.
-- Session close. The actor port has no session-close call, so the parked-answer store cannot drop a session's unwaited slots when the session closes, only when its turn is cancelled. A withdrawal the owner sends after the cancel is not dropped.
+- `strict: true` on the mono `submit_result` declaration. Closed in 9.68 (the tool asks for it, the Anthropic adapter folds the schema and sends it).
+- Session close. Closed in 9.68: the turn side's close drops the session's parked answers. A withdrawal the owner sends after a cancel, for a session that is never closed, is still not dropped.
 
 ### 9.8g W6a part 2c-4f: the tool-started order (as built)
 
@@ -3909,8 +3909,9 @@ worktree (`@zcode/model-option-map` is missing from the workspace, with `--froze
      `hole-filled`, and the tool's result does not name a draft. The cold read surface cannot find a draft written by a fill.
 512. Model bindings. The run's binding table is not carried into the run service, so the helper gets none and a body that names a
      model is refused as unbound. A run launched with named models cannot take a body that names one.
-513. Owner exemption. Node's `isFillWorkflowHoleOwnedRun` skips the ask for the session's own run. Every fill asks here
-     (`alwaysAsk`, `allowAlways: session`). The hole's facts (`owned_by_this_session`) are not read. The same reason as 454 for AmendWorkflow.
+513. Owner exemption. Built (checked in 9.68). `check_permissions` reads the run's facts through `owned_run_facts` and `hole_facts`, and
+     `is_fill_workflow_hole_owned_run` allows the fill without an ask for the session's own run. Any other fill asks (`alwaysAsk`,
+     `allowAlways: session`). This text said "not built" until 9.68.
 514. Output. The success text is short, and has no display window, no causality graph and no `CreateWorkflowOutput` shape. A compile
      refusal is a failure whose text lists `L{line}:C{column} message` lines, not Node's `ok: false` response with its fill block.
 515. Hole name. The tool names the hole by its site id only; the hole's name and type are not read (see 437).
@@ -4153,11 +4154,11 @@ Divergences:
 604. Node's GUI cancel of a settled run returns `background_task_not_running` (`cancelBackgroundTask` turns `alreadyTerminal` into a reason). Here GUI and TaskStop both refuse a settled run with the same text, from the journal row.
 605. Settlement is asynchronous. `cancel` returns true once the stop is posted; the run settles on its owner's thread. Node awaits only the abort, so a TaskStop result can come before the row's `stopped` write.
 606. Parked questions are read from the projection before the stop. A question parked just before the stop, whose projection has not caught up, is not withdrawn. A later answer to it is `unknown_question`, not `run_not_in_flight`. Node reads its registry directly.
-607. Withdrawals happen only through the stop path. Node also withdraws a question when its ask is cancelled or its turn fails (`withdraw` in the escalation registry). That needs the ask driver's failure path and is not built.
+607. Withdrawals happen only through the stop path. Node also withdraws a question when its ask is cancelled or its turn fails (`withdraw` in the escalation registry). Closed in 9.68: the owner already withdrew on a cancelled ask, a refused start and the next ask (`reconcile`, `refuse_start` and `start_ask` in `driver_owner.rs`). A turn failure that is redriven did not withdraw, and now does.
 608. The `superseded` initiator is refused as unsupported by `cancel`. The amend path stops its predecessor itself (9.43).
 609. Listing runs in the background registry is not built: runs are not in the `backgroundWorks` projection or in `/tasks`, so the GUI shows no card for a run. A run is cancelled only by its id (`cancelBackgroundWork` or TaskStop). It needs the run's lifecycle events in the projection, which fall with the W8b notifications.
 
-610. Run ownership is the exact calling session, not its session tree. `command_sessions` and `visible` widen the other target types to the tree (L18), but the run lookup does not. A run started from a subagent's session is therefore not stoppable from the top-level session. Not verified against Node's registry scope; recorded as a deliberate narrower scope until checked.
+610. Closed in 9.68. Run lookup was the exact calling session. It now follows `command_sessions` (the caller's session, and for the main thread each subagent session of its tree), so a run started by a subagent can be stopped from the top-level session.
 
 Review round (ocr on #607, fifteen findings). Fixed with tests where practical:
 
@@ -4488,7 +4489,8 @@ in the terminal module, and the two would be edited together only if Node's rule
 744. Divergence 609 is closed for the snapshot only. The run is cancelled by its id through TaskStop (9.48), as before.
 745. Divergence 610, checked. Node's subagent runtimes receive the parent's `runtimeTaskRegistry` (`runtime/methods/subagent.ts:99`), so
      Node's TaskStop and `cancelBackgroundWork` see the runs of the whole session tree from the top session. Rust keeps the exact session
-     (9.48). Not changed: tree membership needs a lookup in the run path that the run service does not hold, and it is a separate PR.
+     (9.48). Closed in 9.68: the agents side asks one run port per session of the tree (`command_sessions`), so the run service needs no
+     tree lookup.
 746. Not verified against a live Node run. The checks are source reads and the Rust tests.
 747. The retry text changed. A refused retune (`workflow_run_settled`, `workflow_run_not_retunable`) told the model to call AmendWorkflow
      again. Here a call with only `max_concurrency` always retunes, so that retry refused again, forever. The text now names `name`
@@ -6186,6 +6188,57 @@ settings rows (930).
 **Gate.** `cargo fmt --all --check` clean. `cargo clippy --workspace --all-targets --locked -- -D warnings` clean, with no
 allow attributes added. Lib tests: kernel-api 464, workflow 469, runtime 408, protocol-zcode 1092, node-store 366 (1 ignored,
 existing), tools 758, agents 352, session 422, platform 205 (1 ignored, existing), tui 577. cli bin tests 566.
+
+### 9.68 Debt round 2026-11-27: small workflow gaps (as built)
+
+Six small items from a read-only audit at fork 79907c7b0. Each was proved first: a test that fails on the old code, or evidence
+that the item was already done.
+
+- Parked answers on session close (done). `ParkedAnswers::discard_session` ran only from `cancel_turn`. Node has no close-time
+  drop of its own: its escalation registry is withdrawn from `cancelAsk`, `onTurnRejected` and `startAsk`, and its turn
+  deferreds die with the driver state. The Rust store outlives the turn threads and keys slots by session, so a late answer for
+  a session whose turn is gone stayed in it. `run_close` (the turn side's close, run at once for an idle session and from
+  the last turn's guard for a busy one) now calls `discard_session` after the closer succeeded. A refused close leaves the
+  answers, since the session stays open. Tests: a close drops only the closed session's answers; a refused close keeps them.
+- `strict: true` on the mono `submit_result` (done). Node sets `strict` on the typed declaration. Its AI SDK keeps the flag only
+  for a model on its structured-output capability list (substring match, `ANTHROPIC_STRUCTURED_OUTPUT_MODELS`; an id such as
+  `claude-opus-5-5` is not on it) and omits it otherwise. Node's adapter also requires a bare `claude-` id
+  (`isAnthropicFirstPartyModelId`), so `anthropic/claude-sonnet-4-6` and `us.anthropic.claude-sonnet-4-6` never get it. The
+  schema is folded into the strict subset (`strict-tool-schema.ts`). Rust: `Tool::strict()` (default false); `SubmitResult` returns true for a mono session;
+  `wire_tools` puts it in `ToolFlags`; the Anthropic encoder (`model/src/anthropic/strict_schema.rs`) keeps the flag and sends the
+  folded schema for a model on that list, and sends the original schema without the flag for any other model id or for a
+  schema the subset cannot express (`$ref`, `$defs`, `prefixItems`, a schema-valued `additionalProperties`, an empty schema).
+  Folded keywords: `minimum`, `maximum`, `exclusiveMinimum`, `exclusiveMaximum`, `multipleOf`, `minLength`, `maxLength`,
+  `pattern`, `minItems`, `maxItems`, `default`, and formats outside the strict list. They move into the description. Node's
+  generic declaration is not strict, and neither is Rust's. A strict tool adds no beta of its own: the structured-outputs beta
+  stays what the existing Node path sends for tools on those models (F71 rule unchanged). Not verified against a live call.
+- The typed declaration's `$schema` (done). Node's `typedSubmitResultInputSchema` ends with
+  `$schema: "https://json-schema.org/draft/2020-12/schema"`. The Rust typed declaration now has it. The generic declaration
+  is unchanged: Node's comes from zod's generator and also carries `$schema`, but no Rust tool schema built by hand carries
+  one, so that is left for a sweep of all of them (see 940).
+- Divergence 610 (done). TaskStop and the user's stop read the run ports of `command_sessions`: the caller's own session and,
+  for the main thread, each subagent session of its top-level session. A subagent sees only its own session's runs, as it
+  does for commands (L18). Node's subagent runtimes share the parent's task registry, so the main thread sees them. Tests: the
+  main thread stops a run its subagent started; another session does not see it; a subagent does not stop its parent's run.
+  Limit: `command_sessions` lists only the subagents still in the live table. A run started by a subagent whose entry has left
+  the table is not reachable from the main thread.
+- Divergence 513 (docs only). The owner exemption was already built (`workflow_fill_hole.rs`, `check_permissions`, with tests).
+  The module doc and the text of 513 said "not built". Both are fixed.
+- Divergence 607 (one fix, one test of the old behaviour). The owner already withdraws questions when an ask is cancelled, when
+  its start is refused and when the next ask starts (`reconcile`, `refuse_start`, `start_ask` in `driver_owner.rs`). Two tests
+  pin a failing turn. A failure that fails the ask was already covered (reconcile). A transient failure that is redriven was not:
+  Node's `onTurnRejected` withdraws before it decides what the failure means, and the Rust owner left the question parked.
+  `turn_failed` now withdraws first through `EscalationBook::withdraw_pending`, which keeps the ask active for the redrive.
+  The red run of the redrive test showed the question was not rejected. Node's pending list is its in-memory escalation
+  registry, which a withdrawal edits and which emits no event. Rust's `GetWorkflowRun` and the run snapshot replay the journal
+  and the projection, where `escalation-raised` stays until `escalation-resolved` or `run-settled`. So `ParkedAnswers` now
+  records the qids the owner withdrew (`withdrawn()`), and `run_detail_for` and `run_snapshot_of` drop them from the state
+  (and so from the roster built from it). No journal event is added, since the journal is shared with Node. The same stale
+  listing existed for the older withdrawal paths (cancelled ask, refused start) and is closed by the same filter. Limit: the
+  filter is in-memory, so it covers a live run only, as Node's registry does; a cold read of a non-terminal run is unchanged.
+
+**Divergences.** 940: Rust's hand-built tool schemas for `submit_result` (generic) and `escalate` carry no `$schema`, while
+Node's zod-generated ones do. Not changed here, since it touches every tool schema and the prompt-cache bytes.
 
 ## 10. Open questions
 

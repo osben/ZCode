@@ -138,6 +138,17 @@ impl Requested {
     }
 }
 
+/// Fork: Node forwards `offPeakToolEnabled` on a v4 create only when it is `true` (`v4-bridge.ts`), and the runtime
+/// gets its off-peak port then or when the workspace policy is on. Recorded before the session opens.
+fn record_off_peak_flag(server: &Server, id: &SessionId, flag: Option<bool>) {
+    if flag == Some(true) {
+        server
+            .context
+            .off_peak
+            .set_session_enabled(id.as_str(), true);
+    }
+}
+
 /// createSession 的 payload。
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -177,6 +188,8 @@ struct CreateSessionPayload {
     /// are resolved with the cached fact by `resolve_gate`; the inbound schema has already refused other values.
     dynamic_workflow_enabled: Option<bool>,
     dynamic_workflow_mode: Option<DynamicWorkflowMode>,
+    /// Fork: the session's own off-peak tool flag (Node `offPeakToolEnabled`; only `true` is forwarded to the runtime).
+    off_peak_tool_enabled: Option<bool>,
 }
 
 /// B1: the shared `guard.worktreeCwdLocalOnly` refusal (Node `resolveWorkspaceRefFromId` then
@@ -634,6 +647,11 @@ pub(crate) async fn create_session_with(
         // Node `runActivation`: SessionStart (Node runs it in the first turn) sees the draft's config, and the first
         // input follows the move into the worktree.
         // Fork (W7-1, spec 9.2): past the attachment refusals above; the activation itself may still refuse.
+        record_off_peak_flag(
+            server,
+            &SessionId::new(prepared),
+            payload.off_peak_tool_enabled,
+        );
         record_workflow_gate(
             server,
             &SessionId::new(prepared),
@@ -857,6 +875,9 @@ pub(crate) async fn create_session_with(
         Ok(id) => id,
         Err(error) => return refused(error.to_string()),
     };
+    // Fork: Node forwards `offPeakToolEnabled` on a v4 create only when it is `true` (`v4-bridge.ts`), and the runtime
+    // gets its off-peak port then or when the workspace policy is on. The flag is recorded before the session opens.
+    record_off_peak_flag(server, &id, payload.off_peak_tool_enabled);
     // Fork (W1, W7-1): the record takes its dynamic-workflow gate from the create parameters, then the Host's cached fact.
     record_workflow_gate(
         server,
