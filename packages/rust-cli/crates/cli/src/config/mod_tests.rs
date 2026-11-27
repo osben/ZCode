@@ -238,6 +238,77 @@ async fn project_mcp_servers_need_a_workspace_trust_grant() {
     );
 }
 
+/// Fork: Node's `.agents/mcp.json` session fallback reaches the process snapshot too. An ungranted fallback server
+/// stays out, a granted one joins as a project server whose `cwd` resolves against the working directory, and a
+/// granted disabled one is listed as disabled.
+#[tokio::test]
+async fn the_agents_mcp_fallback_joins_the_snapshot_when_granted() {
+    let fallback = json!({"mcpServers": {
+        "legacy": {"type": "stdio", "command": "node", "cwd": "tools"},
+        "pending": {"type": "stdio", "command": "deno"},
+        "off": {"type": "stdio", "command": "x", "enabled": false},
+    }});
+    let files = [("/Users/dev/repo/.agents/mcp.json", fallback)];
+    let (_dir, paths) = home(None);
+    let env = env(&files);
+    let workspace = WorkspaceRef {
+        environment: EnvironmentId::new("local"),
+        root: EnvPath::new(ROOT),
+    };
+    let inputs = ConfigInputs {
+        files: &env,
+        workspace: &workspace,
+        paths: &paths,
+        process_env: &rust_cli_base::secret::EnvSnapshot::default(),
+        flag: None,
+        project_is_local: true,
+    };
+    assert!(assemble(&inputs).await.mcp_servers.is_empty());
+    let read = read_files(&inputs).await;
+    let trust = mcp_trust::Inspection::read(
+        &env,
+        &workspace,
+        mcp_trust::Target::new(ROOT, None),
+        (read.user.object(), &read.projects),
+        &paths,
+    )
+    .await;
+    for name in ["legacy", "off"] {
+        let digest = trust.discovery().unwrap().get(name).unwrap().digest.clone();
+        let record = rust_cli_platform::local::McpTrustRecord {
+            workspace_identity: ROOT.to_owned(),
+            server_name: name.to_owned(),
+            declaration_digest: digest,
+            granted_at: "2026-11-13T00:00:00.000Z".to_owned(),
+        };
+        trust
+            .store
+            .decide(
+                async || rust_cli_platform::local::StillDeclared::Yes,
+                record,
+                true,
+            )
+            .await
+            .unwrap();
+    }
+    let snapshot = assemble(&inputs).await;
+    let names = |servers: &[McpServer]| -> Vec<(String, McpScope)> {
+        servers.iter().map(|s| (s.name.clone(), s.scope)).collect()
+    };
+    assert_eq!(
+        names(&snapshot.mcp_servers),
+        [("legacy".to_owned(), McpScope::Project)]
+    );
+    assert_eq!(
+        names(&snapshot.mcp_disabled),
+        [("off".to_owned(), McpScope::Project)]
+    );
+    assert_eq!(
+        snapshot.mcp_origins["legacy"].path,
+        "/Users/dev/repo/.zcode/config.json"
+    );
+}
+
 #[tokio::test]
 async fn rules_are_combined_with_local_settings_and_the_command_line() {
     let snapshot =
