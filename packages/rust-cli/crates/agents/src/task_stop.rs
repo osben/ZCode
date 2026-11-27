@@ -343,31 +343,43 @@ impl TaskStopTool {
         true
     }
 
-    /// Fork (W8a, 9.48): the journal detail of a workflow run this session owns, under `id`. None when no run port is
-    /// wired or the session has no such run, so the id is not a run.
+    /// The run ports a stop reads, in order: the caller's own session, and for the main thread each subagent session of its
+    /// tree. Node's subagent runtimes share the parent's task registry, so the main thread sees the runs a subagent started
+    /// (divergence 610); the same scope as the commands (`command_sessions`, L18). A subagent sees only its own.
+    fn run_ports(&self, context: &Caller<'_>) -> Vec<Arc<dyn DynamicWorkflowRunPort>> {
+        let Some(sessions) = self.core.run_sessions.get() else {
+            return Vec::new();
+        };
+        self.command_sessions(context)
+            .iter()
+            .map(|session| sessions.for_session(session))
+            .collect()
+    }
+
+    /// Fork (W8a, 9.48): the journal detail of a workflow run this session or one of its subagents owns, under `id`. None
+    /// when no run port is wired or none of the sessions has such a run, so the id is not a run.
     async fn session_run(
         &self,
         id: &str,
         context: &Caller<'_>,
     ) -> Result<Option<Value>, DynamicWorkflowRunError> {
-        let Some(sessions) = self.core.run_sessions.get() else {
-            return Ok(None);
-        };
-        let port = sessions.for_session(context.session);
-        owned_run_detail(port.as_ref(), &WorkflowRunId::new(id)).await
+        for port in self.run_ports(context) {
+            if let Some(detail) = owned_run_detail(port.as_ref(), &WorkflowRunId::new(id)).await? {
+                return Ok(Some(detail));
+            }
+        }
+        Ok(None)
     }
 
-    /// Fork (W8a, 9.48): stops a workflow run of this session through the run port, as Node's `stopBackgroundTask` does for
-    /// a `local_dynamic_workflow`: the user's stop is `user`, the model's TaskStop is `model`. A run that already ended is
-    /// not running (strict, as Node's TaskStop). None when the session holds no such run, so the id goes on to the
-    /// subagents and the commands.
+    /// Fork (W8a, 9.48): stops a workflow run of this session (or of a subagent's, for the main thread) through the run
+    /// port, as Node's `stopBackgroundTask` does for a `local_dynamic_workflow`: the user's stop is `user`, the model's
+    /// TaskStop is `model`. A run that already ended is not running (strict, as Node's TaskStop). None when no session holds
+    /// such a run, so the id goes on to the subagents and the commands.
     async fn stop_run(
         &self,
         id: &str,
         context: &Caller<'_>,
     ) -> Option<Result<StoppedTask, ToolError>> {
-        let sessions = self.core.run_sessions.get()?;
-        let port = sessions.for_session(context.session);
         let run = WorkflowRunId::new(id);
         let initiator = if context.user {
             CancelInitiator::User
@@ -379,30 +391,35 @@ impl TaskStopTool {
                 message: error.to_string(),
             }))
         };
-        match port.cancel(&run, initiator).await {
-            Ok(true) => Some(Ok(StoppedTask {
-                id: id.to_owned(),
-                task_type: "local_dynamic_workflow",
-                command: RUN_COMMAND.to_owned(),
-                machine: MachineName::primary(),
-            })),
-            Ok(false) => match owned_run_detail(port.as_ref(), &run).await {
-                Ok(Some(detail)) => {
-                    let status = detail
-                        .get("status")
-                        .and_then(Value::as_str)
-                        .unwrap_or("unknown")
-                        .to_owned();
-                    Some(Err(ToolError::Failed {
-                        message: format!("Task {id} is not running (status: {status})"),
-                    }))
+        for port in self.run_ports(context) {
+            match port.cancel(&run, initiator.clone()).await {
+                Ok(true) => {
+                    return Some(Ok(StoppedTask {
+                        id: id.to_owned(),
+                        task_type: "local_dynamic_workflow",
+                        command: RUN_COMMAND.to_owned(),
+                        machine: MachineName::primary(),
+                    }));
                 }
-                Ok(None) => None,
-                Err(error) => failed(error),
-            },
-            Err(error) if error.is_unsupported() => None,
-            Err(error) => failed(error),
+                Ok(false) => match owned_run_detail(port.as_ref(), &run).await {
+                    Ok(Some(detail)) => {
+                        let status = detail
+                            .get("status")
+                            .and_then(Value::as_str)
+                            .unwrap_or("unknown")
+                            .to_owned();
+                        return Some(Err(ToolError::Failed {
+                            message: format!("Task {id} is not running (status: {status})"),
+                        }));
+                    }
+                    Ok(None) => {}
+                    Err(error) => return failed(error),
+                },
+                Err(error) if error.is_unsupported() => {}
+                Err(error) => return failed(error),
+            }
         }
+        None
     }
 
     /// 停止一个任务（TaskStop 的 `call` 与用户的 `/tasks` 共用）。校验之后状态可能变了（命令刚好自己结束）：
