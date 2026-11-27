@@ -369,6 +369,44 @@ async fn an_expired_ticket_is_renewed_and_resent_without_spending_retries() {
     assert_eq!(*tickets.renewed.lock().unwrap(), ["tkt_1"]);
 }
 
+/// Node refreshes a run's credentials on every HTTP attempt (`refreshRuntimeHeadersBeforeAttempt`), so an ordinary
+/// retry of a ticketed request re-resolves its endpoint: a short-lived token that rotated in between is not resent.
+#[tokio::test]
+async fn a_retry_of_a_ticketed_request_resolves_its_credentials_again() {
+    let server = Fixture::start(vec![
+        error(500, "api_error"),
+        Reply::new(200).send(text_response(&["ok"])),
+    ])
+    .await;
+    let tickets = Arc::new(Tickets {
+        issued: Mutex::new(0),
+        refusals: Mutex::new(0),
+        renewed: Mutex::new(Vec::new()),
+    });
+    let source = rust_cli_kernel_api::off_peak_ticket::TicketSource(tickets.clone());
+    let egress = Arc::new(Egress::new(NetworkPolicy::default()).await.unwrap());
+    let model = ProviderModel::new(
+        egress,
+        Arc::new(TicketedEndpoints {
+            base_url: server.url(),
+            ticket_header: true,
+        }),
+        clock(),
+        RouteOptions {
+            retry: fast_retry(3),
+            ..RouteOptions::default()
+        },
+    );
+    let mut ticketed = request("hi", QuerySource::MainThread);
+    ticketed.options.off_peak_ticket = Some(source);
+    let events = collect(&model, ticketed).await;
+    assert!(events.iter().all(Result::is_ok), "{events:?}");
+    let requests = server.requests();
+    assert_eq!(requests.len(), 2);
+    assert_eq!(requests[0].header("x-api-key"), Some("token-1"));
+    assert_eq!(requests[1].header("x-api-key"), Some("token-2"));
+}
+
 /// Fork (slice 3 layer B): renewals of one request are bounded. A provider that keeps refusing the renewed ticket ends
 /// the request with the refusal instead of renewing forever (the cap is `MAX_TICKET_RENEWALS`, 3).
 #[tokio::test]

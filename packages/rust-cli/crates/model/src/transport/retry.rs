@@ -93,6 +93,25 @@ impl Connect {
                 }
             }
         }
+        // Node refreshes a run's credentials before every HTTP attempt, so a retry on a ticket resolves the endpoint again
+        // (a short-lived token may have rotated since the last send). The renewal above already did it for a rejection.
+        if !renew && let Some(source) = self.ticket.as_ref() {
+            let fresh = self.route.endpoints.endpoint(EndpointQuery {
+                selection: &self.selection,
+                rejected: None,
+                output_limit: self.output_limit,
+                session: self.session.as_ref(),
+                ticket: Some(source),
+            });
+            match self.cancel.run_until_cancelled(fresh).await {
+                None => return Err(ModelError::Cancelled),
+                Some(Err(error)) => return Err(error),
+                Some(Ok(endpoint)) => {
+                    self.endpoint.credential = endpoint.credential;
+                    self.endpoint.headers = endpoint.headers;
+                }
+            }
+        }
         let delay_ms = millis(delay);
         let max_retries = self.route.options.retry.max_retries;
         // 带会话的 `model.retry`（warn）由 query 从重试通知记；这里是所有调用方的细节（logging.md §4）。

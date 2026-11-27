@@ -294,6 +294,7 @@ impl Platform {
         selection: &ModelSelection,
         session: Option<&rust_cli_kernel_api::ids::SessionId>,
         auth: rust_cli_kernel_api::provider::SuppliedAuth,
+        rejected_plan: Option<&RedactedString>,
     ) -> Result<(Option<RedactedString>, Vec<(String, RedactedString)>), ModelError> {
         let Some(scope) = auth.account_scope.clone() else {
             return Ok((auth.api_key, auth.headers));
@@ -317,7 +318,7 @@ impl Platform {
                     mode: mode.clone(),
                 },
                 session: session.cloned(),
-                rejected_fingerprint: None,
+                rejected_fingerprint: rejected_plan.map(|key| token::fingerprint(key.expose())),
                 expected_account_scope: Some(scope.clone()),
             })
             .await?;
@@ -433,6 +434,7 @@ impl ModelEndpoints for Platform {
         };
         // Fork (slice 3 layer B): a ticket of an off-peak run supplies the credentials before the ordinary source (Node
         // `this.requestAuth ?? initial.requestAuthSource`). Without one the path below is the ordinary one.
+        let mut scoped = false;
         let (ticket_id, ticket_auth) = match ticket {
             Some(source) => {
                 let granted = source.0.acquire().await?;
@@ -442,7 +444,17 @@ impl ModelEndpoints for Platform {
         };
         let (key, supplied) = match ticket_auth {
             Some(auth) => {
-                self.refresh_ticket_auth(template, selection, session, auth)
+                // A scoped off-peak ticket judges the rejected Coding Plan token, not the ticket's own key (Node
+                // `AccountRequestRetry.#token` reads `x-coding-plan-api-key` in off-peak mode).
+                let rejected_plan = rejected.and_then(|endpoint| {
+                    endpoint
+                        .headers
+                        .iter()
+                        .find(|(name, _)| name.eq_ignore_ascii_case(CODING_PLAN_KEY_HEADER))
+                        .map(|(_, value)| value)
+                });
+                scoped = auth.account_scope.is_some();
+                self.refresh_ticket_auth(template, selection, session, auth, rejected_plan)
                     .await?
             }
             None => {
@@ -452,6 +464,7 @@ impl ModelEndpoints for Platform {
         };
         // 被拒的凭据重新读到的还是同一个（手工 key 不会自己变）：不再重试，直接报鉴权失败。
         if let (Some(previous), Some(key)) = (previous, &key)
+            && !scoped
             && previous.expose() == key.expose()
         {
             return Err(ModelError::Authentication {

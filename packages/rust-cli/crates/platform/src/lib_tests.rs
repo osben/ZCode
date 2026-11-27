@@ -949,3 +949,55 @@ async fn a_scoped_ticket_refuses_an_answer_for_another_account() {
         Err(ModelError::Authentication { message }) if message == "project_token_scope_invalidated"
     ));
 }
+
+/// After the server rejects the Coding Plan token, the endpoint is resolved again with the rejected endpoint. The
+/// ticket's own key is unchanged then, so it must not count as "the same credential rejected" (Node judges the plan
+/// token of an off-peak run), and the Host is told which plan token was rejected.
+#[tokio::test]
+async fn a_scoped_ticket_retry_after_a_rejection_names_the_rejected_plan_token() {
+    let dir = tempfile::tempdir().unwrap();
+    let (platform, paths) = platform(dir.path()).await;
+    let source = Arc::new(Scoped {
+        answers: "scope-1",
+        asked: std::sync::Mutex::new(Vec::new()),
+    });
+    let platform = platform.with_header_source(source.clone());
+    write(
+        paths.credentials().as_path(),
+        json!({
+            account::identity_key(ZAI): IDENTITY,
+            account::source_key(ZAI): "manual",
+            account::manual_key(ZAI, IDENTITY): "sk-own",
+        })
+        .to_string(),
+    )
+    .await;
+    let select = selection(ZAI, models::GLM_5_3_ACCOUNT, Some("high"));
+    let ticket = rust_cli_kernel_api::off_peak_ticket::TicketSource(Arc::new(ScopedTicket));
+    let session = rust_cli_kernel_api::ids::SessionId::new("session_1");
+    let first = platform
+        .endpoint(EndpointQuery {
+            ticket: Some(&ticket),
+            session: Some(&session),
+            ..EndpointQuery::new(&select)
+        })
+        .await
+        .unwrap();
+    let second = platform
+        .endpoint(EndpointQuery {
+            ticket: Some(&ticket),
+            rejected: Some(&first),
+            session: Some(&session),
+            ..EndpointQuery::new(&select)
+        })
+        .await
+        .expect("the unchanged ticket key is not a rejected credential");
+    assert_eq!(second.credential, first.credential);
+    let asked = source.asked.lock().unwrap().clone();
+    assert_eq!(asked.len(), 2);
+    assert_eq!(asked[0].rejected_fingerprint, None);
+    assert_eq!(
+        asked[1].rejected_fingerprint.as_deref(),
+        Some(token::fingerprint("pat-fresh").as_str())
+    );
+}

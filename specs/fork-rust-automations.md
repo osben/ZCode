@@ -322,6 +322,31 @@ Divergences kept: the run's background tasks and queued notifications are not ob
 turn end); the run opens at admission, not at turn start; the renewal is a `Retrying` notice (Node emits
 `waiting_ticket`).
 
+**Scoped renewal, event order (2026-11-27).** The run owns the ticket and its credentials (`OffPeakRuns`); the Host owns the
+account token. Each send of a scoped ticket asks the Host first, so a rotated token is never resent.
+
+```mermaid
+sequenceDiagram
+  participant H as Host
+  participant R as Run (OffPeakRuns)
+  participant P as Platform.endpoint
+  participant T as Transport attempt
+  H->>R: replace_ticket {ticketId, requestAuth{apiKey, accountScope}}
+  loop every send, including a retry after a non-auth failure
+    T->>P: endpoint(ticket)
+    P->>R: acquire() -> ticket id + SuppliedAuth{scope}
+    P->>H: requestProviderRuntimeHeaders {expectedAccountScope}
+    H-->>P: plan token + accountScope
+    P->>P: scope differs or token blank -> project_token_scope_invalidated
+    P-->>T: endpoint with X-Coding-Plan-Api-Key = fresh token
+    T->>T: send
+  end
+  Note over T,P: a 401 asks once more, and also names rejectedProjectTokenFingerprint (the rejected plan token)
+```
+
+A rejected scoped send is judged by its Coding Plan token, not by the ticket's own key (which does not change), as in Node's
+`AccountRequestRetry`.
+
 **Review follow-ups (2026-11-17).** The ticket source registers its wait on the run's `changed` notify before it reads
 the state (`enable()`), so a change between the read and the wait is not missed. `ticket_needed` is sent by a task of its
 own (`LifecycleSink` over the peer), so dropping the attempt mid-send cannot lose the request; an undelivered notification
