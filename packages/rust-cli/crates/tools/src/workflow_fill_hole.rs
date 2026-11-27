@@ -3,9 +3,9 @@
 //!
 //! A fill gives the statements of the function that a waiting hole stands for. The run port checks the effective script and
 //! releases the branch parked there with the code; nothing is started. The ask always asks, and the session may allow it
-//! (Node's `alwaysAsk` with `allowAlways: "session"`). Not built: the owner exemption (`isFillWorkflowHoleOwnedRun` skips the
-//! ask; the hole's facts are not read here, divergence 513), the fill file and the draft (divergence 511), and the display
-//! window with its model-facing paths and causality graph (divergence 514).
+//! (Node's `alwaysAsk` with `allowAlways: "session"`), except for the session's own run: the owner exemption
+//! (`isFillWorkflowHoleOwnedRun`, divergence 513) allows it without an ask. Not built: the fill file and the draft
+//! (divergence 511), and the display window with its model-facing paths and causality graph (divergence 514).
 
 use std::path::PathBuf;
 use std::sync::Arc;
