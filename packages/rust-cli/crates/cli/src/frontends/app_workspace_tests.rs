@@ -244,7 +244,9 @@ fn fixture_with(
     };
     let mut env = MemoryEnvironment::new(facts)
         .with_file("/Users/dev/repo/.git/HEAD", "ref")
-        .with_file("/Users/dev/repo/.zcode/config.json", project);
+        .with_file("/Users/dev/repo/.zcode/config.json", project)
+        // The entry script of `node check.js` (D24): a grant needs reviewable content.
+        .with_file("/Users/dev/repo/check.js", "process.exit(0)\n");
     for (path, text) in &extra_files {
         env = env.with_file(path, text);
     }

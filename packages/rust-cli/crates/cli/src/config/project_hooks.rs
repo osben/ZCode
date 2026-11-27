@@ -41,7 +41,7 @@ pub(crate) async fn entry(
         user.object(),
         &projects,
         paths,
-        workspace.environment.as_str() == rust_cli_node_store::LOCAL_ENVIRONMENT,
+        super::hook_scripts::Scripts::of(files, workspace),
         &mut warnings,
     )
     .await;

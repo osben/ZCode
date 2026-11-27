@@ -3,8 +3,9 @@
 
 use std::collections::HashSet;
 
-use rust_cli_hooks::config::{HookMatcher, HookOrigin, HooksSettings};
+use rust_cli_hooks::config::{HookCommand, HookMatcher, HookOrigin, HooksSettings};
 use rust_cli_hooks::node_config::NodeHooks;
+use rust_cli_hooks::script_entry::{ScriptCheck, ScriptState};
 use rust_cli_hooks::workspace_digest::{Bundle, DigestEntry, DigestSource, RuntimeRoot};
 use rust_cli_hooks::{HookSource, workspace_digest};
 use rust_cli_paths::StoragePaths;
@@ -12,6 +13,7 @@ use rust_cli_platform::local::{ConfigFile, HookTrustStore, TrustLoad};
 use serde_json::{Map, Value};
 
 use super::files::{ProjectFile, relative};
+use super::hook_scripts::{self, Scripts};
 use super::workspace_schema;
 
 /// What a project file contributes to the workspace hooks (Node `loadFileConfig` for a project file).
@@ -116,7 +118,7 @@ impl WorkspaceHooks {
         user: Option<&Map<String, Value>>,
         files: &[ProjectFile],
         paths: &StoragePaths,
-        local: bool,
+        scripts: Scripts<'_>,
         warnings: &mut Vec<String>,
     ) -> Self {
         let user_hooks = user
@@ -127,11 +129,20 @@ impl WorkspaceHooks {
         let root = workspace_digest::runtime_root(
             std::iter::once(&user_hooks).chain(found.iter().map(|(_, hooks)| hooks)),
         );
-        let bundle = workspace_digest::bundle(&sources(workspace_root, &found), &root);
+        let sources = sources(workspace_root, &found);
+        // Fork (specs/fork-rust-hook-script-entry.md): the entry scripts' content is part of the digest.
+        let states = hook_scripts::read_states(
+            scripts,
+            workspace_root,
+            workspace_digest::script_paths(&sources),
+        )
+        .await;
+        let bundle = workspace_digest::bundle(&sources, &root, &states);
         let store = HookTrustStore::new(paths.hook_trust_store(storage_dir(user)));
         let load = store.load().await;
         Self {
-            identity: super::trust_identity::resolve(paths, workspace_root, local).await,
+            identity: super::trust_identity::resolve(paths, workspace_root, scripts.is_local())
+                .await,
             root,
             bundle,
             store,
@@ -154,10 +165,23 @@ impl WorkspaceHooks {
         // 声明已按 来源 → 事件 → matcher → hook 排好（digest 的遍历顺序），相邻的合成一组。
         let mut groups: Vec<(&DigestEntry, HookMatcher)> = Vec::new();
         for entry in self.entries() {
-            if !entry.configured_enabled || !trusted.contains(&entry.digest) {
+            // An entry script that is missing or unreadable never runs, whatever the records say (D24).
+            if !entry.configured_enabled
+                || entry.script_unavailable()
+                || !trusted.contains(&entry.digest)
+            {
                 continue;
             }
-            let command = entry.hook.to_command(self.root.timeout_ms, &mut warnings);
+            let mut command = entry.hook.to_command(self.root.timeout_ms, &mut warnings);
+            // The trusted content, re-checked right before each run.
+            if let (HookCommand::Command(hook), Some(script)) = (&mut command, &entry.script)
+                && let ScriptState::File(sha256) = &script.state
+            {
+                hook.script = Some(ScriptCheck {
+                    path: script.path.clone(),
+                    sha256: sha256.clone(),
+                });
+            }
             match groups.last_mut() {
                 Some((first, matcher))
                     if first.source_index == entry.source_index
@@ -203,7 +227,12 @@ impl WorkspaceHooks {
         let digests: Vec<String> = self
             .entries()
             .iter()
-            .filter(|entry| entry.configured_enabled && !trusted.contains(&entry.digest))
+            // An unavailable entry script cannot be trusted, so it is not pending either (D24).
+            .filter(|entry| {
+                entry.configured_enabled
+                    && !entry.script_unavailable()
+                    && !trusted.contains(&entry.digest)
+            })
             .map(|entry| entry.digest.clone())
             .collect();
         let bundle = self.bundle.as_ref()?;

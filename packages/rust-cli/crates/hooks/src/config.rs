@@ -40,6 +40,9 @@ pub struct CommandHook {
     pub plugin_root: Option<String>,
     /// Node 配置的 `onError: "deny"`：PreToolUse 里出错时拦下工具（hooks.md §4.1 末段）。`settings.json` 形状的设置没有这一项。
     pub deny_on_error: bool,
+    /// Fork (specs/fork-rust-hook-script-entry.md): an admitted project hook's entry script, checked right before
+    /// each run; `None` for every other hook.
+    pub script: Option<crate::script_entry::ScriptCheck>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -197,6 +200,7 @@ fn parse_hook(value: &Value) -> Result<HookCommand, String> {
                 background: flag(object, "async") || flag(object, "asyncRewake"),
                 plugin_root: None,
                 deny_on_error: false,
+                script: None,
             }))
         }
         Some("prompt") => Ok(HookCommand::Prompt(PromptHook {

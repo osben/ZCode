@@ -162,5 +162,38 @@
         }
       }
     ]
+  },
+  {
+    "name": "entry scripts are part of the declaration digest",
+    "workspacePath": "/Users/dev/repo",
+    "userHooks": { "enabled": true },
+    "sources": [
+      {
+        "path": "/Users/dev/repo/.zcode/config.json",
+        "discoveryOrder": 0,
+        "hooks": {
+          "events": {
+            "PreToolUse": [
+              {
+                "matcher": "Bash",
+                "hooks": [
+                  { "type": "command", "command": "./scripts/guard.sh --fast" },
+                  { "type": "process", "command": "bash", "args": ["${ZCODE_PROJECT_DIR}/hooks/check.sh"], "onError": "deny" },
+                  { "type": "command", "command": "\"$CLAUDE_PROJECT_DIR\"/bin/run" },
+                  { "type": "command", "command": "guard" },
+                  { "type": "process", "command": "python3", "args": ["-m", "audit"] }
+                ]
+              }
+            ],
+            "Stop": [{ "hooks": [{ "type": "process", "command": "node", "args": ["stop.js"] }] }]
+          }
+        }
+      }
+    ],
+    "scriptStates": {
+      "workspace-hook-0-PreToolUse-0-0": { "kind": "file", "sha256": "9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08" },
+      "workspace-hook-0-PreToolUse-0-1": { "kind": "missing" },
+      "workspace-hook-0-PreToolUse-0-2": { "kind": "unverifiable" }
+    }
   }
 ]

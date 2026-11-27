@@ -12,6 +12,11 @@ fn args(text: &str) -> Vec<String> {
 }
 
 fn env(hooks: &str) -> MemoryEnvironment {
+    // The entry script of `node guard.js` (D24): only a script that can be read has reviewable content.
+    without_scripts(hooks).with_file("/Users/dev/repo/guard.js", "process.exit(0)\n")
+}
+
+fn without_scripts(hooks: &str) -> MemoryEnvironment {
     let facts = EnvFacts {
         cwd: EnvPath::new(ROOT),
         platform: "linux".to_owned(),
@@ -169,6 +174,68 @@ async fn status_grant_and_revoke_print_node_text() {
             .stdout
             .contains("state: workspace_hooks_pending_trust")
     );
+}
+
+#[tokio::test]
+async fn a_missing_entry_script_is_blocked_and_refuses_every_grant() {
+    // Node `workspace-hook-trust-cli.ts` (D24): the item is `blocked_untrusted`, the state names the script, and a
+    // grant that selects it is refused whole with the declarations listed; nothing is written.
+    let home = tempfile::tempdir().unwrap();
+    let paths = StoragePaths::resolve(&Default::default(), home.path(), home.path());
+    let env = without_scripts(HOOKS);
+    let status = run_with(&env, &paths, "hooks trust --json").await;
+    let status: serde_json::Value = serde_json::from_str(&status.stdout).unwrap();
+    assert_eq!(status["reasonCode"], "workspace_hook_script_unavailable");
+    assert_eq!(status["items"][0]["trustState"], "blocked_untrusted");
+    assert_eq!(status["items"][1]["trustState"], "pending_trust");
+    let bundle = status["bundleDigest"].as_str().unwrap().to_owned();
+    let digest = status["items"][0]["hookDeclarationDigest"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+
+    let text = run_with(
+        &env,
+        &paths,
+        &format!("hooks trust grant --hook-digest {digest}"),
+    )
+    .await;
+    assert_eq!(text.code, 1);
+    assert_eq!(
+        text.stderr,
+        "Error: workspace_hook_script_unavailable\nEntry script missing or unreadable:\n  PreToolUse node guard.js (.zcode/config.json)\n"
+    );
+    let json = run_with(
+        &env,
+        &paths,
+        &format!("hooks trust grant --all-current --bundle-digest {bundle} --json"),
+    )
+    .await;
+    let refused: serde_json::Value = serde_json::from_str(&json.stdout).unwrap();
+    assert_eq!(
+        refused,
+        serde_json::json!({
+            "accepted": false,
+            "reasonCode": "workspace_hook_script_unavailable",
+            "unavailableItems": ["PreToolUse node guard.js (.zcode/config.json)"],
+        })
+    );
+    assert!(!paths.hook_trust_store(None).as_path().exists());
+
+    // The App's `workspace/hooks/trustGrant` refuses with the same code.
+    let context = TrustContext {
+        files: &env,
+        paths: &paths,
+        cwd: ROOT,
+        version: "0.1.0",
+        now_ms: 1_760_688_000_000,
+    };
+    let app = grant_for_app(&context, (ROOT.to_owned(), None), &bundle, &digest).await;
+    assert_eq!(
+        app,
+        serde_json::json!({"accepted": false, "reasonCode": "workspace_hook_script_unavailable"})
+    );
+    assert!(!paths.hook_trust_store(None).as_path().exists());
 }
 
 #[tokio::test]

@@ -1,7 +1,7 @@
 [
   {
     "name": "one project file with command and process hooks",
-    "bundleDigest": "e906940aaf844b5ccd6394da452354a4173f6ac305115126ec9dc7945c9edc0d",
+    "bundleDigest": "80d56a3fbd70b8cfe4ea7d0abf75d9695fb9f5f43de9b180bdecbe130d25b766",
     "hooks": [
       {
         "reviewItemId": "workspace-hook-0-PreToolUse-0-0",
@@ -17,7 +17,13 @@
         "resolvedTimeoutMs": 60000,
         "configuredEnabled": true,
         "editable": true,
-        "hookDeclarationDigest": "fa62d0ce7b4ac477f410db0b1c3c076fbdd19a1eeeb0c109c31e96938fb9f73b"
+        "scriptEntry": {
+          "path": "check.js",
+          "state": {
+            "kind": "unverifiable"
+          }
+        },
+        "hookDeclarationDigest": "f1352aaa9acfafbd05e5bc0cf5acbd812d53814027a95f5a7d4d345d7a97683e"
       },
       {
         "reviewItemId": "workspace-hook-0-PreToolUse-0-2",
@@ -91,7 +97,7 @@
   },
   {
     "name": "onError deny is part of the declaration digest",
-    "bundleDigest": "7e0b44e2669fa90d56df9d0d77dd03f1bb3f9293b47a6cd72c27c8c5bfd89944",
+    "bundleDigest": "184b93bb37dfc90042e198d7dfe9884054bde648bcf78dfddbf108c31282df92",
     "hooks": [
       {
         "reviewItemId": "workspace-hook-0-PreToolUse-0-0",
@@ -115,13 +121,19 @@
         "resolvedTimeoutMs": 60000,
         "configuredEnabled": true,
         "editable": true,
-        "hookDeclarationDigest": "8e137da0c0075889db2e360e4ec4228e7db70aa2cfe7efa4a99ff0016f135d98"
+        "scriptEntry": {
+          "path": "check.js",
+          "state": {
+            "kind": "unverifiable"
+          }
+        },
+        "hookDeclarationDigest": "b0d4580cadd96493a719db779c3e766b6fa2bebf78a158e52f760056afe006e8"
       }
     ]
   },
   {
     "name": "compaction and session end events, in Node's event order",
-    "bundleDigest": "856e765a04c8a75785c345c3f2607c02234cf59013ab5dbe5a2624ecc060b749",
+    "bundleDigest": "d4d06bddca3c4f13f507374ec8711356050fbea218126d2ca88e52b0e1362896",
     "hooks": [
       {
         "reviewItemId": "workspace-hook-0-UserPromptSubmit-0-0",
@@ -145,7 +157,13 @@
         "resolvedTimeoutMs": 60000,
         "configuredEnabled": true,
         "editable": true,
-        "hookDeclarationDigest": "aa415a912ff425f3db72bd09d8c7982ec055c5980a4f3707917692d83cc6e1df"
+        "scriptEntry": {
+          "path": "after.js",
+          "state": {
+            "kind": "unverifiable"
+          }
+        },
+        "hookDeclarationDigest": "7e00da889962bd1d4a4731823589d994e0066b2df7cf34b8c2faa8c6b3394da9"
       },
       {
         "reviewItemId": "workspace-hook-0-SessionEnd-0-0",
@@ -154,6 +172,85 @@
         "configuredEnabled": true,
         "editable": true,
         "hookDeclarationDigest": "59b46f1dcc0e106e5a69dfd7df44d53c61c676cc007e7a6e52a8a8b6cba9576e"
+      }
+    ]
+  },
+  {
+    "name": "entry scripts are part of the declaration digest",
+    "bundleDigest": "8a376e03af65c87ce26005a5328104e323e77b8cf5d5d12e04049ec6dd1c4230",
+    "hooks": [
+      {
+        "reviewItemId": "workspace-hook-0-PreToolUse-0-0",
+        "sourceRelativePath": ".zcode/config.json",
+        "resolvedTimeoutMs": 60000,
+        "configuredEnabled": true,
+        "editable": true,
+        "scriptEntry": {
+          "path": "scripts/guard.sh",
+          "state": {
+            "kind": "file",
+            "sha256": "9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08"
+          }
+        },
+        "hookDeclarationDigest": "ab6c4617be9718ab16ca8e7266ef4625e93ca068caa74bc6df2a9fd80ca0a329"
+      },
+      {
+        "reviewItemId": "workspace-hook-0-PreToolUse-0-1",
+        "sourceRelativePath": ".zcode/config.json",
+        "resolvedTimeoutMs": 60000,
+        "configuredEnabled": true,
+        "editable": true,
+        "scriptEntry": {
+          "path": "hooks/check.sh",
+          "state": {
+            "kind": "missing"
+          }
+        },
+        "hookDeclarationDigest": "aceb3f8b7bf93ce62622c674c9118862931c1994a8be0e9e97a4303a8382d779"
+      },
+      {
+        "reviewItemId": "workspace-hook-0-PreToolUse-0-2",
+        "sourceRelativePath": ".zcode/config.json",
+        "resolvedTimeoutMs": 60000,
+        "configuredEnabled": true,
+        "editable": true,
+        "scriptEntry": {
+          "path": "bin/run",
+          "state": {
+            "kind": "unverifiable"
+          }
+        },
+        "hookDeclarationDigest": "aef529479ea3256686443f9d6e4c333480f22af5ba173fb8d9be9e0e8735d6a6"
+      },
+      {
+        "reviewItemId": "workspace-hook-0-PreToolUse-0-3",
+        "sourceRelativePath": ".zcode/config.json",
+        "resolvedTimeoutMs": 60000,
+        "configuredEnabled": true,
+        "editable": true,
+        "hookDeclarationDigest": "17a91c61eb159f1ea5b106cb82836f7f6dd129b21b74b43678541f284452521e"
+      },
+      {
+        "reviewItemId": "workspace-hook-0-PreToolUse-0-4",
+        "sourceRelativePath": ".zcode/config.json",
+        "resolvedTimeoutMs": 60000,
+        "configuredEnabled": true,
+        "editable": true,
+        "hookDeclarationDigest": "9b0ae5695f3aaec33c6e28292871204e667eb9d18c494949399689e0f45cd801"
+      },
+      {
+        "reviewItemId": "workspace-hook-0-Stop-0-0",
+        "sourceRelativePath": ".zcode/config.json",
+        "resolvedTimeoutMs": 60000,
+        "configuredEnabled": true,
+        "editable": true,
+        "scriptEntry": {
+          "path": "stop.js",
+          "state": {
+            "kind": "unverifiable"
+          }
+        },
+        "hookDeclarationDigest": "eeb99a9dc17c9ddcd65c6d4c309543124e236bd8439c8e39bb504df6ef7c83ac"
       }
     ]
   }

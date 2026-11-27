@@ -6,6 +6,7 @@
 //! 候选目录在同一次组装里从本机存储的插件清单得出（`plugins`，config.md §2.1）。
 
 mod files;
+pub(crate) mod hook_scripts;
 pub(crate) mod mcp_trust;
 mod mcp_trust_display;
 pub(crate) mod merge;
@@ -437,7 +438,14 @@ pub(crate) async fn assemble(inputs: &ConfigInputs<'_>) -> ConfigSnapshot {
         user_object,
         projects,
         inputs.paths,
-        inputs.project_is_local,
+        if inputs.project_is_local {
+            hook_scripts::Scripts::Local
+        } else {
+            hook_scripts::Scripts::Port {
+                files: inputs.files,
+                workspace: inputs.workspace,
+            }
+        },
         &mut warnings,
     )
     .await;

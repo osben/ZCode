@@ -139,7 +139,7 @@ pub(crate) fn repl(executed: Executed, command: &str, event: &str) -> HookResult
         }) => command_result(command, event, &stdout, &stderr, exit),
         Executed::Raw(Raw::Http { status, body }) => http_result(command, event, status, &body),
         Executed::Raw(Raw::Cancelled | Raw::TimedOut) => HookResult::cancelled(),
-        Executed::Raw(Raw::Backgrounded) => HookResult::default(),
+        Executed::Raw(Raw::Backgrounded | Raw::Refused(_)) => HookResult::default(),
         Executed::Raw(Raw::Failed(message)) => HookResult::non_blocking(message),
     }
 }
@@ -199,6 +199,11 @@ pub(crate) fn outside(executed: Executed, command: &str) -> Summary {
             ..summary(false, "Hook cancelled".to_owned(), false)
         },
         Executed::Raw(Raw::Backgrounded) => summary(true, String::new(), false),
+        // Not run: like a cancelled hook, it adds no line and no output.
+        Executed::Raw(Raw::Refused(_)) => Summary {
+            cancelled: true,
+            ..summary(false, String::new(), false)
+        },
         Executed::Raw(Raw::Failed(message)) => summary(false, message, false),
         Executed::Result(result) => summary(
             result.outcome == Outcome::Success,

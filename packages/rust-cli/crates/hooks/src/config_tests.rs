@@ -56,6 +56,7 @@ fn parses_every_hook_type_and_field() {
             background: true,
             plugin_root: None,
             deny_on_error: false,
+            script: None,
         })
     );
     assert_eq!(hooks[0].display(), "node a.js");

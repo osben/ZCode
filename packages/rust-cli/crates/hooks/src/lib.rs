@@ -46,6 +46,7 @@ mod prompt;
 mod records;
 mod result;
 mod run;
+pub mod script_entry;
 mod texts;
 mod transcript;
 pub mod workspace_digest;
@@ -301,6 +302,7 @@ impl HookRunner for HookEngine {
             },
             prompt_model: loaded.config.prompt_model.as_ref(),
             node,
+            scripts: self.state.read_unpoisoned().scripts.clone(),
         };
         let mut done = run::run_all(&self.ports, &batch, &hooks, &cancel).await;
         // Node runs the hooks of one event one by one in config order (`runner.ts`) and folds each result as it
@@ -325,7 +327,14 @@ impl HookRunner for HookEngine {
                 let hook = &hooks[index];
                 let display = hook.display();
                 // Node 配置的 `onError: "deny"`（修复线 F68）：PreToolUse 的这个 hook 出错时拦下工具。
-                if event.name == HookEventName::PreToolUse && hook.denies_on_error() {
+                // A refused re-check of a background hook is no error (Node: `!hook.async`).
+                let refused_background =
+                    matches!(executed, result::Executed::Raw(result::Raw::Refused(_)))
+                        && matches!(hook, HookCommand::Command(command) if command.background);
+                if event.name == HookEventName::PreToolUse
+                    && hook.denies_on_error()
+                    && !refused_background
+                {
                     let timeout = run::timeout_ms(hook, batch.default_timeout_ms);
                     let result = interpret::repl(executed.clone(), &display, event_name);
                     return on_error::deny(&executed, result, &display, timeout);
@@ -420,6 +429,10 @@ impl HookRunner for HookEngine {
 #[cfg(test)]
 #[path = "lib_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "script_recheck_tests.rs"]
+mod script_recheck_tests;
 
 #[cfg(test)]
 #[path = "on_error_tests.rs"]

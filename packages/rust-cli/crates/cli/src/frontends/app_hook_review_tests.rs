@@ -145,6 +145,34 @@ async fn nothing_is_reviewable_without_declarations_or_with_an_unreadable_config
 }
 
 #[tokio::test]
+async fn a_missing_entry_script_is_blocked_and_its_grant_refused() {
+    // Node's review controller (D24): the declaration has no reviewable content, so it is `blocked_untrusted`
+    // (not pending) and a selection that includes it is refused whole after the mismatch check.
+    let fixture = fixture_text(&PROJECT.replace("check.js", "gone.js"), json!({}));
+    let review = bundle(&fixture).await;
+    assert!(!review.items[0].script_unavailable);
+    assert!(review.items[1].script_unavailable);
+    let mismatch = fixture
+        .admin
+        .review_grant(&target(ROOT), &"0".repeat(64), &ids(&review))
+        .await;
+    assert_eq!(mismatch, Err(codes::SNAPSHOT_MISMATCH));
+    let refused = fixture
+        .admin
+        .review_grant(&target(ROOT), &review.bundle_digest, &ids(&review))
+        .await;
+    assert_eq!(refused, Err(codes::SCRIPT_UNAVAILABLE));
+    assert!(!store_file(&fixture).exists(), "a refusal writes nothing");
+    assert!(fixture.hooks.lock().unwrap().is_empty());
+    // The declaration without a script is still granted alone.
+    fixture
+        .admin
+        .review_grant(&target(ROOT), &review.bundle_digest, &ids(&review)[..1])
+        .await
+        .unwrap();
+}
+
+#[tokio::test]
 async fn a_grant_writes_nodes_records_and_rebuilds_the_process_hooks() {
     let fixture = fixture_text(PROJECT, json!({}));
     let review = bundle(&fixture).await;

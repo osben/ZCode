@@ -40,6 +40,10 @@ fn outcome(raw: Option<&Raw>, result: Option<&HookResult>) -> HookRunOutcome {
     if matches!(raw, Some(Raw::Backgrounded)) {
         return HookRunOutcome::Success;
     }
+    // Node `HookRunBlocked` with the re-check's reason code.
+    if matches!(raw, Some(Raw::Refused(_))) {
+        return HookRunOutcome::Blocked;
+    }
     if result.is_some_and(blocks) {
         return HookRunOutcome::Blocked;
     }
@@ -87,6 +91,11 @@ fn block_reason(result: Option<&HookResult>, raw: Option<&Raw>) -> String {
         .and_then(|result| result.stop_reason.clone().or_else(|| result.reason.clone()))
         .or(denied)
         .or(exit_two)
+        // A refused re-check without `onError: "deny"`: its reason code (Node `errorCode`).
+        .or_else(|| match raw {
+            Some(Raw::Refused(code)) => Some((*code).to_owned()),
+            _ => None,
+        })
         .unwrap_or_else(|| BLOCKED.to_owned());
     mask::text(&reason)
 }

@@ -39,7 +39,7 @@ fn entries_follow_the_node_event_order_and_gates() {
         }
     );
     let sources = [source(&project, 2)];
-    let bundle = bundle(&sources, &root).unwrap();
+    let bundle = bundle(&sources, &root, &ScriptStates::new()).unwrap();
     let ids: Vec<_> = bundle
         .entries
         .iter()
@@ -58,7 +58,7 @@ fn entries_follow_the_node_event_order_and_gates() {
     assert_eq!(bundle.bundle_digest.len(), 64);
     // 运行根关闭时三个门之一为假：configuredEnabled 全为假，digest 也随之变化。
     let off = runtime_root([&project]);
-    let closed = super::bundle(&sources, &off).unwrap();
+    let closed = super::bundle(&sources, &off, &ScriptStates::new()).unwrap();
     assert!(closed.entries.iter().all(|entry| !entry.configured_enabled));
     assert_ne!(closed.bundle_digest, bundle.bundle_digest);
 }
@@ -67,5 +67,5 @@ fn entries_follow_the_node_event_order_and_gates() {
 fn no_declarations_means_no_bundle() {
     let empty = hooks(json!({"enabled": true}));
     let sources = [source(&empty, 0)];
-    assert!(bundle(&sources, &runtime_root([&empty])).is_none());
+    assert!(bundle(&sources, &runtime_root([&empty]), &ScriptStates::new()).is_none());
 }

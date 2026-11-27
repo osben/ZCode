@@ -104,6 +104,14 @@ impl LocalKernel {
         self.hooks.set_project_loader(loader);
     }
 
+    /// Fork (specs/fork-rust-hook-script-entry.md): the entry script reader of the project hooks' re-check.
+    pub fn set_hook_script_verifier(
+        &self,
+        verifier: std::sync::Arc<dyn rust_cli_hooks::script_entry::ScriptVerifier>,
+    ) {
+        self.hooks.set_script_verifier(verifier);
+    }
+
     /// 换上入口层从命令行与配置组装的权限规则快照（shell-permissions.md §5）；之后的判决用新快照。
     pub fn replace_permission_rules(&self, rules: PermissionRules) {
         self.gate.replace_rules(rules);

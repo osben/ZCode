@@ -839,6 +839,10 @@ pub(crate) async fn kernel(
         files: opened.primary.files().clone(),
         paths: opened.paths.clone(),
     }));
+    // Fork (specs/fork-rust-hook-script-entry.md): an admitted project hook re-reads its entry script before each run.
+    kernel.set_hook_script_verifier(Arc::new(config::hook_scripts::Verifier {
+        files: opened.primary.files().clone(),
+    }));
     kernel.put_project_hooks(
         &rust_cli_hooks::project_key(opened.workspace.root.as_str()),
         opened.config.project_hooks.clone(),

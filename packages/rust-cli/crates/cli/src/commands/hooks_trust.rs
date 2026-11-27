@@ -276,7 +276,11 @@ pub(crate) async fn inspect_review(
         files.user.object(),
         &files.projects,
         context.paths,
-        true,
+        // The entry scripts come through the port that read the config (Node reads both from the workspace).
+        crate::config::hook_scripts::Scripts::Port {
+            files: context.files,
+            workspace: &workspace,
+        },
         &mut warnings,
     )
     .await;
@@ -338,21 +342,53 @@ pub(crate) fn records(
         .collect()
 }
 
-/// `{accepted: false, reasonCode}` 或 `Error: …`。
-fn failure(options: &Options, reason: &str) -> Output {
+/// Node's reason code of a selection with a missing or unreadable entry script (D24).
+pub(crate) const SCRIPT_UNAVAILABLE: &str = "workspace_hook_script_unavailable";
+
+/// Fork (specs/fork-rust-hook-script-entry.md): the selected declarations whose entry script is missing or
+/// unreadable, as Node's CLI lists them (`<event> <display> (<source>)`); a grant refuses when any is.
+pub(crate) fn unavailable_items(hooks: &WorkspaceHooks, selected: &[usize]) -> Vec<String> {
+    selected
+        .iter()
+        .filter_map(|index| hooks.entries().get(*index))
+        .filter(|entry| entry.script_unavailable())
+        .map(|entry| {
+            format!(
+                "{} {} ({})",
+                entry.event.as_str(),
+                entry.hook.display(),
+                entry.source_relative_path
+            )
+        })
+        .collect()
+}
+
+/// `{accepted: false, reasonCode}` 或 `Error: …`; a grant refused for its entry scripts lists them (Node
+/// `unavailableItems`, `Entry script missing or unreadable:`).
+fn failure(options: &Options, reason: &str, unavailable: &[String]) -> Output {
     if options.json {
-        let body = serde_json::to_string_pretty(&json!({"accepted": false, "reasonCode": reason}))
-            .unwrap_or_default();
+        let mut body = json!({"accepted": false, "reasonCode": reason});
+        if !unavailable.is_empty() {
+            body["unavailableItems"] = json!(unavailable);
+        }
+        let body = serde_json::to_string_pretty(&body).unwrap_or_default();
         Output {
             code: 1,
             stdout: format!("{body}\n"),
             stderr: String::new(),
         }
     } else {
+        let mut stderr = format!("Error: {reason}\n");
+        if !unavailable.is_empty() {
+            stderr.push_str("Entry script missing or unreadable:\n");
+            for item in unavailable {
+                stderr.push_str(&format!("  {item}\n"));
+            }
+        }
         Output {
             code: 1,
             stdout: String::new(),
-            stderr: format!("Error: {reason}\n"),
+            stderr,
         }
     }
 }
@@ -368,13 +404,14 @@ fn unique(values: &[String]) -> Vec<String> {
 }
 
 /// The reason codes `workspace/hooks/trustGrant` may answer (`zcodeWorkspaceHookTrustGrantReasonCodeSchema`).
-const APP_REASONS: [&str; 6] = [
+const APP_REASONS: [&str; 7] = [
     "workspace_hooks_blocked_by_policy",
     "workspace_hooks_bundle_changed",
     "workspace_hooks_snapshot_mismatch",
     "workspace_hooks_policy_requires_pretrust",
     "workspace_hooks_trust_store_corrupt",
     "workspace_hooks_config_unreadable",
+    SCRIPT_UNAVAILABLE,
 ];
 
 /// Node `toPublicReasonCode`: anything else (an error text with paths, a status reason) becomes the stable
@@ -408,6 +445,10 @@ pub(crate) async fn grant_for_app(
     let granted = match hooks.bundle {
         None => Err("no declarations".to_owned()),
         Some(_) => match status::select(&hooks, &options) {
+            // Fork (D24): an unavailable entry script refuses the grant before anything is written.
+            Ok(selected) if !unavailable_items(&hooks, &selected).is_empty() => {
+                Err(SCRIPT_UNAVAILABLE.to_owned())
+            }
             Ok(selected) => hooks
                 .store
                 .grant(records(&hooks, &selected, context))

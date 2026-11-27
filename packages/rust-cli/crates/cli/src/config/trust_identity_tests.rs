@@ -245,7 +245,15 @@ async fn a_hook_trusted_in_the_source_is_admitted_in_the_worktree() {
         let paths = layout.paths.clone();
         async move {
             let root = root.to_string_lossy().into_owned();
-            WorkspaceHooks::inspect(&root, None, &files, &paths, true, &mut Vec::new()).await
+            WorkspaceHooks::inspect(
+                &root,
+                None,
+                &files,
+                &paths,
+                super::super::hook_scripts::Scripts::Local,
+                &mut Vec::new(),
+            )
+            .await
         }
     };
 
@@ -278,12 +286,19 @@ async fn a_hook_trusted_in_the_source_is_admitted_in_the_worktree() {
     assert_eq!(inspect(layout.worktree.clone()).await.admitted().len(), 1);
     // A remote workspace never reads the local source's records.
     let root = layout.worktree.to_string_lossy().into_owned();
+    let workspace = rust_cli_kernel_api::env::WorkspaceRef {
+        environment: rust_cli_kernel_api::ids::EnvironmentId::new("ssh-box"),
+        root: rust_cli_kernel_api::env::EnvPath::new(root.clone()),
+    };
     let remote = WorkspaceHooks::inspect(
         &root,
         None,
         &files(&layout.worktree),
         &layout.paths,
-        false,
+        super::super::hook_scripts::Scripts::Port {
+            files: &NoFiles,
+            workspace: &workspace,
+        },
         &mut Vec::new(),
     )
     .await;
@@ -372,4 +387,27 @@ async fn a_plugin_trusted_in_the_source_loads_in_the_worktree() {
                 .into_owned()
         ]
     );
+}
+
+/// A remote environment's files that are never read: the declarations above name no entry script.
+struct NoFiles;
+
+#[async_trait::async_trait]
+impl rust_cli_kernel_api::machine::Files for NoFiles {
+    async fn read_file(
+        &self,
+        _workspace: &rust_cli_kernel_api::env::WorkspaceRef,
+        _request: rust_cli_kernel_api::env::ReadFile,
+    ) -> Result<rust_cli_kernel_api::env::FileContent, rust_cli_kernel_api::env::EnvError> {
+        unreachable!("no entry script is read")
+    }
+
+    async fn write_file(
+        &self,
+        _workspace: &rust_cli_kernel_api::env::WorkspaceRef,
+        _context: rust_cli_kernel_api::env::OperationContext,
+        _request: rust_cli_kernel_api::env::WriteFile,
+    ) -> Result<rust_cli_kernel_api::env::WriteReceipt, rust_cli_kernel_api::env::EnvError> {
+        unreachable!("nothing is written")
+    }
 }

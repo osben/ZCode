@@ -23,6 +23,7 @@ const D2: &str = "22222222222222222222222222222222222222222222222222222222222222
 
 fn item(id: &str, digest: &str, event: &str, matcher: Option<&str>) -> ReviewItem {
     ReviewItem {
+        script_unavailable: false,
         review_item_id: id.to_owned(),
         event: event.to_owned(),
         matcher: matcher.map(str::to_owned),
@@ -1055,4 +1056,23 @@ fn the_projection_keeps_one_session_level_review() {
         projection.remove_hook_review("i2"),
         Some(json!({"op": "state.updated", "patch": {"pendingInteractions": []}}))
     );
+}
+
+#[test]
+fn an_unavailable_entry_script_is_blocked_and_never_pending() {
+    // Node `evaluateSnapshot` (D24): no reviewable content, so the review neither lists it as pending nor opens for it.
+    let mut bundle = two_hooks();
+    bundle.items[1].script_unavailable = true;
+    let revoked = HashSet::new();
+    assert_eq!(
+        trust_state(&bundle.items[1], &bundle, &revoked),
+        "blocked_untrusted"
+    );
+    assert_eq!(
+        trust_state(&bundle.items[0], &bundle, &revoked),
+        "pending_trust"
+    );
+    assert!(has_pending(&bundle, &revoked));
+    bundle.items[0].stored = StoredTrust::Trusted;
+    assert!(!has_pending(&bundle, &revoked));
 }
