@@ -647,6 +647,23 @@ pub struct Stat {
     pub owner_only: bool,
 }
 
+/// Node `fs.promises.realpath`: the canonical absolute path, symlinks resolved. Windows' verbatim prefix (`\\?\`) is
+/// dropped so the result compares with Node's (`\\?\C:\x` is `C:\x`, `\\?\UNC\s\x` is `\\s\x`).
+pub async fn realpath(path: &Path) -> io::Result<PathBuf> {
+    let real = tokio::fs::canonicalize(path).await?;
+    Ok(strip_verbatim(real))
+}
+
+fn strip_verbatim(path: PathBuf) -> PathBuf {
+    let text = path.to_string_lossy();
+    let stripped = if let Some(rest) = text.strip_prefix(r"\\?\UNC\") {
+        Some(format!(r"\\{rest}"))
+    } else {
+        text.strip_prefix(r"\\?\").map(str::to_owned)
+    };
+    stripped.map_or(path, PathBuf::from)
+}
+
 /// The path's metadata, following symlinks; `None` when it does not exist (Fork: a shared attachment's size probe,
 /// specs/fork-agent-runtime-selection.md "Attachments in Rust mode").
 pub async fn stat(path: &Path) -> io::Result<Option<Stat>> {

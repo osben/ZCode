@@ -276,6 +276,7 @@ pub(crate) async fn inspect_review(
         files.user.object(),
         &files.projects,
         context.paths,
+        true,
         &mut warnings,
     )
     .await;

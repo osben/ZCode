@@ -96,7 +96,8 @@ pub(crate) fn sources<'a>(
 
 /// 一个工作区的项目 hooks：digest、信任记录与准入（启动组装与 `zcode hooks trust` 共用）。
 pub(crate) struct WorkspaceHooks {
-    /// 工作区身份：工作区根的绝对路径（Node 独立 CLI 的 `resolve(cwd)`）。
+    /// 工作区身份：工作区根的绝对路径（Node 独立 CLI 的 `resolve(cwd)`）。Fork: a local managed worktree's is its source
+    /// repository path (specs/fork-rust-managed-worktree-trust-identity.md), the trust store key only.
     pub(crate) identity: String,
     pub(crate) root: RuntimeRoot,
     pub(crate) bundle: Option<Bundle>,
@@ -115,6 +116,7 @@ impl WorkspaceHooks {
         user: Option<&Map<String, Value>>,
         files: &[ProjectFile],
         paths: &StoragePaths,
+        local: bool,
         warnings: &mut Vec<String>,
     ) -> Self {
         let user_hooks = user
@@ -129,7 +131,7 @@ impl WorkspaceHooks {
         let store = HookTrustStore::new(paths.hook_trust_store(storage_dir(user)));
         let load = store.load().await;
         Self {
-            identity: workspace_root.to_owned(),
+            identity: super::trust_identity::resolve(paths, workspace_root, local).await,
             root,
             bundle,
             store,

@@ -135,7 +135,5 @@ session open (Rust): read project files -> candidates -> digest each -> match re
 
 ## Known differences
 
-- Managed worktrees: Node maps a managed worktree's identity to its source repository
-  (`resolveWorkspaceHookTrustIdentity`). Rust uses the session's root, as its hook and MCP trust already do, so a
-  plugin trusted in the source repository stays pending in a task's managed worktree on Rust until it is trusted
-  there. Remote workspaces have no Rust project plugin loading at all (the project files are read on the controller).
+- Managed worktrees map to their source repository as in Node: see
+  [fork-rust-managed-worktree-trust-identity.md](fork-rust-managed-worktree-trust-identity.md). Remote workspaces have no Rust project plugin loading at all (the project files are read on the controller).

@@ -161,7 +161,7 @@ async fn only_trusted_enabled_declarations_run_and_the_rest_are_pending() {
     // An event outside Node's ten drops the whole file (`a_file_nodes_strict_schema_rejects_is_dropped_whole`).
     let files = vec![file_with(root, "/Users/dev/repo/zcode.json", 0, &hooks)];
     let mut warnings = Vec::new();
-    let first = WorkspaceHooks::inspect(root, None, &files, &paths, &mut warnings).await;
+    let first = WorkspaceHooks::inspect(root, None, &files, &paths, true, &mut warnings).await;
     assert!(warnings.is_empty(), "{warnings:?}");
     assert!(first.admitted().is_empty());
     let trusted = first.entries()[0].digest.clone();
@@ -173,7 +173,7 @@ async fn only_trusted_enabled_declarations_run_and_the_rest_are_pending() {
         ])
         .await
         .unwrap();
-    let again = WorkspaceHooks::inspect(root, None, &files, &paths, &mut Vec::new()).await;
+    let again = WorkspaceHooks::inspect(root, None, &files, &paths, true, &mut Vec::new()).await;
     let admitted = again.admitted();
     assert_eq!(admitted.len(), 1);
     let (source, settings) = &admitted[0];
@@ -205,7 +205,8 @@ async fn the_user_storage_dir_moves_the_trust_store() {
     let home = tempfile::tempdir().unwrap();
     let paths = StoragePaths::resolve(&Default::default(), home.path(), home.path());
     let user = json!({"storage": {"dir": "elsewhere"}});
-    let hooks = WorkspaceHooks::inspect("/w", user.as_object(), &[], &paths, &mut Vec::new()).await;
+    let hooks =
+        WorkspaceHooks::inspect("/w", user.as_object(), &[], &paths, true, &mut Vec::new()).await;
     assert_eq!(
         hooks.store.path().as_path(),
         home.path()

@@ -14,7 +14,8 @@ use rust_cli_platform::local::{ConfigFile, read_cli_config};
 use super::files;
 use super::trust::WorkspaceHooks;
 
-/// The entry of `workspace`, with its trust records read under the workspace path (a known difference: no identity).
+/// The entry of `workspace`, with its trust records read under its trust identity (a local managed worktree reads its
+/// source repository's records, specs/fork-rust-managed-worktree-trust-identity.md).
 pub(crate) async fn entry(
     files: &dyn Files,
     paths: &StoragePaths,
@@ -40,6 +41,7 @@ pub(crate) async fn entry(
         user.object(),
         &projects,
         paths,
+        workspace.environment.as_str() == rust_cli_node_store::LOCAL_ENVIRONMENT,
         &mut warnings,
     )
     .await;

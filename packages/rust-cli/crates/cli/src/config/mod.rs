@@ -13,6 +13,7 @@ mod plugins;
 pub(crate) mod project_hooks;
 mod storage;
 pub(crate) mod trust;
+mod trust_identity;
 pub(crate) mod workspace_layer;
 mod workspace_plugins;
 pub(crate) mod workspace_schema;
@@ -273,14 +274,16 @@ async fn plugin_dirs(
         return dirs;
     }
     let root = inputs.workspace.root.as_str();
-    let identity = mcp_trust::Target::new(root, None).identity;
+    let working_directory = mcp_trust::Target::new(root, None).working_directory;
+    // The store key maps a managed worktree to its source; the plugin roots and digests stay the worktree's own.
+    let identity = trust_identity::resolve(inputs.paths, &working_directory, true).await;
     let grants = workspace_plugins::grants(inputs.paths, files.user.object(), &identity).await;
     let user_roots: Vec<std::path::PathBuf> = dirs
         .iter()
         .map(|dir| std::path::PathBuf::from(plugins::resolve_dir(root, dir)))
         .collect();
     let trusted = workspace_plugins::trusted_roots(
-        std::path::Path::new(&identity),
+        std::path::Path::new(&working_directory),
         &files.projects,
         &user_roots,
         &grants,
@@ -434,6 +437,7 @@ pub(crate) async fn assemble(inputs: &ConfigInputs<'_>) -> ConfigSnapshot {
         user_object,
         projects,
         inputs.paths,
+        inputs.project_is_local,
         &mut warnings,
     )
     .await;
