@@ -156,6 +156,47 @@ fn run_state_replays_the_open_escalations_of_the_journal() {
     assert!(store.run_detail("run_9", Some(4.0)).unwrap().is_none());
 }
 
+/// Node reads pending questions from its in-memory registry, and a withdrawal removes the question there. The journal
+/// has no event for a withdrawal, so a reader passes the qids the owner withdrew and the detail leaves them out, in the
+/// state and in the roster built from it (divergence 607).
+#[test]
+fn a_withdrawn_question_is_left_out_of_the_detail() {
+    let conn = database();
+    add_session(&conn, "ses_p");
+    dwf::create_run(&conn, &run("run_1", "ses_p", "/w", DwfStatus::Running), 7).unwrap();
+    for (qid, at) in [("dwfq-run_1-0", 9), ("dwfq-run_1-1", 10)] {
+        dwf::append_event(
+            &conn,
+            "run_1",
+            &json!({"type": "escalation-raised", "qid": qid, "question": "which?",
+                    "actor": {"siteId": "agent#1", "ordinal": 1}, "askedAt": at}),
+            at,
+        )
+        .unwrap();
+    }
+    let store = store(conn);
+    let withdrawn = vec!["dwfq-run_1-0".to_owned()];
+    let detail = store
+        .run_detail_for("run_1", Some(4.0), true, &withdrawn)
+        .unwrap()
+        .expect("held");
+    let state = detail.state.expect("replays");
+    let pending = state["pendingQuestions"].as_array().expect("pending list");
+    assert_eq!(pending.len(), 1, "{state:?}");
+    assert_eq!(pending[0]["qid"], "dwfq-run_1-1");
+    let all = store
+        .run_detail_for("run_1", Some(4.0), true, &[])
+        .unwrap()
+        .expect("held");
+    assert_eq!(
+        all.state.unwrap()["pendingQuestions"]
+            .as_array()
+            .unwrap()
+            .len(),
+        2
+    );
+}
+
 /// 9.42: the detail's row carries the row's own timestamps and result from the same snapshot. Without a configured default
 /// nothing is replayed (`state` is `None`), and a row with no event yet has no replayed state either.
 #[test]

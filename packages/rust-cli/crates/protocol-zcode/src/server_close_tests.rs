@@ -943,6 +943,9 @@ async fn a_kernel_message_does_not_fold_the_activity() {
 #[path = "server_completed_activity_tests.rs"]
 mod completed_activity;
 
+#[path = "server_activity_cold_tests.rs"]
+mod activity_cold;
+
 #[path = "server_background_tests.rs"]
 mod background;
 

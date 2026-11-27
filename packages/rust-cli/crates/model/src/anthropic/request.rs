@@ -19,7 +19,7 @@ use rust_cli_kernel_api::model::{
 };
 use serde_json::{Map, Value};
 
-use super::write;
+use super::{strict_schema, write};
 use crate::anthropic::betas::{self, MessageFlags, writes_diagnostics};
 use crate::patch;
 use crate::profiles::Profile;
@@ -73,6 +73,8 @@ pub(crate) fn encode(
     write::messages(&mut messages_text, &messages)?;
     drop(messages);
     let mut body = Map::new();
+    // Node sends `strict` only for a model on the AI SDK's structured-output list.
+    let strict_allowed = strict_schema::supports_strict_tools(&selection.model);
     body.insert("model".into(), Value::String(selection.model));
     // 占位：补丁不碰这个键时它留在原位，写出时换成 `messages_text`。
     body.insert("messages".into(), Value::Null);
@@ -83,8 +85,18 @@ pub(crate) fn encode(
     let mut flags_by_tool = options.tool_flags;
     let mut tools: Vec<Value> = tools
         .into_iter()
-        .map(|item| {
-            let flags = flags_by_tool.remove(&item.name).unwrap_or_default();
+        .map(|mut item| {
+            let mut flags = flags_by_tool.remove(&item.name).unwrap_or_default();
+            if flags.strict {
+                // The folded schema goes out with `strict`; a schema or model that cannot use it goes out as it is, without.
+                match strict_allowed
+                    .then(|| strict_schema::to_strict_schema(&item.input_schema))
+                    .flatten()
+                {
+                    Some(schema) => item.input_schema = schema,
+                    None => flags.strict = false,
+                }
+            }
             tool(item, flags)
         })
         .collect();

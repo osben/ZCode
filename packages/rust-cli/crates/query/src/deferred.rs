@@ -200,8 +200,16 @@ pub(crate) fn wire_tools<'a>(
         if !keep {
             continue;
         }
-        if deferred && native {
-            flags.insert(tool.name().to_owned(), deferred_flag());
+        let strict = tool.strict();
+        if (deferred && native) || strict {
+            flags.insert(
+                tool.name().to_owned(),
+                ToolFlags {
+                    defer_loading: deferred && native,
+                    strict,
+                    ..ToolFlags::default()
+                },
+            );
         }
         // Node's `readOnly` and `destructive` are per tool. The Rust trait answers per input, so the empty input stands for
         // a call with no arguments (spec step 4, item C: the approximation is recorded there).

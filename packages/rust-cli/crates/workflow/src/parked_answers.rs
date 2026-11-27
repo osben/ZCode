@@ -34,6 +34,9 @@ struct State {
     slots: HashMap<String, Slot>,
     /// The questions a turn is blocked on, by id, with the session whose turn waits.
     waiting: HashMap<String, String>,
+    /// The questions the owner withdrew, in order. Readers of the run's state use them to leave those questions out:
+    /// Node's pending list is an in-memory registry that a withdrawal edits, and the journal records no withdrawal.
+    withdrawn: Vec<String>,
 }
 
 #[derive(Default)]
@@ -54,7 +57,13 @@ impl ParkedAnswers {
 
     /// A parked question of `session` that the owner withdrew, with the reason its waiter gets.
     pub fn reject(&self, session: &str, qid: &str, reason: &str) {
+        self.lock().withdrawn.push(qid.to_owned());
         self.put(session, qid, Outcome::Withdrawn(reason.to_owned()));
+    }
+
+    /// The question ids the owner withdrew so far.
+    pub fn withdrawn(&self) -> Vec<String> {
+        self.lock().withdrawn.clone()
     }
 
     /// Blocks until the question is answered (`Ok`) or withdrawn (`Err`), then takes its slot.

@@ -542,6 +542,7 @@ fn pagination_round_trips_the_cursors() {
     let item = |id: &str, ended_at: u64| EndedItem {
         child_session_id: id.to_owned(),
         ended_at,
+        completed_at: None,
         value: json!({"childSessionId": id, "endedAt": ended_at}),
     };
     // Sorted as the projection leaves it: newest first, id descending on ties.
@@ -810,21 +811,133 @@ async fn ended_outcomes_classify_every_child_with_no_page_limit() {
         10,
         None,
     )];
-    let outcomes = ended_outcomes(&queries, &SessionId::new("ses_p"), &live, 10_000)
+    let outcomes = ended_outcomes(&queries, &SessionId::new("ses_p"), &live, 10_000, false)
         .await
         .expect("the store is readable");
+    assert!(outcomes.cut.is_empty());
     assert_eq!(
         outcomes
+            .ended
             .iter()
-            .filter(|(_, status)| status == "success")
+            .filter(|item| item.status == "success")
             .count(),
         105
     );
-    assert!(outcomes.contains(&("c_failed".to_owned(), "failed".to_owned())));
+    let failed = outcomes
+        .ended
+        .iter()
+        .find(|item| item.child == "c_failed")
+        .expect("the failed child");
+    assert_eq!(failed.status, "failed");
+    assert_eq!(failed.ended_at, 5_000, "the child row's update time");
     assert!(
-        outcomes.iter().all(|(id, _)| id != "c_live"),
+        outcomes.ended.iter().all(|item| item.child != "c_live"),
         "a running child is not ended"
     );
+}
+
+#[tokio::test]
+async fn a_nested_child_of_a_retained_launch_is_not_cut() {
+    // The grandchild's launch is stored in the child's session, not in the root's parts: it follows its owner.
+    let queries = HistoryQueries {
+        saved: true,
+        parts: json!([agent_part("c_kept", "completed")]),
+        children: json!([
+            child_row("c_kept"),
+            child_row("c_nested"),
+            child_row("c_orphan")
+        ]),
+    };
+    let mut kept = entry(
+        SubagentStatus::Completed,
+        "c_kept",
+        false,
+        false,
+        10,
+        Some(3),
+    );
+    kept.agent = AgentId::new("agent_c_kept");
+    let mut nested = entry(
+        SubagentStatus::Completed,
+        "c_nested",
+        false,
+        false,
+        10,
+        Some(3),
+    );
+    nested.agent = AgentId::new("agent_c_nested");
+    nested.owner = Some(AgentId::new("agent_c_kept"));
+    // Its owner is a root launch the rewind cut: it goes with it.
+    let mut orphan = entry(
+        SubagentStatus::Completed,
+        "c_orphan",
+        false,
+        false,
+        10,
+        Some(3),
+    );
+    orphan.agent = AgentId::new("agent_c_orphan");
+    orphan.owner = Some(AgentId::new("agent_c_gone"));
+    let outcomes = ended_outcomes(
+        &queries,
+        &SessionId::new("ses_p"),
+        &[kept, nested, orphan],
+        10_000,
+        true,
+    )
+    .await
+    .expect("readable");
+    let mut ids: Vec<&str> = outcomes
+        .ended
+        .iter()
+        .map(|item| item.child.as_str())
+        .collect();
+    ids.sort_unstable();
+    assert_eq!(ids, ["c_kept", "c_nested"]);
+    assert_eq!(outcomes.cut, [("c_orphan".to_owned(), 0)]);
+}
+
+#[tokio::test]
+async fn a_rewritten_history_cuts_the_table_entries_no_part_links() {
+    let queries = HistoryQueries {
+        saved: true,
+        parts: json!([agent_part("c_kept", "completed")]),
+        children: json!([child_row("c_kept"), child_row("c_cut")]),
+    };
+    let live = [
+        entry(
+            SubagentStatus::Completed,
+            "c_kept",
+            false,
+            false,
+            10,
+            Some(3),
+        ),
+        entry(
+            SubagentStatus::Completed,
+            "c_cut",
+            false,
+            false,
+            10,
+            Some(3),
+        ),
+    ];
+    let session = SessionId::new("ses_p");
+    let plain = ended_outcomes(&queries, &session, &live, 10_000, false)
+        .await
+        .expect("readable");
+    assert!(plain.ended.iter().any(|item| item.child == "c_cut"));
+    assert!(plain.cut.is_empty());
+    let rewritten = ended_outcomes(&queries, &session, &live, 10_000, true)
+        .await
+        .expect("readable");
+    let ids: Vec<&str> = rewritten
+        .ended
+        .iter()
+        .map(|item| item.child.as_str())
+        .collect();
+    assert_eq!(ids, ["c_kept"]);
+    assert_eq!(rewritten.cut, [("c_cut".to_owned(), 0)]);
 }
 
 #[tokio::test]
@@ -836,17 +949,17 @@ async fn ended_outcomes_of_a_session_not_saved_yet_are_empty() {
         parts: json!([]),
         children: json!([]),
     };
-    let outcomes = ended_outcomes(&queries, &SessionId::new("ses_new"), &[], 0)
+    let outcomes = ended_outcomes(&queries, &SessionId::new("ses_new"), &[], 0, false)
         .await
         .expect("an unsaved session has an empty history");
-    assert!(outcomes.is_empty());
+    assert!(outcomes.ended.is_empty());
     // The in-memory store answers NotFound for a session it does not hold: the same case.
     let store = MemoryStore::default();
     assert_eq!(
-        ended_outcomes(&store, &SessionId::new("ses_p"), &[], 0)
+        ended_outcomes(&store, &SessionId::new("ses_p"), &[], 0, false)
             .await
             .expect("NotFound is a session not saved yet"),
-        Vec::<(String, String)>::new()
+        Outcomes::default()
     );
 }
 
@@ -905,7 +1018,7 @@ async fn ended_outcomes_fail_when_the_store_cannot_answer() {
         }
     }
     assert!(
-        ended_outcomes(&NoRows, &SessionId::new("ses_p"), &[], 0)
+        ended_outcomes(&NoRows, &SessionId::new("ses_p"), &[], 0, false)
             .await
             .is_err()
     );

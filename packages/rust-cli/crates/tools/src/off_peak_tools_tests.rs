@@ -5,6 +5,7 @@ use async_trait::async_trait;
 use rust_cli_kernel_api::env::{EnvPath, WorkspaceRef};
 use rust_cli_kernel_api::ids::EnvironmentId;
 use rust_cli_kernel_api::ids::SessionId;
+use rust_cli_kernel_api::incognito::IncognitoToolGate;
 use rust_cli_kernel_api::model::ModelSelection;
 use rust_cli_kernel_api::off_peak::{OffPeakError, OffPeakPort};
 use rust_cli_kernel_api::permission::{PermissionDecision, PermissionMode};
@@ -436,6 +437,120 @@ async fn list_returns_only_the_model_fields_of_each_task() {
             "sessionId": "sess_1", "createdAt": 1_800_000_000_000_u64,
         }]})
     );
+}
+
+/// A port that offers the tools to the sessions in `enabled` only.
+struct Gate {
+    enabled: Mutex<Vec<String>>,
+}
+
+#[async_trait]
+impl OffPeakPort for Gate {
+    fn tools_enabled(&self, session: &SessionId) -> bool {
+        self.enabled
+            .lock()
+            .unwrap()
+            .iter()
+            .any(|id| id == session.as_str())
+    }
+
+    async fn request(&self, _: &SessionId, _: &str, _: Value) -> Answer {
+        Err(OffPeakError::new("unused"))
+    }
+}
+
+fn names(registry: &dyn ToolRegistry, session: &SessionId) -> Vec<String> {
+    registry
+        .snapshot(session)
+        .tools
+        .iter()
+        .map(|tool| tool.name().to_owned())
+        .collect()
+}
+
+/// Node injects `offPeakPort` per session: only a session with the tools on sees OffPeakCreate and OffPeakList.
+#[test]
+fn the_tools_are_offered_per_session() {
+    let gate = Arc::new(Gate {
+        enabled: Mutex::new(vec!["sess_on".to_owned()]),
+    });
+    let inner: Arc<dyn ToolRegistry> = Arc::new(rust_cli_kernel_api::testing::ListTools(vec![]));
+    let registry = OffPeakTools::new(inner, gate.clone(), Arc::new(NoIncognito), Arc::default());
+    let on = SessionId::new("sess_on");
+    let off = SessionId::new("sess_off");
+    assert_eq!(names(&registry, &on), ["OffPeakCreate", "OffPeakList"]);
+    assert!(names(&registry, &off).is_empty());
+    assert!(registry.find_for(&on, "OffPeakCreate").is_some());
+    assert!(registry.find_for(&off, "OffPeakCreate").is_none());
+    assert!(registry.find_for(&off, "OffPeakList").is_none());
+    assert!(
+        registry.find("OffPeakList").is_none(),
+        "no session, no tool"
+    );
+    assert!(registry.withheld("OffPeakList").is_none());
+    // Node decides once, when the session's runtime is created: a later policy flip changes neither the snapshot nor
+    // `find_for` of a session that already asked.
+    gate.enabled.lock().unwrap().push("sess_off".to_owned());
+    assert!(names(&registry, &off).is_empty());
+    assert!(registry.find_for(&off, "OffPeakList").is_none());
+    gate.enabled.lock().unwrap().clear();
+    assert_eq!(names(&registry, &on), ["OffPeakCreate", "OffPeakList"]);
+    assert!(registry.find_for(&on, "OffPeakCreate").is_some());
+}
+
+/// The decision lives as long as the session's runtime: after the session is unloaded (`forget`) and resumed with the
+/// tools on, the next lookup asks the port again.
+#[test]
+fn a_resumed_session_decides_again() {
+    let gate = Arc::new(Gate {
+        enabled: Mutex::new(vec![]),
+    });
+    let inner: Arc<dyn ToolRegistry> = Arc::new(rust_cli_kernel_api::testing::ListTools(vec![]));
+    let decisions = Arc::new(OffPeakDecisions::default());
+    let registry = OffPeakTools::new(
+        inner,
+        gate.clone(),
+        Arc::new(NoIncognito),
+        decisions.clone(),
+    );
+    let session = SessionId::new("sess_1");
+    assert!(names(&registry, &session).is_empty());
+    gate.enabled.lock().unwrap().push("sess_1".to_owned());
+    assert!(names(&registry, &session).is_empty(), "kept while loaded");
+    decisions.forget(&session);
+    assert_eq!(names(&registry, &session), ["OffPeakCreate", "OffPeakList"]);
+}
+
+struct NoIncognito;
+
+impl IncognitoToolGate for NoIncognito {
+    fn hides(&self, _: &SessionId, _: &dyn Tool) -> bool {
+        false
+    }
+}
+
+/// Hides the automation tools of one session, as an incognito profile with `automationTools: false` does.
+struct HidesFor(&'static str);
+
+impl IncognitoToolGate for HidesFor {
+    fn hides(&self, session: &SessionId, _: &dyn Tool) -> bool {
+        session.as_str() == self.0
+    }
+}
+
+/// An incognito session without automation tools never sees the off-peak tools, whatever the flag or policy says.
+#[test]
+fn an_incognito_profile_still_hides_the_tools() {
+    let gate = Arc::new(Gate {
+        enabled: Mutex::new(vec!["sess_inc".to_owned(), "sess_plain".to_owned()]),
+    });
+    let inner: Arc<dyn ToolRegistry> = Arc::new(rust_cli_kernel_api::testing::ListTools(vec![]));
+    let registry = OffPeakTools::new(inner, gate, Arc::new(HidesFor("sess_inc")), Arc::default());
+    let incognito = SessionId::new("sess_inc");
+    let plain = SessionId::new("sess_plain");
+    assert!(names(&registry, &incognito).is_empty());
+    assert!(registry.find_for(&incognito, "OffPeakCreate").is_none());
+    assert_eq!(names(&registry, &plain), ["OffPeakCreate", "OffPeakList"]);
 }
 
 #[tokio::test]

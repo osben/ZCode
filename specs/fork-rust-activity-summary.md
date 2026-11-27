@@ -31,7 +31,29 @@ the field, so on Rust the Activity capsule kept showing a finished batch (for ex
 4. Delivery: the value goes out as `state.updated {activitySummaryDismissed}` in the same frame as the change,
    and the session's snapshot carries it, so a renderer reload and the mobile `web-remote-replayable` replay see
    the same boundary as the desktop `desktop-continuous` stream.
-5. Records are never deleted; the UI only folds finished details and shows the history directory.
+5. Cold seed: a session opened from storage (a new process) has no boundary yet. When the stored history holds a
+   real input and the session's own boundary is still unset, the full-history seed of
+   `specs/fork-rust-completed-activity-count.md` (rule 2) also sets it, in the same pump task and frame as the count:
+   - `at`: the admission time (`admittedAt`, ms) of the last real input, read from its stored input intent. A typed
+     message and a steer absorbed into a running turn (a guided row) both count. An input with no intent (typed in the TUI or the CLI) has no time: `at` is then the session's creation
+     time, so children that ended after it stay visible;
+   - `subagentIds`: the ended children of the active branch (the store classification) whose own completion time is not after
+     `at`. A background Agent's tool part ends at its launch acknowledgement, so the child's last completion wins
+     over the part's end when both exist;
+   - `workflowRunIds`: the journaled runs whose physical status is neither `running` nor `pending` and whose last
+     event or last row update (later of the two; a settlement written by startup reconciliation appends no event) is
+     not after `at`;
+   - `workIds`: always empty. Background commands are in-process facts and nothing persists them.
+     A live boundary (rule 2) is never replaced by the seed. A failed seed sets nothing and the next seed retries.
+     Rule 3 runs on the seeded value like on any other, with one correction: a cold open redraws a finished
+     background Agent as a running row from its stored `async_launched` display, and an empty kernel table does not
+     settle it. Children the store reports ended are therefore not read as running by rule 3 until the table lists
+     them running.
+     Known difference: Node's live boundary is the time the input's row is projected, which is later than
+     `admittedAt` for an input that waited in the queue. Stored messages carry no delivery time, so the cold `at`
+     is the admission time, and an activity that ended while that input was queued stays visible after a cold
+     open. Closing it needs a persisted delivery time in fork storage (an open storage decision).
+6. Records are never deleted; the UI only folds finished details and shows the history directory.
 
 ```text
 kernel event ──► Projection.apply ──► deltas ──┐
@@ -43,10 +65,9 @@ ledger / subagent table ──► Projection ────────┘
 
 ## Divergences from Node
 
-- Cold open: Node rebuilds the boundary while it replays the stored events, and a cold child seed archives
-  children that ended before it. zcode-rs builds a cold projection from the session view, not from an event
-  replay, so a reopened session has no boundary until the next real input. Finished items of the last batch show
-  again after a restart.
+- Cold open: Node rebuilds the boundary while it replays the stored events (each real input sets it from what the
+  replay knows then) and a cold child seed archives children that ended before it. zcode-rs has no event replay and
+  no per-message time, so rule 6 derives the same value from the stored facts (see its limits).
 - `completedActivityCount` has its own spec: `specs/fork-rust-completed-activity-count.md` (full-history seed from the
   workflow journal and the store's subagent classification, live updates from the subagent table and the run deltas).
 
@@ -57,7 +78,10 @@ ledger / subagent table ──► Projection ────────┘
 - A workflow notice or background result row does not set the boundary.
 - The same run resumed: its id leaves `workflowRunIds` before its completion, and the completed result shows.
 - A running work, child or run is never in the value.
+- A cold open of a session whose last turn followed an ended run and an ended child: the first snapshot after the seed
+  carries both ids with `at` = the last input's admission time; a child that ended after that time is not in it.
 
-Coverage: `packages/rust-cli/crates/protocol-zcode/src/fork/activity_summary_tests.rs`,
+Coverage: `packages/rust-cli/crates/protocol-zcode/src/fork/activity_summary_tests.rs` (rules, cold seed),
+`packages/rust-cli/crates/protocol-zcode/src/server_activity_cold_tests.rs` (the open's seed),
 `packages/rust-cli/crates/protocol-zcode/src/server_close_tests.rs` (set, release, kernel messages ignored),
 `conversation-session-dynamic-workflow-gray-always-on-resume.test.ts` on Rust in the Linux box (4/4 on 2026-11-26, was 2/4).

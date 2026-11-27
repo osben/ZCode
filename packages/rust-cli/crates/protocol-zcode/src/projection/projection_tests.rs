@@ -2869,6 +2869,32 @@ fn a_user_row_carries_its_epilogue_start() {
     assert!(inputs[1].get("epilogueStart").is_none());
 }
 
+/// Node `normalizeGenUiInput`: an old App record keeps the page state as a tail of the body; the row shows the typed
+/// text. A broken tail is the user's own text and stays.
+#[test]
+fn a_user_row_hides_the_legacy_gen_ui_tail() {
+    let tail = "\n\n<untrusted_gen_ui_state>\n[{\"path\":\"/w/page.html\",\"state\":{\"a\":1}}]\n</untrusted_gen_ui_state>";
+    let broken = "keep\n\n<untrusted_gen_ui_state>\n[{oops\n</untrusted_gen_ui_state>";
+    let projection = Projection::from_view(
+        &view(vec![
+            user("msg_u1", &format!("typed{tail}")),
+            assistant("msg_a1", vec![ContentBlock::Text { text: "ok".into() }]),
+            user("msg_u2", broken),
+        ]),
+        Followup::Guide,
+        Vec::new(),
+    );
+    let snapshot = projection.snapshot(0, "epoch");
+    let texts: Vec<&str> = snapshot["rows"]["window"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|row| row["kind"] == "userInput")
+        .map(|row| row["text"].as_str().unwrap())
+        .collect();
+    assert_eq!(texts, vec!["typed", broken]);
+}
+
 /// Fork (9.66, divergence 141): the window of CreateWorkflow and AmendWorkflow offers Refine after the standard options
 /// (Node `product-projection.ts`: a `custom` option whose static response is a plain denial, so a consumer that does not
 /// know it refuses). Any other tool's ask has no such option.

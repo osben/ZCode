@@ -47,6 +47,36 @@ pub(crate) fn dismissed(at: u64, facts: &Facts<'_>) -> Value {
     })
 }
 
+/// Rule 5: the cold boundary at `at` from the stored facts. `ended` are the ended children of the active branch,
+/// `runs` the journaled runs as `(runId, physical status, last event or update time in ms)`. An item is in it when it
+/// had ended by `at`; background works are never stored, so `workIds` is empty.
+pub(crate) fn cold_dismissed(
+    at: u64,
+    ended: &[crate::fork::subagents::EndedOutcome],
+    runs: &[(String, String, i64)],
+) -> Value {
+    let subagent_ids: Vec<&str> = ended
+        .iter()
+        .filter(|item| item.completed_at.unwrap_or(item.ended_at) <= at)
+        .map(|item| item.child.as_str())
+        .collect();
+    let run_ids: Vec<&str> = runs
+        .iter()
+        .filter(|(_, status, updated_at)| {
+            status != "running"
+                && status != "pending"
+                && u64::try_from(*updated_at).is_ok_and(|time| time <= at)
+        })
+        .map(|(run_id, _, _)| run_id.as_str())
+        .collect();
+    json!({
+        "at": at,
+        "workIds": [],
+        "subagentIds": subagent_ids,
+        "workflowRunIds": run_ids,
+    })
+}
+
 /// Rule 3: the boundary without the ids that run again; `None` when none does.
 pub(crate) fn without_running(boundary: &Value, facts: &Facts<'_>) -> Option<Value> {
     let works: HashSet<&str> = items(facts.works)
