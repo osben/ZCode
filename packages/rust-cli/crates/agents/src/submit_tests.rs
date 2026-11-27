@@ -72,6 +72,11 @@ fn a_mono_session_declares_its_schema_under_result_and_a_generic_one_does_not() 
     );
     assert_eq!(mono["required"], json!(["result"]));
     assert_eq!(mono["additionalProperties"], json!(false));
+    // Node `typedSubmitResultInputSchema` ends with `$schema: TOOL_JSON_SCHEMA_VERSION`.
+    assert_eq!(
+        mono["$schema"],
+        json!("https://json-schema.org/draft/2020-12/schema")
+    );
     let generic = submit::tool(port, None).input_schema();
     assert!(
         generic["properties"]["result"].get("type").is_none(),
@@ -194,4 +199,13 @@ fn only_an_actor_with_a_port_gets_the_actor_tools() {
     let tools = submit::tools_for(Some(&submit_port));
     let names: Vec<&str> = tools.iter().map(|tool| tool.name()).collect();
     assert_eq!(names, vec!["submit_result", "escalate"]);
+}
+
+#[test]
+fn only_a_mono_declaration_asks_for_strict_decoding() {
+    // Node: `...(typed ? { strict: true } : {})`.
+    let port: Arc<dyn ActorPort> = ScriptedPort::replying(Ok(ActorSubmit::Accepted));
+    let mono = submit::tool(port.clone(), Some(json!({"type": "string"})));
+    assert!(mono.strict());
+    assert!(!submit::tool(port, None).strict());
 }

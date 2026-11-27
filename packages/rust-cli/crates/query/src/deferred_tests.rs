@@ -19,10 +19,14 @@ struct Named {
     defer: bool,
     /// MCP 工具的来源（名字以 `mcp__` 开头的）。
     mcp: Option<McpToolInfo>,
+    strict: bool,
 }
 
 #[async_trait]
 impl Tool for Named {
+    fn strict(&self) -> bool {
+        self.strict
+    }
     fn name(&self) -> &str {
         self.name
     }
@@ -54,6 +58,7 @@ fn tool(name: &'static str, defer: bool) -> Arc<dyn Tool> {
     Arc::new(Named {
         name,
         defer,
+        strict: false,
         mcp: name.starts_with("mcp__").then(|| McpToolInfo {
             server: "s".to_owned(),
             tool: name.to_owned(),
@@ -404,4 +409,26 @@ fn local_tool_search_turns_references_into_text() {
             is_error: false,
         }]
     );
+}
+
+#[test]
+fn a_strict_tool_carries_the_strict_flag_on_the_wire() {
+    let strict: Arc<dyn Tool> = Arc::new(Named {
+        name: "Submit",
+        defer: false,
+        mcp: None,
+        strict: true,
+    });
+    let tools = vec![tool("Read", false), strict];
+    for mode in [ToolSearchMode::Off, ToolSearchMode::Local] {
+        let wire = wire_tools(&tools, &[], &prompt(), (mode, ToolOrder::ByName));
+        assert_eq!(
+            wire.flags.get("Submit"),
+            Some(&ToolFlags {
+                strict: true,
+                ..ToolFlags::default()
+            })
+        );
+        assert!(!wire.flags.contains_key("Read"));
+    }
 }

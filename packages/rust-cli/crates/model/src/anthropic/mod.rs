@@ -15,6 +15,7 @@ mod output;
 pub(crate) mod request;
 mod shape;
 pub(crate) mod stream;
+mod strict_schema;
 mod system_fold;
 mod write;
 
