@@ -17,7 +17,8 @@ fn every_source_is_listed_and_reads_back() {
             | SideSource::WorkspaceText
             | SideSource::GitCommitMessage
             | SideSource::ConnectivityProbe
-            | SideSource::McpSampling => {}
+            | SideSource::McpSampling
+            | SideSource::InputPrediction => {}
         }
         assert_eq!(SideSource::from_wire(source.as_wire()), Some(source));
     }
@@ -70,6 +71,11 @@ fn names_are_the_previous_strings() {
             "mcp_app_sampling",
             "mcp_app_sampling",
         ),
+        (
+            SideSource::InputPrediction,
+            "input_prediction",
+            "input_prediction",
+        ),
     ];
     for (source, wire, node) in table {
         assert_eq!(source.as_wire(), wire);
@@ -103,6 +109,7 @@ fn the_rules_match_the_previous_lists() {
         (SideSource::GitCommitMessage, true, false),
         (SideSource::ConnectivityProbe, true, false),
         (SideSource::McpSampling, true, false),
+        (SideSource::InputPrediction, true, false),
     ];
     for (source, foreground, quiet) in table {
         assert_eq!(source.foreground(), foreground, "{source:?}");
@@ -120,7 +127,8 @@ fn only_the_workspace_model_calls_are_workspace_scoped() {
             SideSource::WorkspaceText
             | SideSource::GitCommitMessage
             | SideSource::ConnectivityProbe
-            | SideSource::McpSampling => true,
+            | SideSource::McpSampling
+            | SideSource::InputPrediction => true,
             SideSource::SessionTitle
             | SideSource::Rename
             | SideSource::HookPrompt

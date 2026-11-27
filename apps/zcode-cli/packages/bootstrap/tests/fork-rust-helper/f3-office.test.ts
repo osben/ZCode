@@ -47,7 +47,9 @@ readline.createInterface({ input: process.stdin }).on("line", (line) => {
       capabilities: { tools: {}, resources: {} }, serverInfo: { name: "f3", version: "1.0.0" } } });
   } else if (method === "tools/list") {
     send({ jsonrpc: "2.0", id, result: { tools: [
-      tool("open_doc", ["model", "app"], { annotations: { readOnlyHint: true } }),
+      tool("open_doc", ["model", "app"], { annotations: { readOnlyHint: true },
+        _meta: { ui: { visibility: ["model", "app"], resourceUri: "ui://f3/open_doc.html", surface: "docs",
+          csp: { connectDomains: ["https://api.example.test"] } }, "openai/ui": { preferredModelDisplayMode: "pip" } } }),
       tool("slow", ["model", "app"]),
       tool("app_only", ["app"]),
       tool("mention_search", ["app"]),
@@ -295,6 +297,20 @@ describe("fork: Node helper F3 (Office tools and panels)", () => {
       readOnlyHint: true,
     });
     expect(listed.result.nextCursor).toBeUndefined();
+    // The panel's descriptor reaches Rust's listing (it builds the result's `display.ui` from it), and `visibility` does not.
+    expect(listed.result.tools.find((tool) => tool.name === "open_doc")).toMatchObject({
+      _meta: {
+        ui: {
+          resourceUri: "ui://f3/open_doc.html",
+          surface: "docs",
+          csp: { connectDomains: ["https://api.example.test"] },
+        },
+        "openai/ui": { preferredModelDisplayMode: "pip" },
+      },
+    });
+    expect(
+      (listed.result.tools.find((tool) => tool.name === "slow") as { _meta?: unknown })._meta,
+    ).toBeUndefined();
 
     expect((await helper.openSession()).error).toBeUndefined();
     const called = await helper.mcp("c1", {

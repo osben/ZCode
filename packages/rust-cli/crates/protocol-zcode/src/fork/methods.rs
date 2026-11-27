@@ -43,6 +43,8 @@ pub(crate) async fn dispatch(
     }
     let result = match method {
         "v4/conversation/plans" => plans(server, &params).await,
+        // Fork: the phone's ghost hint (specs/fork-rust-input-prediction.md).
+        "v4/conversation/inputPrediction" => super::input_prediction::handle(server, &params).await,
         // Fork: the App's per-turn file summary queries (specs/fork-rust-agent-parity.md).
         "v4/conversation/fileChanges" => super::file_summary::file_changes(server, &params).await,
         "v4/conversation/fileRewindPreview" => {

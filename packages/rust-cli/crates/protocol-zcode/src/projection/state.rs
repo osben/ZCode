@@ -294,18 +294,31 @@ pub fn config(
 pub fn usage(
     context: Option<rust_cli_kernel_api::compaction::ContextOccupancy>,
     total: &Usage,
+    facts: &super::context_facts::ContextFacts,
 ) -> Value {
     json!({
         // Fork: Node publishes the model window (not the window minus the summary reserve) and no
         // context window at all for an unknown model.
-        "contextWindow": context.and_then(|context| context.window_tokens.map(|window| json!({
-            "usedTokens": context.used_tokens,
-            "maxTokens": window,
-            "autoCompactThresholdTokens": context.compact_at,
-            // Fork (specs/fork-rust-background-and-context-usage.md): the kernel's `compact_at` is the threshold it acts on
-            // (`None` is auto-compact off), so it is authoritative, as Node marks any threshold its runtime event carries.
-            "autoCompactThresholdAuthoritative": true,
-        }))),
+        "contextWindow": context.and_then(|context| context.window_tokens.map(|window| {
+            let mut window = json!({
+                "usedTokens": context.used_tokens,
+                "maxTokens": window,
+                "autoCompactThresholdTokens": context.compact_at,
+                // Fork (specs/fork-rust-background-and-context-usage.md): the kernel's `compact_at` is the threshold it acts on
+                // (`None` is auto-compact off), so it is authoritative, as Node marks any threshold its runtime event carries.
+                "autoCompactThresholdAuthoritative": true,
+                // Fork (specs/fork-rust-context-breakdown.md rule 1): zcode-rs does not microcompact. `null` is Node's
+                // "microcompact off"; an absent field would make the UI estimate a warning threshold for it.
+                "microcompactThresholdTokens": null,
+            });
+            if let Some(cache) = facts.cache() {
+                window["cache"] = cache.clone();
+            }
+            if let Some(breakdown) = facts.breakdown() {
+                window["breakdown"] = breakdown.clone();
+            }
+            window
+        })),
         "cumulative": {
             "inputTokens": total.input_tokens,
             "outputTokens": total.output_tokens,

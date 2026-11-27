@@ -91,6 +91,7 @@ impl NodeHook {
                 background: *background,
                 plugin_root: None,
                 deny_on_error: self.deny_on_error,
+                script: None,
             },
             NodeHookKind::Process { args } => CommandHook {
                 command: self.command.clone(),
@@ -101,6 +102,7 @@ impl NodeHook {
                 background: false,
                 plugin_root: None,
                 deny_on_error: self.deny_on_error,
+                script: None,
             },
         };
         HookCommand::Command(hook)

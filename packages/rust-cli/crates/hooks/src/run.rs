@@ -19,7 +19,8 @@ use crate::command::{self, CommandRun};
 use crate::config::HookCommand;
 use crate::http::{self, HttpPolicy};
 use crate::prompt::{self, PromptRun};
-use crate::result::{Executed, HookResult};
+use crate::result::{Executed, HookResult, Raw};
+use crate::script_entry::{ScriptCheck, ScriptState, ScriptVerifier};
 use crate::transcript::{self, NodeStdin};
 
 /// 执行 hook 需要的端口。
@@ -74,6 +75,46 @@ pub(crate) struct Batch<'a> {
     pub prompt_model: Option<&'a ModelSelection>,
     /// Fork: the Node stdin for command hooks; set with [`HookPorts::node_stdin`].
     pub node: Option<NodeStdin>,
+    /// Fork (specs/fork-rust-hook-script-entry.md): the entry script reader of the re-check.
+    pub scripts: Option<Arc<dyn ScriptVerifier>>,
+}
+
+/// Node's reason codes of a failed re-check.
+pub(crate) const SCRIPT_UNAVAILABLE: &str = "workspace_hook_script_unavailable";
+pub(crate) const DECLARATION_CHANGED: &str = "workspace_hook_declaration_changed";
+
+/// Fork (D24, Node `verifyScriptEntry` + `verifyHookBeforeDispatch`): the entry script of an admitted project hook,
+/// read at the workspace root (where the hook runs) under its own deadline (the hook's timeout, not taken from the
+/// run's). `None` when the content is the one trusted.
+async fn recheck(
+    batch: &Batch<'_>,
+    check: &ScriptCheck,
+    timeout_ms: u64,
+    cancel: &CancellationToken,
+) -> Option<Raw> {
+    let read = async {
+        match &batch.scripts {
+            Some(scripts) => scripts.state(batch.workspace, &check.path).await,
+            None => ScriptState::Unverifiable,
+        }
+    };
+    let state = tokio::select! {
+        biased;
+        () = cancel.cancelled() => return Some(Raw::Cancelled),
+        state = tokio::time::timeout(std::time::Duration::from_millis(timeout_ms), read) => {
+            state.unwrap_or(ScriptState::Unverifiable)
+        }
+    };
+    let reason = match state {
+        ScriptState::File(sha256) if sha256 == check.sha256 => return None,
+        ScriptState::File(_) => DECLARATION_CHANGED,
+        ScriptState::Missing | ScriptState::Unverifiable => SCRIPT_UNAVAILABLE,
+    };
+    tracing::warn!(
+        reason,
+        "workspace hook script verification blocked dispatch"
+    );
+    Some(Raw::Refused(reason))
 }
 
 pub(crate) fn timeout_ms(hook: &HookCommand, default: u64) -> u64 {
@@ -113,6 +154,11 @@ async fn execute(
     let timeout = timeout_ms(hook, batch.default_timeout_ms);
     match hook {
         HookCommand::Command(command) => {
+            if let Some(check) = &command.script
+                && let Some(refused) = recheck(batch, check, timeout, &cancel).await
+            {
+                return Executed::Raw(refused);
+            }
             let staged = match (&ports.node_stdin, &batch.node) {
                 (Some(stdin), Some(node)) => {
                     Some(transcript::stage(ports, &stdin.transcripts, node).await)

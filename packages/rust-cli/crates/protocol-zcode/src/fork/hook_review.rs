@@ -35,6 +35,8 @@ pub mod codes {
     pub const CONFIG_UNREADABLE: &str = "workspace_hooks_config_unreadable";
     pub const CONFIG_WRITE_FAILED: &str = "workspace_hooks_config_write_failed";
     pub const CONFIG_REBUILD_FAILED: &str = "workspace_hooks_config_rebuild_failed";
+    /// Fork (D24): a selected declaration's entry script is missing or unreadable.
+    pub const SCRIPT_UNAVAILABLE: &str = "workspace_hook_script_unavailable";
 }
 #[cfg(test)]
 use codes::BUNDLE_CHANGED;
@@ -73,6 +75,8 @@ pub struct ReviewItem {
     pub editable: bool,
     pub digest: String,
     pub stored: StoredTrust,
+    /// Fork (D24): the entry script is missing or unreadable, so the declaration is `blocked_untrusted`.
+    pub script_unavailable: bool,
 }
 
 /// One project file that declares hooks.
@@ -220,7 +224,10 @@ fn scope<'a>(server: &'a Server, live: &'a Arc<Bridged<Live>>, session: &str) ->
     if excludes(live.sink.incognito().as_ref(), IncognitoKey::Hooks) {
         return None;
     }
-    let path = server.context.workspace_of(session)?;
+    // The session's cwd: a worktree task reviews its worktree (specs/fork-rust-managed-worktree-trust-identity.md
+    // rule 7). A session without a registered workspace has none.
+    server.context.workspace_of(session)?;
+    let path = live.sink.cwd();
     Some(Scope {
         server,
         live,
@@ -528,7 +535,7 @@ fn trust_state(
     bundle: &ReviewBundle,
     revoked: &HashSet<String>,
 ) -> &'static str {
-    if bundle.store_corrupt {
+    if bundle.store_corrupt || item.script_unavailable {
         return "blocked_untrusted";
     }
     match item.stored {

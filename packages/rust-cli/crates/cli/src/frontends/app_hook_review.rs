@@ -140,6 +140,11 @@ impl AppWorkspace {
         let trust = Self::trust_target(target);
         let (hooks, failures, _) = self.review_hooks(&trust).await;
         let selected = current_items(&hooks, failures.user, bundle_digest, review_item_ids)?;
+        // Node's review controller (D24): an unavailable entry script has no reviewable content, so the whole
+        // selection is refused before anything is written.
+        if !hooks_trust::unavailable_items(&hooks, &selected).is_empty() {
+            return Err(codes::SCRIPT_UNAVAILABLE);
+        }
         let context = TrustContext {
             files: self.files.as_ref(),
             paths: &self.paths,
@@ -390,7 +395,14 @@ fn declared_as_reviewed(
         editable: source.editable,
         hooks: &parsed,
     };
-    workspace_digest::bundle(&[digest_source], &hooks.root).is_some_and(|bundle| {
+    // Node `writeWorkspaceHookConfiguredToggle` keeps the reviewed script state: only the declaration is compared, and
+    // the rebuild after the write reads the script again (D24).
+    let states: workspace_digest::ScriptStates = entry
+        .script
+        .iter()
+        .map(|script| (script.path.clone(), script.state.clone()))
+        .collect();
+    workspace_digest::bundle(&[digest_source], &hooks.root, &states).is_some_and(|bundle| {
         bundle.entries.iter().any(|current| {
             current.event == entry.event
                 && current.matcher_index == entry.matcher_index
@@ -434,6 +446,7 @@ fn review_item(entry: &DigestEntry, max_output_bytes: f64, stored: StoredTrust) 
         editable: entry.editable,
         digest: entry.digest.clone(),
         stored,
+        script_unavailable: entry.script_unavailable(),
     }
 }
 

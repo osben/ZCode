@@ -27,6 +27,8 @@ struct Item {
     enabled: bool,
     digest: String,
     trusted: bool,
+    /// Fork (D24): the entry script is missing or unreadable, so the item is `blocked_untrusted`.
+    unavailable: bool,
 }
 
 fn status(hooks: &WorkspaceHooks, workspace_path: &str) -> Status {
@@ -44,6 +46,7 @@ fn status(hooks: &WorkspaceHooks, workspace_path: &str) -> Status {
             enabled: entry.configured_enabled,
             digest: entry.digest.clone(),
             trusted: !is_corrupt && trusted.contains(&entry.digest),
+            unavailable: entry.script_unavailable(),
         })
         .collect();
     let enabled: Vec<&Item> = items.iter().filter(|item| item.enabled).collect();
@@ -53,10 +56,15 @@ fn status(hooks: &WorkspaceHooks, workspace_path: &str) -> Status {
         "workspace_hooks_not_applicable"
     } else if enabled.is_empty() {
         "workspace_hooks_no_enabled_hooks"
-    } else if enabled.iter().all(|item| item.trusted) {
+    } else if enabled
+        .iter()
+        .all(|item| state(item) == "trusted_persistent")
+    {
         "workspace_hooks_trusted_persistent"
-    } else {
+    } else if enabled.iter().any(|item| state(item) == "pending_trust") {
         "workspace_hooks_pending_trust"
+    } else {
+        super::SCRIPT_UNAVAILABLE
     };
     Status {
         workspace_path: workspace_path.to_owned(),
@@ -68,7 +76,9 @@ fn status(hooks: &WorkspaceHooks, workspace_path: &str) -> Status {
 }
 
 fn state(item: &Item) -> &'static str {
-    if item.trusted {
+    if item.unavailable {
+        "blocked_untrusted"
+    } else if item.trusted {
         "trusted_persistent"
     } else {
         "pending_trust"
@@ -203,7 +213,22 @@ pub(super) fn select(
     Ok(selected)
 }
 
-async fn act(action: Action, options: &Options, context: &TrustContext<'_>) -> Result<(), String> {
+/// Why a grant or revoke failed: the reason, and the declarations whose entry script refused a grant.
+struct Failure {
+    reason: String,
+    unavailable: Vec<String>,
+}
+
+impl<T: Into<String>> From<T> for Failure {
+    fn from(reason: T) -> Self {
+        Self {
+            reason: reason.into(),
+            unavailable: Vec::new(),
+        }
+    }
+}
+
+async fn act(action: Action, options: &Options, context: &TrustContext<'_>) -> Result<(), Failure> {
     // Status and review only read; `run` reads once for their output.
     if matches!(action, Action::Status | Action::Review) {
         return Ok(());
@@ -214,29 +239,41 @@ async fn act(action: Action, options: &Options, context: &TrustContext<'_>) -> R
         Action::Grant => {
             // Node `requireSnapshot` reads the config before the grant writes anything.
             if let Some(error) = unreadable {
-                return Err(error);
+                return Err(Failure::from(error));
             }
             if hooks.bundle.is_none() {
-                return Err("No Workspace Hook declarations were discovered.".to_owned());
+                return Err(Failure::from(
+                    "No Workspace Hook declarations were discovered.",
+                ));
             }
-            let selected = select(&hooks, options).map_err(str::to_owned)?;
+            let selected = select(&hooks, options).map_err(Failure::from)?;
+            // Fork (D24): no reviewable content, so the whole command is refused and nothing is written.
+            let unavailable = super::unavailable_items(&hooks, &selected);
+            if !unavailable.is_empty() {
+                return Err(Failure {
+                    reason: super::SCRIPT_UNAVAILABLE.to_owned(),
+                    unavailable,
+                });
+            }
             hooks
                 .store
                 .grant(records(&hooks, &selected, context))
                 .await
-                .map_err(|error| error.to_string())
+                .map_err(|error| Failure::from(error.to_string()))
         }
         Action::Revoke => {
             let digests = unique(&options.digests);
             if options.all != digests.is_empty() {
-                return Err("Specify exactly one of --all or --hook-digest.".to_owned());
+                return Err(Failure::from(
+                    "Specify exactly one of --all or --hook-digest.",
+                ));
             }
             let selected = (!options.all).then_some(digests.as_slice());
             hooks
                 .store
                 .revoke(&hooks.identity, selected)
                 .await
-                .map_err(|error| error.to_string())
+                .map_err(|error| Failure::from(error.to_string()))
         }
     }
 }
@@ -253,13 +290,13 @@ pub(crate) async fn run(command: TrustCommand, context: &TrustContext<'_>) -> Ou
         }
         TrustCommand::Run(action, options) => (action, options),
     };
-    if let Err(reason) = act(action, &options, context).await {
-        return failure(&options, &reason);
+    if let Err(error) = act(action, &options, context).await {
+        return failure(&options, &error.reason, &error.unavailable);
     }
     // A revoke has already written the store; like Node, the status read after it fails.
     let (hooks, unreadable) = inspect_workspace(context, &options).await;
     if let Some(error) = unreadable {
-        return failure(&options, &error);
+        return failure(&options, &error, &[]);
     }
     let (path, _) = super::target(&options, context.cwd);
     let status = status(&hooks, &path);

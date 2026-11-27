@@ -23,6 +23,7 @@ mod frontend_records;
 mod goal_target;
 mod goal_verify;
 mod ids;
+mod import_history;
 mod load;
 mod marks;
 mod node_checkpoints;
@@ -772,6 +773,33 @@ impl StoreQueries for NodeStore {
         let session = session.as_str().to_owned();
         self.with_db(move |conn, _| reconcile_row::row(conn, &session))
             .await
+    }
+
+    async fn import_history(
+        &self,
+        session: &SessionId,
+        history: &rust_cli_kernel_api::store::ImportedHistory,
+    ) -> Result<(), StoreError> {
+        let session = session.clone();
+        let history = history.clone();
+        self.with_drafts(move |conn, ids, drafts| {
+            let now = i64::try_from(ids.now_ms()).unwrap_or(i64::MAX);
+            // A draft gets its row in the same transaction as the import, so a failed import leaves no half-written
+            // session behind.
+            if let Some(drafts) = drafts
+                && drafts.is_draft(session.as_str())
+            {
+                return drafts::materialize(conn, drafts, &session, ids, |tx| {
+                    import_history::write(tx, &session, &history, now)
+                });
+            }
+            let tx = conn
+                .transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)
+                .storage()?;
+            import_history::write(&tx, &session, &history, now)?;
+            tx.commit().storage()
+        })
+        .await
     }
 
     async fn is_draft(&self, session: &SessionId) -> Result<bool, StoreError> {

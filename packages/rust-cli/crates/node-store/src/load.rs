@@ -61,6 +61,7 @@ pub fn load(
         marks: crate::marks::load(&records),
         messages: crate::hydrate::hydrate(&active),
         earlier: crate::hydrate::hydrate(&earlier),
+        preserved_usage: preserved_usage(&records, &active),
         model,
         mode: execution.map(|state| state.mode),
         plan: execution.is_some_and(|state| state.plan),
@@ -295,3 +296,27 @@ fn execution_state(
 #[cfg(test)]
 #[path = "load_turn_tests.rs"]
 mod turn_tests;
+
+/// Fork (specs/fork-rust-context-breakdown.md rule 6): the original usage of the preserved segment's assistant
+/// messages. `active_messages` hands those as owned copies with the tokens cleared (`invalidated`); the stored rows
+/// still hold them, as Node's `persistedMessages` do.
+fn preserved_usage(
+    records: &[crate::repo::messages::WithParts],
+    active: &[std::borrow::Cow<'_, crate::repo::messages::WithParts>],
+) -> Vec<(MessageId, rust_cli_kernel_api::message::Usage)> {
+    let originals: Vec<std::borrow::Cow<'_, crate::repo::messages::WithParts>> = active
+        .iter()
+        .filter(|record| matches!(record, std::borrow::Cow::Owned(_)))
+        .filter_map(|copy| records.iter().find(|record| record.id() == copy.id()))
+        .map(std::borrow::Cow::Borrowed)
+        .collect();
+    crate::hydrate::hydrate(&originals)
+        .into_iter()
+        .filter_map(|message| match message {
+            rust_cli_kernel_api::message::Message::Assistant(assistant) => {
+                assistant.usage.map(|usage| (assistant.id, usage))
+            }
+            _ => None,
+        })
+        .collect()
+}

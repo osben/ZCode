@@ -17,6 +17,7 @@ fn failure(executed: &Executed, interpreted: &HookResult, timeout_ms: u64) -> Op
     match executed {
         Executed::Raw(Raw::TimedOut) => Some(format!("Hook timed out after {timeout_ms}ms")),
         Executed::Raw(Raw::Failed(message)) => Some(message.clone()),
+        Executed::Raw(Raw::Refused(code)) => Some((*code).to_owned()),
         Executed::Raw(Raw::Command {
             stdout,
             stderr,

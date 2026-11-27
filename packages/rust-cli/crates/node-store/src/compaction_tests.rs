@@ -152,7 +152,11 @@ async fn a_tool_result_tail_maps_to_its_assistant_row() {
         }],
         model: "m".to_owned(),
         stop_reason: Some(StopReason::ToolUse),
-        usage: None,
+        usage: Some(rust_cli_kernel_api::message::Usage {
+            input_tokens: 100,
+            cache_read_input_tokens: 50,
+            ..Default::default()
+        }),
     });
     let result = Message::User(UserMessage {
         stall_execution: None,
@@ -195,6 +199,20 @@ async fn a_tool_result_tail_maps_to_its_assistant_row() {
     assert_eq!(ids, ["msg_b", "msg_s", "msg_a1", "msg_r1"]);
     let earlier: Vec<&str> = loaded.earlier.iter().map(|m| m.id().as_str()).collect();
     assert_eq!(earlier, ["msg_u1"]);
+    // Fork (specs/fork-rust-context-breakdown.md rule 6): the preserved copy has its usage cleared, the stored
+    // original comes back on the side.
+    let Some(Message::Assistant(copy)) = loaded.messages.get(2) else {
+        panic!("the preserved assistant copy");
+    };
+    assert!(
+        copy.usage
+            .as_ref()
+            .is_none_or(|usage| usage.input_tokens == 0)
+    );
+    assert_eq!(loaded.preserved_usage.len(), 1);
+    assert_eq!(loaded.preserved_usage[0].0.as_str(), "msg_a1");
+    assert_eq!(loaded.preserved_usage[0].1.input_tokens, 100);
+    assert_eq!(loaded.preserved_usage[0].1.cache_read_input_tokens, 50);
 }
 
 /// 压缩过两次（F102，compact.md §5.1）：更早的压缩点在只供显示的部分里还原成边界与摘要；模型侧的历史从最后一个

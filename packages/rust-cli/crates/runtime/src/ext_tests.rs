@@ -663,6 +663,28 @@ impl rust_cli_ext::WorkspaceConfigLoader for SwitchingLayer {
     }
 }
 
+/// A workspace layer with one project server named `name` (none for `None`): reloads that must install
+/// change the read, since an equal read installs nothing (specs/fork-rust-workspace-plugins-mcp.md).
+fn layer_with(name: Option<&str>) -> Option<rust_cli_ext::WorkspaceConfig> {
+    Some(rust_cli_ext::WorkspaceConfig {
+        plugins: Default::default(),
+        servers: name
+            .map(|name| rust_cli_ext::McpServer {
+                name: name.to_owned(),
+                scope: rust_cli_ext::McpScope::Project,
+                transport: rust_cli_kernel_api::mcp::McpTransportConfig::stdio(
+                    "node".to_owned(),
+                    Vec::new(),
+                ),
+                options: Default::default(),
+                oauth: None,
+                machine: Default::default(),
+            })
+            .into_iter()
+            .collect(),
+    })
+}
+
 /// Fork (specs/fork-rust-node-helper.md F3, per-workspace admission): a session of a workspace with
 /// a loaded layer resolves that workspace's plugin set; the process workspace and unknown sessions
 /// resolve none, so the helper's catalog falls back to the process one for them.
@@ -821,6 +843,7 @@ async fn a_workspace_layer_reload_replaces_the_loaded_slot() {
         .plugins_for_session(&session)
         .expect("the session's workspace loaded a layer");
 
+    *loader.0.lock().unwrap() = layer_with(Some("changed"));
     kernel.reload_workspace_layer(&other).await;
     assert!(
         !Arc::ptr_eq(
@@ -1367,7 +1390,8 @@ async fn mcp_enable_and_disable_reload_the_named_workspaces_layer() {
             servers: Vec::new(),
         })
     };
-    kernel.set_workspace_config_loader(Arc::new(SwitchingLayer(std::sync::Mutex::new(config()))));
+    let loader = Arc::new(SwitchingLayer(std::sync::Mutex::new(config())));
+    kernel.set_workspace_config_loader(loader.clone());
     let other = WorkspaceRef {
         environment: workspace().environment,
         root: EnvPath::new("/Users/dev/other"),
@@ -1416,6 +1440,7 @@ async fn mcp_enable_and_disable_reload_the_named_workspaces_layer() {
     // Disable (equally enable) follows a committed `enabled` write: the named workspace's slot is
     // replaced by the re-read, the other workspace's slot is not, and a server the process group
     // does not own never appears in the receipt.
+    *loader.0.lock().unwrap() = layer_with(Some("disabled-write"));
     let infos = kernel
         .mcp_control(rust_cli_kernel_api::manage::McpControl {
             action: rust_cli_kernel_api::manage::McpAction::Disable,
@@ -1452,6 +1477,7 @@ async fn mcp_enable_and_disable_reload_the_named_workspaces_layer() {
     let after_disable = kernel
         .plugins_for_session(&a)
         .expect("the disable installed a loaded slot");
+    *loader.0.lock().unwrap() = layer_with(Some("enabled-write"));
     kernel
         .mcp_control(rust_cli_kernel_api::manage::McpControl {
             action: rust_cli_kernel_api::manage::McpAction::Enable,

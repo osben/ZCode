@@ -229,6 +229,9 @@ pub(crate) struct Actor {
     /// 模型侧的一切（主循环、压缩、token、标题、rewind、fork、goal 与任务的恢复）只看 `messages`。另一个只读的读者：
     /// 打开时旧会话的跨会话 entry 在这里按文字找一次是否并入过（peer_restore.rs，F139）。
     pub(crate) earlier: Vec<Message>,
+    /// Fork: the stored original usage of the preserved segment at open (only [`Self::view`] reads it, for the context
+    /// usage cache totals).
+    pub(crate) preserved_usage: Vec<(MessageId, rust_cli_kernel_api::message::Usage)>,
     /// Fork: the command that submitted each typed user message, loaded with the session and extended by
     /// [`Self::commit`]; only [`Self::view`] reads it (cold rows' `sourceCommandId`).
     pub(crate) commands: std::collections::BTreeMap<MessageId, CommandId>,
@@ -396,6 +399,7 @@ impl Actor {
             meta: state.meta,
             messages: state.messages,
             earlier: state.earlier,
+            preserved_usage: state.preserved_usage,
             commands: state.commands,
             message_models: state.message_models,
             tool_displays: state.tool_displays,
@@ -1059,6 +1063,7 @@ impl Actor {
                 .cloned()
                 .collect(),
             // Fork (D2): only screenshots whose turn is still in the shown history survive, as the hook records do.
+            preserved_usage: self.preserved_usage.clone(),
             browser_screenshots: self
                 .browser_screenshots
                 .iter()

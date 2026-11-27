@@ -72,6 +72,9 @@ pub(crate) struct State {
     /// replaced only by a write that started later.
     epoch: u64,
     loader: Option<Arc<dyn ProjectHookLoader>>,
+    /// Fork (specs/fork-rust-hook-script-entry.md): reads a project hook's entry script before it runs; without one
+    /// such a hook is refused.
+    pub(crate) scripts: Option<Arc<dyn crate::script_entry::ScriptVerifier>>,
 }
 
 impl State {
@@ -82,6 +85,7 @@ impl State {
             workspace_plugins: BTreeMap::new(),
             epoch: 0,
             loader: None,
+            scripts: None,
         }
     }
 
@@ -259,6 +263,12 @@ impl HookEngine {
     /// Sets the loader that assembles a workspace's entry at its first event and at a session start.
     pub fn set_project_loader(&self, loader: Arc<dyn ProjectHookLoader>) {
         self.state.write_unpoisoned().loader = Some(loader);
+    }
+
+    /// Fork (specs/fork-rust-hook-script-entry.md): sets the reader of the entry scripts admitted project hooks
+    /// re-check before each run.
+    pub fn set_script_verifier(&self, verifier: Arc<dyn crate::script_entry::ScriptVerifier>) {
+        self.state.write_unpoisoned().scripts = Some(verifier);
     }
 
     /// Swaps the entry of `key`; an event already running keeps the snapshot it started with.

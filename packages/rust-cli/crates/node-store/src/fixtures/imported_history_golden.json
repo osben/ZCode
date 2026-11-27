@@ -1,0 +1,112 @@
+{
+  "sessionId": "sess_imp1",
+  "directory": "/w",
+  "model": {
+    "providerId": "p",
+    "modelId": "m"
+  },
+  "mode": "build",
+  "history": {
+    "source": "claudeCode",
+    "title": "  Imported chat  ",
+    "createdAt": 1000,
+    "updatedAt": 2000,
+    "messages": [
+      {
+        "role": "user",
+        "content": "hello",
+        "timestamp": 1000
+      },
+      {
+        "role": "assistant",
+        "content": "hi",
+        "timestamp": 900
+      },
+      {
+        "role": "user",
+        "content": "again"
+      },
+      {
+        "role": "assistant",
+        "content": "ok"
+      },
+      {
+        "role": "assistant",
+        "content": "second answer",
+        "timestamp": 5000
+      }
+    ]
+  },
+  "session": {
+    "title": "Imported chat",
+    "title_source": "custom",
+    "slug": "sess_imp1",
+    "time_created": 1000,
+    "time_title_updated": 2000,
+    "permission": "{\"mode\":\"build\"}"
+  },
+  "messages": [
+    {
+      "id": "msg_sess_imp1_import_0",
+      "time_created": 1000,
+      "time_updated": 1000,
+      "data": "{\"role\":\"user\",\"time\":{\"created\":1000},\"agent\":\"zcode-agent\",\"modelSelection\":{\"providerId\":\"p\",\"modelId\":\"m\"},\"metadata\":{\"migrationSource\":\"claudeCode\"},\"model\":{\"providerID\":\"p\",\"modelID\":\"m\"}}"
+    },
+    {
+      "id": "msg_sess_imp1_import_1",
+      "time_created": 1001,
+      "time_updated": 1001,
+      "data": "{\"role\":\"assistant\",\"time\":{\"created\":1001,\"completed\":1001},\"parentID\":\"msg_sess_imp1_import_0\",\"modelId\":\"m\",\"providerId\":\"p\",\"mode\":\"build\",\"agent\":\"zcode-agent\",\"path\":{\"cwd\":\"/w\",\"root\":\"/w\"},\"cost\":0,\"tokens\":{\"input\":0,\"output\":0,\"reasoning\":0,\"cache\":{\"read\":0,\"write\":0}},\"finish\":\"stop\"}"
+    },
+    {
+      "id": "msg_sess_imp1_import_2",
+      "time_created": 1002,
+      "time_updated": 1002,
+      "data": "{\"role\":\"user\",\"time\":{\"created\":1002},\"agent\":\"zcode-agent\",\"modelSelection\":{\"providerId\":\"p\",\"modelId\":\"m\"},\"metadata\":{\"migrationSource\":\"claudeCode\"},\"model\":{\"providerID\":\"p\",\"modelID\":\"m\"}}"
+    },
+    {
+      "id": "msg_sess_imp1_import_3",
+      "time_created": 1003,
+      "time_updated": 1003,
+      "data": "{\"role\":\"assistant\",\"time\":{\"created\":1003,\"completed\":1003},\"parentID\":\"msg_sess_imp1_import_2\",\"modelId\":\"m\",\"providerId\":\"p\",\"mode\":\"build\",\"agent\":\"zcode-agent\",\"path\":{\"cwd\":\"/w\",\"root\":\"/w\"},\"cost\":0,\"tokens\":{\"input\":0,\"output\":0,\"reasoning\":0,\"cache\":{\"read\":0,\"write\":0}},\"finish\":\"stop\"}"
+    },
+    {
+      "id": "msg_sess_imp1_import_4",
+      "time_created": 5000,
+      "time_updated": 5000,
+      "data": "{\"role\":\"assistant\",\"time\":{\"created\":5000,\"completed\":5000},\"parentID\":\"msg_sess_imp1_import_2\",\"modelId\":\"m\",\"providerId\":\"p\",\"mode\":\"build\",\"agent\":\"zcode-agent\",\"path\":{\"cwd\":\"/w\",\"root\":\"/w\"},\"cost\":0,\"tokens\":{\"input\":0,\"output\":0,\"reasoning\":0,\"cache\":{\"read\":0,\"write\":0}},\"finish\":\"stop\"}"
+    }
+  ],
+  "parts": [
+    {
+      "id": "part_sess_imp1_import_0_text",
+      "message_id": "msg_sess_imp1_import_0",
+      "time_created": 1000,
+      "data": "{\"type\":\"text\",\"text\":\"hello\",\"time\":{\"start\":1000,\"end\":1000},\"metadata\":{\"migrationSource\":\"claudeCode\"}}"
+    },
+    {
+      "id": "part_sess_imp1_import_1_text",
+      "message_id": "msg_sess_imp1_import_1",
+      "time_created": 1001,
+      "data": "{\"type\":\"text\",\"text\":\"hi\",\"time\":{\"start\":1001,\"end\":1001},\"metadata\":{\"migrationSource\":\"claudeCode\"}}"
+    },
+    {
+      "id": "part_sess_imp1_import_2_text",
+      "message_id": "msg_sess_imp1_import_2",
+      "time_created": 1002,
+      "data": "{\"type\":\"text\",\"text\":\"again\",\"time\":{\"start\":1002,\"end\":1002},\"metadata\":{\"migrationSource\":\"claudeCode\"}}"
+    },
+    {
+      "id": "part_sess_imp1_import_3_text",
+      "message_id": "msg_sess_imp1_import_3",
+      "time_created": 1003,
+      "data": "{\"type\":\"text\",\"text\":\"ok\",\"time\":{\"start\":1003,\"end\":1003},\"metadata\":{\"migrationSource\":\"claudeCode\"}}"
+    },
+    {
+      "id": "part_sess_imp1_import_4_text",
+      "message_id": "msg_sess_imp1_import_4",
+      "time_created": 5000,
+      "data": "{\"type\":\"text\",\"text\":\"second answer\",\"time\":{\"start\":5000,\"end\":5000},\"metadata\":{\"migrationSource\":\"claudeCode\"}}"
+    }
+  ]
+}

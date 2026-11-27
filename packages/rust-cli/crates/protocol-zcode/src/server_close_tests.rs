@@ -945,3 +945,6 @@ mod completed_activity;
 
 #[path = "server_background_tests.rs"]
 mod background;
+
+#[path = "server_workspace_config_tests.rs"]
+mod workspace_config;

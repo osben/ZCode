@@ -20,6 +20,7 @@ export const FORK_RUST_HELPER_METHODS = [
   zcodeProtocolMethods.pluginsUninstall,
   zcodeProtocolMethods.pluginsUpdate,
   zcodeProtocolMethods.pluginsSetEnabled,
+  zcodeProtocolMethods.pluginsWorkspaceTrust,
   zcodeProtocolMethods.pluginsConfigure,
   zcodeProtocolMethods.pluginsResetConfig,
   zcodeProtocolMethods.pluginsValidate,

@@ -116,6 +116,9 @@ pub(crate) enum Raw {
     Backgrounded,
     /// 没能运行；文本是错误说明。
     Failed(String),
+    /// Fork (specs/fork-rust-hook-script-entry.md): not started, its entry script failed the re-check; the reason
+    /// code. No effect, recorded `blocked`, an error for `onError: "deny"`.
+    Refused(&'static str),
 }
 
 /// 一个 hook 执行完的产物。prompt hook 直接给出结果。

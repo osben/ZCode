@@ -1,0 +1,950 @@
+[
+  {
+    "platform": "linux",
+    "hook": {
+      "type": "command",
+      "command": "./x.sh"
+    },
+    "path": "x.sh"
+  },
+  {
+    "platform": "win32",
+    "hook": {
+      "type": "command",
+      "command": "./x.sh"
+    },
+    "path": null
+  },
+  {
+    "platform": "linux",
+    "hook": {
+      "type": "command",
+      "command": "  ./x.sh\t--a b  "
+    },
+    "path": "x.sh"
+  },
+  {
+    "platform": "win32",
+    "hook": {
+      "type": "command",
+      "command": "  ./x.sh\t--a b  "
+    },
+    "path": null
+  },
+  {
+    "platform": "linux",
+    "hook": {
+      "type": "command",
+      "command": "scripts/a//b.sh"
+    },
+    "path": "scripts/a/b.sh"
+  },
+  {
+    "platform": "win32",
+    "hook": {
+      "type": "command",
+      "command": "scripts/a//b.sh"
+    },
+    "path": null
+  },
+  {
+    "platform": "linux",
+    "hook": {
+      "type": "command",
+      "command": "dir/"
+    },
+    "path": "dir/"
+  },
+  {
+    "platform": "win32",
+    "hook": {
+      "type": "command",
+      "command": "dir/"
+    },
+    "path": null
+  },
+  {
+    "platform": "linux",
+    "hook": {
+      "type": "command",
+      "command": "./"
+    },
+    "path": "./"
+  },
+  {
+    "platform": "win32",
+    "hook": {
+      "type": "command",
+      "command": "./"
+    },
+    "path": null
+  },
+  {
+    "platform": "linux",
+    "hook": {
+      "type": "command",
+      "command": "."
+    },
+    "path": null
+  },
+  {
+    "platform": "win32",
+    "hook": {
+      "type": "command",
+      "command": "."
+    },
+    "path": null
+  },
+  {
+    "platform": "linux",
+    "hook": {
+      "type": "command",
+      "command": "x.sh"
+    },
+    "path": null
+  },
+  {
+    "platform": "win32",
+    "hook": {
+      "type": "command",
+      "command": "x.sh"
+    },
+    "path": null
+  },
+  {
+    "platform": "linux",
+    "hook": {
+      "type": "command",
+      "command": "/abs/x.sh"
+    },
+    "path": null
+  },
+  {
+    "platform": "win32",
+    "hook": {
+      "type": "command",
+      "command": "/abs/x.sh"
+    },
+    "path": null
+  },
+  {
+    "platform": "linux",
+    "hook": {
+      "type": "command",
+      "command": "../up.sh"
+    },
+    "path": null
+  },
+  {
+    "platform": "win32",
+    "hook": {
+      "type": "command",
+      "command": "../up.sh"
+    },
+    "path": null
+  },
+  {
+    "platform": "linux",
+    "hook": {
+      "type": "command",
+      "command": "a/../b.sh"
+    },
+    "path": null
+  },
+  {
+    "platform": "win32",
+    "hook": {
+      "type": "command",
+      "command": "a/../b.sh"
+    },
+    "path": null
+  },
+  {
+    "platform": "linux",
+    "hook": {
+      "type": "command",
+      "command": "sh x"
+    },
+    "path": null
+  },
+  {
+    "platform": "win32",
+    "hook": {
+      "type": "command",
+      "command": "sh x"
+    },
+    "path": null
+  },
+  {
+    "platform": "linux",
+    "hook": {
+      "type": "command",
+      "command": "sh x."
+    },
+    "path": "x."
+  },
+  {
+    "platform": "win32",
+    "hook": {
+      "type": "command",
+      "command": "sh x."
+    },
+    "path": null
+  },
+  {
+    "platform": "linux",
+    "hook": {
+      "type": "command",
+      "command": "sh .hidden"
+    },
+    "path": null
+  },
+  {
+    "platform": "win32",
+    "hook": {
+      "type": "command",
+      "command": "sh .hidden"
+    },
+    "path": null
+  },
+  {
+    "platform": "linux",
+    "hook": {
+      "type": "command",
+      "command": "sh x.sh"
+    },
+    "path": "x.sh"
+  },
+  {
+    "platform": "win32",
+    "hook": {
+      "type": "command",
+      "command": "sh x.sh"
+    },
+    "path": null
+  },
+  {
+    "platform": "linux",
+    "hook": {
+      "type": "command",
+      "command": "bash -c x.sh"
+    },
+    "path": null
+  },
+  {
+    "platform": "win32",
+    "hook": {
+      "type": "command",
+      "command": "bash -c x.sh"
+    },
+    "path": null
+  },
+  {
+    "platform": "linux",
+    "hook": {
+      "type": "command",
+      "command": "bash"
+    },
+    "path": null
+  },
+  {
+    "platform": "win32",
+    "hook": {
+      "type": "command",
+      "command": "bash"
+    },
+    "path": null
+  },
+  {
+    "platform": "linux",
+    "hook": {
+      "type": "command",
+      "command": "node inspect x.js"
+    },
+    "path": null
+  },
+  {
+    "platform": "win32",
+    "hook": {
+      "type": "command",
+      "command": "node inspect x.js"
+    },
+    "path": null
+  },
+  {
+    "platform": "linux",
+    "hook": {
+      "type": "command",
+      "command": "\"$CLAUDE_PROJECT_DIR\"/hooks/run.sh --x"
+    },
+    "path": "hooks/run.sh"
+  },
+  {
+    "platform": "win32",
+    "hook": {
+      "type": "command",
+      "command": "\"$CLAUDE_PROJECT_DIR\"/hooks/run.sh --x"
+    },
+    "path": null
+  },
+  {
+    "platform": "linux",
+    "hook": {
+      "type": "command",
+      "command": "\"$ZCODE_PROJECT_DIR\"/run"
+    },
+    "path": "run"
+  },
+  {
+    "platform": "win32",
+    "hook": {
+      "type": "command",
+      "command": "\"$ZCODE_PROJECT_DIR\"/run"
+    },
+    "path": null
+  },
+  {
+    "platform": "linux",
+    "hook": {
+      "type": "command",
+      "command": "$ZCODE_PROJECT_DIR/run"
+    },
+    "path": null
+  },
+  {
+    "platform": "win32",
+    "hook": {
+      "type": "command",
+      "command": "$ZCODE_PROJECT_DIR/run"
+    },
+    "path": null
+  },
+  {
+    "platform": "linux",
+    "hook": {
+      "type": "command",
+      "command": "${ZCODE_PROJECT_DIR}/run"
+    },
+    "path": null
+  },
+  {
+    "platform": "win32",
+    "hook": {
+      "type": "command",
+      "command": "${ZCODE_PROJECT_DIR}/run"
+    },
+    "path": null
+  },
+  {
+    "platform": "linux",
+    "hook": {
+      "type": "command",
+      "command": "python3 \"$CLAUDE_PROJECT_DIR\"/a.py"
+    },
+    "path": "a.py"
+  },
+  {
+    "platform": "win32",
+    "hook": {
+      "type": "command",
+      "command": "python3 \"$CLAUDE_PROJECT_DIR\"/a.py"
+    },
+    "path": null
+  },
+  {
+    "platform": "linux",
+    "hook": {
+      "type": "command",
+      "command": "./x.sh | tee"
+    },
+    "path": null
+  },
+  {
+    "platform": "win32",
+    "hook": {
+      "type": "command",
+      "command": "./x.sh | tee"
+    },
+    "path": null
+  },
+  {
+    "platform": "linux",
+    "hook": {
+      "type": "command",
+      "command": "./x.sh;rm"
+    },
+    "path": null
+  },
+  {
+    "platform": "win32",
+    "hook": {
+      "type": "command",
+      "command": "./x.sh;rm"
+    },
+    "path": null
+  },
+  {
+    "platform": "linux",
+    "hook": {
+      "type": "command",
+      "command": "./x.sh y"
+    },
+    "path": null
+  },
+  {
+    "platform": "win32",
+    "hook": {
+      "type": "command",
+      "command": "./x.sh y"
+    },
+    "path": null
+  },
+  {
+    "platform": "linux",
+    "hook": {
+      "type": "command",
+      "command": "./x.sh\u000by"
+    },
+    "path": null
+  },
+  {
+    "platform": "win32",
+    "hook": {
+      "type": "command",
+      "command": "./x.sh\u000by"
+    },
+    "path": null
+  },
+  {
+    "platform": "linux",
+    "hook": {
+      "type": "command",
+      "command": "./x.sh\ny"
+    },
+    "path": null
+  },
+  {
+    "platform": "win32",
+    "hook": {
+      "type": "command",
+      "command": "./x.sh\ny"
+    },
+    "path": null
+  },
+  {
+    "platform": "linux",
+    "hook": {
+      "type": "command",
+      "command": "KEY=v ./x.sh"
+    },
+    "path": null
+  },
+  {
+    "platform": "win32",
+    "hook": {
+      "type": "command",
+      "command": "KEY=v ./x.sh"
+    },
+    "path": null
+  },
+  {
+    "platform": "linux",
+    "hook": {
+      "type": "command",
+      "command": "./x.sh KEY=v a@b:c,d+e"
+    },
+    "path": "x.sh"
+  },
+  {
+    "platform": "win32",
+    "hook": {
+      "type": "command",
+      "command": "./x.sh KEY=v a@b:c,d+e"
+    },
+    "path": null
+  },
+  {
+    "platform": "linux",
+    "hook": {
+      "type": "command",
+      "command": "./x$y.sh"
+    },
+    "path": null
+  },
+  {
+    "platform": "win32",
+    "hook": {
+      "type": "command",
+      "command": "./x$y.sh"
+    },
+    "path": null
+  },
+  {
+    "platform": "linux",
+    "hook": {
+      "type": "command",
+      "command": "./é.sh"
+    },
+    "path": null
+  },
+  {
+    "platform": "win32",
+    "hook": {
+      "type": "command",
+      "command": "./é.sh"
+    },
+    "path": null
+  },
+  {
+    "platform": "linux",
+    "hook": {
+      "type": "command",
+      "command": "./x.sh",
+      "shell": "/bin/zsh"
+    },
+    "path": null
+  },
+  {
+    "platform": "win32",
+    "hook": {
+      "type": "command",
+      "command": "./x.sh",
+      "shell": "/bin/zsh"
+    },
+    "path": null
+  },
+  {
+    "platform": "linux",
+    "hook": {
+      "type": "command",
+      "command": "./x.sh",
+      "shell": true
+    },
+    "path": "x.sh"
+  },
+  {
+    "platform": "win32",
+    "hook": {
+      "type": "command",
+      "command": "./x.sh",
+      "shell": true
+    },
+    "path": null
+  },
+  {
+    "platform": "linux",
+    "hook": {
+      "type": "command",
+      "command": ""
+    },
+    "path": null
+  },
+  {
+    "platform": "win32",
+    "hook": {
+      "type": "command",
+      "command": ""
+    },
+    "path": null
+  },
+  {
+    "platform": "linux",
+    "hook": {
+      "type": "command",
+      "command": "   "
+    },
+    "path": null
+  },
+  {
+    "platform": "win32",
+    "hook": {
+      "type": "command",
+      "command": "   "
+    },
+    "path": null
+  },
+  {
+    "platform": "linux",
+    "hook": {
+      "type": "process",
+      "command": "./x.sh"
+    },
+    "path": "x.sh"
+  },
+  {
+    "platform": "win32",
+    "hook": {
+      "type": "process",
+      "command": "./x.sh"
+    },
+    "path": "x.sh"
+  },
+  {
+    "platform": "linux",
+    "hook": {
+      "type": "process",
+      "command": "x.sh"
+    },
+    "path": null
+  },
+  {
+    "platform": "win32",
+    "hook": {
+      "type": "process",
+      "command": "x.sh"
+    },
+    "path": null
+  },
+  {
+    "platform": "linux",
+    "hook": {
+      "type": "process",
+      "command": "x"
+    },
+    "path": null
+  },
+  {
+    "platform": "win32",
+    "hook": {
+      "type": "process",
+      "command": "x"
+    },
+    "path": null
+  },
+  {
+    "platform": "linux",
+    "hook": {
+      "type": "process",
+      "command": "./tool"
+    },
+    "path": "tool"
+  },
+  {
+    "platform": "win32",
+    "hook": {
+      "type": "process",
+      "command": "./tool"
+    },
+    "path": null
+  },
+  {
+    "platform": "linux",
+    "hook": {
+      "type": "process",
+      "command": "./tool.exe"
+    },
+    "path": "tool.exe"
+  },
+  {
+    "platform": "win32",
+    "hook": {
+      "type": "process",
+      "command": "./tool.exe"
+    },
+    "path": "tool.exe"
+  },
+  {
+    "platform": "linux",
+    "hook": {
+      "type": "process",
+      "command": "${ZCODE_PROJECT_DIR}/bin/tool"
+    },
+    "path": "bin/tool"
+  },
+  {
+    "platform": "win32",
+    "hook": {
+      "type": "process",
+      "command": "${ZCODE_PROJECT_DIR}/bin/tool"
+    },
+    "path": null
+  },
+  {
+    "platform": "linux",
+    "hook": {
+      "type": "process",
+      "command": "${CLAUDE_PROJECT_DIR}/bin/tool.cmd"
+    },
+    "path": "bin/tool.cmd"
+  },
+  {
+    "platform": "win32",
+    "hook": {
+      "type": "process",
+      "command": "${CLAUDE_PROJECT_DIR}/bin/tool.cmd"
+    },
+    "path": "bin/tool.cmd"
+  },
+  {
+    "platform": "linux",
+    "hook": {
+      "type": "process",
+      "command": "\"$ZCODE_PROJECT_DIR\"/bin/tool"
+    },
+    "path": null
+  },
+  {
+    "platform": "win32",
+    "hook": {
+      "type": "process",
+      "command": "\"$ZCODE_PROJECT_DIR\"/bin/tool"
+    },
+    "path": null
+  },
+  {
+    "platform": "linux",
+    "hook": {
+      "type": "process",
+      "command": "node",
+      "args": [
+        "x.js"
+      ]
+    },
+    "path": "x.js"
+  },
+  {
+    "platform": "win32",
+    "hook": {
+      "type": "process",
+      "command": "node",
+      "args": [
+        "x.js"
+      ]
+    },
+    "path": "x.js"
+  },
+  {
+    "platform": "linux",
+    "hook": {
+      "type": "process",
+      "command": "node",
+      "args": [
+        "x"
+      ]
+    },
+    "path": null
+  },
+  {
+    "platform": "win32",
+    "hook": {
+      "type": "process",
+      "command": "node",
+      "args": [
+        "x"
+      ]
+    },
+    "path": null
+  },
+  {
+    "platform": "linux",
+    "hook": {
+      "type": "process",
+      "command": "node",
+      "args": [
+        "-e",
+        "x.js"
+      ]
+    },
+    "path": null
+  },
+  {
+    "platform": "win32",
+    "hook": {
+      "type": "process",
+      "command": "node",
+      "args": [
+        "-e",
+        "x.js"
+      ]
+    },
+    "path": null
+  },
+  {
+    "platform": "linux",
+    "hook": {
+      "type": "process",
+      "command": "node"
+    },
+    "path": null
+  },
+  {
+    "platform": "win32",
+    "hook": {
+      "type": "process",
+      "command": "node"
+    },
+    "path": null
+  },
+  {
+    "platform": "linux",
+    "hook": {
+      "type": "process",
+      "command": "node",
+      "args": []
+    },
+    "path": null
+  },
+  {
+    "platform": "win32",
+    "hook": {
+      "type": "process",
+      "command": "node",
+      "args": []
+    },
+    "path": null
+  },
+  {
+    "platform": "linux",
+    "hook": {
+      "type": "process",
+      "command": "perl",
+      "args": [
+        "${ZCODE_PROJECT_DIR}/a.pl"
+      ]
+    },
+    "path": "a.pl"
+  },
+  {
+    "platform": "win32",
+    "hook": {
+      "type": "process",
+      "command": "perl",
+      "args": [
+        "${ZCODE_PROJECT_DIR}/a.pl"
+      ]
+    },
+    "path": "a.pl"
+  },
+  {
+    "platform": "linux",
+    "hook": {
+      "type": "process",
+      "command": "ruby",
+      "args": [
+        "${ZCODE_PROJECT_DIR}/a"
+      ]
+    },
+    "path": "a"
+  },
+  {
+    "platform": "win32",
+    "hook": {
+      "type": "process",
+      "command": "ruby",
+      "args": [
+        "${ZCODE_PROJECT_DIR}/a"
+      ]
+    },
+    "path": "a"
+  },
+  {
+    "platform": "linux",
+    "hook": {
+      "type": "process",
+      "command": "zsh",
+      "args": [
+        "./dir/./a.sh"
+      ]
+    },
+    "path": "dir/a.sh"
+  },
+  {
+    "platform": "win32",
+    "hook": {
+      "type": "process",
+      "command": "zsh",
+      "args": [
+        "./dir/./a.sh"
+      ]
+    },
+    "path": "dir/a.sh"
+  },
+  {
+    "platform": "linux",
+    "hook": {
+      "type": "process",
+      "command": "python",
+      "args": [
+        "a b.py"
+      ]
+    },
+    "path": null
+  },
+  {
+    "platform": "win32",
+    "hook": {
+      "type": "process",
+      "command": "python",
+      "args": [
+        "a b.py"
+      ]
+    },
+    "path": null
+  },
+  {
+    "platform": "linux",
+    "hook": {
+      "type": "process",
+      "command": "python",
+      "args": [
+        "..x.py"
+      ]
+    },
+    "path": "..x.py"
+  },
+  {
+    "platform": "win32",
+    "hook": {
+      "type": "process",
+      "command": "python",
+      "args": [
+        "..x.py"
+      ]
+    },
+    "path": "..x.py"
+  },
+  {
+    "platform": "linux",
+    "hook": {
+      "type": "process",
+      "command": "python",
+      "args": [
+        "x..py"
+      ]
+    },
+    "path": "x..py"
+  },
+  {
+    "platform": "win32",
+    "hook": {
+      "type": "process",
+      "command": "python",
+      "args": [
+        "x..py"
+      ]
+    },
+    "path": "x..py"
+  },
+  {
+    "platform": "linux",
+    "hook": {
+      "type": "process",
+      "command": "/usr/bin/node",
+      "args": [
+        "x.js"
+      ]
+    },
+    "path": null
+  },
+  {
+    "platform": "win32",
+    "hook": {
+      "type": "process",
+      "command": "/usr/bin/node",
+      "args": [
+        "x.js"
+      ]
+    },
+    "path": null
+  }
+]

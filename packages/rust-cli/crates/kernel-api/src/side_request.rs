@@ -44,11 +44,14 @@ pub enum SideSource {
     /// Fork (desktop App): an MCP App panel's `mcp/uiSampling`, run for the Node helper on the session's model
     /// (`helper/sampleModel`, Node `mcp_app_sampling`; specs/fork-rust-node-helper.md F3).
     McpSampling,
+    /// Fork: the mobile remote control's input prediction (`v4/conversation/inputPrediction`, Node `input_prediction`;
+    /// specs/fork-rust-input-prediction.md). A workspace-scoped model call on the session's model.
+    InputPrediction,
 }
 
 impl SideSource {
     /// 全部来源（`from_wire` 按它查；测试核对它列全了）。
-    pub const ALL: [Self; 11] = [
+    pub const ALL: [Self; 12] = [
         Self::SessionTitle,
         Self::Rename,
         Self::HookPrompt,
@@ -60,6 +63,7 @@ impl SideSource {
         Self::GitCommitMessage,
         Self::ConnectivityProbe,
         Self::McpSampling,
+        Self::InputPrediction,
     ];
 
     /// 本工程的来源名（`QuerySource` 序列化后的 `name`；用量表与请求头另经 [`Self::node_name`]）。
@@ -76,6 +80,7 @@ impl SideSource {
             Self::GitCommitMessage => "git_commit_message",
             Self::ConnectivityProbe => "provider_settings_connectivity",
             Self::McpSampling => "mcp_app_sampling",
+            Self::InputPrediction => "input_prediction",
         }
     }
 
@@ -99,7 +104,8 @@ impl SideSource {
             | Self::WorkspaceText
             | Self::GitCommitMessage
             | Self::ConnectivityProbe
-            | Self::McpSampling => self.as_wire(),
+            | Self::McpSampling
+            | Self::InputPrediction => self.as_wire(),
         }
     }
 
@@ -113,7 +119,8 @@ impl SideSource {
             | Self::WorkspaceText
             | Self::GitCommitMessage
             | Self::ConnectivityProbe
-            | Self::McpSampling => true,
+            | Self::McpSampling
+            | Self::InputPrediction => true,
             Self::SessionTitle | Self::Rename | Self::GoalSummaryTitle => false,
         }
     }
@@ -130,7 +137,8 @@ impl SideSource {
             | Self::WorkspaceText
             | Self::GitCommitMessage
             | Self::ConnectivityProbe
-            | Self::McpSampling => false,
+            | Self::McpSampling
+            | Self::InputPrediction => false,
         }
     }
 
@@ -147,7 +155,8 @@ impl SideSource {
             | Self::WorkspaceText
             | Self::GitCommitMessage
             | Self::ConnectivityProbe
-            | Self::McpSampling => false,
+            | Self::McpSampling
+            | Self::InputPrediction => false,
         }
     }
 
@@ -159,7 +168,8 @@ impl SideSource {
             Self::WorkspaceText
             | Self::GitCommitMessage
             | Self::ConnectivityProbe
-            | Self::McpSampling => true,
+            | Self::McpSampling
+            | Self::InputPrediction => true,
             Self::SessionTitle
             | Self::Rename
             | Self::HookPrompt

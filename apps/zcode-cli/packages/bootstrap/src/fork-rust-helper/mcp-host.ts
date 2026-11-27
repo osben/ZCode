@@ -7,6 +7,7 @@ import {
   type Logger,
   type McpPort,
   type McpServerConfig,
+  type McpToolDescriptor,
   type McpElicitationRequest,
   type McpElicitationResult,
   type McpServerNotification,
@@ -86,6 +87,35 @@ export interface ForkRustHelperMcpHostDeps {
 }
 
 const SESSION_NOT_OPEN = -32602;
+
+/**
+ * The `_meta` of a model tool in the pipe's listing: the always-load mark and the tool's UI descriptor. Node reads the
+ * panel's descriptor (`resourceUri`, display hints, csp, surface) from the listed `_meta` (`normalizeMcpToolUiMeta`),
+ * and Rust's display of a tool result (`v4/plugin-ui/tool-result`) needs the same descriptor, so it is written back in
+ * the spec's own shape, which that function reads again (specs/fork-rust-plugin-ui-tool-result.md). `visibility` is
+ * left out: Rust never reads it for a helper-hosted tool.
+ */
+export function modelToolMeta(tool: McpToolDescriptor): { _meta?: Record<string, unknown> } {
+  const ui = tool.ui;
+  const meta: Record<string, unknown> = {
+    ...(tool.alwaysLoad ? { "zcode/alwaysLoad": true } : {}),
+    ...(ui
+      ? {
+          ui: {
+            resourceUri: ui.resourceUri,
+            ...(ui.csp ? { csp: ui.csp } : {}),
+            ...(ui.prefersBorder !== undefined ? { prefersBorder: ui.prefersBorder } : {}),
+            ...(ui.surface ? { surface: ui.surface } : {}),
+            ...(ui.showInline !== undefined ? { showInline: ui.showInline } : {}),
+          },
+          ...(ui.preferredDisplayMode
+            ? { "openai/ui": { preferredModelDisplayMode: ui.preferredDisplayMode } }
+            : {}),
+        }
+      : {}),
+  };
+  return Object.keys(meta).length > 0 ? { _meta: meta } : {};
+}
 
 /**
  * The helper's MCP side for F3: Rust's MCP client pipes (a small MCP server facade over Node's MCP
@@ -288,7 +318,7 @@ export class ForkRustHelperMcpHost {
         ...(tool.description !== undefined ? { description: tool.description } : {}),
         inputSchema: tool.inputSchema,
         ...(tool.annotations !== undefined ? { annotations: tool.annotations } : {}),
-        ...(tool.alwaysLoad ? { _meta: { "zcode/alwaysLoad": true } } : {}),
+        ...modelToolMeta(tool),
       }));
   }
 

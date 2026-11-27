@@ -341,6 +341,11 @@ pub struct LoadedSession {
     /// 模型侧的历史只是 `messages`；界面显示 `earlier ++ messages`。没有压缩点时为空（serde 缺省为空、为空时不写出）。
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub earlier: Vec<Message>,
+    /// Fork: the original usage of each assistant message in the last compaction's preserved segment. `messages` holds
+    /// those messages with the usage cleared (Node `invalidateRuntimeTokenUsage`); the context usage cache totals read the
+    /// original (Node `mainTurnCacheHitAggregateFromMessages`, specs/fork-rust-context-breakdown.md rule 6).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub preserved_usage: Vec<(MessageId, crate::message::Usage)>,
     /// Fork: the stored `anchor.sourceCommandId` of each typed user message ([`crate::session_api::SessionView::commands`]).
     #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
     pub commands: std::collections::BTreeMap<MessageId, CommandId>,
@@ -524,6 +529,24 @@ pub struct Admission {
     /// title or the input is blank. The caller hands it to the session actor ([`crate::session_api::Command::AdoptTitle`])
     /// before the input's hooks, as Node emits `SessionTitleUpdated` at the persistence.
     pub title: Option<String>,
+}
+
+/// Fork: one message of an imported session (`session/create` `importedHistory.messages`, source `claudeCode`).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ImportedMessage {
+    /// `true` for an assistant message, `false` for a user one (the only two roles the protocol admits).
+    pub assistant: bool,
+    pub content: String,
+    pub timestamp: Option<u64>,
+}
+
+/// Fork: the history a `session/create` with `importedHistory` stores (specs/fork-rust-imported-history.md).
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct ImportedHistory {
+    pub title: Option<String>,
+    pub created_at: Option<u64>,
+    pub updated_at: Option<u64>,
+    pub messages: Vec<ImportedMessage>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error, Serialize, Deserialize)]
@@ -1162,6 +1185,19 @@ pub trait StoreQueries: Send + Sync {
         _input: &str,
     ) -> Result<Admission, StoreError> {
         Ok(Admission::default())
+    }
+
+    /// Fork: Node `persistImportedSessionHistory` for the `claudeCode` source: persists the session (a draft gets its
+    /// row), sets its title (`custom`) and times, and writes the history as message and part rows. The caller opens
+    /// the session again afterwards, so the history is loaded. Stores without it answer `Unsupported`.
+    async fn import_history(
+        &self,
+        _session: &SessionId,
+        _history: &ImportedHistory,
+    ) -> Result<(), StoreError> {
+        Err(StoreError::Unsupported {
+            what: "imported history".to_owned(),
+        })
     }
 
     /// Fork: the workspace key the session's row is listed under (Node `workspaceID ?? directory`, the

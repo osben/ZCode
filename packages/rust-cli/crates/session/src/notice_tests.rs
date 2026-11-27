@@ -145,6 +145,7 @@ async fn session_as(
             hook_rows: false,
         },
         SessionState {
+            preserved_usage: Vec::new(),
             commands: Default::default(),
             meta,
             messages,

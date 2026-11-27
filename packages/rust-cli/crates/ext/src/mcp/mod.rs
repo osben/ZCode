@@ -4,6 +4,7 @@
 mod app_provided;
 mod config;
 mod connection;
+mod display;
 mod manager;
 mod node_config;
 mod notices;

@@ -194,6 +194,15 @@ fn ack(subscription: &str, epoch: &str) -> Value {
     json!({"ack": {"subscriptionId": subscription, "mode": "snapshot", "logEpoch": epoch}})
 }
 
+/// Fork: the state of a `workspace-config/<workspaceId>` topic as the one `stored` row of its first frame; empty for any
+/// other topic.
+async fn config_rows(server: &Server, topic: &str) -> Vec<Value> {
+    match topic.strip_prefix(CONFIG_PREFIX) {
+        Some(workspace) => vec![server.workspace_config(workspace).await],
+        None => Vec::new(),
+    }
+}
+
 pub async fn subscribe(server: &Server, params: &Value) -> Result<Reply, RpcError> {
     let topic = params["topic"].as_str().unwrap_or_default().to_owned();
     let connection = params["connectionId"]
@@ -221,7 +230,8 @@ pub async fn subscribe(server: &Server, params: &Value) -> Result<Reply, RpcErro
     let ids = worktree_ids(params);
     let stored = match index {
         Some(workspace) => stored_rows(server, workspace, &ids).await,
-        None => Vec::new(),
+        // Fork (specs/fork-rust-workspace-config-topic.md): a config topic's one row is its state.
+        None => config_rows(server, &topic).await,
     };
     let subscription = server
         .context
@@ -278,7 +288,7 @@ pub async fn resync(server: &Server, params: &Value) -> Result<Reply, RpcError> 
     // ids are subscribe-time facts and only an id-carrying subscribe re-reads them.
     let stored = match topic.strip_prefix(INDEX_PREFIX) {
         Some(workspace) => stored_rows(server, workspace, &[]).await,
-        None => Vec::new(),
+        None => config_rows(server, &topic).await,
     };
     let topics = server.topics.clone();
     let id = subscription.clone();

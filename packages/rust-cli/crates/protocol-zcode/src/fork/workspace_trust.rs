@@ -212,37 +212,37 @@ pub(super) async fn read_resource(server: &Server, params: &Value) -> Result<Val
     ))
 }
 
+/// An open session and the admission ticket taken for it.
+type Ticketed = (Arc<Bridged<Live>>, u64);
+
 /// The open sessions in `target`'s workspace re-read their banners (Node `reloadWorkspaceMcpTrust` and the hook
-/// grant's reannounce). Sessions are matched by their workspace path, the identity key of local workspaces.
+/// grant's reannounce). A session matches by its cwd or its listed workspace, and reads its own cwd (a worktree task
+/// listed under its project; specs/fork-rust-managed-worktree-trust-identity.md rule 7).
 async fn refresh_workspace(
     server: &Server,
     admin: &Arc<dyn WorkspaceAdmin>,
     target: &WorkspaceTarget,
 ) {
-    // The banners depend only on the workspace: one read for all of its sessions. Every ticket is taken before the
-    // read, so a read that started earlier for any of them cannot land after this one.
-    let matched: Vec<(Arc<Bridged<Live>>, u64)> = server
-        .bridge
-        .sessions()
-        .into_iter()
-        .filter(|live| {
-            server
-                .context
-                .workspace_of(live.handle.id().as_str())
-                .as_deref()
-                == Some(target.path.as_str())
-        })
-        .map(|live| {
-            let ticket = live.sink.admission_ticket();
-            (live, ticket)
-        })
-        .collect();
-    if matched.is_empty() {
-        return;
+    // One read per cwd for all of its sessions. Every ticket is taken before the reads, so a read that started
+    // earlier for any of them cannot land after this one.
+    let mut by_cwd: Vec<(String, Vec<Ticketed>)> = Vec::new();
+    for live in server.bridge.sessions() {
+        let cwd = live.sink.cwd();
+        let listed = server.context.workspace_of(live.handle.id().as_str());
+        if cwd != target.path && listed.as_deref() != Some(target.path.as_str()) {
+            continue;
+        }
+        let ticket = live.sink.admission_ticket();
+        match by_cwd.iter_mut().find(|(path, _)| *path == cwd) {
+            Some((_, sessions)) => sessions.push((live, ticket)),
+            None => by_cwd.push((cwd, vec![(live, ticket)])),
+        }
     }
-    let admission = admin.admission(&WorkspaceTarget::local(&target.path)).await;
-    for (live, ticket) in matched {
-        publish(&live, admission.clone(), ticket);
+    for (cwd, sessions) in by_cwd {
+        let admission = admin.admission(&WorkspaceTarget::local(&cwd)).await;
+        for (live, ticket) in sessions {
+            publish(&live, admission.clone(), ticket);
+        }
     }
 }
 
@@ -254,34 +254,33 @@ pub(crate) fn refresh_after_input(server: &Server, session: &SessionId) {
     let Some(admin) = admin(server) else {
         return;
     };
-    let Some(path) = server.context.workspace_of(session.as_str()) else {
-        return;
-    };
     let Some(live) = server.bridge.get(session) else {
         return;
     };
     let ticket = live.sink.admission_ticket();
-    drop(
-        server
-            .spawner
-            .spawn("workspace-trust-input-refresh", async move {
-                let admission = admin.admission(&WorkspaceTarget::local(&path)).await;
-                publish(&live, admission, ticket);
-            }),
-    );
+    let spawner = server.spawner.clone();
+    let sink = live.sink.clone();
+    // The cwd is read on the session's queue, after a worktree activation queued before this input (the first input
+    // of a worktree task runs in the worktree).
+    live.clone().run(Box::pin(async move {
+        let path = sink.cwd();
+        drop(spawner.spawn("workspace-trust-input-refresh", async move {
+            let admission = admin.admission(&WorkspaceTarget::local(&path)).await;
+            publish(&live, admission, ticket);
+        }));
+    }));
 }
 
 /// A stored session's banners when it is opened again; awaited, as Node awaits `refreshWorkspaceTrustAdmission` before
 /// `resumeFromStore` completes.
-pub(crate) async fn refresh_session(server: &Server, live: &Bridged<Live>, session: &SessionId) {
+pub(crate) async fn refresh_session(server: &Server, live: &Bridged<Live>, _session: &SessionId) {
     let Some(admin) = admin(server) else {
         return;
     };
-    let Some(path) = server.context.workspace_of(session.as_str()) else {
-        return;
-    };
     let ticket = live.sink.admission_ticket();
-    let admission = admin.admission(&WorkspaceTarget::local(&path)).await;
+    let admission = admin
+        .admission(&WorkspaceTarget::local(&live.sink.cwd()))
+        .await;
     publish(live, admission, ticket);
 }
 

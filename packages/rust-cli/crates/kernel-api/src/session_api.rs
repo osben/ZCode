@@ -509,6 +509,9 @@ pub struct SessionView {
     /// 显示用的历史：冷读取时是只供显示的压缩点之前的消息（[`crate::store::LoadedSession::earlier`]）接上会话 actor 的
     /// 历史（工作线 F102，docs/specs/rust-cli/compact.md §5.1）。要模型侧的那一段时取 [`crate::history::active`]。
     pub messages: Vec<Message>,
+    /// Fork: [`crate::store::LoadedSession::preserved_usage`] of a cold-opened session (empty for a new one).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub preserved_usage: Vec<(MessageId, crate::message::Usage)>,
     pub selection: ModelSelection,
     /// 权限模式（修复线 F20 起不会是 `Plan`）。
     pub mode: PermissionMode,

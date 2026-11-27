@@ -10,6 +10,7 @@ pub use background_shells::ShellEnd;
 mod bash_progress;
 mod browser_screenshot;
 mod cold;
+mod context_facts;
 pub mod elicitation;
 mod external_agent_config;
 mod external_agent_status;
@@ -178,6 +179,8 @@ pub struct Projection {
     levels: Vec<String>,
     context: Option<rust_cli_kernel_api::compaction::ContextOccupancy>,
     total: Usage,
+    /// Fork (specs/fork-rust-context-breakdown.md): `usage.contextWindow.cache` and `.breakdown`.
+    context_facts: context_facts::ContextFacts,
     queue: Vec<QueuedInput>,
     pending: Vec<Value>,
     turn: Option<Turn>,
@@ -414,6 +417,10 @@ impl Projection {
             levels,
             context: view.context_usage,
             total: Usage::default(),
+            context_facts: context_facts::ContextFacts::seeded(
+                &view.messages,
+                &view.preserved_usage,
+            ),
             queue: view.queue.clone(),
             pending: Vec::new(),
             turn: None,
@@ -454,6 +461,13 @@ impl Projection {
         }
         projection.refresh_actions(&mut Vec::new());
         projection
+    }
+
+    /// Fork: the settled-or-running card of tool call `tool_use`, as the rows hold it.
+    pub fn tool_card_of(&self, tool_use: &str) -> Option<&Map<String, Value>> {
+        self.index
+            .get(&tool_key(tool_use))
+            .map(|at| &self.rows[*at])
     }
 
     pub fn revision(&self) -> u64 {
@@ -1210,7 +1224,10 @@ impl Projection {
                     patch.insert("queue".into(), self.queue_state());
                     patch.insert("inputRouting".into(), self.input_routing());
                 }
-                patch.insert("usage".into(), state::usage(self.context, &self.total));
+                patch.insert(
+                    "usage".into(),
+                    state::usage(self.context, &self.total, &self.context_facts),
+                );
                 // Fork: the kernel resolves the turn's own asks before this event (`cancel_turn_asks`); what is still
                 // pending is session-level (an MCP App authorization, a background subagent's ask, the workspace hook
                 // review) and outlives the turn. Clearing it here hid a prompt Rust still waited for.
@@ -1227,7 +1244,10 @@ impl Projection {
                     compact_at: *compact_at,
                     window_tokens: *window_tokens,
                 });
-                patch.insert("usage".into(), state::usage(self.context, &self.total));
+                patch.insert(
+                    "usage".into(),
+                    state::usage(self.context, &self.total, &self.context_facts),
+                );
             }
             KernelEvent::TitleChanged { title, source } => {
                 // Node `onSessionTitleUpdated`: once custom, an automatic title does not replace it.
@@ -1292,6 +1312,22 @@ impl Projection {
                 self.compacting = false;
                 self.compact_settled("success", &mut out);
                 patch.insert("availability".into(), self.availability());
+                // Fork (specs/fork-rust-context-breakdown.md rule 7): the compacted history has no measured request yet.
+                if self.context_facts.compacted() {
+                    patch.insert(
+                        "usage".into(),
+                        state::usage(self.context, &self.total, &self.context_facts),
+                    );
+                }
+            }
+            // Fork (specs/fork-rust-context-breakdown.md): a completed main request brings `cache` and `breakdown`.
+            KernelEvent::ModelRequestCompleted { call } => {
+                if self.context_facts.request_completed(call) {
+                    patch.insert(
+                        "usage".into(),
+                        state::usage(self.context, &self.total, &self.context_facts),
+                    );
+                }
             }
             KernelEvent::CompactFailed { .. } => {
                 self.compacting = false;
@@ -1342,7 +1378,6 @@ impl Projection {
             KernelEvent::SessionCreated { .. }
             | KernelEvent::ContextNotice { .. }
             | KernelEvent::OutputSpeed { .. }
-            | KernelEvent::ModelRequestCompleted { .. }
             | KernelEvent::TasksChanged { .. }
             | KernelEvent::HistoryRewritten { .. }
             | KernelEvent::ScheduledFire { .. }
@@ -1786,7 +1821,7 @@ impl Projection {
             "meta": state::meta(&self.title, self.title_source),
             "config": self.config(),
             "modelTransition": null,
-            "usage": state::usage(self.context, &self.total),
+            "usage": state::usage(self.context, &self.total, &self.context_facts),
             "queue": self.queue_state(),
             "pendingInteractions": self.pending,
             "pendingCommands": [],

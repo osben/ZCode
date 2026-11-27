@@ -19,6 +19,8 @@ use super::*;
 mod background_result;
 #[path = "background_shells_tests.rs"]
 mod background_shells;
+#[path = "context_breakdown_tests.rs"]
+mod context_breakdown;
 #[path = "external_agent_config_tests.rs"]
 mod external_agent_config;
 #[path = "external_agent_status_tests.rs"]

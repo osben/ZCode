@@ -150,6 +150,8 @@ pub struct StoragePaths {
     settings: StoragePath,
     builtin_provider_config: Option<StoragePath>,
     home: PathBuf,
+    /// Node `resolveZCodeDataBaseDir`: `ZCODE_DATA_BASE_DIR`, else home.
+    data_base: PathBuf,
 }
 
 impl StoragePaths {
@@ -169,6 +171,7 @@ impl StoragePaths {
             settings: StoragePath(user_path(home, CONFIG_ROOT).join("setting.json")),
             builtin_provider_config: None,
             home: home.to_path_buf(),
+            data_base: home.to_path_buf(),
         }
     }
 
@@ -186,7 +189,18 @@ impl StoragePaths {
     /// 账号与 Provider 配置的根改到 `<base>/.zcode/v2`（`ZCODE_DATA_BASE_DIR`）；`base` 是绝对路径。
     pub fn with_data_base_dir(mut self, base: &Path) -> Self {
         self.config = StoragePath(user_path(base, CONFIG_ROOT));
+        self.data_base = base.to_path_buf();
         self
+    }
+
+    /// Fork (specs/fork-rust-managed-worktree-trust-identity.md): the Host's managed worktree root
+    /// `<dataBaseDir>/.zcode/worktrees` (Node `resolveManagedWorktreeRoot`).
+    pub fn managed_worktrees(&self) -> StoragePath {
+        StoragePath(
+            self.data_base
+                .join(DOT_DIR)
+                .join(rust_cli_base::names::WORKTREES_DIR),
+        )
     }
 
     /// 账号与 Provider 配置的根（默认 `~/.zcode/v2`）。

@@ -15,6 +15,8 @@ mod file_summary;
 pub(crate) mod slash_builtins;
 /// Fork (W9a, 9.53): the v4 run controls `startSavedWorkflow` and `amendWorkflowRunSettings`.
 pub(crate) mod workflow_run_commands;
+// Fork: the `workspace-config/<workspaceId>` snapshot value (specs/fork-rust-workspace-config-topic.md).
+pub(crate) mod workspace_config;
 // Fork: specs/fork-rust-node-helper.md F3, "Helper → Rust requests".
 pub(crate) mod helper_answers;
 mod helper_elicitation;
@@ -35,10 +37,13 @@ pub(crate) mod mcp_ui_app_tools;
 mod message_marks;
 pub(crate) mod methods;
 pub mod node_helper;
+pub(crate) mod plugin_ui_result;
 mod queue;
 mod release_under_directory;
 pub(crate) use queue::settle_running_turn;
 pub(crate) mod in_flight;
+// Fork: the v4 query `v4/conversation/inputPrediction` (specs/fork-rust-input-prediction.md).
+pub(crate) mod input_prediction;
 mod row_commands;
 mod selection_side_chat;
 mod session_config;

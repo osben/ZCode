@@ -12,6 +12,7 @@ use crate::node_config::{
     DEFAULT_MAX_OUTPUT_BYTES, DEFAULT_TIMEOUT_MS, NODE_EVENTS, NodeHook, NodeHookKind, NodeHooks,
     NodeShell,
 };
+use crate::script_entry::{self, ScriptEntry, ScriptState};
 use rust_cli_kernel_api::hooks::HookEventName;
 
 /// Node `WORKSPACE_HOOK_DIGEST_SCHEMA_VERSION`。
@@ -84,7 +85,43 @@ pub struct DigestEntry {
     pub runtime_hooks_enabled: bool,
     pub configured_enabled: bool,
     pub editable: bool,
+    /// Fork (specs/fork-rust-hook-script-entry.md): the declaration's direct entry script and its state at
+    /// discovery (Node `scriptEntry`).
+    pub script: Option<ScriptEntry>,
     pub digest: String,
+}
+
+impl DigestEntry {
+    /// An entry script that is missing or unreadable: the declaration can be neither trusted nor run (D24).
+    pub fn script_unavailable(&self) -> bool {
+        self.script.as_ref().is_some_and(ScriptEntry::unavailable)
+    }
+}
+
+/// The entry script states of a discovery, by script path; an identified path without a state is
+/// [`ScriptState::Unverifiable`], like Node's build without a read.
+pub type ScriptStates = std::collections::HashMap<String, ScriptState>;
+
+/// Whether hooks run on Windows here (the script rules of a `command` hook differ there).
+pub const WINDOWS: bool = cfg!(windows);
+
+/// The entry script paths of `sources`, once each, in discovery order (what a discovery reads).
+pub fn script_paths(sources: &[DigestSource<'_>]) -> Vec<String> {
+    let mut paths: Vec<String> = Vec::new();
+    for source in sources {
+        for event in NODE_EVENTS {
+            for matcher in source.hooks.matchers(event) {
+                for hook in &matcher.hooks {
+                    if let Some(path) = script_entry::script_path(hook, WINDOWS)
+                        && !paths.contains(&path)
+                    {
+                        paths.push(path);
+                    }
+                }
+            }
+        }
+    }
+    paths
 }
 
 /// 一组项目来源的 digest（Node `WorkspaceHookBundleSnapshotData` 的 `hooks` 与 `bundleDigest`）。
@@ -124,6 +161,7 @@ fn declaration_digest(
     (matcher, matcher_index, hook_index): (Option<&str>, usize, usize),
     hook: &NodeHook,
     (timeout_ms, max_output_bytes): (f64, f64),
+    script: Option<&ScriptEntry>,
 ) -> String {
     let mut payload = vec![
         json!("workspace-hook-declaration"),
@@ -143,11 +181,23 @@ fn declaration_digest(
     if hook.deny_on_error {
         payload.push(json!(["onError", "deny"]));
     }
+    // Fork (D24): the entry script and its state, after `onError`; a declaration without one keeps its digest.
+    if let Some(script) = script {
+        payload.push(json!([
+            "scriptEntry",
+            script.path,
+            script.state.canonical()
+        ]));
+    }
     sha256(&Value::Array(payload))
 }
 
 /// Node `resolveWorkspaceHookEntries`：来源 → 10 个事件的固定顺序 → matcher → hook。
-pub fn entries(sources: &[DigestSource<'_>], root: &RuntimeRoot) -> Vec<DigestEntry> {
+pub fn entries(
+    sources: &[DigestSource<'_>],
+    root: &RuntimeRoot,
+    states: &ScriptStates,
+) -> Vec<DigestEntry> {
     let mut entries = Vec::new();
     for (source_index, source) in sources.iter().enumerate() {
         for event in NODE_EVENTS {
@@ -156,12 +206,20 @@ pub fn entries(sources: &[DigestSource<'_>], root: &RuntimeRoot) -> Vec<DigestEn
                     let source_root_enabled = source.hooks.enabled != Some(false);
                     let declaration_enabled = hook.enabled != Some(false);
                     let timeout = hook.resolved_timeout_ms(root.timeout_ms);
+                    let script = script_entry::script_path(hook, WINDOWS).map(|path| ScriptEntry {
+                        state: states
+                            .get(&path)
+                            .cloned()
+                            .unwrap_or(ScriptState::Unverifiable),
+                        path,
+                    });
                     let digest = declaration_digest(
                         source,
                         event,
                         (matcher.matcher.as_deref(), matcher_index, hook_index),
                         hook,
                         (timeout, root.max_output_bytes),
+                        script.as_ref(),
                     );
                     entries.push(DigestEntry {
                         review_item_id: format!(
@@ -184,6 +242,7 @@ pub fn entries(sources: &[DigestSource<'_>], root: &RuntimeRoot) -> Vec<DigestEn
                             && declaration_enabled
                             && root.enabled,
                         editable: source.editable,
+                        script,
                         digest,
                     });
                 }
@@ -194,8 +253,12 @@ pub fn entries(sources: &[DigestSource<'_>], root: &RuntimeRoot) -> Vec<DigestEn
 }
 
 /// Node `buildWorkspaceHookBundleSnapshot` 的 digest 部分；没有声明时为 None。
-pub fn bundle(sources: &[DigestSource<'_>], root: &RuntimeRoot) -> Option<Bundle> {
-    let entries = entries(sources, root);
+pub fn bundle(
+    sources: &[DigestSource<'_>],
+    root: &RuntimeRoot,
+    states: &ScriptStates,
+) -> Option<Bundle> {
+    let entries = entries(sources, root, states);
     if entries.is_empty() {
         return None;
     }

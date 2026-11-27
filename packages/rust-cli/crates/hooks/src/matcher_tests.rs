@@ -16,6 +16,7 @@ fn cmd(text: &str, condition: Option<&str>) -> HookCommand {
         background: false,
         plugin_root: None,
         deny_on_error: false,
+        script: None,
     })
 }
 

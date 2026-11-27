@@ -334,7 +334,7 @@ async fn forward_ok(helper: &NodeHelper, method: &str, params: Value) -> Value {
 
 #[test]
 fn forwarded_table_is_the_spec_list() {
-    assert_eq!(FORWARDED_METHODS.len(), 57);
+    assert_eq!(FORWARDED_METHODS.len(), 58);
     assert!(FORWARDED_METHODS.contains(&super::super::workflow_compile::FILL_PREPARE));
     // W4: the workflow compile and format are forwarded (specs/fork-rust-workflow-engine.md, 4.1).
     assert!(FORWARDED_METHODS.contains(&super::super::workflow_compile::COMPILE));
@@ -360,7 +360,7 @@ fn forwarded_table_is_the_spec_list() {
         .iter()
         .filter(|method| method.starts_with("mcp/"))
         .count();
-    assert_eq!((plugins, workflows, runs, session), (21, 8, 7, 17));
+    assert_eq!((plugins, workflows, runs, session), (22, 8, 7, 17));
     // F3 adds the session-scoped methods (`plugins/mentionItems` among them); the sessionless skills catalog that Rust
     // answers itself stays out.
     assert!(FORWARDED_METHODS.contains(&"plugins/mentionItems"));
@@ -396,6 +396,28 @@ async fn only_allowlisted_and_advertised_methods_are_forwarded() {
             .forward("helper/initialize", &json!({}))
             .await
             .is_none()
+    );
+}
+
+/// Fork (specs/fork-rust-plugin-workspace-trust.md): the project plugin trust write reaches the helper with its
+/// params untouched, and the helper's `reasonCode` answer passes back verbatim.
+#[tokio::test]
+async fn plugin_workspace_trust_is_forwarded_untouched() {
+    let echoing = rig(fake(&["plugins/workspaceTrust"], echo()), timing());
+    let params = json!({"workspace": {"workspacePath": "/w"}, "pluginRoot": "plugins/demo",
+        "declarationDigest": "a".repeat(64), "trusted": true});
+    let answer = forward_ok(&echoing.helper, "plugins/workspaceTrust", params.clone()).await;
+    assert_eq!(answer, params);
+    let refused = json!({"accepted": false, "reasonCode": "workspace_plugin_declaration_changed"});
+    let reply = refused.clone();
+    let behaviour = behaviour(move |_, _, _| Act::Reply {
+        notes: Vec::new(),
+        result: reply.clone(),
+    });
+    let rig = rig(fake(&["plugins/workspaceTrust"], behaviour), timing());
+    assert_eq!(
+        forward_ok(&rig.helper, "plugins/workspaceTrust", json!({})).await,
+        refused
     );
 }
 
@@ -2303,6 +2325,7 @@ fn each_forwarded_method_uses_the_hosts_timeout_for_it() {
     let secs = |method: &str| timing.timeout_for(method).as_secs();
     assert_eq!(secs("plugins/list"), 300);
     assert_eq!(secs("plugins/mentionItems"), 300);
+    assert_eq!(secs("plugins/workspaceTrust"), 300);
     assert_eq!(secs("workflows/save"), 300);
     assert_eq!(secs("mcp/uiSampling"), 65);
     assert_eq!(secs("mcp/uiCallTool"), 180);

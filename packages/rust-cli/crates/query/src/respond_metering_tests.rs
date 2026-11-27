@@ -91,6 +91,21 @@ async fn a_text_reply_is_timed_and_committed_with_its_assistant_message() {
     assert!(call.error.is_none());
 }
 
+/// Fork (specs/fork-rust-context-breakdown.md rule 3): the main request's call carries the coarse breakdown of the
+/// request it answered, for the App's context usage.
+#[tokio::test]
+async fn a_main_request_carries_the_breakdown_of_what_it_sent() {
+    let model = Arc::new(ScriptedModel::new(vec![text_response(&["hello"])]));
+    let (stop, sink) = run(model, Vec::new()).await;
+    stop.unwrap();
+    let calls = models(&sink);
+    let breakdown = &calls[0].1.context_breakdown;
+    assert!(!breakdown.is_empty());
+    assert!(breakdown.iter().all(|item| item.chars > 0));
+    // The user message "hi" is part of the request.
+    assert!(breakdown.iter().any(|item| item.source == "messages"));
+}
+
 #[tokio::test]
 async fn a_tool_round_commits_the_tool_call_with_its_result() {
     let model = Arc::new(ScriptedModel::new(vec![

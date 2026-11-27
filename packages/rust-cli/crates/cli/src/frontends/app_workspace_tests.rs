@@ -244,7 +244,9 @@ fn fixture_with(
     };
     let mut env = MemoryEnvironment::new(facts)
         .with_file("/Users/dev/repo/.git/HEAD", "ref")
-        .with_file("/Users/dev/repo/.zcode/config.json", project);
+        .with_file("/Users/dev/repo/.zcode/config.json", project)
+        // The entry script of `node check.js` (D24): a grant needs reviewable content.
+        .with_file("/Users/dev/repo/check.js", "process.exit(0)\n");
     for (path, text) in &extra_files {
         env = env.with_file(path, text);
     }
@@ -349,8 +351,8 @@ async fn a_trust_grant_admits_the_declaration_and_clears_the_banner() {
         .mcp_trust(&target("k"), "alpha", &digest, true)
         .await;
     assert_eq!(answer, json!({"accepted": true}));
-    // The layer's server admission reads that store, so the committed decision reloads the layer.
-    assert_eq!(fixture.layer.reloaded(), [ROOT.to_owned()]);
+    // Like Node, the decision does not reach the open tasks' MCP: no layer reload (the next session open re-reads).
+    assert!(fixture.layer.reloaded().is_empty());
 
     let statuses = list(&fixture, "k", true).await;
     assert_eq!(fixture.transport.started(), ["alpha"]);

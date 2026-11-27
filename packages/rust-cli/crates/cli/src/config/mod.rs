@@ -6,6 +6,7 @@
 //! 候选目录在同一次组装里从本机存储的插件清单得出（`plugins`，config.md §2.1）。
 
 mod files;
+pub(crate) mod hook_scripts;
 pub(crate) mod mcp_trust;
 mod mcp_trust_display;
 pub(crate) mod merge;
@@ -13,7 +14,9 @@ mod plugins;
 pub(crate) mod project_hooks;
 mod storage;
 pub(crate) mod trust;
+mod trust_identity;
 pub(crate) mod workspace_layer;
+mod workspace_plugins;
 pub(crate) mod workspace_schema;
 
 use rust_cli_ext::PluginSources;
@@ -255,6 +258,46 @@ pub(crate) struct PluginView {
     pub(crate) storage: rust_cli_paths::StoragePath,
 }
 
+/// The plugin dirs a session may load: the user and `--settings` dirs (`userish`, the layers without the
+/// project ones), then each project `plugins.dirs` root that has a workspace plugin trust record for its current
+/// declaration (specs/fork-rust-plugin-workspace-trust.md, part 2; Node `resolveCandidates` order).
+async fn plugin_dirs(
+    inputs: &ConfigInputs<'_>,
+    userish: &[merge::Layer<'_>],
+    files: &Files,
+) -> Vec<String> {
+    // The userish merge re-walks layers the full merge already warned about; a throwaway sink keeps each
+    // warning logged once.
+    let mut sink = Vec::new();
+    let mut dirs = plugins::merge(userish, &mut sink).dirs;
+    // Project files of a remote workspace are not on the controller, so their plugin dirs are not either.
+    if !inputs.project_is_local || files.projects.is_empty() {
+        return dirs;
+    }
+    let root = inputs.workspace.root.as_str();
+    let working_directory = mcp_trust::Target::new(root, None).working_directory;
+    // The store key maps a managed worktree to its source; the plugin roots and digests stay the worktree's own.
+    let identity = trust_identity::resolve(inputs.paths, &working_directory, true).await;
+    let grants = workspace_plugins::grants(inputs.paths, files.user.object(), &identity).await;
+    let user_roots: Vec<std::path::PathBuf> = dirs
+        .iter()
+        .map(|dir| std::path::PathBuf::from(plugins::resolve_dir(root, dir)))
+        .collect();
+    let trusted = workspace_plugins::trusted_roots(
+        std::path::Path::new(&working_directory),
+        &files.projects,
+        &user_roots,
+        &grants,
+    )
+    .await;
+    dirs.extend(
+        trusted
+            .into_iter()
+            .map(|root| root.to_string_lossy().into_owned()),
+    );
+    dirs
+}
+
 pub(crate) async fn plugin_view(inputs: &ConfigInputs<'_>) -> PluginView {
     let files = read_files(inputs).await;
     plugin_view_of(inputs, &files).await
@@ -281,10 +324,7 @@ pub(crate) async fn plugin_view_of(inputs: &ConfigInputs<'_>, files: &Files) -> 
             path: layer.path,
         })
         .collect();
-    // The userish merge re-walks layers the full merge above already warned about; a throwaway
-    // sink keeps each warning logged once.
-    let mut sink = Vec::new();
-    section.dirs = plugins::merge(&userish, &mut sink).dirs;
+    section.dirs = plugin_dirs(inputs, &userish, files).await;
     let options = std::mem::take(&mut section.options);
     // The inventory roots (plugin cache, installed_plugins.json) resolve from the trusted layers
     // too: a project's storage.dir must not redirect them to a checked-in directory.
@@ -363,7 +403,19 @@ pub(crate) async fn assemble(inputs: &ConfigInputs<'_>) -> ConfigSnapshot {
     let question_timeout = merge::question_timeout(&layers, &mut warnings);
     let (compact_at, compact_pinned) = merge::compact_at(&layers, &mut warnings);
     let root = inputs.workspace.root.as_str();
-    let plugin_section = plugins::merge(&layers, &mut warnings);
+    let mut plugin_section = plugins::merge(&layers, &mut warnings);
+    // Fork (specs/fork-rust-plugin-workspace-trust.md, part 2): a project layer's `plugins.dirs` loads only with a
+    // workspace plugin trust record, here as in the workspace layer (`plugin_view_of`).
+    let userish: Vec<merge::Layer<'_>> = layers
+        .iter()
+        .filter(|layer| layer.source != RuleSource::ProjectSettings)
+        .map(|layer| merge::Layer {
+            source: layer.source,
+            object: layer.object,
+            path: layer.path,
+        })
+        .collect();
+    plugin_section.dirs = plugin_dirs(inputs, &userish, &files).await;
     let storage = storage_layers(inputs, &layers, &mut warnings);
     let plugin_root = inputs
         .paths
@@ -386,6 +438,14 @@ pub(crate) async fn assemble(inputs: &ConfigInputs<'_>) -> ConfigSnapshot {
         user_object,
         projects,
         inputs.paths,
+        if inputs.project_is_local {
+            hook_scripts::Scripts::Local
+        } else {
+            hook_scripts::Scripts::Port {
+                files: inputs.files,
+                workspace: inputs.workspace,
+            }
+        },
         &mut warnings,
     )
     .await;

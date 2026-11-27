@@ -415,3 +415,64 @@ async fn a_renamed_session_reopens_custom_and_stays_custom_after_a_turn() {
     assert_eq!(view.meta.title, "Renamed");
     assert_eq!(view.title_source, Some(Source::Custom));
 }
+
+/// Fork (specs/fork-rust-imported-history.md): an imported Claude Code session. The import persists the draft and
+/// writes the history; the actor that was created empty is closed and the session opened again, so its view holds the
+/// imported messages (the model sees them on the first turn) and the title the import set.
+#[tokio::test]
+async fn an_imported_history_is_loaded_when_the_session_opens_again() {
+    use rust_cli_kernel_api::message::{ContentBlock, Message};
+    use rust_cli_kernel_api::store::{ImportedHistory, ImportedMessage};
+
+    let sandbox = Sandbox::new();
+    let (kernel, store) = sandbox.kernel();
+    let id = sandbox.create(&kernel).await;
+    let message = |assistant: bool, content: &str, timestamp: u64| ImportedMessage {
+        assistant,
+        content: content.to_owned(),
+        timestamp: Some(timestamp),
+    };
+    store
+        .import_history(
+            &id,
+            &ImportedHistory {
+                title: Some("Imported chat".to_owned()),
+                created_at: Some(1000),
+                updated_at: Some(2000),
+                messages: vec![message(false, "hello", 1000), message(true, "hi", 1500)],
+            },
+        )
+        .await
+        .unwrap();
+    assert!(!store.is_draft(&id).await.unwrap());
+    let before = kernel.open_session(&id).await.unwrap();
+    assert!(before.view().await.unwrap().messages.is_empty());
+    before.close(EndReason::Other).await;
+    let after = kernel.open_session(&id).await.unwrap();
+    let view = after.view().await.unwrap();
+    let texts: Vec<String> = view
+        .messages
+        .iter()
+        .map(|message| match message {
+            Message::User(user) => format!("user:{:?}", user.content),
+            Message::Assistant(assistant) => format!("assistant:{:?}", assistant.content),
+            other => panic!("{other:?}"),
+        })
+        .collect();
+    let text = |text: &str| {
+        format!(
+            "{:?}",
+            vec![ContentBlock::Text {
+                text: text.to_owned()
+            }]
+        )
+    };
+    assert_eq!(
+        texts,
+        vec![
+            format!("user:{}", text("hello")),
+            format!("assistant:{}", text("hi"))
+        ]
+    );
+    assert_eq!(view.meta.title, "Imported chat");
+}

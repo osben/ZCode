@@ -134,6 +134,8 @@ struct Queries {
     log: Log,
     /// The draft persistence fails (a store error at create).
     fail_persist: bool,
+    /// The history import fails (a store error at the import).
+    fail_import: bool,
 }
 
 #[async_trait]
@@ -192,6 +194,39 @@ impl StoreQueries for Queries {
         Ok(Admission::default())
     }
 
+    async fn import_history(
+        &self,
+        session: &SessionId,
+        history: &rust_cli_kernel_api::store::ImportedHistory,
+    ) -> Result<(), StoreError> {
+        let messages: Vec<String> = history
+            .messages
+            .iter()
+            .map(|message| {
+                format!(
+                    "{}:{}:{:?}",
+                    if message.assistant { "a" } else { "u" },
+                    message.content,
+                    message.timestamp
+                )
+            })
+            .collect();
+        self.log.lock().unwrap().push(format!(
+            "import {} {:?} {:?} {:?} {}",
+            session.as_str(),
+            history.title,
+            history.created_at,
+            history.updated_at,
+            messages.join(",")
+        ));
+        if self.fail_import {
+            return Err(StoreError::Storage {
+                message: "disk full".to_owned(),
+            });
+        }
+        Ok(())
+    }
+
     async fn discard_draft(&self, session: &SessionId) -> Result<bool, StoreError> {
         self.log
             .lock()
@@ -208,6 +243,7 @@ pub(crate) struct TestKernel {
     log: Log,
     ids: Log,
     fail_persist: std::sync::atomic::AtomicBool,
+    fail_import: std::sync::atomic::AtomicBool,
     /// Fork (F7 PR 2): how `sample_model` answers; unset, it refuses as a kernel without sampling does.
     sampling: StdMutex<Option<TestSampling>>,
     /// Fork (F7 PR 2): notified when a held `sample_model` call starts waiting for its cancel.
@@ -312,6 +348,7 @@ impl Kernel for TestKernel {
             store: self.store.clone(),
             log: self.log.clone(),
             fail_persist: self.fail_persist.load(std::sync::atomic::Ordering::SeqCst),
+            fail_import: self.fail_import.load(std::sync::atomic::Ordering::SeqCst),
         })
     }
 
@@ -382,6 +419,7 @@ fn server_without_directory() -> (TaskScope, Arc<Server>, Arc<TestKernel>) {
         log: Arc::new(StdMutex::new(Vec::new())),
         ids: Arc::new(StdMutex::new(Vec::new())),
         fail_persist: std::sync::atomic::AtomicBool::new(false),
+        fail_import: std::sync::atomic::AtomicBool::new(false),
         sampling: StdMutex::new(None),
         sampling_started: tokio::sync::Notify::new(),
     });
@@ -543,7 +581,9 @@ async fn fields_the_agent_cannot_honour_refuse_the_create_before_the_kernel() {
         ("parentSessionId", json!("p1")),
         (
             "importedHistory",
-            json!({"source": "claudeCode", "messages": [{"role": "user", "content": "hi"}]}),
+            json!({"source": "sharedContext", "title": "t", "markdown": "m", "provenance": {
+                "shareId": "s", "projectionSha256": "a".repeat(64), "artifactSetSha256": "b".repeat(64),
+                "formatterVersion": 1, "markdownSha256": "c".repeat(64), "installedArtifacts": []}}),
         ),
         ("executionWorktree", json!({"path": "/w/wt"})),
     ] {
@@ -1248,4 +1288,59 @@ async fn a_thought_level_for_an_unparseable_model_is_skipped_and_logged() {
         skipped[0].get("level").map(String::as_str),
         Some("\"high\"")
     );
+}
+
+fn claude_import(id: &str) -> Value {
+    let mut params = automation_create(id);
+    params["importedHistory"] = json!({
+        "source": "claudeCode",
+        "title": "Imported chat",
+        "createdAt": 1000,
+        "updatedAt": 2000,
+        "messages": [
+            {"role": "user", "content": "hello", "timestamp": 1000},
+            {"role": "assistant", "content": "hi"},
+        ],
+    });
+    params
+}
+
+/// Node `persistImportedSessionHistory` then `app.resume()`: the history is stored (that persists the draft, whatever
+/// the persistence), then the runtime is opened again so it loads the history. Nothing persists the session twice.
+#[tokio::test]
+async fn a_claude_code_import_stores_the_history_and_opens_the_session_again() {
+    let (_scope, server, kernel) = server();
+    call(&server, "session/create", claude_import("s9"))
+        .await
+        .unwrap();
+    assert_eq!(
+        log(&kernel),
+        vec![
+            "create s9 m2 high edit".to_owned(),
+            "import s9 Some(\"Imported chat\") Some(1000) Some(2000) u:hello:Some(1000),a:hi:None"
+                .to_owned(),
+            "close s9".to_owned(),
+            "DisableTitleGeneration".to_owned(),
+        ]
+    );
+    assert!(server.bridge.get(&SessionId::new("s9")).is_some());
+}
+
+/// An import that fails leaves no half-created id behind (the Host's retry with the same id is not refused).
+#[tokio::test]
+async fn a_failed_import_leaves_no_session_behind() {
+    let (_scope, server, kernel) = server();
+    kernel
+        .fail_import
+        .store(true, std::sync::atomic::Ordering::SeqCst);
+    let error = call(&server, "session/create", claude_import("s9"))
+        .await
+        .unwrap_err();
+    assert!(!error.message.contains("disk full"), "{error:?}");
+    assert!(error.message.contains("import"), "{error:?}");
+    let log = log(&kernel);
+    assert_eq!(log[0], "create s9 m2 high edit");
+    assert!(log.contains(&"discard s9".to_owned()), "{log:?}");
+    assert!(log.contains(&"close s9".to_owned()), "{log:?}");
+    assert!(server.bridge.get(&SessionId::new("s9")).is_none());
 }

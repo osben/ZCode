@@ -413,6 +413,7 @@ impl LocalKernel {
                 worktrees: base.worktrees.clone(),
                 gate: gate.clone(),
                 mcp: ext.mcp().clone(),
+                workspace_layer: ext.workspace_layer().clone(),
                 agents: agents.signals(),
                 acp: acp_host.clone().map(|host| acp::AcpRelease { host }),
                 agent_catalog: agent_catalog.clone(),

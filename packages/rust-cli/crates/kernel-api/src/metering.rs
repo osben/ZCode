@@ -56,6 +56,18 @@ pub struct ModelCall {
     pub retries: u32,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub error: Option<ModelError>,
+    /// Fork (specs/fork-rust-context-breakdown.md): the coarse context breakdown of a main-thread request, in memory for
+    /// the App projection. The usage table does not read it.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub context_breakdown: Vec<ContextBreakdownItem>,
+}
+
+/// Fork: one coarse source of a request's context (Node `ContextUsageBreakdownItem`): `source` is one of the seven
+/// usage-ring sources, `chars` its size in characters.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ContextBreakdownItem {
+    pub source: String,
+    pub chars: u64,
 }
 
 impl ModelCall {
@@ -83,6 +95,7 @@ impl ModelCall {
             usage: None,
             retries: 0,
             error: None,
+            context_breakdown: Vec::new(),
         }
     }
 }

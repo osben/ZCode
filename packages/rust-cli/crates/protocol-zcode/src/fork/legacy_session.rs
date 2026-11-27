@@ -31,10 +31,35 @@ struct CreateParams {
     tool_allowlist: Vec<String>,
     #[serde(default)]
     tool_denylist: Vec<String>,
-    imported_history: Option<Value>,
+    imported_history: Option<ImportedHistoryParam>,
     parent_session_id: Option<String>,
     execution_worktree: Option<Value>,
     incognito: Option<Value>,
+}
+
+/// `zcodeSessionImportHistorySchema`: the schema already checked the shape. Only the `claudeCode` source is read here;
+/// a `sharedContext` import needs the conversation-share attach flow this agent does not have.
+#[derive(Deserialize)]
+#[serde(tag = "source", rename_all = "camelCase")]
+enum ImportedHistoryParam {
+    ClaudeCode(ClaudeCodeHistory),
+    SharedContext {},
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct ClaudeCodeHistory {
+    title: Option<String>,
+    created_at: Option<u64>,
+    updated_at: Option<u64>,
+    messages: Vec<ImportedMessageParam>,
+}
+
+#[derive(Deserialize)]
+struct ImportedMessageParam {
+    role: String,
+    content: String,
+    timestamp: Option<u64>,
 }
 
 #[derive(Deserialize)]
@@ -164,11 +189,32 @@ async fn supported_level(
 /// until the first accepted input persists it (`persistence: "deferred"`); `"immediate"`, Node's default, persists it
 /// here.
 pub(crate) async fn create(server: &Server, params: &Value) -> Result<Value, RpcError> {
-    let params: CreateParams = parse(params)?;
+    let mut params: CreateParams = parse(params)?;
     check_tool_lists(&params.tool_allowlist, &params.tool_denylist)?;
-    if params.imported_history.is_some() {
-        return Err(unsupported("importedHistory"));
-    }
+    // Fork: a `sharedContext` import is refused like the other fields this agent cannot honour; it names no
+    // unrecognized key, so the Host's compatibility retry does not run without it.
+    let imported = match params.imported_history.take() {
+        Some(ImportedHistoryParam::SharedContext {}) => {
+            return Err(unsupported("importedHistory (sharedContext)"));
+        }
+        Some(ImportedHistoryParam::ClaudeCode(history)) => {
+            Some(rust_cli_kernel_api::store::ImportedHistory {
+                title: history.title,
+                created_at: history.created_at,
+                updated_at: history.updated_at,
+                messages: history
+                    .messages
+                    .into_iter()
+                    .map(|message| rust_cli_kernel_api::store::ImportedMessage {
+                        assistant: message.role == "assistant",
+                        content: message.content,
+                        timestamp: message.timestamp,
+                    })
+                    .collect(),
+            })
+        }
+        None => None,
+    };
     if params.parent_session_id.is_some() {
         return Err(unsupported("parentSessionId"));
     }
@@ -242,10 +288,13 @@ pub(crate) async fn create(server: &Server, params: &Value) -> Result<Value, Rpc
         return Err(RpcError::internal("createSession answered no session id"));
     };
     let id = SessionId::new(id);
-    let live = server
+    let mut live = server
         .live(&id)
         .await
         .map_err(|error| kernel_error(&error))?;
+    if let Some(history) = &imported {
+        live = import(server, &id, live, history).await?;
+    }
     if params.title_generation_enabled == Some(false) {
         send(
             live.handle.as_ref(),
@@ -254,7 +303,8 @@ pub(crate) async fn create(server: &Server, params: &Value) -> Result<Value, Rpc
         )
         .await;
     }
-    if params.persistence.as_deref() != Some("deferred") {
+    // An import persisted the session already, whatever the persistence (Node stores the imported rows at creation).
+    if imported.is_none() && params.persistence.as_deref() != Some("deferred") {
         let queries = server.kernel.queries();
         if let Err(error) = queries.persist_for_input(&id, "").await {
             // No error text: a storage error can name the storage path.
@@ -269,6 +319,31 @@ pub(crate) async fn create(server: &Server, params: &Value) -> Result<Value, Rpc
         }
     }
     crate::legacy::read(server, &snapshot_params(&id)).await
+}
+
+/// Node `persistImportedSessionHistory` then `app.resume()` (`server-operations.ts`): stores the history (which also
+/// persists a draft), then opens the session again, so the runtime loads the stored history like a cold resume. A
+/// failed import leaves no half-created id behind, like a failed persistence: the draft is dropped and the runtime
+/// closed, so the Host's retry with the same id is not refused as existing.
+async fn import(
+    server: &Server,
+    id: &SessionId,
+    live: std::sync::Arc<Bridged<Live>>,
+    history: &rust_cli_kernel_api::store::ImportedHistory,
+) -> Result<std::sync::Arc<Bridged<Live>>, RpcError> {
+    let queries = server.kernel.queries();
+    if let Err(error) = queries.import_history(id, history).await {
+        // No error text: a storage error can name the storage path.
+        tracing::warn!(event = "legacy.session_import.failed", session = %id, error = %error, "storing the imported history failed");
+        let _ = queries.discard_draft(id).await;
+        server.bridge.close(id);
+        live.handle.close(EndReason::Other).await;
+        server.announce_lifecycle(id, "unloaded").await;
+        return Err(RpcError::internal("importing the session history failed"));
+    }
+    server.bridge.close(id);
+    live.handle.close(EndReason::Other).await;
+    server.live(id).await.map_err(|error| kernel_error(&error))
 }
 
 /// Node `resumeSession`: opens a stored session (cold) or takes the live one, and answers its snapshot. A missing

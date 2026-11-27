@@ -102,9 +102,11 @@ official cache and `installed_plugins.json` all live under the storage root
 4. Model turn: the session's tool snapshot, `SessionCatalog` (`mcp_servers`), WaitForMcpServers and
    ToolSearch read the session's group (the same snapshot path they read today, parity spec
    "session keeps a snapshot of the tool profile"), so they follow without new owners.
-5. Config change for a workspace (a trust write the App committed, `/mcp enable|disable`): an epoch
-   write replaces only that workspace's slot ("As built: layer reload" below); connections of its
-   group reconnect, other groups and the process group do not notice.
+5. Config change for a workspace (a hook trust write the App committed, `/mcp enable|disable`, a
+   changed read at a session open): an epoch write replaces only that workspace's slot ("As built:
+   layer reload" below). The new group serves the sessions that open after it; open sessions keep
+   the group they started with ("As built: a session keeps its group"). Other groups and the process
+   group do not notice.
 
 ## Rules
 
@@ -149,9 +151,12 @@ construction; the Rust side keeps the explicit-trigger model — the App's confi
 reload after the write they committed, never a file watcher:
 
 - `workspace/hooks/trustGrant` and the hook review's grant and revoke (`rebuild_hooks`, the same
-  place that rebuilds the hooks entry), the review toggle's committed write, and an accepted
-  `workspace/mcp/trust` decision (the layer's server admission reads that store) —
-  `frontends/app_workspace.rs`.
+  place that rebuilds the hooks entry) and the review toggle's committed write:
+  `frontends/app_workspace.rs`. An accepted `workspace/mcp/trust` decision does not reload: Node's
+  decision only refreshes the banners (`refreshWorkspaceTrustAdmission`, "does not connect, does not
+  grant"), and the next session open reads the new record ("As built: session-open re-read"). Before,
+  the reload restarted the workspace group, so an open task connected a server the moment it was
+  trusted (WMT-01/04 failed at `expect(await exists(marker)).toBe(false)`).
 - `/mcp enable|disable` (both TUI surfaces: the slash command and the settings page): the kernel's
   `mcp_control` names the calling surface's current workspace, and an enable/disable — which the
   TUI issues only after its `enabled` write committed — reloads that workspace's layer through the
@@ -165,7 +170,8 @@ acceptance check) it cannot replace the group either. A plain `load` reserves wh
 single-flight key, so a reload triggered while it runs always reserves after it; a reload does not
 queue behind the claim (the epochs arbitrate). Reload stays lazy: a workspace with neither a slot nor
 a load in flight does not load on reload — nothing in this process uses it yet, and the next session
-open reads the post-write config directly. A reload whose read fails installs `Invalid` and stops
+open reads the post-write config directly. A reload whose read equals the installed one installs
+nothing, like a session-open re-read. A reload whose read fails installs `Invalid` and stops
 the group exactly like a first load (fail-closed, rule (d)); a later reload or session retry
 recovers. The replaced slot needs no new owners: the skill roots, agent files and helper admission
 read `plugins_of` (the slot) per call, and the MCP view resolves the group per snapshot, so both
@@ -195,6 +201,45 @@ open's path. A re-read that fails is fail-closed like a reload (`Invalid`, the
 group stops). Sessions already open keep their group handle semantics unchanged: a replaced group
 is what a reload does today. Cost: one config + plugin inventory read per session open, as in Node.
 
+## As built: a session keeps its group
+
+Node builds an MCP pool per session app at construction, and its trust gate keeps that admission:
+"revocation and config changes take effect in a new or restarted session or on an explicit
+reconnect; a banner refresh does not change existing authorization"
+(`workspace-mcp-trust/CONTRACT.md`). The Desktop says the same in the pending popover.
+
+Rust shares one group per workspace key, so a replaced group used to reach every open session of the
+workspace. Now `WorkspaceMcp` pins a group to a session the first time the session resolves it
+(`for_session`, the session's first snapshot after its open loaded the layer):
+
+- The owner of the pins is `WorkspaceMcp` (`ext/src/mcp/workspaces.rs`): session id to the key and
+  the group it resolved. A session with no workspace group (the process group) is not pinned.
+- A replaced or stopped group (`start_with_plugins` over an existing key, `stop`) is retired: it
+  shuts down at once when no session holds it, else it keeps running for the sessions that hold it.
+- A session close (`SessionScoped::released`, through `WorkspaceLayer::session_closed`) drops the
+  pin. A retired group shuts down when its last pin goes. The current group of a key never shuts down
+  on a release.
+- A reopened session pins whatever group is current then, like a restarted Node session.
+
+Order of events:
+
+```text
+session A opens  -> layer load (group G1) -> A's first snapshot pins G1
+trust grant      -> trust record written, banners refresh (no reload, G1 unchanged)
+session B opens  -> re-read differs -> G2 installed, G1 retired but pinned by A -> B pins G2
+A keeps G1 (no newly trusted server), B has it
+A closes         -> pin dropped -> G1 has no pins -> G1 shuts down
+```
+
+Cost: while an old and a new group both have sessions, the workspace runs two sets of connections,
+as Node runs one pool per session app. Subagents, and anything else that resolves by a session id
+with no recorded workspace, keep the process group as before.
+
+Acceptance: `ext` tests (a pinned session keeps its group across a replace and a stop, a release
+shuts a retired group only after its last pin, never the current group); a layer test (an equal
+reload installs nothing); the `cli` test that an accepted MCP trust decision reloads nothing; E2E
+`plugins/conversation-session-workspace-mcp-trust` on Rust.
+
 ## Not in this PR (follow-ups)
 
 - ~~Per-workspace `HelperCatalog` admission and helper-hosted plugin servers per workspace~~ — closed:
@@ -221,13 +266,14 @@ is what a reload does today. Cost: one config + plugin inventory read per sessio
   for enable/disable (the App's trust triggers are too): a toggled user-scope server still reaches
   workspace groups only with its startup-snapshot state, because the layer's user-scope server
   list is a process-startup read.
-- ~~The LSP path's project `plugins.dirs`~~ — closed: `plugin_view` applies the Node rule (project
-  dirs never load; the inventory roots resolve from the trusted layers only), and the workspace
-  loader reuses the view instead of its own copy.
+- ~~The LSP path's project `plugins.dirs`~~ — closed: `plugin_view` applies the Node rule (a project
+  dir loads only with a workspace plugin trust record for its current declaration,
+  `fork-rust-plugin-workspace-trust.md` part 2; the inventory roots resolve from the trusted layers only),
+  and the workspace loader reuses the view instead of its own copy.
 
 ## Acceptance
 
-- Acceptance: a project config declaring `plugins.dirs` or a `storage.dir` into a checked-in
+- Acceptance: a project config declaring an untrusted `plugins.dirs` or a `storage.dir` into a checked-in
   directory changes neither the workspace layer's nor `lsp/status`'s plugin set (the trusted-layer
   resolution of `plugin_view`).
 - Rust unit tests (ext, cli, protocol-zcode):

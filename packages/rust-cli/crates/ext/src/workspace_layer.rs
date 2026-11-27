@@ -170,6 +170,12 @@ impl WorkspaceLayer {
             .and_then(|workspace| self.plugins_of(&workspace))
     }
 
+    /// A session closed: the MCP group it pinned is released (specs/fork-rust-workspace-plugins-mcp.md, "As built:
+    /// a session keeps its group").
+    pub fn session_closed(&self, session: &rust_cli_kernel_api::ids::SessionId) {
+        self.mcp.release(session);
+    }
+
     /// Fork: print mode reaches every group of the composite.
     pub(crate) fn set_print_session(&self, print: bool) {
         self.mcp.set_print_session(print);
@@ -338,7 +344,11 @@ impl WorkspaceLayer {
         };
         let epoch = self.reserve();
         let install = self.assemble(&loader, workspace).await;
-        self.put_or_superseded(&key, workspace, epoch, install);
+        // An equal read installs nothing, like a session-open re-read: a new group would only duplicate the
+        // connections of the one the open sessions hold.
+        if !self.installed_matches(&key, &install) {
+            self.put_or_superseded(&key, workspace, epoch, install);
+        }
     }
 
     /// The next epoch, taken before the write reads (the hooks engine's `reserve_project`).
@@ -414,7 +424,8 @@ impl WorkspaceLayer {
             } => {
                 // A replaced group's connections stop inside `start` (`McpManager::shutdown`).
                 slots.servers.insert(key.to_owned(), servers.clone());
-                self.mcp.start(key, workspace, servers);
+                self.mcp
+                    .start_with_plugins(key, workspace, servers, plugins.mcp_plugin_ids());
                 if let Some(sink) = self.hooks.get() {
                     sink(key, &plugins);
                 }

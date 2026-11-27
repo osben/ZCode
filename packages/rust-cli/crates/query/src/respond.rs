@@ -103,6 +103,8 @@ struct Timing {
     /// 首个内容（footer 的 TPS，修复线 F105，tui-display.md §2.6）：只在内存，不写进用量表。
     first_content: Option<u64>,
     retries: u32,
+    /// Fork (specs/fork-rust-context-breakdown.md): the coarse breakdown of the request, kept for a main-thread request.
+    breakdown: Vec<rust_cli_kernel_api::metering::ContextBreakdownItem>,
 }
 
 /// 用量表那一列的首字（Node `firstModelTokenAt`）：第一个非空的文本或推理增量。
@@ -165,6 +167,7 @@ impl Timing {
             usage: Some(usage).filter(|usage| *usage != Usage::default()),
             retries: self.retries,
             error,
+            context_breakdown: self.breakdown.clone(),
             ..ModelCall::new(
                 self.message.clone(),
                 self.source.clone(),
@@ -318,6 +321,12 @@ async fn stream(
         first_token: None,
         first_content: None,
         retries: 0,
+        // Node attaches the breakdown to main-turn completions only.
+        breakdown: if request.source == rust_cli_kernel_api::model::QuerySource::MainThread {
+            crate::composition::usage_breakdown(&composition)
+        } else {
+            Vec::new()
+        },
     };
     // 请求开始是进展（Node `ModelRequest`）：子代理的无进展提醒的钟在这里重新计时（stall.rs）。
     scope.sink.request_started().await;

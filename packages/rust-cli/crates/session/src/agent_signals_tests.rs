@@ -116,6 +116,7 @@ async fn an_agent_notice_starts_a_turn_and_is_acked_after_the_commit() {
             hook_rows: false,
         },
         SessionState {
+            preserved_usage: Vec::new(),
             commands: Default::default(),
             meta: meta(),
             messages: Vec::new(),
@@ -243,6 +244,7 @@ async fn open_with(signals: Arc<FakeSignals>, scope: &TaskScope) -> Session {
             meta: meta(),
             messages: Vec::new(),
             earlier: Vec::new(),
+            preserved_usage: Vec::new(),
             selection: selection(),
             mode: PermissionMode::Default.into(),
             checkpoints: Vec::new(),

@@ -146,6 +146,47 @@ pub async fn read_regular_bounded(path: &Path, max: u64) -> io::Result<BoundedRe
     Ok(BoundedRead::Bytes(bytes))
 }
 
+/// Fork (specs/fork-rust-hook-script-entry.md): [`read_regular_bounded`] for a hook's entry script, as Node
+/// `readWorkspaceHookScriptState` reads it. A missing path or a path through a non-directory is `Missing`; the open
+/// does not block (`O_NONBLOCK` on Unix, so a path swapped for a FIFO after the metadata call opens without a
+/// writer), and the open handle must still be a regular file.
+pub async fn read_script_file(path: &Path, max: u64) -> io::Result<BoundedRead> {
+    use tokio::io::AsyncReadExt;
+    let gone =
+        |error: &io::Error| matches!(error.kind(), ErrorKind::NotFound | ErrorKind::NotADirectory);
+    let metadata = match tokio::fs::metadata(path).await {
+        Ok(metadata) => metadata,
+        Err(error) if gone(&error) => return Ok(BoundedRead::Missing),
+        Err(error) => return Err(error),
+    };
+    if !metadata.is_file() {
+        return Ok(BoundedRead::NotRegular);
+    }
+    if metadata.len() > max {
+        return Ok(BoundedRead::TooLarge);
+    }
+    let mut options = tokio::fs::OpenOptions::new();
+    options.read(true);
+    #[cfg(unix)]
+    options.custom_flags(libc::O_NONBLOCK);
+    let file = match options.open(path).await {
+        Ok(file) => file,
+        Err(error) if gone(&error) => return Ok(BoundedRead::Missing),
+        Err(error) => return Err(error),
+    };
+    if !file.metadata().await?.is_file() {
+        return Ok(BoundedRead::NotRegular);
+    }
+    let mut bytes = Vec::new();
+    file.take(max.saturating_add(1))
+        .read_to_end(&mut bytes)
+        .await?;
+    if bytes.len() as u64 > max {
+        return Ok(BoundedRead::TooLarge);
+    }
+    Ok(BoundedRead::Bytes(bytes))
+}
+
 /// 打开一个文件只读，按块读（上传到远端的执行器与它的 sha256，docs/specs/rust-cli/remote-exec.md §19.9）。
 pub async fn open_read(path: &Path) -> io::Result<tokio::fs::File> {
     tokio::fs::File::open(path).await
@@ -645,6 +686,23 @@ pub struct Stat {
     /// No group or other permission bits (`mode & 0o077 == 0`); always true off Unix (Node checks the mode only off
     /// Windows). Fork: the default `credential-secret` must be private (specs/fork-rust-credential-cipher.md F4).
     pub owner_only: bool,
+}
+
+/// Node `fs.promises.realpath`: the canonical absolute path, symlinks resolved. Windows' verbatim prefix (`\\?\`) is
+/// dropped so the result compares with Node's (`\\?\C:\x` is `C:\x`, `\\?\UNC\s\x` is `\\s\x`).
+pub async fn realpath(path: &Path) -> io::Result<PathBuf> {
+    let real = tokio::fs::canonicalize(path).await?;
+    Ok(strip_verbatim(real))
+}
+
+fn strip_verbatim(path: PathBuf) -> PathBuf {
+    let text = path.to_string_lossy();
+    let stripped = if let Some(rest) = text.strip_prefix(r"\\?\UNC\") {
+        Some(format!(r"\\{rest}"))
+    } else {
+        text.strip_prefix(r"\\?\").map(str::to_owned)
+    };
+    stripped.map_or(path, PathBuf::from)
 }
 
 /// The path's metadata, following symlinks; `None` when it does not exist (Fork: a shared attachment's size probe,

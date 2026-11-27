@@ -210,6 +210,8 @@ pub struct SessionState {
     pub messages: Vec<Message>,
     /// 只供显示的、最后一个压缩点之前的消息（冷加载的 `LoadedSession.earlier`，工作线 F102）；新建的会话为空。
     pub earlier: Vec<Message>,
+    /// Fork: [`rust_cli_kernel_api::store::LoadedSession::preserved_usage`]; empty for a new session.
+    pub preserved_usage: Vec<(MessageId, rust_cli_kernel_api::message::Usage)>,
     pub selection: ModelSelection,
     /// 执行状态（权限模式 × plan 开关，修复线 F20）；旧的单值模式经 `From<PermissionMode>`（`Plan` 是 plan 开）。
     pub mode: rust_cli_kernel_api::permission::ExecutionState,
@@ -273,6 +275,7 @@ impl SessionState {
             meta,
             messages: Vec::new(),
             earlier: Vec::new(),
+            preserved_usage: Vec::new(),
             selection,
             mode,
             checkpoints: Vec::new(),
@@ -308,6 +311,7 @@ impl SessionState {
             meta: loaded.meta,
             messages: loaded.messages,
             earlier: loaded.earlier,
+            preserved_usage: loaded.preserved_usage,
             commands: loaded.commands,
             selection: loaded
                 .model

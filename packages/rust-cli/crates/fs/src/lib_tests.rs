@@ -218,6 +218,44 @@ async fn bounded_reads_refuse_directories_and_oversized_files_without_reading_th
 }
 
 #[tokio::test]
+async fn script_reads_follow_node_hook_script_states() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("hook.sh");
+    assert_eq!(
+        read_script_file(&path, 4).await.unwrap(),
+        BoundedRead::Missing
+    );
+    std::fs::write(&path, b"echo").unwrap();
+    // A path through a regular file (ENOTDIR) is missing too, as Node maps it.
+    assert_eq!(
+        read_script_file(&path.join("x.sh"), 4).await.unwrap(),
+        BoundedRead::Missing
+    );
+    assert_eq!(
+        read_script_file(dir.path(), 4).await.unwrap(),
+        BoundedRead::NotRegular
+    );
+    assert_eq!(
+        read_script_file(&path, 3).await.unwrap(),
+        BoundedRead::TooLarge
+    );
+    assert_eq!(
+        read_script_file(&path, 4).await.unwrap(),
+        BoundedRead::Bytes(b"echo".to_vec())
+    );
+    #[cfg(unix)]
+    {
+        // A symlink is read through, like the child process opens it.
+        let link = dir.path().join("link.sh");
+        std::os::unix::fs::symlink(&path, &link).unwrap();
+        assert_eq!(
+            read_script_file(&link, 4).await.unwrap(),
+            BoundedRead::Bytes(b"echo".to_vec())
+        );
+    }
+}
+
+#[tokio::test]
 async fn appends_create_the_parents_and_keep_the_order() {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("tui/history.jsonl");
