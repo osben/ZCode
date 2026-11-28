@@ -109,12 +109,12 @@ impl Actor {
         branch: Option<String>,
     ) -> Ack {
         if root == self.meta.workspace.root {
-            // A session already at the root keeps the fact it loaded. Without one (nothing stored it) the root is
-            // its own parent, so the model is not told a parent it does not have.
+            // A session already at the root keeps the fact it loaded. Without one it still guards the root; its parent
+            // is unknown (empty), so the model-context notice, which needs the parent, is not written.
             self.execution_worktree
                 .get_or_insert_with(|| ExecutionWorktreeFact {
                     path: root.clone(),
-                    workspace: root.clone(),
+                    workspace: EnvPath::new(""),
                     branch: branch.clone(),
                     missing: false,
                 });

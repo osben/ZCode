@@ -19,7 +19,7 @@ It replaces the earlier `execution_worktree: bool` in `LoadedSession`, `SessionS
 
 - create in a worktree: `path` and `branch` from the request, `workspace` is the root before the move, `missing` false;
 - cold load: the stored row (`directory`, `execution_directory`, `execution_branch`), `missing` is one `metadata` call when the row is loaded;
-- activation of a prepared session (`Command::SetExecutionRoot {root, branch}`): `workspace` is the root before the move, `missing` false. An activation at the root the session already has keeps the fact it loaded;
+- activation of a prepared session (`Command::SetExecutionRoot {root, branch}`): `workspace` is the root before the move, `missing` false. An activation at the root the session already has keeps the fact it loaded (with none, the parent is unknown and no notice is written);
 - a subagent: its spawning session's fact, through `RunView`.
 
 The fact travels to the assembler as `ContextRequest::execution_worktree`, set by the query loop from `RunView`. It is never read from the store at render time and costs no I/O per request.
@@ -63,7 +63,7 @@ A fork child takes the main session's context and the parent's fact, so it gets 
 
 ## Acceptance
 
-Tests (`context` `worktree_tests.rs`, `system_tests.rs`; `agents` `report_tests.rs`; `session` and `runtime` for the fact):
+Tests (`prompts` `worktree_tests.rs`; `context` `worktree_tests.rs` and `lib_tests.rs`; `query` `worktree_tests.rs`; `agents` `report_tests.rs`; `session` `workspace_tests.rs`, `runtime` `workspace_sessions_tests.rs` and `node-store` `fork_execution_worktree_tests.rs` for the fact):
 
 1. healthy with a branch, healthy without a branch, missing: the three sentences above, byte for byte;
 2. an empty `workspace` renders nothing;
@@ -71,4 +71,4 @@ Tests (`context` `worktree_tests.rs`, `system_tests.rs`; `agents` `report_tests.
 4. a request without the fact has no section (system blocks equal to the blocks of a session that never had one);
 5. `--system-prompt`: a trailing block holds the section;
 6. a subagent's system ends with the `<env>` block, also under an incognito profile; none without the fact;
-7. the fact: a create in a worktree, a cold load of a stored row (with and without a branch, a missing directory), an activation and a repeated activation.
+7. the fact: a create in a worktree, a cold load of a stored row (with a branch, a missing directory without one), an activation; the query step copies the session's fact into the context request.
