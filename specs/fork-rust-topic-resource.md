@@ -187,10 +187,15 @@ Owner: the session row, in `node-store`. The gate holds no copy it must keep in 
    `LocalSettings::session_rules`) and decides with that rule set instead of the workspace's `LocalSettings` layer.
 
 There is no notification and no timer, and so no second write path. The cost is one primary-key read of the session row
-per decision, as in Node; it is not cached. `PolicyGate::scope` stays as the fallback for a gate without a source and for
-a read that fails (`StoredRules` logs it; the open-time copy decides then). A session row that is not scoped decides with
-the shared snapshot as before. The same read also makes "always allow" in a scoped session effective at once, which the
-open-time copy did not.
+per decision, as in Node; it is not cached. A session row that is not scoped decides with the shared snapshot as before.
+The same read also makes "always allow" in a scoped session effective at once, which the open-time copy did not.
+
+A failed read fails closed, as Node's `resolveToolPermission` does when `loadProjectPermissionRuleset` throws: the ask
+is denied with the StorageError message `Failed to load project permission rules`, and no rule set is used for it, not
+the workspace rules and not an open-time copy. Without this, a task scoped on its first input would fall back to the
+workspace rules (`Bash(touch:*)` allowed) on one read error although its row excludes them. The same denial is returned
+by the `check_rules` path. `PolicyGate::scope` (the open-time copy) is used only by a gate with no rules source, which
+is the case in tests.
 
 ## Acceptance cases
 
@@ -228,7 +233,8 @@ Unit tests:
     `botGroupSource` leaves the row alone.
 12. Live decisions (`policy` tests): with a source whose row turns scoped between two asks of one gate, the first ask
     decides with the workspace rules and the second with the session rules, without `PolicyGate::scope` being called;
-    a failing read falls back to the open-time copy.
+    a failing read after that denies the ask (and the `check_rules` path) with `Failed to load project permission
+rules` and uses no rule set.
 
 E2E, in the Linux box on both runtimes:
 

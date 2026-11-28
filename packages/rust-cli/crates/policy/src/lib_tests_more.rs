@@ -305,13 +305,30 @@ async fn a_row_scoped_after_the_open_decides_with_the_session_rules_at_once() {
     );
 }
 
+/// Node `resolveToolPermission`: a failed `loadProjectPermissionRuleset` denies the ask with a StorageError result and
+/// no rule set is used. Here the row was unscoped at the open, was scoped by the first input, and then cannot be read.
 #[tokio::test]
-async fn a_failed_row_read_falls_back_to_the_open_time_copy() {
-    let row = Arc::new(Row(std::sync::Mutex::new(Err("boom".to_owned()))));
-    let gate = PolicyGate::new(workspace_allows_touch()).with_local_rules(row);
-    gate.scope(&SessionId::new("s1"), &ProjectRules::default());
+async fn a_failed_row_read_denies_the_ask_and_uses_no_rules() {
+    let row = Arc::new(Row(std::sync::Mutex::new(Ok(None))));
+    let gate = PolicyGate::new(workspace_allows_touch()).with_local_rules(row.clone());
     assert_eq!(
-        ask_message(&bash(&gate, PermissionMode::Default, "touch x").await),
-        TOUCH_INSIDE
+        bash(&gate, PermissionMode::Default, "touch x").await,
+        allow()
+    );
+    *row.0.lock().unwrap() = Err("boom".to_owned());
+    assert_eq!(
+        bash(&gate, PermissionMode::Default, "touch x").await,
+        deny("Failed to load project permission rules")
+    );
+    let hook_check = gate
+        .check_rules(
+            &Named("Bash", PermissionDecision::Passthrough),
+            &json!({"command": "touch x"}),
+            &context(PermissionMode::Default),
+        )
+        .await;
+    assert_eq!(
+        hook_check,
+        Some(deny("Failed to load project permission rules"))
     );
 }
