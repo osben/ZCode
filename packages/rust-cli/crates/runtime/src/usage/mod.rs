@@ -189,6 +189,7 @@ impl UsageAnalyzer {
         let request = ContextRequest {
             capabilities,
             tool_names,
+            execution_worktree: query.execution_worktree.clone(),
             ..ContextRequest::new(
                 // 没有会话时规则缓存不参与（analysis 不缓存），会话 ID 只是占位。
                 query

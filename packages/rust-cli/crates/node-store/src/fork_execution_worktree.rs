@@ -103,8 +103,15 @@ pub(crate) async fn run_in_worktree(
     else {
         return Ok(());
     };
-    loaded.meta.workspace.root = worktree.path;
-    loaded.execution_worktree = true;
+    // Node's resume stats the directory once and keeps the answer as the `missing` fact (the model-context notice).
+    let missing = !rust_cli_fs::is_dir(std::path::Path::new(worktree.path.as_str())).await;
+    loaded.meta.workspace.root = worktree.path.clone();
+    loaded.execution_worktree = Some(rust_cli_kernel_api::session_ops::ExecutionWorktreeFact {
+        path: worktree.path,
+        workspace: worktree.directory,
+        branch: worktree.branch,
+        missing,
+    });
     Ok(())
 }
 

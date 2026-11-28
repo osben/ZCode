@@ -12,6 +12,9 @@ const MAX_LOG_ENTRIES: usize = 40;
 const MAX_LOG_BYTES: usize = 1_024;
 const MAX_RESULT_BYTES: usize = 4_000;
 const MAX_PHASES: usize = 32;
+/// Node `WORKFLOW_OBSERVATION_DISPLAY_MAX_MODELS` and `_MAX_META_CHARS` (bytes, as `boundDisplayText` counts them).
+const MAX_MODELS: usize = 100;
+const MAX_META_BYTES: usize = 2_048;
 const MAX_SUBAGENTS: usize = 64;
 /// Node `DISPLAY_TRUNCATION_SUFFIX`.
 const TRUNCATION_SUFFIX: &str = "\n...[truncated]";
@@ -296,6 +299,59 @@ pub(crate) fn snippet_display(
 }
 
 /// Node `boundDisplayText`: within `max_bytes` UTF-8 bytes, the cut ending in the truncation suffix.
+/// Node `createListModelsDisplay` (9.69): the ListModels card. Rows are capped at 100, the registry's free text (provider
+/// label, disabled reason) is bounded, and `truncated` says that not all of it is shown. `current` is omitted when no row
+/// is the session's. The desktop parses the card strictly, so every object is rebuilt from the schema's own keys.
+pub(crate) fn list_models_display(entries: &[crate::model_reference::CatalogEntry]) -> Value {
+    let mut truncated = false;
+    let mut meta = |value: &str| {
+        let (shown, cut) = bound(value, MAX_META_BYTES);
+        truncated |= cut;
+        shown
+    };
+    let models: Vec<Value> = entries
+        .iter()
+        .take(MAX_MODELS)
+        .map(|entry| {
+            let mut row = Map::new();
+            row.insert(
+                "id".into(),
+                json!(crate::model_reference::canonical_id(entry)),
+            );
+            row.insert("providerId".into(), json!(entry.provider));
+            row.insert("modelId".into(), json!(entry.model));
+            if let Some(label) = &entry.provider_label {
+                row.insert("providerLabel".into(), json!(meta(label)));
+            }
+            row.insert("reasoningLevels".into(), json!(entry.reasoning_levels));
+            if let Some(level) = &entry.default_level {
+                row.insert("defaultReasoningLevel".into(), json!(level));
+            }
+            if let Some(window) = entry.context_window {
+                row.insert("contextWindow".into(), json!(window));
+            }
+            if let Some(reason) = &entry.disabled_reason {
+                row.insert("disabledReason".into(), json!(meta(reason)));
+            }
+            Value::Object(row)
+        })
+        .collect();
+    truncated |= entries.len() > MAX_MODELS;
+    let mut card = Map::new();
+    card.insert("kind".into(), json!("list_models"));
+    if let Some(current) = entries.iter().find(|entry| entry.current) {
+        card.insert(
+            "current".into(),
+            json!(crate::model_reference::canonical_id(current)),
+        );
+    }
+    card.insert("models".into(), Value::Array(models));
+    if truncated {
+        card.insert("truncated".into(), Value::Bool(true));
+    }
+    Value::Object(card)
+}
+
 fn bound(text: &str, max_bytes: usize) -> (String, bool) {
     if text.len() <= max_bytes {
         return (text.to_owned(), false);

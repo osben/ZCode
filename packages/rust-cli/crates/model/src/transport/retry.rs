@@ -263,13 +263,13 @@ impl Connect {
         delay.ok_or_else(failed)
     }
 
-    /// 退避等待（认 Retry-After；等待超过上限时不等）；次数用尽时为 None。
+    /// 退避等待（认 Retry-After，规则见 `RetryPolicy::delay`）；次数用尽时为 None。
     fn backoff(&self, verdict: &Verdict) -> Option<Duration> {
         let retry = &self.route.options.retry;
         if self.attempt > retry.max_retries {
             return None;
         }
-        retry.delay(self.attempt, verdict.retry_after, jitter())
+        Some(retry.delay(self.attempt, verdict.retry_after, jitter()))
     }
 
     /// G：一次流式重发代替非流式重发，不等待、不受次数上限限制；用过之后为 None（provider-errors.md §3.2）。

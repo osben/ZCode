@@ -69,6 +69,8 @@ impl StepTools {
             // Fork: the agent catalog reads the Host's subagent snapshot once per parent run.
             run: Some(scope.run.clone()),
             inject_agents_md: scope.inject_agents_md,
+            // Fork: the model is told when the session (a subagent: its parent) runs in an execution worktree.
+            execution_worktree: view.execution_worktree.clone(),
             ..ContextRequest::new(
                 scope.session.clone(),
                 view.workspace,
@@ -144,3 +146,7 @@ async fn settled_snapshot(scope: &RunScope) -> ToolSnapshot {
 #[cfg(test)]
 #[path = "step_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "worktree_tests.rs"]
+mod worktree_tests;

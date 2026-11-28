@@ -62,6 +62,7 @@ fn query(session: Option<rust_cli_kernel_api::ids::SessionId>) -> ContextUsageQu
         workspace: workspace(),
         selection: carded(),
         mode: PermissionMode::Default,
+        execution_worktree: None,
     }
 }
 

@@ -1,0 +1,1 @@
+Execution worktree: the requested worktree {{path}} is missing; filesystem and terminal actions are blocked until it is restored. The parent workspace is {{workspace}}.

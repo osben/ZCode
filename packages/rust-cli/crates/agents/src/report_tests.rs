@@ -83,12 +83,12 @@ fn an_incognito_child_drops_identity_and_keeps_the_confirmation_floor() {
     use rust_cli_kernel_api::incognito::IncognitoProfile;
     use rust_cli_prompts::agents as texts;
     use rust_cli_prompts::texts as context_texts;
-    let normal = super::system("PROMPT", None);
+    let normal = super::system("PROMPT", None, None);
     assert_eq!(normal.len(), 2);
     assert_eq!(normal[0].text, context_texts::identity());
     assert!(normal[1].text.contains(texts::notes()));
 
-    let locked = super::system("PROMPT", Some(&IncognitoProfile::LOCKDOWN));
+    let locked = super::system("PROMPT", Some(&IncognitoProfile::LOCKDOWN), None);
     assert_eq!(locked.len(), 1);
     let body = &locked[0].text;
     assert!(body.starts_with("PROMPT"));
@@ -104,6 +104,34 @@ fn an_incognito_child_drops_identity_and_keeps_the_confirmation_floor() {
             harness: true,
             ..IncognitoProfile::LOCKDOWN
         }),
+        None,
     );
     assert_eq!(kept, normal);
+}
+
+/// Node `buildSubagentExecutionWorktreeContext`: a subagent of a worktree session ends its system text with the notice
+/// in `<env>` tags, whatever the incognito profile; a session without a worktree has none.
+#[test]
+fn a_child_of_a_worktree_session_ends_with_the_env_block() {
+    use rust_cli_kernel_api::incognito::IncognitoProfile;
+    let fact = rust_cli_kernel_api::session_ops::ExecutionWorktreeFact {
+        path: rust_cli_kernel_api::env::EnvPath::new("/w/.wt/a"),
+        workspace: rust_cli_kernel_api::env::EnvPath::new("/w"),
+        branch: Some("a".to_owned()),
+        missing: false,
+    };
+    let block = "<env>\nExecution worktree: this session runs in a linked git worktree of /w (branch a); file changes stay in the worktree until they are merged.\n</env>";
+    let plain = super::system("PROMPT", None, None);
+    let with = super::system("PROMPT", None, Some(&fact));
+    assert_eq!(with.len(), plain.len());
+    assert_eq!(with[0], plain[0]);
+    assert_eq!(with[1].text, format!("{}\n\n{block}", plain[1].text));
+    let locked = super::system("PROMPT", Some(&IncognitoProfile::LOCKDOWN), Some(&fact));
+    assert!(
+        locked
+            .last()
+            .unwrap()
+            .text
+            .ends_with(&format!("\n\n{block}"))
+    );
 }

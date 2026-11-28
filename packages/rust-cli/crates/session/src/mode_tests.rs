@@ -154,7 +154,7 @@ fn spawn(
             checkpoints: Vec::new(),
             start: StartSource::Startup,
             start_held: false,
-            execution_worktree: false,
+            execution_worktree: None,
             turn: None,
             last_turn_failed: false,
             child_live: None,

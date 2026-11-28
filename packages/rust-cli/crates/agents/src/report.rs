@@ -5,6 +5,7 @@ use rust_cli_kernel_api::env_shell::BackgroundStatus;
 use rust_cli_kernel_api::incognito::IncognitoProfile;
 use rust_cli_kernel_api::message::{AssistantMessage, ContentBlock, Usage};
 use rust_cli_kernel_api::model::{CacheControl, SystemBlock};
+use rust_cli_kernel_api::session_ops::ExecutionWorktreeFact;
 use rust_cli_prompts::agents as texts;
 use rust_cli_prompts::texts::{self as context_texts, render};
 
@@ -30,11 +31,18 @@ fn ephemeral(text: String) -> SystemBlock {
 ///
 /// Fork: an incognito child (Node `buildSubagentContextSections`) sends no identity block without `identity`, and
 /// without `harness` replaces the Notes with the confirm-first paragraph, which stays as the safety floor.
-pub(crate) fn system(prompt: &str, incognito: Option<&IncognitoProfile>) -> Vec<SystemBlock> {
+///
+/// Fork: a child of a session that runs in an execution worktree ends the body with the `<env>` notice, as Node's child
+/// context builder does; no incognito toggle drops it (specs/fork-rust-execution-worktree-context.md).
+pub(crate) fn system(
+    prompt: &str,
+    incognito: Option<&IncognitoProfile>,
+    worktree: Option<&ExecutionWorktreeFact>,
+) -> Vec<SystemBlock> {
     let identity = incognito
         .is_none_or(|profile| profile.identity)
         .then(|| ephemeral(context_texts::identity().to_owned()));
-    identity_and_body(identity, prompt, incognito)
+    identity_and_body(identity, prompt, incognito, worktree)
 }
 
 /// A workflow subagent's system prompt. Its `prompt` is the whole workflow identity (Node
@@ -57,6 +65,7 @@ fn identity_and_body(
     identity: Option<SystemBlock>,
     prompt: &str,
     incognito: Option<&IncognitoProfile>,
+    worktree: Option<&ExecutionWorktreeFact>,
 ) -> Vec<SystemBlock> {
     let tokens = render(
         context_texts::total_tokens(),
@@ -67,11 +76,25 @@ fn identity_and_body(
     } else {
         context_texts::action_caution()
     };
-    let body = [prompt, texts::authority(), notes, &tokens]
-        .into_iter()
-        .filter(|part| !part.is_empty())
-        .collect::<Vec<_>>()
-        .join("\n\n");
+    let env = worktree.and_then(|fact| {
+        rust_cli_prompts::worktree::subagent_block(
+            fact.path.as_str(),
+            fact.workspace.as_str(),
+            fact.branch.as_deref(),
+            fact.missing,
+        )
+    });
+    let body = [
+        prompt,
+        texts::authority(),
+        notes,
+        &tokens,
+        env.as_deref().unwrap_or(""),
+    ]
+    .into_iter()
+    .filter(|part| !part.is_empty())
+    .collect::<Vec<_>>()
+    .join("\n\n");
     identity.into_iter().chain([ephemeral(body)]).collect()
 }
 

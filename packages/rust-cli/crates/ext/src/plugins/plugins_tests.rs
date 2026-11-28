@@ -232,3 +232,30 @@ fn each_declared_server_maps_to_its_plugins_id() {
         [("plugin:viewer:docs".to_owned(), "viewer@market".to_owned())]
     );
 }
+
+/// Fork: only the plugin with Node's official Computer Use id flags its skill roots (a plugin that borrows the name
+/// does not).
+#[test]
+fn only_the_official_computer_use_plugin_flags_its_skill_roots() {
+    let plugin = |id: &str, dir: &str| Plugin {
+        id: id.to_owned(),
+        name: "computer-use".to_owned(),
+        dir: dir.to_owned(),
+        manifest: Value::Null,
+        skill_dirs: vec![format!("{dir}/skills")],
+        mcp_servers: Vec::new(),
+        agent_files: Vec::new(),
+        hooks: Vec::new(),
+    };
+    let plugins = Plugins(vec![
+        plugin("computer-use@zcode-plugins-official", "/p/official"),
+        plugin("computer-use@elsewhere", "/p/other"),
+        plugin("computer-use@inline", "/p/inline"),
+    ]);
+    let flags: Vec<bool> = plugins
+        .skill_roots()
+        .iter()
+        .map(|root| root.official_cua)
+        .collect();
+    assert_eq!(flags, [true, false, false]);
+}

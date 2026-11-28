@@ -235,7 +235,7 @@ fn undriven(harness: &crate::test_support::Harness, agent: &str) -> AgentId {
                 .unwrap(),
         ),
         workspace: crate::test_support::workspace(),
-        execution_worktree: false,
+        execution_worktree: None,
         selection: rust_cli_kernel_api::testing::selection(),
         mode: rust_cli_kernel_api::permission::PermissionMode::Default,
         background: true,

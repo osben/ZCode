@@ -30,6 +30,8 @@ pub const SKILL_MESSAGE_SOURCE: &str = "skill";
 const INVALID_FORMAT: i32 = 1;
 const UNKNOWN_SKILL: i32 = 2;
 const MODEL_INVOCATION_DISABLED: i32 = 4;
+const COMPUTER_USE_REFUSED: i32 = 5;
+use rust_cli_kernel_api::subagent_config::COMPUTER_USE_UNAVAILABLE;
 /// 结果的字符上限（通用值只定义在 kernel-api）。
 const MAX_RESULT_CHARS: usize = rust_cli_kernel_api::tool::DEFAULT_MAX_RESULT_CHARS;
 
@@ -112,6 +114,13 @@ impl Tool for SkillTool {
         let (raw, name) = requested(input);
         if raw.trim().is_empty() {
             return invalid(format!("Invalid skill format: {raw}"), INVALID_FORMAT);
+        }
+        if self
+            .catalog
+            .refuses_official(&context.workspace, &context.session, &name)
+            .await
+        {
+            return invalid(COMPUTER_USE_UNAVAILABLE.to_owned(), COMPUTER_USE_REFUSED);
         }
         let skills = self
             .catalog

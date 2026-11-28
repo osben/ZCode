@@ -295,3 +295,36 @@ fn the_session_less_views_never_list_or_find_a_workflow_tool() {
     assert_eq!(names(&registry.tools()), ["Read"]);
     assert!(registry.find(tool_names::CREATE_WORKFLOW).is_none());
 }
+
+/// 9.69: ListModels rides with the workflow tools (Node's gate has no other condition without a session-control
+/// surface), so a closed gate and an unactivated on-demand session leave it out.
+#[test]
+fn list_models_follows_the_workflow_gate() {
+    let mut tools = workflow_stubs();
+    tools.push(Arc::new(Stub {
+        name: tool_names::LIST_MODELS,
+    }));
+    let base = Base {
+        tools: vec![Arc::new(Stub { name: "Read" }) as Arc<dyn Tool>],
+    };
+    let gates = Gates(
+        [("open", OPEN), ("closed", CLOSED), ("lazy", ON_DEMAND)]
+            .into_iter()
+            .map(|(session, gate)| (session.to_owned(), gate))
+            .collect(),
+    );
+    let registry = GatedRegistry::new(Arc::new(base), Arc::new(gates), tools);
+    let has = |session: &str| {
+        registry
+            .find_for(&SessionId::new(session), tool_names::LIST_MODELS)
+            .is_some()
+    };
+    assert!(has("open"));
+    assert!(!has("closed"));
+    assert!(!has("lazy"));
+    assert!(!has("unknown"));
+    let open = names(&registry.snapshot(&SessionId::new("open")).tools);
+    assert_eq!(open.len(), 12);
+    assert_eq!(open.last().map(String::as_str), Some("ListModels"));
+    assert!(registry.find(tool_names::LIST_MODELS).is_none());
+}

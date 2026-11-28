@@ -179,6 +179,7 @@ pub(crate) async fn text(kernel: Arc<dyn Kernel>, options: PrintOptions) -> Resu
         workspace: options.workspace.clone(),
         selection: options.selection.clone(),
         mode: options.mode,
+        execution_worktree: None,
     };
     let usage = kernel.context_usage(query).await;
     if let Some(session) = &session {

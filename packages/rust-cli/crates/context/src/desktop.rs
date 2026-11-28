@@ -1,5 +1,5 @@
-//! Fork: Node's "ZCode Desktop Context" system section (core `context/sections/desktop.ts`), byte for byte
-//! (specs/fork-rust-agent-parity.md, "ZCode Desktop Context").
+//! Fork: Node's "ZCode Desktop Context" text (core `context/sections/desktop.ts`), byte for byte, and the session's Gen UI
+//! directory. The text rides the environment announcement (specs/fork-rust-desktop-context-announcement.md).
 
 use std::collections::HashMap;
 use std::path::{Component, Path, PathBuf};
@@ -15,21 +15,21 @@ use sha2::{Digest, Sha256};
 
 use crate::config::DesktopContext;
 
-/// The section's name in `/context` (Node's section name).
-pub(crate) const NAME: &str = "ZCode Desktop Context";
+/// What the environment announcement says about the desktop (Node `withDesktopContext`): present only on a request
+/// that gets the ZCode Desktop Context.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct DesktopFacts {
+    /// The session's Gen UI output directory when the Host supplied a root; the Interactive views block goes with it.
+    pub(crate) directory: Option<String>,
+}
 
-/// The section text. `directory` is the session's Gen UI output directory when the Host supplied a root.
-pub(crate) fn section(directory: Option<&str>) -> String {
-    let views = match directory {
-        // Node writes the directory with `JSON.stringify`; serde_json escapes strings the same way.
-        Some(directory) => render(
-            texts::desktop_gen_ui(),
-            &[(
-                "directory",
-                &serde_json::to_string(directory).unwrap_or_default(),
-            )],
-        ),
-        None => texts::desktop_gen_ui_none().to_owned(),
+/// The ZCode Desktop Context text (Node `buildDesktopContextContent`). Without a Gen UI directory the whole Interactive
+/// views block is left out, and nothing replaces it.
+pub(crate) fn content(has_directory: bool) -> String {
+    let views = if has_directory {
+        format!("{}\n\n", texts::desktop_gen_ui())
+    } else {
+        String::new()
     };
     render(texts::desktop_context(), &[("interactive_views", &views)])
 }

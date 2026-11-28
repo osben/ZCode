@@ -370,7 +370,7 @@ impl LiveAgent {
                 memory: None,
             }),
             workspace: run.workspace,
-            execution_worktree: false,
+            execution_worktree: None,
             machine: MachineName::primary(),
             selection: run.selection,
             mode: run.mode,

@@ -48,6 +48,7 @@ mod grep_output;
 mod html_markdown;
 mod line_diff;
 mod lsp_range;
+mod model_list;
 pub mod model_reference;
 #[cfg(test)]
 #[path = "side_effect_tests.rs"]

@@ -9,6 +9,7 @@
 //! `testing::OpsOverride`（全委托给 `testing::NoSession`，只覆盖关心的方法）。
 
 use async_trait::async_trait;
+use serde::{Deserialize, Serialize};
 
 use crate::env::{EnvPath, WorkspaceRef};
 use crate::ids::SessionId;
@@ -19,6 +20,20 @@ use crate::monitor::MonitorArmed;
 use crate::orchestration::OrchestrationError;
 use crate::permission::PermissionMode;
 use crate::plan::PlanModeFlags;
+
+/// Fork: the facts of a session that runs in an execution worktree (Node `config.executionWorktree`, specs/
+/// fork-rust-execution-worktree-context.md). The session actor owns it; the model context and the missing-root guard
+/// read it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ExecutionWorktreeFact {
+    /// Where the session runs (the worktree).
+    pub path: EnvPath,
+    /// The parent workspace the session is listed under (Node `workspacePath`).
+    pub workspace: EnvPath,
+    pub branch: Option<String>,
+    /// The worktree directory was gone when the actor opened (Node sets it at resume only).
+    pub missing: bool,
+}
 
 /// 会话在一个时刻的状态：一次往返读出（同一时刻的值，docs/specs/rust-cli/query.md §1、context.md §13.4）。
 /// 主循环每一步与每次工具调用前读一次，工具改过的模式与工作目录在同一回合里立即生效（tools-more.md §2.3、§11.4）。
@@ -37,8 +52,9 @@ pub struct RunView {
     /// 会话现在的目标条件（`/goal`，goal.md §4）；子代理没有。
     pub goal: Option<String>,
     /// Fork: the workspace is the session's execution worktree (a subagent: its parent's), so a root that is gone
-    /// refuses the workspace tools (Node `getMissingExecutionWorktreeToolError` applies only then).
-    pub execution_worktree: bool,
+    /// refuses the workspace tools (Node `getMissingExecutionWorktreeToolError` applies only then), and the model is
+    /// told about it ([`ExecutionWorktreeFact`]).
+    pub execution_worktree: Option<ExecutionWorktreeFact>,
     /// Fork: the limits of the running turn (automation id, hidden tools; specs/fork-rust-automations.md). Default
     /// outside a turn the Host dispatched, and always for a subagent: like Node, a child run takes the session's tool
     /// config, not the turn's. Node registers no Cron tool for a subagent child (`runtime-tools.ts`
@@ -58,7 +74,7 @@ impl RunView {
             workspace,
             selection: None,
             goal: None,
-            execution_worktree: false,
+            execution_worktree: None,
             turn: Default::default(),
         }
     }

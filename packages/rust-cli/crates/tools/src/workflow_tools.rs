@@ -20,6 +20,7 @@ use rust_cli_kernel_api::workflow_snippet::WorkflowSnippetPort;
 use serde::Deserialize;
 use serde_json::Value;
 
+use crate::model_list::ListModelsTool;
 use crate::workflow_amend::AmendWorkflowTool;
 use crate::workflow_create::CreateWorkflowTool;
 use crate::workflow_eval_snippet::EvalWorkflowSnippetTool;
@@ -46,7 +47,7 @@ pub struct Contract {
     pub input_schema: Value,
 }
 
-/// The ten contracts in Node's registration order (`core/src/tool/handlers/index.ts`).
+/// The eleven contracts (the ten workflow tools, then ListModels) in Node's registration order (`core/src/tool/handlers/index.ts`).
 pub fn contracts() -> &'static [Contract] {
     static PARSED: std::sync::OnceLock<Vec<Contract>> = std::sync::OnceLock::new();
     PARSED.get_or_init(|| {
@@ -105,7 +106,7 @@ pub async fn skill_loaded(context: &ToolUseContext) -> bool {
 }
 
 /// The dynamic-workflow tools to register, in Node's registration order (CreateWorkflow, SaveWorkflow,
-/// EvalWorkflowSnippet, then ListSavedWorkflows). CreateWorkflow and SaveWorkflow check scripts, so they exist only with
+/// EvalWorkflowSnippet, then ListSavedWorkflows and ListModels). CreateWorkflow and SaveWorkflow check scripts, so they exist only with
 /// an analyzer; without one, neither is offered. CreateWorkflow starts runs through `run_port` (no port: it typechecks and
 /// says it did not run). EvalWorkflowSnippet runs a snippet, so it exists only with a snippet port. All reach a session
 /// only through the gate (`runtime::workflow_gate`), whose source no entry point sets yet.
@@ -127,7 +128,7 @@ pub fn workflow_tools(
         ));
         // Node's order: CreateWorkflow, AmendWorkflow, SaveWorkflow (9.43).
         tools.push(Arc::new(
-            AmendWorkflowTool::new(analyzer.clone(), runs.clone(), ids).with_models(models),
+            AmendWorkflowTool::new(analyzer.clone(), runs.clone(), ids).with_models(models.clone()),
         ));
         // FillWorkflowHole sits next to AmendWorkflow (9.45); it stays on the child denylist.
         tools.push(Arc::new(
@@ -139,6 +140,8 @@ pub fn workflow_tools(
         tools.push(Arc::new(EvalWorkflowSnippetTool::new(snippets)));
     }
     tools.push(Arc::new(ListSavedWorkflowsTool::new(home)));
+    // Node registers ListModels right after ListSavedWorkflows (9.69); it reads the same late catalog.
+    tools.push(Arc::new(ListModelsTool::new(models)));
     tools
 }
 

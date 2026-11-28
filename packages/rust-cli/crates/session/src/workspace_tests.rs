@@ -410,6 +410,7 @@ async fn the_execution_root_moves_the_session_without_a_note() {
             id,
             Command::SetExecutionRoot {
                 root: EnvPath::new(root),
+                branch: Some("feat/a".to_owned()),
             },
         )
     };
@@ -427,6 +428,15 @@ async fn the_execution_root_moves_the_session_without_a_note() {
     )));
     let view = built.session.view().await.unwrap();
     assert_eq!(view.meta.workspace.root.as_str(), "/work/.worktrees/a");
+    // The model-context notice names the parent the session moved from and the activation's branch.
+    let fact = view.execution_worktree.expect("the move records the fact");
+    assert_eq!(fact.path.as_str(), "/work/.worktrees/a");
+    assert_eq!(
+        fact.workspace.as_str(),
+        crate::test_support::meta().workspace.root.as_str()
+    );
+    assert_eq!(fact.branch.as_deref(), Some("feat/a"));
+    assert!(!fact.missing);
     assert!(view.messages.is_empty(), "{:?}", view.messages);
     assert_eq!(*cwd_env.cwd.lock_unpoisoned(), ["/work/.worktrees/a"]);
 
@@ -502,6 +512,7 @@ async fn held_start_runs_in_the_worktree(opened: crate::Opened, start: StartSour
             "c1",
             Command::SetExecutionRoot {
                 root: EnvPath::new("/work/.worktrees/a"),
+                branch: None,
             },
         ))
         .await;
@@ -557,6 +568,7 @@ async fn a_same_root_move_releases_the_held_start_once() {
             id,
             Command::SetExecutionRoot {
                 root: EnvPath::new("/work/.worktrees/a"),
+                branch: None,
             },
         )
     };
@@ -616,6 +628,7 @@ async fn a_never_activated_prepared_session_closes_without_session_end() {
                     "c1",
                     Command::SetExecutionRoot {
                         root: EnvPath::new("/work/.worktrees/a"),
+                        branch: None,
                     },
                 ))
                 .await;

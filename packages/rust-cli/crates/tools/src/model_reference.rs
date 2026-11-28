@@ -32,6 +32,8 @@ pub struct CatalogEntry {
     pub provider_label: Option<String>,
     pub reasoning_levels: Vec<String>,
     pub default_level: Option<String>,
+    /// The model's context window, for the ListModels card.
+    pub context_window: Option<u64>,
     /// The session's own model (provider and model; the level is not part of the identity).
     pub current: bool,
     /// Never set by this host, as Node's port never sets it.
@@ -81,6 +83,7 @@ pub fn catalog_entries(
                 reasoning_levels: model.reasoning_levels.clone(),
                 // Node `reasoning.default ?? reasoning.values.at(-1)` (9.65, closes 917).
                 default_level: model.default_level(),
+                context_window: Some(model.context_window),
                 current: session.is_some_and(|session| {
                     session.provider == model.provider && session.model == model.model
                 }),
@@ -400,7 +403,8 @@ fn same(left: &str, right: &str) -> bool {
     left.trim().to_lowercase() == right.trim().to_lowercase()
 }
 
-fn id(entry: &CatalogEntry) -> String {
+/// Node `formatModelCatalogId`: `provider/model`, without a level.
+pub fn canonical_id(entry: &CatalogEntry) -> String {
     format!("{}/{}", entry.provider, entry.model)
 }
 
@@ -415,7 +419,7 @@ fn not_found(text: &str, entries: &[CatalogEntry]) -> Refusal {
         .map(|entry| {
             format!(
                 "{}{}",
-                id(entry),
+                canonical_id(entry),
                 if entry.current { " [current]" } else { "" }
             )
         })
@@ -440,7 +444,7 @@ fn not_found(text: &str, entries: &[CatalogEntry]) -> Refusal {
 }
 
 fn other_provider(text: &str, session: &CatalogEntry, candidates: &[&CatalogEntry]) -> Refusal {
-    let lines: Vec<String> = candidates.iter().map(|entry| id(entry)).collect();
+    let lines: Vec<String> = candidates.iter().map(|entry| canonical_id(entry)).collect();
     let provider = session
         .provider_label
         .as_deref()
@@ -455,7 +459,7 @@ fn other_provider(text: &str, session: &CatalogEntry, candidates: &[&CatalogEntr
 }
 
 fn ambiguous(text: &str, candidates: &[&CatalogEntry]) -> Refusal {
-    let lines: Vec<String> = candidates.iter().map(|entry| id(entry)).collect();
+    let lines: Vec<String> = candidates.iter().map(|entry| canonical_id(entry)).collect();
     Refusal {
         reason: RefusalReason::Ambiguous,
         message: format!(
@@ -471,7 +475,7 @@ fn disabled(text: &str, candidates: &[&CatalogEntry]) -> Refusal {
         .map(|entry| {
             format!(
                 "{} — {}",
-                id(entry),
+                canonical_id(entry),
                 entry.disabled_reason.as_deref().unwrap_or_default()
             )
         })
@@ -486,7 +490,7 @@ fn disabled(text: &str, candidates: &[&CatalogEntry]) -> Refusal {
 }
 
 fn level_unknown(entry: &CatalogEntry, level: &str) -> Refusal {
-    let id = id(entry);
+    let id = canonical_id(entry);
     let levels = if entry.reasoning_levels.is_empty() {
         format!("{id} has no reasoning levels — drop the `$` suffix.")
     } else {

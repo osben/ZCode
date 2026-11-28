@@ -122,7 +122,7 @@ fn loaded_sessions_round_trip_with_open_work() {
         message_models: Default::default(),
         tool_displays: Default::default(),
         marks: Default::default(),
-        execution_worktree: false,
+        execution_worktree: None,
     };
     round_trip(&loaded);
     // 没有这些字段的旧结果也能读，读出来是空清单。
