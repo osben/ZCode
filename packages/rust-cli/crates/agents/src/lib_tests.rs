@@ -12,6 +12,52 @@ use tokio::sync::Notify;
 
 use crate::test_support::{desktop_harness, harness, text};
 
+/// Fork (rule 17, Node `FilteredSkillPort` with `cuaPolicy`): every child run is enrolled in the skill catalog before its
+/// first request, whether or not its profile declares `skills`, and the enrolment ends with the run.
+#[tokio::test]
+async fn every_child_run_is_enrolled_in_the_skill_catalog_and_forgotten_after() {
+    let harness = harness(None);
+    let output = harness
+        .call(
+            "sess_parent",
+            "Agent",
+            json!({"description": "Say hello", "prompt": "Say hello.", "subagent_type": "general-purpose", "run_in_background": false}),
+        )
+        .await;
+    assert!(text(&output).starts_with("[Subagent hand-back]"));
+    let calls = harness.grants.calls.lock().unwrap().clone();
+    let kinds: Vec<&str> = calls.iter().map(|(kind, _)| *kind).collect();
+    assert_eq!(kinds, ["enroll", "forget"], "{calls:?}");
+    assert_eq!(calls[0].1, calls[1].1);
+    assert_ne!(calls[0].1.as_str(), "sess_parent");
+}
+
+/// Node `validateSubagentComputerUseConfiguration`: a profile whose `skills` names an official Computer Use skill is
+/// refused before the child starts; a profile with no `skills` list is not asked.
+#[tokio::test]
+async fn a_skills_list_naming_an_official_skill_is_refused() {
+    let harness = harness(None);
+    *harness.grants.refusal.lock().unwrap() =
+        Some(rust_cli_kernel_api::subagent_config::COMPUTER_USE_UNAVAILABLE.to_owned());
+    let mut definition = crate::definitions::builtins().remove(0);
+    let workspace = crate::test_support::workspace();
+    definition.skills = None;
+    assert_eq!(
+        crate::toolset::skills_refusal(&definition, harness.grants.as_ref(), &workspace).await,
+        None
+    );
+    definition.skills = Some(Vec::new());
+    assert_eq!(
+        crate::toolset::skills_refusal(&definition, harness.grants.as_ref(), &workspace).await,
+        None
+    );
+    definition.skills = Some(vec!["computer-use:screen".to_owned()]);
+    assert_eq!(
+        crate::toolset::skills_refusal(&definition, harness.grants.as_ref(), &workspace).await,
+        Some("Computer Use is not available in subagent".to_owned())
+    );
+}
+
 #[tokio::test]
 async fn a_foreground_agent_runs_in_a_child_session_and_hands_back_its_report() {
     let harness = harness(None);

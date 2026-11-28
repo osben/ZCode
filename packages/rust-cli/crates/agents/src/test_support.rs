@@ -423,6 +423,8 @@ pub(crate) struct Harness {
     pub(crate) catalog: Arc<crate::AgentCatalog>,
     /// Fork: `ContextRequest::inject_agents_md` of every context build, in order.
     pub(crate) injected: Arc<Mutex<Vec<bool>>>,
+    /// Fork (rule 17): the skill-grant calls of the child runs.
+    pub(crate) grants: Arc<RecordingGrants>,
     pub(crate) _scope: TaskScope,
 }
 
@@ -719,6 +721,7 @@ fn built_full(
     ));
     // 操作上下文与别的 ID 同一个来源（ID 的顺序不变，工作线 F134）。
     let ids: Arc<dyn rust_cli_kernel_api::clock::Ids> = Arc::new(SequentialIds::default());
+    let grants = Arc::new(RecordingGrants::default());
     let ports = AgentsPorts {
         store: store.clone(),
         ids: ids.clone(),
@@ -743,7 +746,7 @@ fn built_full(
         ),
         incognito: Default::default(),
         sessions: Default::default(),
-        skill_grants: Arc::new(NoSkillGrants),
+        skill_grants: grants.clone(),
     };
     let agents = Agents::new(
         ports,
@@ -779,6 +782,7 @@ fn built_full(
         opened: Arc::default(),
         catalog,
         injected,
+        grants,
         _scope: scope,
     }
 }
@@ -923,19 +927,39 @@ impl Default for crate::live::Live {
     }
 }
 
-/// Fork (rule 17): a test double with no skill catalog; every entry is unresolved and no grant is kept.
-struct NoSkillGrants;
+/// Fork (rule 17): a test double with no skill catalog. Every entry is unresolved and no grant is kept; it records the
+/// enrol and forget calls of the child runs and answers the Computer Use refusal with `refusal`.
+#[derive(Default)]
+pub(crate) struct RecordingGrants {
+    /// `("enroll" | "forget", child)` in call order.
+    pub(crate) calls: Mutex<Vec<(&'static str, SessionId)>>,
+    pub(crate) refusal: Mutex<Option<String>>,
+}
 
 #[async_trait::async_trait]
-impl rust_cli_kernel_api::subagent_config::SubagentSkillGrants for NoSkillGrants {
+impl rust_cli_kernel_api::subagent_config::SubagentSkillGrants for RecordingGrants {
     async fn grant(
         &self,
-        _child: &rust_cli_kernel_api::ids::SessionId,
-        _workspace: &rust_cli_kernel_api::env::WorkspaceRef,
+        _child: &SessionId,
+        _workspace: &WorkspaceRef,
         entries: &[String],
     ) -> Vec<String> {
         entries.to_vec()
     }
 
-    fn forget(&self, _child: &rust_cli_kernel_api::ids::SessionId) {}
+    fn forget(&self, child: &SessionId) {
+        self.calls.lock_unpoisoned().push(("forget", child.clone()));
+    }
+
+    fn enroll(&self, child: &SessionId) {
+        self.calls.lock_unpoisoned().push(("enroll", child.clone()));
+    }
+
+    async fn computer_use_refusal(
+        &self,
+        _workspace: &WorkspaceRef,
+        _entries: &[String],
+    ) -> Option<String> {
+        self.refusal.lock_unpoisoned().clone()
+    }
 }

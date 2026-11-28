@@ -222,6 +222,7 @@ async fn plugin_skills_are_prefixed_and_parsed_once_per_version() {
     catalog.set_plugin_roots(vec![PluginSkillRoot {
         plugin: "kit".to_owned(),
         dir: "/plugins/kit/skills".to_owned(),
+        official_cua: false,
     }]);
     let first = catalog.skills(&workspace()).await;
     assert_eq!(names(&first), ["kit:deploy=Deploy"]);

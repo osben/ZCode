@@ -47,6 +47,9 @@ pub struct PluginAgentFile {
     pub namespace: Vec<String>,
 }
 
+/// Node `ZCODE_CUA_OFFICIAL_PLUGIN_ID` (packages/shared/src/mcp.ts).
+pub(crate) const OFFICIAL_CUA_PLUGIN_ID: &str = "computer-use@zcode-plugins-official";
+
 /// 一个已加载的插件。
 #[derive(Debug, Clone, PartialEq)]
 pub struct Plugin {
@@ -76,6 +79,7 @@ impl Plugins {
                 plugin.skill_dirs.iter().map(|dir| PluginSkillRoot {
                     plugin: plugin.name.clone(),
                     dir: dir.clone(),
+                    official_cua: plugin.id == OFFICIAL_CUA_PLUGIN_ID,
                 })
             })
             .collect()

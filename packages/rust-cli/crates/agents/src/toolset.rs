@@ -476,6 +476,20 @@ pub(crate) fn mcp_refusal(definition: &AgentDefinition, view: Option<&McpView>) 
     })
 }
 
+/// Fork (rule 17, Node `validateSubagentComputerUseConfiguration`): the refusal when the definition's `skills` list names
+/// an official Computer Use skill. None when no list is declared or no entry does.
+pub(crate) async fn skills_refusal(
+    definition: &AgentDefinition,
+    grants: &dyn rust_cli_kernel_api::subagent_config::SubagentSkillGrants,
+    workspace: &rust_cli_kernel_api::env::WorkspaceRef,
+) -> Option<String> {
+    let entries = definition
+        .skills
+        .as_ref()
+        .filter(|entries| !entries.is_empty())?;
+    grants.computer_use_refusal(workspace, entries).await
+}
+
 /// Fork (rule 16, Node `resolveSubagentMcpAccess` awaiting `mcpStartupPromise`): when a listed server is still
 /// connecting, waits for the parent's first connections (bounded by the connect wait), then refuses as
 /// [`mcp_refusal`] does.
