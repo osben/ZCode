@@ -56,6 +56,15 @@ async fn started_with(
     scope: &TaskScope,
     servers: Vec<(&str, McpScope, Arc<crate::test_support::Handler>)>,
 ) -> Ext {
+    started_on(profiles, &Default::default(), scope, servers).await
+}
+
+async fn started_on(
+    profiles: &IncognitoProfiles,
+    sessions: &rust_cli_kernel_api::workspace_key::SessionWorkspaces,
+    scope: &TaskScope,
+    servers: Vec<(&str, McpScope, Arc<crate::test_support::Handler>)>,
+) -> Ext {
     let mut fake = FakeMcp::default();
     for (name, _, handler) in &servers {
         fake = fake.with(name, handler.clone());
@@ -77,7 +86,7 @@ async fn started_with(
             spawner: scope.spawner(),
             clock: crate::clock_tests::clock(),
             incognito: profiles.clone(),
-            sessions: Default::default(),
+            sessions: sessions.clone(),
             app_tools: None,
         },
         base,
@@ -281,4 +290,66 @@ fn the_automation_switch_covers_every_cron_tool() {
         );
     }
     assert_eq!(super::hides_automation_tool(&off, "ScheduleWakeup"), None);
+}
+
+/// A tool with a given name, for the gate's name checks.
+struct Named(&'static str);
+
+#[async_trait::async_trait]
+impl rust_cli_kernel_api::tool::Tool for Named {
+    fn name(&self) -> &str {
+        self.0
+    }
+
+    fn input_schema(&self) -> serde_json::Value {
+        json!({"type": "object"})
+    }
+
+    fn description(&self, _context: &rust_cli_kernel_api::tool::PromptContext) -> String {
+        String::new()
+    }
+
+    async fn call(
+        &self,
+        _input: serde_json::Value,
+        _context: rust_cli_kernel_api::tool::ToolUseContext,
+        _progress: tokio::sync::mpsc::Sender<rust_cli_kernel_api::tool::ToolProgress>,
+    ) -> Result<rust_cli_kernel_api::tool::ToolOutput, rust_cli_kernel_api::tool::ToolError> {
+        unreachable!("the gate tests never call the tool")
+    }
+}
+
+/// Node `resolveSessionToolDenylist`: a session on a remote workspace identity (ssh, wsl, docker, server) has the five
+/// Cron tools denied (`REMOTE_AUTOMATION_TOOL_NAMES`), whatever its incognito profile. The off-peak tools and a local
+/// or malformed-identity workspace are untouched.
+#[tokio::test]
+async fn a_remote_workspace_session_hides_the_five_cron_tools() {
+    let sessions = rust_cli_kernel_api::workspace_key::SessionWorkspaces::default();
+    let remote = SessionId::new("remote");
+    let local = SessionId::new("local");
+    let malformed = SessionId::new("malformed");
+    let at = |root: &str| rust_cli_kernel_api::env::WorkspaceRef {
+        environment: rust_cli_kernel_api::ids::EnvironmentId::new("local"),
+        root: rust_cli_kernel_api::env::EnvPath::new(root),
+    };
+    sessions.record(&remote, at("remote:ssh:host:22:user:/work/app"));
+    sessions.record(&local, at(CWD));
+    sessions.record(&malformed, at("remote:ftp:host:/work"));
+    let scope = TaskScope::root("test", |_| {});
+    let ext = started_on(&IncognitoProfiles::default(), &sessions, &scope, Vec::new()).await;
+    let gate = ext.incognito_tools();
+    for name in [
+        "CronCreate",
+        "CronList",
+        "CronUpdate",
+        "CronDelete",
+        "CronPauseSelf",
+    ] {
+        assert!(gate.hides(&remote, &Named(name)), "{name} on remote");
+        assert!(!gate.hides(&local, &Named(name)), "{name} on local");
+        assert!(!gate.hides(&malformed, &Named(name)), "{name} malformed");
+    }
+    for name in ["OffPeakCreate", "OffPeakList", "ScheduleWakeup", "Bash"] {
+        assert!(!gate.hides(&remote, &Named(name)), "{name} on remote");
+    }
 }

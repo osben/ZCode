@@ -69,7 +69,7 @@ pub(crate) fn resolve(entries: &[String], skills: &[Arc<Skill>]) -> Resolved {
 }
 
 /// The part of a plugin skill's call name after the plugin prefix (`kit:review` gives `review`).
-fn bare(skill: &Skill) -> &str {
+pub(super) fn bare(skill: &Skill) -> &str {
     match skill.source {
         SkillSource::Plugin { .. } => skill
             .name

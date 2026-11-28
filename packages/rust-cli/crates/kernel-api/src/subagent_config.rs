@@ -105,6 +105,25 @@ pub trait SubagentSkillGrants: Send + Sync {
         entries: &[String],
     ) -> Vec<String>;
 
-    /// The run of `child` ended: drop its grant.
+    /// The run of `child` ended: drop its grant and its enrolment.
     fn forget(&self, child: &SessionId);
+
+    /// Marks `child` as a subagent child for its run: its skill view never shows the official Computer Use plugin's
+    /// skills (Node `FilteredSkillPort` with `cuaPolicy`, applied to every child whether or not it declares `skills`).
+    /// Called before the first request; `forget` ends it. No-op for a catalog that has no such skills.
+    fn enroll(&self, _child: &SessionId) {}
+
+    /// Node `validateSubagentComputerUseConfiguration` for the `skills` list: the refusal text when an entry names the
+    /// official Computer Use plugin's skill (a qualified name, or a bare name that matches exactly one skill, which is
+    /// official), checked before the child starts. `None` when no entry does.
+    async fn computer_use_refusal(
+        &self,
+        _workspace: &WorkspaceRef,
+        _entries: &[String],
+    ) -> Option<String> {
+        None
+    }
 }
+
+/// Node `SUBAGENT_COMPUTER_USE_UNAVAILABLE_MESSAGE`.
+pub const COMPUTER_USE_UNAVAILABLE: &str = "Computer Use is not available in subagent";
