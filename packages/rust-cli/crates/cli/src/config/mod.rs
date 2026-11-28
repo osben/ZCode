@@ -15,6 +15,7 @@ pub(crate) mod project_hooks;
 mod storage;
 pub(crate) mod trust;
 mod trust_identity;
+mod user_fallback;
 pub(crate) mod workspace_layer;
 mod workspace_plugins;
 pub(crate) mod workspace_schema;
@@ -188,13 +189,18 @@ fn object<'a>(
 pub(crate) struct Files {
     pub(crate) user_path: String,
     pub(crate) user: ConfigFile,
+    /// `~/.agents/mcp.json` as a user-scope layer, when the user config declares no MCP server.
+    pub(crate) user_fallback: Option<user_fallback::UserFallback>,
     pub(crate) projects: Vec<ProjectFile>,
 }
 
 pub(crate) async fn read_files(inputs: &ConfigInputs<'_>) -> Files {
+    let user = read_cli_config(inputs.paths).await;
+    let user_fallback = user_fallback::read(inputs.paths, user.object()).await;
     Files {
         user_path: inputs.paths.cli_config().as_path().display().to_string(),
-        user: read_cli_config(inputs.paths).await,
+        user,
+        user_fallback,
         projects: files::discover(inputs.files, inputs.workspace).await,
     }
 }
@@ -212,6 +218,14 @@ pub(crate) fn layers<'a>(
         object: user_object.unwrap_or(empty),
         path: &files.user_path,
     }];
+    // Fork: Node's user MCP fallback is part of the user layers, merged after the project ones.
+    if let Some(fallback) = &files.user_fallback {
+        layers.push(Layer {
+            source: RuleSource::UserSettings,
+            object: &fallback.object,
+            path: &fallback.path,
+        });
+    }
     for project in &files.projects {
         if let Some(object) = object(&project.path, &project.file, warnings) {
             layers.push(Layer {
@@ -354,6 +368,7 @@ pub(crate) async fn assemble(inputs: &ConfigInputs<'_>) -> ConfigSnapshot {
         user_path,
         user,
         projects,
+        ..
     } = &files;
     let user_object = user.object();
     let permission = merge::permission(&layers, &mut warnings);
