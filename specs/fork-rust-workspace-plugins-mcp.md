@@ -262,7 +262,8 @@ discovery found to the merged project layer, in both loaders: the process assemb
   such verbs, so this is a fork extension.
 - Fail closed: the merge runs before the trust filter. An ungranted or changed declaration is dropped
   there, an enabled one needs a grant for its digest, a disabled one is listed only when granted.
-- A user fallback (`~/.agents/mcp.json`) is not ported here.
+- The user fallback `~/.agents/mcp.json` is a different file with other rules: see "As built: the user
+  `~/.agents/mcp.json` fallback".
 - The session pin from "As built: a session keeps its group" is unchanged. The fallback file is read
   with the other layer inputs on each session open, the layer compares the result with the installed
   group, and an equal read installs nothing.
@@ -271,6 +272,85 @@ Acceptance: `cli` tests (the workspace layer and the process snapshot take a gra
 and drop an ungranted one, the fallback is ignored when the project file declares servers); E2E
 `plugins/conversation-session-workspace-mcp-trust` and
 `plugins/conversation-session-plugin-mcp-skill-workspace-root` on Rust.
+
+## As built: the user `~/.agents/mcp.json` fallback
+
+Node registers `~/.agents/mcp.json` as the fallback of the user config path
+(`dynamic-mcp-config.ts` `fallbackPaths`, read by `config-loader.ts`). Rust did not read it, so a
+user with servers only in that file had none in a Rust session.
+
+- Applies when the user config (`~/.zcode/cli/config.json`) declares no server: the file is missing or
+  unreadable, `mcp.servers` is absent or empty, or every entry is invalid (a disabled entry counts as
+  declared). `config/user_fallback.rs` decides it and reads the file from the user's home, not through
+  the workspace file port.
+- The file's `mcpServers` become a user layer merged after the project layers, so the servers are
+  user scope (`McpScope::User`), need no workspace review or grant, and shadow a project server of
+  the same name (a project fallback entry of that name is skipped, as Node's user layer wins).
+  Incognito drops them with the other user servers.
+- A stdio `cwd` is not resolved against the file: user servers keep it raw, as in Node.
+- A file that is not a JSON object, or whose `mcpServers` is not an object, yields nothing and a
+  warning; a broken entry is skipped alone.
+- `/mcp enable|disable` on such a server writes `enabled` under the file's top-level `mcpServers`
+  (`write_user_fallback_mcp_enabled`, the same lock as the config writer), not into `config.json`.
+- Not changed: Node's trust discovery and `mcp/list` without a Host list read the config through
+  `createConfig`, which never sees this file, so `mcp_trust` does not know it. The Desktop's own
+  server list (the `mcpServers` of `mcp/list`) already carries what it resolved.
+- The `.agents/mcp.json` name rule is already Node's: the system, env and cli layers carry no
+  `mcp.servers` for trust discovery (`DefaultRuntimeConfig.mcp.servers` is empty, `parseEnvConfig` and
+  `cliOverrides` give none), so only user names make a project fallback entry skip.
+
+Acceptance: `cli` tests in `config/user_fallback_tests.rs` (when it applies, user scope without a
+grant, shadowing, broken file, the toggle target in `frontends/tui_mcp_tests.rs`).
+
+## As built: the settings lane revalidates in place
+
+Node's `mcp/list` connect calls `connectConfiguredServers(servers, {revalidate: true})`: a server
+with the same configuration keeps its record, a connected one is probed with `ping` (5 s, or the
+server's own timeout when shorter; a JSON-RPC error answer still counts as alive), a failed one
+reconnects, and only changed, removed and new servers are stopped or started. Rust closed the whole
+lane and respawned every child on each connect.
+
+- Owner: `AppWorkspace` (`app_workspace.rs`). A connect for the same workspace key keeps the lane's
+  `McpManager` and calls `McpManager::reconcile` (`ext` `mcp/manager_reconcile.rs`) under the lane lock,
+  so it stays ordered against newer connects; `Reconciled::settle` then closes the stopped clients and
+  probes the kept connected ones outside the lock, restarting the dead. A connect for another key
+  starts a manager of its own and closes the displaced lane, as before.
+- `reconcile` restarts a changed or failed server in place (the generation moves on, so the old
+  task's late updates are dropped), removes a name that is no longer wanted (cancel, close, app
+  listeners run), and starts new names. A status read between install and settle shows a failed server
+  that the lane is about to revive as `connecting`.
+- The lane's connect timeout, tool timeout and output cap come from the process environment
+  (`MCP_TIMEOUT`, `MCP_TOOL_TIMEOUT`, `MAX_MCP_OUTPUT_TOKENS`) through the same reader as a session's
+  settings (`assemble::mcp::with_env_limits`). Node itself has no such variables: its adapter uses the
+  server's `timeoutMs` or 30 s. The lane follows the Rust sessions here, so a Settings connect gives up
+  when a session would.
+- This lowers the lane churn recorded in `fork-rust-mcp-oauth.md` "E2E findings": a refresh no longer
+  spawns a new stdio child for an unchanged server.
+
+Acceptance: `ext` tests in `manager_reconcile_tests.rs` (unchanged keeps its connection, ping error is
+alive, a silent server reconnects, changed/removed/new follow the set, a failed server is retried);
+`cli` tests in `app_workspace_tests.rs` (same key shares the manager, another key closes the lane, the
+timeouts); E2E `plugins/conversation-session-workspace-mcp-trust` on Rust.
+
+## As built: retired CUA MCP servers
+
+Node drops the historical standalone zcode-cua MCP server from every effective server set and from
+the Settings rows (`isRetiredCuaMcpServer`, `bootstrap/src/mcp-config.ts`; matchers in
+`packages/shared/src/mcp.ts`). Computer use runs through `node_repl`, which is never retired.
+
+- Match (`ext` `mcp/retired.rs`): a stdio server whose name is not `node_repl` and either is named
+  `computer-use`, has `ZCODE_PLUGIN_ID` (trimmed, lowercased) equal to
+  `computer-use@zcode-plugins-official`, has a command that names the `zcode-cua` package, or has an
+  argument that does. "Names the package": the value or its last path segment, with `_` read as `-`,
+  is `zcode-cua`, or starts with `zcode-cua[`, `zcode-cua@`, `zcode-cua==` or `zcode-cua.`
+  (case-sensitive; `zcode-cua-proxy` stays out). Other transports are never retired.
+- Applied in `McpManager::start`, `register_disabled` and `reconcile` (every group: process,
+  workspace layers, the settings lane), and in the settings lane's rows and plugin servers
+  (`app_workspace.rs` `retired_row`). A `NodeHelper` plugin server has no command, so only the
+  name rule can match it; the official computer-use plugin reaches Rust as `node_repl`.
+
+Acceptance: `ext` tests in `retired_tests.rs` and `manager_reconcile_tests.rs`; `cli` test
+`a_retired_cua_server_is_neither_listed_nor_connected`.
 
 ## As built: official plugin servers in `process/childProcesses`
 
