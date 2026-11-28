@@ -39,6 +39,7 @@ mod rust_entries;
 mod session_deletion;
 mod session_inputs;
 mod session_tree;
+mod shared_context;
 mod state;
 mod subagent_rows;
 mod task_lists;
@@ -798,6 +799,50 @@ impl StoreQueries for NodeStore {
                 .storage()?;
             import_history::write(&tx, &session, &history, now)?;
             tx.commit().storage()
+        })
+        .await
+    }
+
+    async fn import_shared_context(
+        &self,
+        session: &SessionId,
+        import: &rust_cli_kernel_api::store::SharedContextImport,
+    ) -> Result<(), StoreError> {
+        let session = session.clone();
+        let import = import.clone();
+        self.with_drafts(move |conn, ids, drafts| {
+            let now = i64::try_from(ids.now_ms()).unwrap_or(i64::MAX);
+            if let Some(drafts) = drafts
+                && drafts.is_draft(session.as_str())
+            {
+                return drafts::materialize(conn, drafts, &session, ids, |tx| {
+                    shared_context::write(tx, &session, &import, now)
+                });
+            }
+            let tx = conn
+                .transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)
+                .storage()?;
+            shared_context::write(&tx, &session, &import, now)?;
+            tx.commit().storage()
+        })
+        .await
+    }
+
+    async fn transition_shared_context(
+        &self,
+        session: &SessionId,
+        transition: &rust_cli_kernel_api::store::SharedContextTransition,
+    ) -> Result<bool, StoreError> {
+        let session = session.clone();
+        let transition = transition.clone();
+        self.with_db(move |conn, ids| {
+            let now = i64::try_from(ids.now_ms()).unwrap_or(i64::MAX);
+            let tx = conn
+                .transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)
+                .storage()?;
+            let moved = shared_context::transition(&tx, &session, &transition, now)?;
+            tx.commit().storage()?;
+            Ok(moved)
         })
         .await
     }

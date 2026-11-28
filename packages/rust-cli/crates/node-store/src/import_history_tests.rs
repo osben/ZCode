@@ -285,3 +285,58 @@ async fn an_unknown_session_is_not_found() {
         .unwrap_err();
     assert!(matches!(error, StoreError::NotFound { .. }), "{error:?}");
 }
+
+/// Node `removePreviousImportedSessionHistory`: before the rows are written, the session's earlier import messages go
+/// (the fixed `msg_import_<n>` ids, the `msg_claude-import-` prefix, a `migrationSource` of the import's source on the
+/// message or on one of its parts) with their parts. Real messages stay.
+#[tokio::test]
+async fn earlier_import_rows_are_removed_and_real_ones_kept() {
+    let golden = golden();
+    let t = TestStore::new();
+    started(&t, "sess_imp1").await;
+    let conn = t.connection();
+    let message = |id: &str, data: &str| {
+        conn.execute(
+            "insert into message (id, session_id, time_created, time_updated, data) values (?, 'sess_imp1', 1, 1, ?)",
+            rusqlite::params![id, data],
+        )
+        .unwrap();
+        conn.execute(
+            "insert into part (id, message_id, session_id, time_created, time_updated, data) values (?, ?, 'sess_imp1', 1, 1, '{\"type\":\"text\",\"text\":\"x\"}')",
+            rusqlite::params![format!("part_{id}"), id],
+        )
+        .unwrap();
+    };
+    message("msg_import_0", r#"{"role":"user","time":{"created":1}}"#);
+    message(
+        "msg_claude-import-7",
+        r#"{"role":"user","time":{"created":1}}"#,
+    );
+    message(
+        "msg_tagged",
+        r#"{"role":"user","time":{"created":1},"metadata":{"migrationSource":"claudeCode"}}"#,
+    );
+    message(
+        "msg_other_source",
+        r#"{"role":"user","time":{"created":1},"metadata":{"migrationSource":"codex"}}"#,
+    );
+    message("msg_real", r#"{"role":"user","time":{"created":1}}"#);
+    conn.execute(
+        "insert into part (id, message_id, session_id, time_created, time_updated, data) values ('part_tagged_part', 'msg_real', 'sess_imp1', 1, 1, '{\"type\":\"text\",\"text\":\"y\",\"metadata\":{\"migrationSource\":\"claudeCode\"}}')",
+        [],
+    )
+    .unwrap();
+    drop(conn);
+    t.store
+        .import_history(&SessionId::new("sess_imp1"), &history(&golden))
+        .await
+        .unwrap();
+    let ids =
+        t.rows("select id from message where id not like 'msg_sess_imp1_import_%' order by id");
+    // `msg_real` has a part tagged with the source, so it counts as imported, like in Node.
+    assert_eq!(ids, vec![vec![json!("msg_other_source")]]);
+    let parts = t.rows(
+        "select id from part where id like 'part_msg_%' or id = 'part_tagged_part' order by id",
+    );
+    assert_eq!(parts, vec![vec![json!("part_msg_other_source")]]);
+}

@@ -549,6 +549,29 @@ pub struct ImportedHistory {
     pub messages: Vec<ImportedMessage>,
 }
 
+/// Fork: the share a `session/create` with `importedHistory.source = "sharedContext"` stores
+/// (specs/fork-rust-imported-history.md, Shared context). The strings are already as Node's schema outputs them
+/// (trimmed), and `provenance` keeps the schema's key order: it is written as the entry's `data`.
+#[derive(Debug, Clone, PartialEq)]
+pub struct SharedContextImport {
+    pub title: String,
+    pub created_at: Option<u64>,
+    pub markdown: String,
+    /// `shareId`, `contextId?`, `shareUrl?`, `status?`, the hashes, `formatterVersion` and `installedArtifacts`.
+    pub provenance: serde_json::Map<String, serde_json::Value>,
+}
+
+/// Fork: Node's `SharedContextImportTransition` (`transitionSharedContextImport`).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SharedContextTransition {
+    pub context_id: String,
+    /// The statuses the entry may be in; any other leaves it alone and the answer is `false`.
+    pub expected: Vec<String>,
+    pub status: String,
+    /// Written as `sourceId` when set (the queue item that reserved the context).
+    pub source_id: Option<String>,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum StoreError {
@@ -1197,6 +1220,33 @@ pub trait StoreQueries: Send + Sync {
     ) -> Result<(), StoreError> {
         Err(StoreError::Unsupported {
             what: "imported history".to_owned(),
+        })
+    }
+
+    /// Fork: Node `commitSharedContextImportBundle` for a `sharedContext` import: persists the session (a draft gets
+    /// its row), sets its title and times, and writes the hidden context message with its text part and the
+    /// `v4/shared_context_import` entry in one transaction. Importing the same share twice writes nothing. The caller
+    /// opens the session again afterwards. Stores without it answer `Unsupported`.
+    async fn import_shared_context(
+        &self,
+        _session: &SessionId,
+        _import: &SharedContextImport,
+    ) -> Result<(), StoreError> {
+        Err(StoreError::Unsupported {
+            what: "shared context import".to_owned(),
+        })
+    }
+
+    /// Fork: Node `transitionSharedContextImport`: moves the entry of `transition.context_id` (and the context
+    /// message's `sharedContextStatus`) to `transition.status` when it is in one of the expected statuses. `false`
+    /// when there is no such entry or it is in another status.
+    async fn transition_shared_context(
+        &self,
+        _session: &SessionId,
+        _transition: &SharedContextTransition,
+    ) -> Result<bool, StoreError> {
+        Err(StoreError::Unsupported {
+            what: "shared context transition".to_owned(),
         })
     }
 

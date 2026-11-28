@@ -13,7 +13,7 @@ use crate::repo::{messages, sessions};
 use crate::state;
 
 /// Node `slugifyImportedSession`.
-fn slug(session: &str) -> String {
+pub(crate) fn slug(session: &str) -> String {
     let mut out = String::with_capacity(session.len());
     let mut dash = false;
     for c in session.to_lowercase().chars() {
@@ -35,6 +35,41 @@ fn slug(session: &str) -> String {
 
 fn ms(value: u64) -> i64 {
     i64::try_from(value).unwrap_or(i64::MAX)
+}
+
+/// Node `isImportedHistoryMessage`.
+fn is_imported(message: &messages::WithParts, source: &str) -> bool {
+    let id = message.info["id"].as_str().unwrap_or_default();
+    let numbered = id
+        .strip_prefix("msg_import_")
+        .is_some_and(|rest| !rest.is_empty() && rest.bytes().all(|byte| byte.is_ascii_digit()));
+    numbered
+        || id.starts_with("msg_claude-import-")
+        || message.info["metadata"]["migrationSource"] == source
+        || message
+            .parts
+            .iter()
+            .any(|part| part["metadata"]["migrationSource"] == source)
+}
+
+/// Node `removePreviousImportedSessionHistory`: clears the session's earlier import messages (their parts go with
+/// them) and keeps the rest. A legacy create refuses an existing id, so a fresh session has none; it still runs, as in
+/// Node, so rows an older build wrote under the fixed ids never survive a new import.
+fn remove_previous(conn: &Connection, session: &str, source: &str) -> Result<usize, StoreError> {
+    let mut removed = 0;
+    for message in messages::messages(conn, session).storage()? {
+        if !is_imported(&message, source) {
+            continue;
+        }
+        let id = message.info["id"].as_str().unwrap_or_default();
+        conn.execute(
+            "delete from message where id = ? and session_id = ?",
+            params![id, session],
+        )
+        .storage()?;
+        removed += 1;
+    }
+    Ok(removed)
 }
 
 /// Writes the import into the session's row. `now` is the save time (`Date.now()` of Node's `saveMessage` / `savePart`).
@@ -81,6 +116,7 @@ pub(crate) fn write(
     .execute(params![title, slug(id), created, updated, updated, id])
     .storage()?;
 
+    remove_previous(conn, id, "claudeCode")?;
     let mut parent: Option<String> = None;
     let mut last_stamp = created - 1;
     for (index, message) in history.messages.iter().enumerate() {

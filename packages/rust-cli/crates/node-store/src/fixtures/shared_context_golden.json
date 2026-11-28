@@ -1,0 +1,193 @@
+{
+  "sessionId": "sess_ctx1",
+  "directory": "/w",
+  "model": {
+    "providerId": "p",
+    "modelId": "m"
+  },
+  "mode": "build",
+  "raw": {
+    "source": "sharedContext",
+    "title": "Shared chat",
+    "createdAt": 1000,
+    "markdown": "# Shared\n\nsome context",
+    "provenance": {
+      "shareId": "share1",
+      "contextId": "ctx-1",
+      "shareUrl": "https://example.com/cn/share/abc",
+      "status": "pending",
+      "projectionSha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "artifactSetSha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "formatterVersion": 1,
+      "markdownSha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+      "installedArtifacts": [
+        {
+          "artifactId": "art1",
+          "workspaceRelativePath": "docs/a.md"
+        }
+      ]
+    }
+  },
+  "history": {
+    "source": "sharedContext",
+    "title": "Shared chat",
+    "createdAt": 1000,
+    "markdown": "# Shared\n\nsome context",
+    "provenance": {
+      "shareId": "share1",
+      "contextId": "ctx-1",
+      "shareUrl": "https://example.com/cn/share/abc",
+      "status": "pending",
+      "projectionSha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "artifactSetSha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "formatterVersion": 1,
+      "markdownSha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+      "installedArtifacts": [
+        {
+          "artifactId": "art1",
+          "workspaceRelativePath": "docs/a.md"
+        }
+      ]
+    }
+  },
+  "session": {
+    "title": "Shared chat",
+    "title_source": "custom",
+    "slug": "sess_ctx1",
+    "time_created": 1000,
+    "time_title_updated": 1000,
+    "permission": "{\"mode\":\"build\"}"
+  },
+  "messages": [
+    {
+      "id": "msg_sess_ctx1_shared_context",
+      "time_created": 1000,
+      "time_updated": 1000,
+      "data": "{\"role\":\"user\",\"time\":{\"created\":1000},\"agent\":\"zcode-agent\",\"modelSelection\":{\"providerId\":\"p\",\"modelId\":\"m\"},\"synthetic\":true,\"source\":\"shared_context\",\"visibility\":\"model-only\",\"semantics\":{\"origin\":\"import\",\"kind\":\"shared_context\",\"source\":\"conversation_share\",\"uiVisibility\":\"hidden\",\"providerVisibility\":\"visible\",\"transcriptVisibility\":\"visible\"},\"metadata\":{\"shareId\":\"share1\",\"contextId\":\"ctx-1\",\"sharedContextStatus\":\"pending\"},\"model\":{\"providerID\":\"p\",\"modelID\":\"m\"}}"
+    }
+  ],
+  "parts": [
+    {
+      "id": "part_sess_ctx1_shared_context_text",
+      "message_id": "msg_sess_ctx1_shared_context",
+      "time_created": 1000,
+      "data": "{\"type\":\"text\",\"text\":\"# Shared\\n\\nsome context\",\"time\":{\"start\":1000,\"end\":1000},\"metadata\":{\"sharedContext\":true}}"
+    }
+  ],
+  "entries": [
+    {
+      "id": "v4_shared_context_import:sess_ctx1:share1",
+      "session_id": "sess_ctx1",
+      "type": "v4/shared_context_import",
+      "time_created": 1000,
+      "time_updated": 1000,
+      "data": "{\"shareId\":\"share1\",\"contextId\":\"ctx-1\",\"shareUrl\":\"https://example.com/cn/share/abc\",\"status\":\"pending\",\"projectionSha256\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"artifactSetSha256\":\"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\",\"formatterVersion\":1,\"markdownSha256\":\"cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc\",\"installedArtifacts\":[{\"artifactId\":\"art1\",\"workspaceRelativePath\":\"docs/a.md\"}]}"
+    }
+  ],
+  "steps": {
+    "reserve": {
+      "ok": true,
+      "entry": "{\"shareId\":\"share1\",\"contextId\":\"ctx-1\",\"shareUrl\":\"https://example.com/cn/share/abc\",\"status\":\"reserved\",\"projectionSha256\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"artifactSetSha256\":\"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\",\"formatterVersion\":1,\"markdownSha256\":\"cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc\",\"installedArtifacts\":[{\"artifactId\":\"art1\",\"workspaceRelativePath\":\"docs/a.md\"}],\"sourceId\":\"queue_q1\"}",
+      "message": "{\"role\":\"user\",\"time\":{\"created\":1000},\"agent\":\"zcode-agent\",\"synthetic\":true,\"source\":\"shared_context\",\"visibility\":\"model-only\",\"semantics\":{\"origin\":\"import\",\"kind\":\"shared_context\",\"source\":\"conversation_share\",\"uiVisibility\":\"hidden\",\"providerVisibility\":\"visible\",\"transcriptVisibility\":\"visible\"},\"metadata\":{\"shareId\":\"share1\",\"contextId\":\"ctx-1\",\"sharedContextStatus\":\"reserved\"},\"modelSelection\":{\"providerId\":\"p\",\"modelId\":\"m\"},\"model\":{\"providerID\":\"p\",\"modelID\":\"m\"}}"
+    },
+    "reserve_again": {
+      "ok": false,
+      "entry": "{\"shareId\":\"share1\",\"contextId\":\"ctx-1\",\"shareUrl\":\"https://example.com/cn/share/abc\",\"status\":\"reserved\",\"projectionSha256\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"artifactSetSha256\":\"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\",\"formatterVersion\":1,\"markdownSha256\":\"cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc\",\"installedArtifacts\":[{\"artifactId\":\"art1\",\"workspaceRelativePath\":\"docs/a.md\"}],\"sourceId\":\"queue_q1\"}",
+      "message": "{\"role\":\"user\",\"time\":{\"created\":1000},\"agent\":\"zcode-agent\",\"synthetic\":true,\"source\":\"shared_context\",\"visibility\":\"model-only\",\"semantics\":{\"origin\":\"import\",\"kind\":\"shared_context\",\"source\":\"conversation_share\",\"uiVisibility\":\"hidden\",\"providerVisibility\":\"visible\",\"transcriptVisibility\":\"visible\"},\"metadata\":{\"shareId\":\"share1\",\"contextId\":\"ctx-1\",\"sharedContextStatus\":\"reserved\"},\"modelSelection\":{\"providerId\":\"p\",\"modelId\":\"m\"},\"model\":{\"providerID\":\"p\",\"modelID\":\"m\"}}"
+    },
+    "revert": {
+      "ok": true,
+      "entry": "{\"shareId\":\"share1\",\"contextId\":\"ctx-1\",\"shareUrl\":\"https://example.com/cn/share/abc\",\"status\":\"pending\",\"projectionSha256\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"artifactSetSha256\":\"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\",\"formatterVersion\":1,\"markdownSha256\":\"cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc\",\"installedArtifacts\":[{\"artifactId\":\"art1\",\"workspaceRelativePath\":\"docs/a.md\"}],\"sourceId\":\"queue_q1\"}",
+      "message": "{\"role\":\"user\",\"time\":{\"created\":1000},\"agent\":\"zcode-agent\",\"synthetic\":true,\"source\":\"shared_context\",\"visibility\":\"model-only\",\"semantics\":{\"origin\":\"import\",\"kind\":\"shared_context\",\"source\":\"conversation_share\",\"uiVisibility\":\"hidden\",\"providerVisibility\":\"visible\",\"transcriptVisibility\":\"visible\"},\"metadata\":{\"shareId\":\"share1\",\"contextId\":\"ctx-1\",\"sharedContextStatus\":\"pending\"},\"modelSelection\":{\"providerId\":\"p\",\"modelId\":\"m\"},\"model\":{\"providerID\":\"p\",\"modelID\":\"m\"}}"
+    },
+    "attach": {
+      "entry": "{\"shareId\":\"share1\",\"contextId\":\"ctx-1\",\"shareUrl\":\"https://example.com/cn/share/abc\",\"status\":\"attached\",\"projectionSha256\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"artifactSetSha256\":\"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\",\"formatterVersion\":1,\"markdownSha256\":\"cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc\",\"installedArtifacts\":[{\"artifactId\":\"art1\",\"workspaceRelativePath\":\"docs/a.md\"}],\"sourceId\":\"queue_q1\",\"attachedMessageId\":\"msg_user1\"}",
+      "message": "{\"role\":\"user\",\"time\":{\"created\":1000},\"agent\":\"zcode-agent\",\"synthetic\":true,\"source\":\"shared_context\",\"visibility\":\"model-only\",\"semantics\":{\"origin\":\"import\",\"kind\":\"shared_context\",\"source\":\"conversation_share\",\"uiVisibility\":\"hidden\",\"providerVisibility\":\"visible\",\"transcriptVisibility\":\"visible\"},\"metadata\":{\"shareId\":\"share1\",\"contextId\":\"ctx-1\",\"sharedContextStatus\":\"attached\"},\"modelSelection\":{\"providerId\":\"p\",\"modelId\":\"m\"},\"model\":{\"providerID\":\"p\",\"modelID\":\"m\"}}"
+    },
+    "discard": {
+      "ok": true,
+      "entry": "{\"shareId\":\"share1\",\"contextId\":\"ctx-1\",\"shareUrl\":\"https://example.com/cn/share/abc\",\"status\":\"discarded\",\"projectionSha256\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"artifactSetSha256\":\"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\",\"formatterVersion\":1,\"markdownSha256\":\"cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc\",\"installedArtifacts\":[{\"artifactId\":\"art1\",\"workspaceRelativePath\":\"docs/a.md\"}]}",
+      "message": "{\"role\":\"user\",\"time\":{\"created\":1000},\"agent\":\"zcode-agent\",\"synthetic\":true,\"source\":\"shared_context\",\"visibility\":\"model-only\",\"semantics\":{\"origin\":\"import\",\"kind\":\"shared_context\",\"source\":\"conversation_share\",\"uiVisibility\":\"hidden\",\"providerVisibility\":\"visible\",\"transcriptVisibility\":\"visible\"},\"metadata\":{\"shareId\":\"share1\",\"contextId\":\"ctx-1\",\"sharedContextStatus\":\"discarded\"},\"modelSelection\":{\"providerId\":\"p\",\"modelId\":\"m\"},\"model\":{\"providerID\":\"p\",\"modelID\":\"m\"}}"
+    },
+    "discard_again": {
+      "ok": false
+    },
+    "recommit": {
+      "entry": "{\"shareId\":\"share1\",\"contextId\":\"ctx-1\",\"shareUrl\":\"https://example.com/cn/share/abc\",\"status\":\"discarded\",\"projectionSha256\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"artifactSetSha256\":\"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\",\"formatterVersion\":1,\"markdownSha256\":\"cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc\",\"installedArtifacts\":[{\"artifactId\":\"art1\",\"workspaceRelativePath\":\"docs/a.md\"}]}",
+      "message": "{\"role\":\"user\",\"time\":{\"created\":1000},\"agent\":\"zcode-agent\",\"synthetic\":true,\"source\":\"shared_context\",\"visibility\":\"model-only\",\"semantics\":{\"origin\":\"import\",\"kind\":\"shared_context\",\"source\":\"conversation_share\",\"uiVisibility\":\"hidden\",\"providerVisibility\":\"visible\",\"transcriptVisibility\":\"visible\"},\"metadata\":{\"shareId\":\"share1\",\"contextId\":\"ctx-1\",\"sharedContextStatus\":\"discarded\"},\"modelSelection\":{\"providerId\":\"p\",\"modelId\":\"m\"},\"model\":{\"providerID\":\"p\",\"modelID\":\"m\"}}"
+    }
+  },
+  "minimal": {
+    "sessionId": "sess_ctx2",
+    "raw": {
+      "source": "sharedContext",
+      "title": "  Padded title  ",
+      "markdown": " body \n",
+      "provenance": {
+        "installedArtifacts": [
+          {
+            "artifactId": " art2 ",
+            "workspaceRelativePath": " docs/b.md "
+          }
+        ],
+        "markdownSha256": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+        "formatterVersion": 1,
+        "artifactSetSha256": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+        "projectionSha256": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+        "shareId": "  share2  "
+      }
+    },
+    "parsed": {
+      "source": "sharedContext",
+      "title": "Padded title",
+      "markdown": " body \n",
+      "provenance": {
+        "shareId": "share2",
+        "projectionSha256": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+        "artifactSetSha256": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+        "formatterVersion": 1,
+        "markdownSha256": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+        "installedArtifacts": [
+          {
+            "artifactId": "art2",
+            "workspaceRelativePath": "docs/b.md"
+          }
+        ]
+      }
+    },
+    "session": {
+      "title": "Padded title",
+      "title_source": "custom",
+      "slug": "sess_ctx2",
+      "time_created": 5000,
+      "time_title_updated": 5000,
+      "permission": "{\"mode\":\"build\"}"
+    },
+    "messages": [
+      {
+        "id": "msg_sess_ctx2_shared_context",
+        "time_created": 5000,
+        "time_updated": 5000,
+        "data": "{\"role\":\"user\",\"time\":{\"created\":5000},\"agent\":\"zcode-agent\",\"synthetic\":true,\"source\":\"shared_context\",\"visibility\":\"model-only\",\"semantics\":{\"origin\":\"import\",\"kind\":\"shared_context\",\"source\":\"conversation_share\",\"uiVisibility\":\"hidden\",\"providerVisibility\":\"visible\",\"transcriptVisibility\":\"visible\"},\"metadata\":{\"shareId\":\"share2\",\"contextId\":\"legacy-shared-context-sess_ctx2\",\"sharedContextStatus\":\"pending\"},\"model\":{}}"
+      }
+    ],
+    "parts": [
+      {
+        "id": "part_sess_ctx2_shared_context_text",
+        "message_id": "msg_sess_ctx2_shared_context",
+        "time_created": 5000,
+        "data": "{\"type\":\"text\",\"text\":\" body \\n\",\"time\":{\"start\":5000,\"end\":5000},\"metadata\":{\"sharedContext\":true}}"
+      }
+    ],
+    "entries": [
+      {
+        "id": "v4_shared_context_import:sess_ctx2:share2",
+        "session_id": "sess_ctx2",
+        "type": "v4/shared_context_import",
+        "time_created": 5000,
+        "time_updated": 5000,
+        "data": "{\"shareId\":\"share2\",\"projectionSha256\":\"dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd\",\"artifactSetSha256\":\"eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee\",\"formatterVersion\":1,\"markdownSha256\":\"ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff\",\"installedArtifacts\":[{\"artifactId\":\"art2\",\"workspaceRelativePath\":\"docs/b.md\"}],\"contextId\":\"legacy-shared-context-sess_ctx2\",\"status\":\"pending\"}"
+      }
+    ]
+  }
+}
