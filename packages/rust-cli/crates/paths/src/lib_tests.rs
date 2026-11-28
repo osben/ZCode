@@ -249,6 +249,15 @@ fn the_executor_lives_under_the_user_root() {
 }
 
 #[test]
+fn the_user_mcp_fallback_sits_beside_zcode_not_under_it() {
+    let paths = resolve(None, Some("data"));
+    assert_eq!(
+        paths.user_agents_mcp().as_path(),
+        Path::new("/home/dev/.agents/mcp.json")
+    );
+}
+
+#[test]
 fn the_cli_config_and_the_hook_trust_store_follow_the_node_cli() {
     let paths = resolve(None, Some("data"));
     assert_eq!(

@@ -276,6 +276,12 @@ impl StoragePaths {
         StoragePath(user_path(&self.home, CLI_CONFIG))
     }
 
+    /// The user-level MCP fallback `<home>/.agents/mcp.json` (Node `dynamic-mcp-config.ts`: `~/.agents/mcp.json`, read when
+    /// the user config declares no server). It is outside the `.zcode` root, like the project fallback.
+    pub fn user_agents_mcp(&self) -> StoragePath {
+        StoragePath(self.home.join(".agents").join("mcp.json"))
+    }
+
     /// 项目 hooks 的信任记录。`storage_dir` 是用户级配置的 `storage.dir`（Node
     /// `resolveWorkspaceHookTrustStorePath` / `resolveTrustedUserPath`：`~/` 展开到 home，相对路径相对
     /// home，空白视为没有）。

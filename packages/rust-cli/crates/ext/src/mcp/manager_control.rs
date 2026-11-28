@@ -13,13 +13,17 @@ use tokio_util::sync::CancellationToken;
 
 use super::app_connection;
 use super::{McpManager, McpServer, McpStatus, Server};
+use crate::mcp::retired::is_retired_cua_server;
 
 impl McpManager {
     /// 启动时停用的服务器（配置里 `enabled: false`）：登记为 disabled，不连接；`/mcp enable` 时才连。
     pub fn register_disabled(&self, servers: Vec<McpServer>) {
         {
             let mut known = self.0.servers();
-            for config in servers {
+            for config in servers
+                .into_iter()
+                .filter(|server| !is_retired_cua_server(server))
+            {
                 known
                     .entry(config.name.clone())
                     .or_insert_with(|| Server::new(config, McpStatus::Disabled));
@@ -68,32 +72,27 @@ impl McpManager {
         u64,
         CancellationToken,
     )> {
+        self.retire_if(name, status, None)
+    }
+
+    /// [`Self::retire`] that does nothing unless the server is still on generation `expect` (when given), so a caller
+    /// that observed one connection cannot retire a newer one.
+    fn retire_if(
+        &self,
+        name: &str,
+        status: McpStatus,
+        expect: Option<u64>,
+    ) -> Option<(
+        McpServer,
+        Option<std::sync::Arc<super::Client>>,
+        u64,
+        CancellationToken,
+    )> {
         let mut servers = self.0.servers();
-        let server = servers.get_mut(name)?;
-        server.cancel.cancel();
-        server.generation += 1;
-        server.cancel = CancellationToken::new();
-        server.deferred = false;
-        server.status = status;
-        server.tools.clear();
-        server.prompts.clear();
-        server.instructions = None;
-        server.resources = false;
-        // Fork (F7 PR 4): the subscriptions of the retired connection go with it.
-        server.resource_subs.clear();
-        server.resources_subscribe = false;
-        let client = server.client.take();
-        // Fork (F7 PR 1): dropping a published client is a new app connection, so its listeners run (after the lock).
-        let listeners: Vec<_> = if client.is_some() {
-            server.app_generation = app_connection::next_generation();
-            server
-                .app_listeners
-                .iter()
-                .map(|(_, listener)| listener.clone())
-                .collect()
-        } else {
-            Vec::new()
-        };
+        let server = servers
+            .get_mut(name)
+            .filter(|server| expect.is_none_or(|generation| server.generation == generation))?;
+        let (client, listeners) = reset(server, status);
         let out = (
             server.config.clone(),
             client,
@@ -109,7 +108,13 @@ impl McpManager {
 
     /// 重新连一个服务器（重连与启用共用）。
     pub(crate) async fn restart(&self, name: &str) {
-        let Some((config, client, generation, cancel)) = self.retire(name, McpStatus::CONNECTING)
+        self.restart_if(name, None).await;
+    }
+
+    /// [`Self::restart`] only while the server is still on generation `expect`.
+    pub(crate) async fn restart_if(&self, name: &str, expect: Option<u64>) {
+        let Some((config, client, generation, cancel)) =
+            self.retire_if(name, McpStatus::CONNECTING, expect)
         else {
             return;
         };
@@ -210,6 +215,43 @@ impl McpManager {
             .filter(|info| names.contains(&info.name))
             .collect()
     }
+}
+
+/// Ends the connection task of `server` and puts `status` in its place: the generation moves on (a late update of
+/// the old task is dropped), the catalog and the app view are cleared. Returns the old client for the caller to close
+/// and the app listeners to run after the lock is released.
+pub(super) fn reset(
+    server: &mut Server,
+    status: McpStatus,
+) -> (
+    Option<Arc<super::Client>>,
+    Vec<super::app_connection::Listener>,
+) {
+    server.cancel.cancel();
+    server.generation += 1;
+    server.cancel = CancellationToken::new();
+    server.deferred = false;
+    server.status = status;
+    server.tools.clear();
+    server.prompts.clear();
+    server.instructions = None;
+    server.resources = false;
+    // Fork (F7 PR 4): the subscriptions of the retired connection go with it.
+    server.resource_subs.clear();
+    server.resources_subscribe = false;
+    let client = server.client.take();
+    // Fork (F7 PR 1): dropping a published client is a new app connection, so its listeners run (after the lock).
+    let listeners = if client.is_some() {
+        server.app_generation = app_connection::next_generation();
+        server
+            .app_listeners
+            .iter()
+            .map(|(_, listener)| listener.clone())
+            .collect()
+    } else {
+        Vec::new()
+    };
+    (client, listeners)
 }
 
 #[cfg(test)]

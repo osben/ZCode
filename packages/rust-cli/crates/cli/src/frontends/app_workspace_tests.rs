@@ -658,6 +658,7 @@ async fn a_displaced_connect_starts_nothing_and_a_pending_lane_shows_connecting(
     let (workspace, servers) = admitted("k").await;
     let older = fixture.admin.arrival();
     let (first, displaced) = fixture.admin.install(older, "k", servers).unwrap();
+    let first_manager = first.manager.clone();
     assert!(
         displaced
             .as_ref()
@@ -675,16 +676,87 @@ async fn a_displaced_connect_starts_nothing_and_a_pending_lane_shows_connecting(
         .admin
         .settle(second, newer_displaced, newer_workspace)
         .await;
-    // The older connect now closes the started lane and finds itself displaced.
+    // The older connect finds itself displaced and starts nothing. The same workspace key shares the manager, so the
+    // newer connect revalidated the failed server in place (one more attempt) and nothing was closed.
     fixture.admin.settle(first, displaced, workspace).await;
     assert_eq!(fixture.transport.started(), ["mine", "mine"]);
+    assert!(Arc::ptr_eq(&started.manager, &first_manager));
+}
+
+/// Another workspace key gets a lane of its own and the displaced lane is closed (Node switches the owner).
+#[tokio::test]
+async fn a_connect_for_another_workspace_key_closes_the_previous_lane() {
+    let fixture = fixture(
+        json!({}),
+        json!({"mcp": {"servers": {"mine": {"command": "user-tool"}}}}),
+    );
+    let older = fixture.admin.arrival();
+    fixture
+        .admin
+        .list(&target("one"), None, Some(older))
+        .await
+        .unwrap();
+    let first = fixture.admin.lane.lock().unwrap().clone().unwrap();
+    let newer = fixture.admin.arrival();
+    fixture
+        .admin
+        .list(&target("two"), None, Some(newer))
+        .await
+        .unwrap();
+    let second = fixture.admin.lane.lock().unwrap().clone().unwrap();
+    assert!(!Arc::ptr_eq(&first.manager, &second.manager));
     assert!(
-        started
+        first
             .manager
             .server_infos()
             .iter()
             .all(|info| info.state == McpServerState::Disabled)
     );
+}
+
+/// Node drops the retired standalone CUA server from the Settings rows and never connects it; `node_repl` stays.
+#[tokio::test]
+async fn a_retired_cua_server_is_neither_listed_nor_connected() {
+    let fixture = fixture(
+        json!({}),
+        json!({"mcp": {"servers": {
+            "computer-use": {"command": "node"},
+            "viacmd": {"command": "/opt/bin/zcode-cua"},
+            "viaarg": {"command": "uvx", "args": ["--from", "zcode_cua", "run"]},
+            "node_repl": {"command": "zcode-cua"},
+            "mine": {"command": "user-tool"},
+        }}}),
+    );
+    let statuses = fixture
+        .admin
+        .mcp_list(&target("k"), None, true)
+        .await
+        .unwrap()["statuses"]
+        .as_object()
+        .unwrap()
+        .clone();
+    let mut names: Vec<&String> = statuses.keys().collect();
+    names.sort();
+    assert_eq!(names, ["mine", "node_repl"]);
+    let mut started = fixture.transport.started();
+    started.sort();
+    assert_eq!(started, ["mine", "node_repl"]);
+}
+
+/// The settings lane gives up on a connect when a session would: `MCP_TIMEOUT` and its siblings apply.
+#[tokio::test]
+async fn the_lane_reads_the_mcp_timeouts_from_the_process_environment() {
+    let mut fixture = fixture(json!({}), json!({}));
+    assert_eq!(fixture.admin.lane_settings().connect_timeout_ms, 30_000);
+    fixture.admin.process.process_env = EnvSnapshot::default()
+        .with_var("MCP_TIMEOUT", "4500")
+        .with_var("MCP_TOOL_TIMEOUT", "9000")
+        .with_var("MAX_MCP_OUTPUT_TOKENS", "777");
+    let settings = fixture.admin.lane_settings();
+    assert_eq!(settings.connect_timeout_ms, 4_500);
+    assert_eq!(settings.tool_timeout_ms, 9_000);
+    assert_eq!(settings.max_output_tokens, 777);
+    assert_eq!(settings.client_version, crate::VERSION);
 }
 
 #[tokio::test]

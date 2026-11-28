@@ -136,3 +136,20 @@ async fn a_fallback_server_is_toggled_in_the_agents_file() {
             .contains("\"enabled\": false")
     );
 }
+
+/// A server of the user fallback `~/.agents/mcp.json` is a user server whose table is `mcpServers`: the toggle writes
+/// that file, never `~/.zcode/cli/config.json`.
+#[tokio::test]
+async fn a_user_fallback_server_is_toggled_in_the_home_agents_file() {
+    let home = tempfile::tempdir().unwrap();
+    let paths = StoragePaths::resolve(&Default::default(), home.path(), home.path());
+    let agents = home.path().join(".agents/mcp.json");
+    std::fs::create_dir_all(agents.parent().unwrap()).unwrap();
+    std::fs::write(&agents, r#"{"mcpServers":{"mine":{"command":"r"}}}"#).unwrap();
+    let files = files(&[("mine", &agents.display().to_string(), true)], env());
+    let written = files.save(&paths, "mine", false).await.unwrap();
+    assert_eq!(written, Some(agents.display().to_string()));
+    let text = std::fs::read_to_string(&agents).unwrap();
+    assert!(text.contains("\"enabled\": false"), "{text}");
+    assert!(!home.path().join(".zcode/cli/config.json").exists());
+}

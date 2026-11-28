@@ -67,6 +67,31 @@ impl ConfigFile {
     }
 }
 
+/// Reads the user MCP fallback `~/.agents/mcp.json` (Node `dynamic-mcp-config.ts`), from disk on every call.
+pub async fn read_user_agents_mcp(paths: &StoragePaths) -> ConfigFile {
+    let file = paths.user_agents_mcp();
+    match rust_cli_fs::read_optional(file.as_path()).await {
+        Ok(Some(bytes)) => ConfigFile::parse(&bytes),
+        Ok(None) => ConfigFile::Missing,
+        Err(error) => ConfigFile::Invalid {
+            reason: error.to_string(),
+        },
+    }
+}
+
+/// `/mcp enable/disable` for a server of the user fallback `~/.agents/mcp.json` (top-level `mcpServers`), written
+/// under the same lock and in the same shape as the project fallback. Returns the file written.
+pub async fn write_user_fallback_mcp_enabled(
+    paths: &StoragePaths,
+    name: &str,
+    enabled: bool,
+) -> Result<StoragePath, ConfigWriteError> {
+    update_file(paths.user_agents_mcp(), |bytes, shown| {
+        fallback_mcp_enabled_text(bytes, shown, name, enabled)
+    })
+    .await
+}
+
 /// 读用户级配置（每次都以磁盘为准，不缓存）。
 pub async fn read_cli_config(paths: &StoragePaths) -> ConfigFile {
     let file = paths.cli_config();
@@ -90,7 +115,14 @@ async fn update_cli_config(
     paths: &StoragePaths,
     edit: impl FnOnce(Option<&[u8]>, &str) -> Result<String, ConfigWriteError>,
 ) -> Result<StoragePath, ConfigWriteError> {
-    let file = paths.cli_config();
+    update_file(paths.cli_config(), edit).await
+}
+
+/// [`update_cli_config`] for any file of the user's storage locations (the user MCP fallback shares the writer).
+async fn update_file(
+    file: StoragePath,
+    edit: impl FnOnce(Option<&[u8]>, &str) -> Result<String, ConfigWriteError>,
+) -> Result<StoragePath, ConfigWriteError> {
     let path = file.as_path();
     let shown = path.display().to_string();
     let written = rust_cli_fs::with_file_lock(path, &LockOptions::default(), async || {

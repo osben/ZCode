@@ -242,7 +242,7 @@ pub(crate) fn mcp_layers(layers: &[Layer<'_>], warnings: &mut Vec<String>) -> Mc
                 McpOrigin {
                     path: layer.path.to_owned(),
                     user: layer.source == RuleSource::UserSettings,
-                    fallback: false,
+                    fallback: super::user_fallback::is_fallback_path(layer.path),
                 },
             );
             merged.insert(found.server.name.clone(), found);

@@ -35,6 +35,15 @@ impl McpConfigFiles {
         let Some(origin) = self.origins.get(server) else {
             return Ok(None);
         };
+        if origin.user && origin.fallback {
+            // `~/.agents/mcp.json` keeps its servers under `mcpServers`, not in the user config.
+            return rust_cli_platform::local::write_user_fallback_mcp_enabled(
+                paths, server, enabled,
+            )
+            .await
+            .map(|file| Some(file.as_path().display().to_string()))
+            .map_err(|error| error.to_string());
+        }
         if origin.user {
             return rust_cli_platform::local::write_mcp_enabled(paths, server, enabled)
                 .await
