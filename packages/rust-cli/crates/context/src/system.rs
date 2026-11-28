@@ -19,6 +19,9 @@ use crate::config::{OutputStyle, Surface};
 use crate::render::{Bullet, bullets};
 use rust_cli_kernel_api::tool_names;
 
+/// Fork: the worktree section's name in `/context` (Node `buildExecutionWorktreeSection`).
+pub(crate) const WORKTREE_NAME: &str = "Execution Worktree";
+
 /// 提示词里提到的工具名。
 pub(crate) const SKILL_TOOL: &str = tool_names::SKILL;
 pub(crate) const AGENT_TOOL: &str = tool_names::AGENT;
@@ -46,8 +49,9 @@ pub(crate) struct PromptFacts<'a> {
     /// Fork: the session's incognito profile (specs/fork-rust-agent-parity.md, "Incognito sessions"). None renders
     /// the normal prompt unchanged.
     pub incognito: Option<IncognitoProfile>,
-    /// Fork: Node's "ZCode Desktop Context" text ([`crate::ContextConfig::desktop`]), already rendered.
-    pub desktop: Option<&'a str>,
+    /// Fork: Node's execution worktree section (`# Environment` and the sentence), already rendered
+    /// (specs/fork-rust-execution-worktree-context.md). Not gated by incognito.
+    pub worktree: Option<&'a str>,
 }
 
 fn cache(scope: Option<&str>) -> Option<CacheControl> {
@@ -157,6 +161,15 @@ fn session_sections(facts: &PromptFacts<'_>) -> Vec<PromptSection> {
             render(texts::memory_lean(), &[("memory_dir", dir)]),
         ));
     }
+    // Fork: Node puts the worktree notice after Memory and before Context management; it is isolation context, so no
+    // incognito toggle drops it. With `--system-prompt` the caller sends it on its own instead ([`custom_sections`]).
+    if facts.custom.is_none() {
+        sections.extend(
+            facts
+                .worktree
+                .map(|text| section(WORKTREE_NAME, text.to_owned())),
+        );
+    }
     // 没有环境段（修复线 F51，context.md §6）。`/context` 的计数用同一个列表。
     sections.push(section(
         "Context management",
@@ -184,15 +197,20 @@ pub(crate) fn sections(facts: &PromptFacts<'_>) -> Vec<PromptSection> {
         Some(custom) => vec![PromptSection::new("Custom prompt", custom.to_owned())],
         None => {
             let mut sections = vec![PromptSection::new("Core instructions", lean_body(facts))];
-            sections.extend(
-                desktop(facts)
-                    .map(|text| PromptSection::new(crate::desktop::NAME, text.to_owned())),
-            );
             sections.extend(session_sections(facts));
             sections
         }
     };
     sections.extend(appended(facts));
+    // Fork: with `--system-prompt` the worktree notice is the trailing block ([`system_blocks`]); otherwise it is a
+    // session section above.
+    if facts.custom.is_some() {
+        sections.extend(
+            facts
+                .worktree
+                .map(|text| PromptSection::new(WORKTREE_NAME, text.to_owned())),
+        );
+    }
     sections
 }
 
@@ -220,12 +238,18 @@ pub(crate) fn system_blocks(facts: &PromptFacts<'_>) -> Vec<SystemBlock> {
                 text: texts::identity().to_owned(),
                 cache_control: cache(None),
             });
+        // Fork: Node sends the worktree notice as its own dynamic system message after the custom text.
+        let worktree = facts.worktree.map(|text| SystemBlock {
+            text: text.to_owned(),
+            cache_control: cache(None),
+        });
         return identity
             .into_iter()
             .chain([SystemBlock {
                 text,
                 cache_control: cache(None),
             }])
+            .chain(worktree)
             .collect();
     }
     let session: Vec<String> = session_sections(facts)
@@ -252,27 +276,13 @@ pub(crate) fn system_blocks(facts: &PromptFacts<'_>) -> Vec<SystemBlock> {
     blocks
 }
 
-/// Fork: the desktop section of this prompt. Incognito without `harness` drops it, like Node (`harnessOff` in the
-/// context builder), in the request and in the `/context` sections alike.
-fn desktop<'a>(facts: &PromptFacts<'a>) -> Option<&'a str> {
-    facts
-        .desktop
-        .filter(|_| facts.incognito.is_none_or(|profile| profile.harness))
-}
-
-/// The static block. Fork: with Node's desktop section, the section follows the static body in this block, as in
-/// Node's stable system message (after the identity body, before the dynamic sections). It names a per-session
-/// directory, so the block is then cached per session (`{ephemeral}`, Node's stable cache control), not `scope: global`.
+/// The static block: the same for every session, so it is cacheable across sessions (`scope: global`). Fork: Node's
+/// ZCode Desktop Context is not part of it any more; it rides the environment announcement
+/// (specs/fork-rust-desktop-context-announcement.md).
 fn stable_block(facts: &PromptFacts<'_>) -> SystemBlock {
-    match desktop(facts) {
-        Some(desktop) => SystemBlock {
-            text: format!("{}\n\n{desktop}", lean_body(facts)),
-            cache_control: cache(None),
-        },
-        None => SystemBlock {
-            text: lean_body(facts),
-            cache_control: cache(Some("global")),
-        },
+    SystemBlock {
+        text: lean_body(facts),
+        cache_control: cache(Some("global")),
     }
 }
 

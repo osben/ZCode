@@ -335,6 +335,9 @@ pub enum Command {
     /// the runtime in the worktree, so the model sees no move. `Rejected` while a turn or compaction runs.
     SetExecutionRoot {
         root: crate::env::EnvPath,
+        /// The worktree's branch, for the model-context notice (specs/fork-rust-execution-worktree-context.md).
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        branch: Option<String>,
     },
     /// Fork: the incognito profile a prepared execution worktree's activation freezes (specs/fork-rust-agent-parity.md,
     /// "Incognito sessions"). The actor's meta takes it while it has none, so a fork of the session keeps it; the same
@@ -581,6 +584,9 @@ pub struct SessionView {
     /// cold projection or a rebuild draws `feedback` and `pinnedAt` (specs/fork-rust-feedback-and-pins.md).
     #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
     pub marks: std::collections::BTreeMap<MessageId, crate::message_mark::Marks>,
+    /// Fork: the session runs in an execution worktree; `/context` lists the model's worktree notice from it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub execution_worktree: Option<crate::session_ops::ExecutionWorktreeFact>,
 }
 
 /// The command id prefix of the input a SessionStart hook gives (`initial_user_message`): it is not typed input, so

@@ -578,7 +578,11 @@ async fn a_fork_from_assistant_adopts_the_host_child_and_worktree() {
     assert_eq!(execution.branch, None);
     let loaded = built.store.load(&child).await.unwrap();
     assert_eq!(loaded.meta.parent, Some(meta().id));
-    assert!(loaded.execution_worktree);
+    let fact = loaded
+        .execution_worktree
+        .expect("the child runs in the worktree");
+    assert_eq!(fact.workspace.as_str(), "/work");
+    assert_eq!(fact.path.as_str(), "/work/.worktrees/one");
     assert_eq!(loaded.meta.workspace.root.as_str(), "/work/.worktrees/one");
 }
 

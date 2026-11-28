@@ -366,7 +366,14 @@ impl Setup {
                 checkpoints: self.checkpoints,
                 start: self.start,
                 start_held: self.start_held,
-                execution_worktree: self.execution_worktree,
+                execution_worktree: self.execution_worktree.then(|| {
+                    rust_cli_kernel_api::session_ops::ExecutionWorktreeFact {
+                        path: EnvPath::new(self.root),
+                        workspace: rust_cli_kernel_api::env::EnvPath::new("/parent"),
+                        branch: None,
+                        missing: false,
+                    }
+                }),
                 turn: self.turn,
                 last_turn_failed: self.last_turn_failed,
                 child_live: self.child_live,

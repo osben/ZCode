@@ -109,6 +109,7 @@ impl Loop<'_> {
             selection: self.app.view.selection().clone(),
             // 判决用的模式（plan 开时是 plan，修复线 F20）。
             mode: self.app.view.execution().effective(),
+            execution_worktree: None,
         };
         self.pending.push(
             async move {

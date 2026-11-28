@@ -124,7 +124,7 @@ async fn the_origin_is_fixed_at_run_start_even_when_the_agent_left_live() {
                 .unwrap(),
         ),
         workspace: crate::test_support::workspace(),
-        execution_worktree: false,
+        execution_worktree: None,
         selection: rust_cli_kernel_api::testing::selection(),
         mode: rust_cli_kernel_api::permission::PermissionMode::Default,
         background: true,

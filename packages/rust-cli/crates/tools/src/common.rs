@@ -272,7 +272,7 @@ async fn in_execution_worktree(context: &ToolUseContext) -> bool {
         .session_ops
         .view()
         .await
-        .is_some_and(|view| view.execution_worktree)
+        .is_some_and(|view| view.execution_worktree.is_some())
 }
 
 pub(crate) async fn stat(

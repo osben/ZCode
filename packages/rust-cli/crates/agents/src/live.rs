@@ -87,7 +87,7 @@ pub(crate) struct LiveAgent {
     pub(crate) definition: Arc<AgentDefinition>,
     pub(crate) workspace: WorkspaceRef,
     /// Fork: `workspace` is the spawning session's execution worktree (its `RunView::execution_worktree`).
-    pub(crate) execution_worktree: bool,
+    pub(crate) execution_worktree: Option<rust_cli_kernel_api::session_ops::ExecutionWorktreeFact>,
     /// 子代理的工具缺省在哪台机器上跑（Agent 的 `machine`，R3，remote-exec.md §20.6）。
     pub(crate) machine: MachineName,
     pub(crate) selection: ModelSelection,

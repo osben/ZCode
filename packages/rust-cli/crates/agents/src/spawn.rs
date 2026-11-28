@@ -468,6 +468,7 @@ async fn run_loop(
                     report::system(
                         &definition.prompt,
                         core.ports.incognito.get(&agent.child).as_ref(),
+                        agent.execution_worktree.as_ref(),
                     )
                 },
                 inject_agents_md: agent.definition.inject_agents_md,

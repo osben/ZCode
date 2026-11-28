@@ -166,7 +166,7 @@ pub(crate) struct Controller {
     /// Fork: the Node desktop agent's semantics where they differ from this CLI's (plan mode boundary, queue
     /// drain); only the app-server turns it on ([`rust_cli_runtime::Extensions::node_desktop`]).
     pub(crate) node_desktop: bool,
-    /// Fork: Node's "ZCode Desktop Context" system section ([`ContextConfig::desktop`]); only the app-server started
+    /// Fork: Node's "ZCode Desktop Context" text, sent with the environment announcement ([`ContextConfig::desktop`]); only the app-server started
     /// with `--surface desktop` (the Host's rollout decision) turns it on.
     pub(crate) desktop_context: bool,
     /// Fork: the desktop Host's automation store (app-server only; specs/fork-rust-automations.md, slice 2).

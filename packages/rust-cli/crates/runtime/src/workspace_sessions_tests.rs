@@ -161,4 +161,10 @@ async fn a_session_created_in_a_worktree_starts_there_and_is_stored_under_the_pa
         view.meta.workspace.root.as_str(),
         "/Users/dev/work/.worktrees/a"
     );
+    // The model-context notice: the parent is the row's workspace, the branch the one stored.
+    let fact = view.execution_worktree.expect("the actor holds the fact");
+    assert_eq!(fact.path.as_str(), "/Users/dev/work/.worktrees/a");
+    assert_eq!(fact.workspace.as_str(), "/Users/dev/work");
+    assert_eq!(fact.branch.as_deref(), Some("feat/a"));
+    assert!(!fact.missing);
 }

@@ -193,7 +193,8 @@ impl Actor {
             // The child runs where the parent runs: without the root it would open in the original checkout.
             execution: self
                 .execution_worktree
-                .then(|| self.meta.workspace.root.clone()),
+                .as_ref()
+                .map(|_| self.meta.workspace.root.clone()),
         };
         let receipt = match self.deps.store.fork(fork).await {
             Ok(receipt) => receipt,

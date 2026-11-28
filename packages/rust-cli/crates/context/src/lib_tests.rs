@@ -295,51 +295,48 @@ async fn an_incognito_profile_drops_the_output_style_and_prompt_overrides() {
     );
 }
 
-/// Fork (ZCode Desktop Context): a child session (its steps and its auto-compaction) neither names nor creates a Gen UI
-/// directory (Node children do not inherit the surface or the root); the main thread creates it before the request, so a failure there fails the build.
-/// `UnusedEnvironment` refuses `ensure_dir`, which makes any creation attempt visible.
+/// Fork (execution worktree notice): the request's fact reaches the system prompt and the `/context` sections; a plain
+/// request has neither.
 #[tokio::test]
-async fn only_the_main_thread_creates_the_gen_ui_directory() {
-    let mut config = ContextConfig::new(Surface::Interactive);
-    config.desktop = Some(DesktopContext {
-        gen_ui_root: Some("/root/visualizations".to_owned()),
-    });
-    let built = assembler_with(config.clone())
-        .build(
-            request(QuerySource::Subagent("Explore".to_owned())),
-            &prompt(),
-        )
-        .await
-        .unwrap();
-    let system: String = built
-        .system
-        .iter()
-        .map(|block| block.text.as_str())
-        .collect();
-    assert!(!system.contains("ZCode Desktop Context"));
-    // A child's auto-compaction keeps the agent id but runs as `Compact` on this assembler.
-    let child_compact = ContextRequest {
-        agent: Some(rust_cli_kernel_api::ids::AgentId::new("agent_1")),
-        ..request(QuerySource::Compact)
+async fn the_requests_worktree_fact_reaches_the_system_prompt() {
+    let line = "- Execution worktree: this session runs in a linked git worktree of /w (branch feat/a); file changes stay in the worktree until they are merged.";
+    let fact = rust_cli_kernel_api::session_ops::ExecutionWorktreeFact {
+        path: EnvPath::new("/w/.wt/a"),
+        workspace: EnvPath::new("/w"),
+        branch: Some("feat/a".to_owned()),
+        missing: false,
     };
-    let built = assembler_with(config.clone())
-        .build(child_compact, &prompt())
-        .await
-        .unwrap();
+    let with = ContextRequest {
+        execution_worktree: Some(fact),
+        ..request(QuerySource::MainThread)
+    };
+    let assembler = assembler();
+    let built = assembler.build(with.clone(), &prompt()).await.unwrap();
     let system: String = built
         .system
         .iter()
         .map(|block| block.text.as_str())
-        .collect();
-    assert!(!system.contains("ZCode Desktop Context"));
-    let error = assembler_with(config)
+        .collect::<Vec<_>>()
+        .join("\n");
+    assert!(
+        system.contains(&format!("# Environment\n{line}")),
+        "{system}"
+    );
+    let plain = assembler
         .build(request(QuerySource::MainThread), &prompt())
         .await
-        .unwrap_err();
+        .unwrap();
     assert!(
-        error
-            .to_string()
-            .contains("Gen UI output directory unavailable"),
-        "{error}"
+        plain
+            .system
+            .iter()
+            .all(|block| !block.text.contains("Execution worktree"))
+    );
+    let analysis = assembler.analysis(&with, &[]).await.unwrap();
+    assert!(
+        analysis
+            .sections
+            .iter()
+            .any(|section| section.name == "Execution Worktree")
     );
 }

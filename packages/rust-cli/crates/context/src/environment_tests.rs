@@ -19,7 +19,7 @@ fn facts(cwd: &str, git: bool, platform: &str) -> EnvFacts {
 
 /// 没有附加目录时的宣布。
 fn announce(history: &[Message], facts: &EnvFacts) -> Option<(String, Value)> {
-    super::announce(history, facts, &[])
+    super::announce(history, facts, &[], None)
 }
 
 fn announced((text, data): (String, Value)) -> Message {
@@ -63,6 +63,6 @@ fn unchanged_facts_are_not_announced_again_and_changes_are_an_update() {
 fn additional_directories_are_nested_items() {
     // 附加目录来自会话配置，不来自执行环境的事实（deployment.md §21）。
     let current = facts("/w", false, "darwin");
-    let (text, _) = super::announce(&[], &current, &[EnvPath::new("/x")]).unwrap();
+    let (text, _) = super::announce(&[], &current, &[EnvPath::new("/x")], None).unwrap();
     assert!(text.contains(" - Additional working directories:\n  - /x\n - Platform: darwin"));
 }

@@ -13,6 +13,7 @@ use rust_cli_kernel_api::manage::DirectoryOutcome;
 use rust_cli_kernel_api::message::{ContentBlock, Message, UserMessage, UserOrigin};
 use rust_cli_kernel_api::orchestration::OrchestrationError;
 use rust_cli_kernel_api::session_api::{Ack, CommandResult, KernelEvent};
+use rust_cli_kernel_api::session_ops::ExecutionWorktreeFact;
 use rust_cli_kernel_api::store::StoreError;
 use rust_cli_kernel_api::user_command::LocalCommandRecord;
 
@@ -102,9 +103,21 @@ impl Actor {
     ///
     /// Idempotent: a session already at `root` (a retried activation, or a cold reopen in the stored worktree after
     /// the first input was admitted) only releases the held SessionStart. Nothing held, it is a no-op even while busy.
-    pub(crate) async fn set_execution_root(&mut self, root: EnvPath) -> Ack {
+    pub(crate) async fn set_execution_root(
+        &mut self,
+        root: EnvPath,
+        branch: Option<String>,
+    ) -> Ack {
         if root == self.meta.workspace.root {
-            self.execution_worktree = true;
+            // A session already at the root keeps the fact it loaded. Without one it still guards the root; its parent
+            // is unknown (empty), so the model-context notice, which needs the parent, is not written.
+            self.execution_worktree
+                .get_or_insert_with(|| ExecutionWorktreeFact {
+                    path: root.clone(),
+                    workspace: EnvPath::new(""),
+                    branch: branch.clone(),
+                    missing: false,
+                });
             if self.deferred_start.is_some() {
                 // SessionStart takes the job slot: while a turn or another job runs it stays held for a retry.
                 if self.busy() {
@@ -119,9 +132,15 @@ impl Actor {
         if self.busy() {
             return rejected(BUSY);
         }
-        match self.change_workspace(root).await {
+        let parent = self.meta.workspace.root.clone();
+        match self.change_workspace(root.clone()).await {
             Ok(()) => {
-                self.execution_worktree = true;
+                self.execution_worktree = Some(ExecutionWorktreeFact {
+                    path: root,
+                    workspace: parent,
+                    branch,
+                    missing: false,
+                });
                 // A prepared session starts here: SessionStart runs in the worktree, after the move.
                 if let Some(source) = self.deferred_start.take() {
                     self.start_session(source);

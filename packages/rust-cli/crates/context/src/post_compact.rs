@@ -67,10 +67,18 @@ impl PromptAssembler {
             return Ok(out);
         }
         let facts = self.facts(&request).await;
+        // A refused Gen UI directory must not drop the other compaction attachments (the engine swallows an error
+        // here); the next step's announcement fails the request and adds the Desktop part once it can be named.
+        let desktop = self.desktop_facts(&request).await.ok().flatten();
         if let Some(shown) = self.shown_facts(&request, facts.as_ref()).await {
             out.extend(
-                environment::announce(kept, &shown, &self.config.additional_directories)
-                    .map(|found| self.attachment(environment::SOURCE, found)),
+                environment::announce(
+                    kept,
+                    &shown,
+                    &self.config.additional_directories,
+                    desktop.as_ref(),
+                )
+                .map(|found| self.attachment(environment::SOURCE, found)),
             );
         }
         out.extend(

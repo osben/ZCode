@@ -274,7 +274,7 @@ async fn session_with_hooks(
             checkpoints: Vec::new(),
             start: rust_cli_kernel_api::session_api::StartSource::Startup,
             start_held: false,
-            execution_worktree: false,
+            execution_worktree: None,
             turn: None,
             last_turn_failed: false,
             child_live: None,

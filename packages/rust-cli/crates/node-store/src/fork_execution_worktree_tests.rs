@@ -3,6 +3,8 @@
 use rust_cli_kernel_api::ids::SessionId;
 use rust_cli_kernel_api::store::SessionStore;
 
+use rust_cli_kernel_api::session_ops::ExecutionWorktreeFact;
+
 use super::*;
 use crate::tests::{TestStore, started};
 
@@ -22,7 +24,7 @@ async fn without_the_node_columns_there_is_no_worktree_and_a_write_is_refused() 
     let conn = t.connection();
     assert_eq!(read(&conn, "sess_1").unwrap(), None);
     let loaded = t.store.load(&SessionId::new("sess_1")).await.unwrap();
-    assert!(!loaded.execution_worktree);
+    assert_eq!(loaded.execution_worktree, None);
     assert!(matches!(
         write(&conn, "sess_1", "/w/.worktrees/a", Some("a")),
         Err(StoreError::Unsupported { .. })
@@ -48,6 +50,28 @@ async fn the_first_worktree_is_kept_and_the_directory_stays_the_parent() {
     ));
 }
 
+/// Node's resume stats the stored directory once: a worktree deleted out of band loads as the missing variant, with no
+/// branch when the row has none (a cold-seeded row).
+#[tokio::test]
+async fn a_cold_open_of_a_deleted_worktree_is_missing() {
+    let t = TestStore::new();
+    started(&t, "sess_1").await;
+    let conn = t.connection();
+    node_columns(&conn);
+    let gone = t.dir.path().join("gone");
+    conn.execute(
+        "update session set execution_directory = ?1 where id = 'sess_1'",
+        [gone.to_str().unwrap()],
+    )
+    .unwrap();
+    let loaded = t.store.load(&SessionId::new("sess_1")).await.unwrap();
+    let fact = loaded.execution_worktree.expect("the stored worktree");
+    assert_eq!(fact.path.as_str(), gone.to_str().unwrap());
+    assert_eq!(fact.workspace.as_str(), "/w");
+    assert_eq!(fact.branch, None);
+    assert!(fact.missing);
+}
+
 #[tokio::test]
 async fn a_cold_open_runs_in_the_worktree_and_lists_under_the_parent() {
     let t = TestStore::new();
@@ -68,7 +92,15 @@ async fn a_cold_open_runs_in_the_worktree_and_lists_under_the_parent() {
         loaded.meta.workspace.root.as_str(),
         worktree.to_str().unwrap()
     );
-    assert!(loaded.execution_worktree);
+    assert_eq!(
+        loaded.execution_worktree,
+        Some(ExecutionWorktreeFact {
+            path: loaded.meta.workspace.root.clone(),
+            workspace: rust_cli_kernel_api::env::EnvPath::new("/w"),
+            branch: Some("feat/a".to_owned()),
+            missing: false,
+        })
+    );
     let row = crate::reconcile_row::row(&conn, "sess_1").unwrap().unwrap();
     assert_eq!(row["directory"], "/w");
     // The listed workspace is the row's directory, never the worktree it runs in.

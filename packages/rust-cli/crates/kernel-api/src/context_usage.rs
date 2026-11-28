@@ -16,6 +16,9 @@ pub struct ContextUsageQuery {
     pub workspace: WorkspaceRef,
     pub selection: ModelSelection,
     pub mode: PermissionMode,
+    /// Fork: the session's execution worktree, for the notice `/context` lists (the kernel fills it from the session).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub execution_worktree: Option<crate::session_ops::ExecutionWorktreeFact>,
 }
 
 /// 类别的种类。

@@ -9,6 +9,7 @@ use rust_cli_prompts::texts::{self, render};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
+use crate::desktop::{DesktopFacts, content};
 use crate::render::{Bullet, attachments, bullets, escape};
 
 pub(crate) const SOURCE: &str = "environment";
@@ -26,11 +27,22 @@ pub(crate) struct Snapshot {
     pub shell: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub os_version: Option<String>,
+    /// Fork: the run is shown in ZCode Desktop (Node `desktopContext`); the full block carries the Desktop text. A
+    /// snapshot without the key (an older build) counts as none.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub desktop_context: bool,
+    /// Fork: the session's Gen UI output directory (Node `visualizationDirectory`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub visualization_directory: Option<String>,
 }
 
 impl Snapshot {
     /// 附加目录来自会话配置，不来自执行环境（deployment.md §21）。
-    pub(crate) fn from_facts(facts: &EnvFacts, additional: &[EnvPath]) -> Self {
+    pub(crate) fn from_facts(
+        facts: &EnvFacts,
+        additional: &[EnvPath],
+        desktop: Option<&DesktopFacts>,
+    ) -> Self {
         let present = |value: &str| (!value.is_empty()).then(|| value.to_owned());
         Self {
             working_directory: facts.cwd.as_str().to_owned(),
@@ -42,7 +54,16 @@ impl Snapshot {
             platform: facts.platform.clone(),
             shell: present(&facts.shell),
             os_version: present(&facts.os_version),
+            desktop_context: desktop.is_some(),
+            visualization_directory: desktop.and_then(|desktop| desktop.directory.clone()),
         }
+    }
+
+    /// The Desktop part of this snapshot (Node `desktopContextText`): none off the desktop, else the text in the form
+    /// the directory decides. Updates compare these.
+    fn desktop_text(&self) -> Option<String> {
+        self.desktop_context
+            .then(|| content(self.visualization_directory.is_some()))
     }
 
     /// 平台、shell、系统版本都没变；变了就要重发整块。
@@ -76,6 +97,12 @@ fn whole(snapshot: &Snapshot) -> String {
                 .collect(),
         ));
     }
+    if let Some(directory) = &snapshot.visualization_directory {
+        lines.push(Bullet::Line(value(
+            texts::environment_visualization(),
+            &escape(directory),
+        )));
+    }
     lines.push(Bullet::Line(value(
         texts::environment_platform(),
         &escape(&snapshot.platform),
@@ -90,7 +117,11 @@ fn whole(snapshot: &Snapshot) -> String {
         lines.push(Bullet::Line(value(texts::environment_os(), &escape(os))));
     }
     lines.push(Bullet::Line(texts::environment_untrusted().to_owned()));
-    render(texts::environment(), &[("lines", &bullets(lines))])
+    let block = render(texts::environment(), &[("lines", &bullets(lines))]);
+    match snapshot.desktop_text() {
+        Some(desktop) => format!("{block}\n\n{desktop}"),
+        None => block,
+    }
 }
 
 /// `# Environment update`（先算变化，再渲染）；没有变化时为 None。
@@ -145,13 +176,38 @@ fn update(latest: &Snapshot, current: &Snapshot) -> Option<(String, Vec<Value>)>
             "field": "additionalWorkingDirectories", "added": added, "removed": removed
         }));
     }
-    if lines.is_empty() {
+    if latest.visualization_directory != current.visualization_directory {
+        let value = current
+            .visualization_directory
+            .as_deref()
+            .map_or_else(|| "none".to_owned(), escape);
+        lines.push(Bullet::Line(match &latest.visualization_directory {
+            Some(was) => render(
+                texts::environment_visualization_was(),
+                &[("value", &value), ("from", &escape(was))],
+            ),
+            None => render(texts::environment_visualization(), &[("value", &value)]),
+        }));
+        changes.push(json!({"field": "visualizationDirectory"}));
+    }
+    let mut parts = Vec::new();
+    if !lines.is_empty() {
+        parts.push(render(
+            texts::environment_update(),
+            &[("lines", &bullets(lines))],
+        ));
+    }
+    // The Desktop part is compared by form: a changed form appends the whole text in the new form, or the sentence that
+    // it no longer applies. With no bullet lines the update is that text alone, with no heading.
+    let (before, after) = (latest.desktop_text(), current.desktop_text());
+    if before != after {
+        parts.push(after.unwrap_or_else(|| texts::desktop_no_longer().to_owned()));
+        changes.push(json!({"field": "desktopContext"}));
+    }
+    if parts.is_empty() {
         return None;
     }
-    Some((
-        render(texts::environment_update(), &[("lines", &bullets(lines))]),
-        changes,
-    ))
+    Some((parts.join("\n\n"), changes))
 }
 
 fn snapshot_of(attachment: &AttachmentMessage) -> Option<Snapshot> {
@@ -163,8 +219,9 @@ pub(crate) fn announce(
     history: &[Message],
     facts: &EnvFacts,
     additional: &[EnvPath],
+    desktop: Option<&DesktopFacts>,
 ) -> Option<(String, Value)> {
-    let current = Snapshot::from_facts(facts, additional);
+    let current = Snapshot::from_facts(facts, additional, desktop);
     let announced: Vec<&AttachmentMessage> = attachments(history, SOURCE).collect();
     let latest = announced
         .last()
