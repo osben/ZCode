@@ -240,6 +240,24 @@ impl Reader<'_> {
     }
 }
 
+/// `base` with the connect timeout, tool timeout and output cap the process environment sets (`MCP_TIMEOUT`,
+/// `MCP_TOOL_TIMEOUT`, `MAX_MCP_OUTPUT_TOKENS`), read as a session reads them. The settings lane uses it so a
+/// Settings connect gives up when a session would.
+pub(crate) fn with_env_limits(base: McpSettings, env: &EnvSnapshot) -> McpSettings {
+    McpSettings {
+        connect_timeout_ms: positive_ms(
+            env,
+            rust_cli_base::names::env::MCP_TIMEOUT,
+            base.connect_timeout_ms,
+        ),
+        tool_timeout_ms: number(env, rust_cli_base::names::env::MCP_TOOL_TIMEOUT)
+            .unwrap_or(base.tool_timeout_ms),
+        max_output_tokens: number(env, rust_cli_base::names::env::MAX_MCP_OUTPUT_TOKENS)
+            .unwrap_or(base.max_output_tokens),
+        ..base
+    }
+}
+
 /// 组装 MCP 设置：配置文件的服务器（`configured`，已按 Node 规则合并，config.md §2）加上
 /// `--mcp-config`（按名覆盖；`--strict-mcp-config` 时只用它）。`enabled` 为 false（`features.mcp`）时
 /// 没有服务器。`allowed` 是 `--allowedTools` 的规则（`-p` 启动等待里点名的服务器）。合并之后按 `bindings`
@@ -274,22 +292,14 @@ pub(crate) async fn settings(
         bindings.bind(&mut servers);
         servers
     };
-    let defaults = McpSettings::default();
-    let connect_timeout_ms = positive_ms(
-        snapshot,
-        rust_cli_base::names::env::MCP_TIMEOUT,
-        defaults.connect_timeout_ms,
-    );
+    let limits = with_env_limits(McpSettings::default(), snapshot);
+    let connect_timeout_ms = limits.connect_timeout_ms;
     McpSettings {
         servers,
-        connect_timeout_ms,
-        tool_timeout_ms: number(snapshot, rust_cli_base::names::env::MCP_TOOL_TIMEOUT)
-            .unwrap_or(defaults.tool_timeout_ms),
-        max_output_tokens: number(snapshot, rust_cli_base::names::env::MAX_MCP_OUTPUT_TOKENS)
-            .unwrap_or(defaults.max_output_tokens),
         // 握手的 `clientInfo.version`：入口的版本是唯一来源（docs/specs/rust-cli/version.md §4）。
         client_version: crate::VERSION.to_owned(),
         startup: startup(snapshot, (explicit, prewait), connect_timeout_ms, allowed),
+        ..limits
     }
 }
 

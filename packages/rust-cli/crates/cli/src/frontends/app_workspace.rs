@@ -19,7 +19,10 @@ use rust_cli_ext::mcp::oauth::{
     McpOAuthConfig, McpOAuthRuntime, McpOAuthStore, ServerOAuthIdentity, authorization_status,
     is_authorization_challenge, may_show_pending, pending_authorization_for,
 };
-use rust_cli_ext::mcp::{McpManager, McpScope, McpServer, McpSettings, parse_node_servers};
+use rust_cli_ext::mcp::{
+    McpManager, McpScope, McpServer, McpSettings, is_retired_cua_server, is_retired_cua_stdio,
+    parse_node_servers,
+};
 use rust_cli_ext::plugins::load_all;
 use rust_cli_hooks::ProjectHookSlots;
 use rust_cli_kernel_api::clock::Clock;
@@ -84,7 +87,9 @@ struct Lane {
     /// The arrival number of the connect that built it ([`AppWorkspace::arrival`]).
     arrival: u64,
     key: String,
-    manager: McpManager,
+    /// Shared with the lane it displaces when both belong to the same workspace key: a connect revalidates the
+    /// manager's servers in place (`McpManager::reconcile`) instead of closing and respawning them.
+    manager: Arc<McpManager>,
     blocked: BTreeMap<String, Value>,
     /// The admitted servers until [`AppWorkspace::settle`] starts them.
     pending: StdMutex<Vec<McpServer>>,
@@ -234,6 +239,7 @@ impl AppWorkspace {
         loaded
             .mcp_servers()
             .into_iter()
+            .filter(|server| !is_retired_cua_server(server))
             .map(|server| (server.name.clone(), server))
             .collect()
     }
@@ -254,7 +260,10 @@ impl AppWorkspace {
             for (name, config) in servers.iter().filter_map(mcp_trust::dto_config) {
                 out.insert(name, config);
             }
-            return out.into_iter().collect();
+            return out
+                .into_iter()
+                .filter(|(name, config)| !retired_row(name, config))
+                .collect();
         }
         if let Ok(discovery) = read.inspection.discovery() {
             for (name, declaration) in &discovery.declarations {
@@ -275,7 +284,9 @@ impl AppWorkspace {
                 out.insert(name.clone(), config);
             }
         }
-        out.into_iter().collect()
+        out.into_iter()
+            .filter(|(name, config)| !retired_row(name, config))
+            .collect()
     }
 
     /// The servers the settings lane may connect, and the status of each refused one (Node's guarded port).
@@ -354,8 +365,8 @@ impl AppWorkspace {
         self.arrivals.fetch_add(1, Ordering::Relaxed) + 1
     }
 
-    /// Replaces the settings lane with one for `key` holding `servers` (Node connects with replace semantics and
-    /// revalidates on every Settings refresh): [`Self::install`], then [`Self::settle`].
+    /// Makes the settings lane hold `servers` for `key` (Node connects with replace semantics and revalidates its pool on
+    /// every Settings refresh, keeping unchanged entries): [`Self::install`], then [`Self::settle`].
     async fn connect(
         &self,
         arrival: u64,
@@ -377,24 +388,6 @@ impl AppWorkspace {
         key: &str,
         (servers, blocked): (Vec<McpServer>, BTreeMap<String, Value>),
     ) -> Option<(Arc<Lane>, Option<Arc<Lane>>)> {
-        let manager = McpManager::new(
-            self.transport.clone(),
-            self.spawner.clone(),
-            self.mcp.clone(),
-            self.clock.clone(),
-        );
-        if let (Some(store), Some(runtime)) =
-            (self.mcp_oauth.clone(), self.mcp_oauth_runtime.clone())
-        {
-            manager.enable_oauth(store, runtime);
-        }
-        let fresh = Arc::new(Lane {
-            arrival,
-            key: key.to_owned(),
-            manager,
-            blocked,
-            pending: StdMutex::new(servers),
-        });
         let mut lane = self.lane.lock_unpoisoned();
         if lane
             .as_ref()
@@ -402,6 +395,32 @@ impl AppWorkspace {
         {
             return None;
         }
+        // The same workspace key keeps its manager, so unchanged servers keep their connections (Node revalidates
+        // its pool and keeps unchanged entries). Another key starts a manager of its own and closes the old lane.
+        let manager = match lane.as_ref().filter(|current| current.key == key) {
+            Some(current) => current.manager.clone(),
+            None => {
+                let manager = McpManager::new(
+                    self.transport.clone(),
+                    self.spawner.clone(),
+                    self.lane_settings(),
+                    self.clock.clone(),
+                );
+                if let (Some(store), Some(runtime)) =
+                    (self.mcp_oauth.clone(), self.mcp_oauth_runtime.clone())
+                {
+                    manager.enable_oauth(store, runtime);
+                }
+                Arc::new(manager)
+            }
+        };
+        let fresh = Arc::new(Lane {
+            arrival,
+            key: key.to_owned(),
+            manager,
+            blocked,
+            pending: StdMutex::new(servers),
+        });
         let displaced = lane.replace(fresh.clone());
         Some((fresh, displaced))
     }
@@ -419,10 +438,14 @@ impl AppWorkspace {
         displaced: Option<Arc<Lane>>,
         workspace: WorkspaceRef,
     ) {
-        if let Some(displaced) = displaced {
+        // A lane of the same workspace key shares the manager: it is revalidated below, not closed.
+        let shared = displaced
+            .as_ref()
+            .is_some_and(|displaced| Arc::ptr_eq(&displaced.manager, &fresh.manager));
+        if let Some(displaced) = displaced.filter(|_| !shared) {
             close(&displaced).await;
         }
-        {
+        let reconciled = {
             let lane = self.lane.lock_unpoisoned();
             if !lane
                 .as_ref()
@@ -431,11 +454,25 @@ impl AppWorkspace {
                 return;
             }
             let servers = std::mem::take(&mut *fresh.pending.lock_unpoisoned());
-            fresh.manager.start(workspace, servers);
+            if shared {
+                Some(fresh.manager.reconcile(workspace, servers))
+            } else {
+                fresh.manager.start(workspace, servers);
+                None
+            }
+        };
+        if let Some(reconciled) = reconciled {
+            reconciled.settle(&fresh.manager).await;
         }
         // Node awaits every connection of the lane (each one bounded by its own connect timeout, so a server that
         // never answers ends `failed` instead of holding the read).
         fresh.manager.wait_ready().await;
+    }
+
+    /// The connect and tool settings of a lane: the defaults and the agent version, with the process's `MCP_TIMEOUT`,
+    /// `MCP_TOOL_TIMEOUT` and `MAX_MCP_OUTPUT_TOKENS` as a session reads them.
+    fn lane_settings(&self) -> McpSettings {
+        crate::assemble::mcp::with_env_limits(self.mcp.clone(), &self.process.process_env)
     }
 
     /// Fork (specs/fork-rust-workspace-plugins-mcp.md, "As built: layer reload"): a config or trust
@@ -501,7 +538,11 @@ impl AppWorkspace {
         let mut statuses = Map::new();
         for (name, config) in &configured {
             let kind = transport(config);
-            let status = if let Some(info) = infos.get(name) {
+            // A failed server of the shared manager that this lane is about to revalidate is reconnecting.
+            let reviving = |info: &&McpServerInfo| {
+                info.state != McpServerState::Failed || !pending.contains(name)
+            };
+            let status = if let Some(info) = infos.get(name).filter(reviving) {
                 self.live(info, kind)
             } else if pending.contains(name) {
                 self.idle("connecting", kind)
@@ -550,6 +591,38 @@ impl AppWorkspace {
             statuses.insert(review.name.clone(), status);
         }
     }
+}
+
+/// Node `isRetiredCuaMcpServer` over a settings row: a stdio entry (a row without `type` is stdio) that names the
+/// old standalone CUA server never shows in Settings and never connects.
+fn retired_row(name: &str, config: &Map<String, Value>) -> bool {
+    if transport(config) != "stdio" {
+        return false;
+    }
+    let command = config
+        .get("command")
+        .and_then(Value::as_str)
+        .unwrap_or_default();
+    let args: Vec<String> = config
+        .get("args")
+        .and_then(Value::as_array)
+        .map(|args| {
+            args.iter()
+                .filter_map(Value::as_str)
+                .map(str::to_owned)
+                .collect()
+        })
+        .unwrap_or_default();
+    let env: BTreeMap<String, String> = config
+        .get("env")
+        .and_then(Value::as_object)
+        .map(|env| {
+            env.iter()
+                .filter_map(|(key, value)| Some((key.clone(), value.as_str()?.to_owned())))
+                .collect()
+        })
+        .unwrap_or_default();
+    is_retired_cua_stdio(name, command, &args, &env)
 }
 
 async fn close(lane: &Lane) {

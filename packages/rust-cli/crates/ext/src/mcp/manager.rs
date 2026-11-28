@@ -29,6 +29,7 @@ use super::connection::{self, Session, has_capability};
 use super::notices::{PROMPTS_LIST_KIND, TOOLS_LIST_KIND};
 use super::oauth_hooks::ChallengeRefresh;
 use super::resources;
+use super::retired::is_retired_cua_server;
 use super::rpc::{Client, Notice};
 use super::tool::{McpTool, name_too_long, note_long_names};
 
@@ -643,7 +644,11 @@ impl McpManager {
     /// 开始连接（每个服务器一个常驻任务，不等待）。同名的服务器只连一次。
     pub fn start(&self, workspace: WorkspaceRef, servers: Vec<McpServer>) {
         *self.0.workspace.lock_unpoisoned() = Some(workspace.clone());
-        for config in servers {
+        // Node drops the retired CUA entries from every effective server set (`isRetiredCuaMcpServer`).
+        for config in servers
+            .into_iter()
+            .filter(|server| !is_retired_cua_server(server))
+        {
             let cancel = {
                 let mut known = self.0.servers();
                 if known.contains_key(&config.name) {
@@ -798,6 +803,10 @@ mod control;
 
 #[path = "manager_state.rs"]
 mod state;
+
+#[path = "manager_reconcile.rs"]
+mod reconcile;
+pub use reconcile::Reconciled;
 
 /// 失败原因写进日志的部分：前 300 个字符（与 `tool.failed` 相同，logging.md §4）。
 ///

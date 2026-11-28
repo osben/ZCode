@@ -13,6 +13,7 @@ mod oauth_hooks;
 mod parse;
 mod resources;
 mod result;
+mod retired;
 mod rpc;
 mod startup;
 mod tool;
@@ -23,9 +24,10 @@ pub use app_provided::{app_provided_tool, app_provided_tools};
 pub use config::{
     McpScope, McpServer, McpServerOptions, McpServers, McpSettings, normalize_name, tool_name,
 };
-pub use manager::McpManager;
+pub use manager::{McpManager, Reconciled};
 pub use node_config::{NodeMcpServer, normalize_node_server, parse_node_servers};
 pub use parse::{EnvLookups, expand_vars, merge_scopes, parse_servers, parse_servers_keeping};
+pub use retired::{is_retired_cua_server, is_retired_cua_stdio};
 pub use rpc::helper_elicitation_answer;
 pub use startup::{
     DEFAULT_CONNECT_WAIT_MS, DEFAULT_PREWAIT_MS, McpStartup, prewait_ms, required_servers,
