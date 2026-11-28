@@ -40,6 +40,10 @@ pub(crate) async fn decide(
         }
         // Fork: the per-turn summary rewind (specs/fork-rust-agent-parity.md).
         "applyFileRewind" => file_summary::apply(live, envelope, revision).await,
+        // Fork: the discard of a conversation share's context (fork/shared_context.rs).
+        "discardSharedContext" => {
+            super::shared_context::discard(server, live, envelope, revision).await
+        }
         "deleteSession" => session_delete::delete(server, live, envelope, revision).await,
         "deleteQueueItem" => queue::delete_queue_item(live, envelope, revision).await,
         "editQueueItem" => queue::edit_queue_item(server, live, envelope, revision).await,

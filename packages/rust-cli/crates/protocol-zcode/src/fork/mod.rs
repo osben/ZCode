@@ -56,6 +56,7 @@ pub(crate) mod session_deletion;
 #[path = "session_store_integration_tests.rs"]
 mod session_store_integration_tests;
 pub(crate) mod session_tree;
+mod shared_context;
 mod skills;
 pub(crate) mod subagents;
 mod usage;

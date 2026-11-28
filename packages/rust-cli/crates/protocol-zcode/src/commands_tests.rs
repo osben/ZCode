@@ -1870,3 +1870,64 @@ async fn a_refused_queued_input_gives_its_context_back() {
     assert_eq!(ack.status, Status::Rejected, "{ack:?}");
     assert_eq!(status_of(&kernel).as_deref(), Some("pending"));
 }
+
+/// Node `discardSharedContext`: a pending context is discarded (an accepted answer without a result).
+#[tokio::test]
+async fn a_pending_shared_context_is_discarded() {
+    let (_scope, server, kernel) = context_server(accepted()).await;
+    let ack = decide(
+        &server,
+        &command_envelope(
+            "c1",
+            "discardSharedContext",
+            Some("s1"),
+            json!({"contextId": "ctx-1"}),
+        ),
+    )
+    .await;
+    assert_eq!(ack.status, Status::Accepted, "{ack:?}");
+    assert_eq!(ack.result, None);
+    assert_eq!(status_of(&kernel).as_deref(), Some("discarded"));
+}
+
+/// A context that is reserved, already discarded or unknown is refused with Node's text and left alone.
+#[tokio::test]
+async fn a_context_that_is_not_pending_is_not_discarded() {
+    use rust_cli_kernel_api::store::StoreQueries as _;
+    let (_scope, server, kernel) = context_server(accepted()).await;
+    kernel
+        .store
+        .transition_shared_context(
+            &SessionId::new("s1"),
+            &rust_cli_kernel_api::store::SharedContextTransition {
+                context_id: "ctx-1".to_owned(),
+                expected: vec!["pending".to_owned()],
+                status: "reserved".to_owned(),
+                source_id: Some("queue_x".to_owned()),
+            },
+        )
+        .await
+        .unwrap();
+    for context in ["ctx-1", "other"] {
+        let ack = decide(
+            &server,
+            &command_envelope(
+                "c1",
+                "discardSharedContext",
+                Some("s1"),
+                json!({"contextId": context}),
+            ),
+        )
+        .await;
+        assert_eq!(ack.status, Status::Failed, "{ack:?}");
+        assert_eq!(
+            ack.reason_code.as_deref(),
+            Some("fault.command.inputRejected")
+        );
+        assert_eq!(
+            ack.message.as_deref(),
+            Some("shared context is not pending")
+        );
+    }
+    assert_eq!(status_of(&kernel).as_deref(), Some("reserved"));
+}
