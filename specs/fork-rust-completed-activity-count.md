@@ -46,8 +46,12 @@ up, and a resume of the same id takes it out of the count until it succeeds agai
    by mistake until it runs again; the window is a few milliseconds. A nested child (its entry has an owner) stays
    while its owner chain in the table reaches a launch the active branch links, because its own launch is stored in
    its owner's session.
-   Known gap: a child resumed by `SendMessage` after its launch was cut is linked only by the resume, and the store's
-   subagent rows do not return `SendMessage` parts, so a later rewind that keeps the resume cuts it again.
+   A child resumed by `SendMessage` after its launch was cut is linked by the resume: the store's subagent rows also
+   return the `SendMessage` tool parts of the active branch (`parent_rows`, a read of the same tool-part rows, no schema
+   change), and a completed one whose `input.to` is the table entry's agent id keeps that entry. Node links the resumed
+   row to the `SendMessage` call the same way (its spawn event carries that call). Only the cut test reads these
+   parts; the subagent directory still lists children by their `Agent`, `Task` and `subagent` parts only, as Node's
+   `candidateFromToolPart` does, so a resumed child whose launch is cut is counted but not listed.
 
 ## Delivery
 

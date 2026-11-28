@@ -752,11 +752,21 @@ pub(crate) async fn ended_outcomes(
         let linked: Vec<Candidate> = collect_candidates(&rows.parts);
         // A nested child's launch is stored in its owner's session, not in the root's parts: it stays while its
         // owner chain ends in a launch the active branch links.
+        // A completed SendMessage to the agent links it too: Node's resumed row carries that call, so a rewind that
+        // keeps the resume keeps the child even when its launch was cut earlier.
+        let resumed: HashSet<&str> = rows
+            .parts
+            .iter()
+            .filter(|part| part.tool == "SendMessage" && part.status == "completed")
+            .filter_map(|part| part.input.get("to").and_then(Value::as_str))
+            .map(str::trim)
+            .collect();
         let linked_entry = |entry: &SubagentEntry| {
-            linked.iter().any(|candidate| {
-                candidate.child_session_id == entry.child.as_str()
-                    || candidate.agent_id == entry.agent.as_str()
-            })
+            resumed.contains(entry.agent.as_str())
+                || linked.iter().any(|candidate| {
+                    candidate.child_session_id == entry.child.as_str()
+                        || candidate.agent_id == entry.agent.as_str()
+                })
         };
         let by_agent: HashMap<&str, &SubagentEntry> = live
             .iter()

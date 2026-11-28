@@ -20,9 +20,10 @@ use std::borrow::Cow;
 use crate::OrStorage;
 use crate::repo::{messages, sessions};
 
-/// The tool names that can spawn a subagent (Node `SUBAGENT_TOOL_NAMES`). Other tool parts can
-/// never become candidates, so they never enter the document.
-const SUBAGENT_TOOLS: [&str; 3] = ["Agent", "Task", "subagent"];
+/// The tool names that can spawn a subagent (Node `SUBAGENT_TOOL_NAMES`), plus `SendMessage`: it is never a
+/// candidate, but its `input.to` links a child resumed after a rewind cut its launch (the cold cut test of the
+/// activity count). Other tool parts never enter the document.
+const SUBAGENT_TOOLS: [&str; 4] = ["Agent", "Task", "subagent", "SendMessage"];
 
 fn object(value: &Value) -> Map<String, Value> {
     value.as_object().cloned().unwrap_or_default()
