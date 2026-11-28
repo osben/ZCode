@@ -349,6 +349,10 @@ the Settings rows (`isRetiredCuaMcpServer`, `bootstrap/src/mcp-config.ts`; match
   (`app_workspace.rs` `retired_row`). A `NodeHelper` plugin server has no command, so only the
   name rule can match it; the official computer-use plugin reaches Rust as `node_repl`.
 
+Known difference kept on purpose: a retired server declared in a project file still gets its workspace
+review row in `mcp/list`, because Node's `withReviews` adds a row for every reviewed declaration after
+`listMcpServerStatuses` has dropped the retired ones. Rust does the same, and the server never connects.
+
 Acceptance: `ext` tests in `retired_tests.rs` and `manager_reconcile_tests.rs`; `cli` test
 `a_retired_cua_server_is_neither_listed_nor_connected`.
 

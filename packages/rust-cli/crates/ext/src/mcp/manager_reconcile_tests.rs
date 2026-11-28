@@ -195,6 +195,77 @@ async fn a_stale_probe_does_not_restart_a_newer_connection() {
     assert_eq!(handshakes(&fake, "files"), 2);
 }
 
+/// A transport whose `send` of a `ping` never returns once armed: an HTTP server that accepts the POST and stalls
+/// before its headers. `Client::request` starts its timeout only after `send`, so the probe needs its own deadline.
+struct StallingPing {
+    inner: Arc<FakeMcp>,
+    armed: std::sync::atomic::AtomicBool,
+}
+
+#[async_trait::async_trait]
+impl rust_cli_kernel_api::mcp::McpTransport for StallingPing {
+    async fn connect(
+        &self,
+        workspace: &rust_cli_kernel_api::env::WorkspaceRef,
+        request: rust_cli_kernel_api::mcp::McpConnect,
+    ) -> Result<rust_cli_kernel_api::mcp::McpConnectionId, rust_cli_kernel_api::mcp::McpError> {
+        self.inner.connect(workspace, request).await
+    }
+
+    async fn send(
+        &self,
+        connection: &rust_cli_kernel_api::mcp::McpConnectionId,
+        message: serde_json::Value,
+    ) -> Result<(), rust_cli_kernel_api::mcp::McpError> {
+        if message["method"] == "ping" && self.armed.load(std::sync::atomic::Ordering::SeqCst) {
+            std::future::pending::<()>().await;
+        }
+        self.inner.send(connection, message).await
+    }
+
+    fn events(
+        &self,
+        connection: &rust_cli_kernel_api::mcp::McpConnectionId,
+    ) -> futures_util::stream::BoxStream<'static, rust_cli_kernel_api::mcp::McpTransportEvent> {
+        self.inner.events(connection)
+    }
+
+    async fn close(
+        &self,
+        connection: &rust_cli_kernel_api::mcp::McpConnectionId,
+    ) -> Result<(), rust_cli_kernel_api::mcp::McpError> {
+        self.inner.close(connection).await
+    }
+}
+
+#[tokio::test]
+async fn a_probe_whose_send_stalls_still_ends_at_the_deadline() {
+    let fake = Arc::new(FakeMcp::default().with("files", live(|| Some(Ok(json!({}))))));
+    let transport = Arc::new(StallingPing {
+        inner: fake.clone(),
+        armed: std::sync::atomic::AtomicBool::new(false),
+    });
+    let scope = TaskScope::root("test", |_| {});
+    let manager = McpManager::new(
+        transport.clone(),
+        scope.spawner(),
+        McpSettings::default(),
+        crate::clock_tests::clock(),
+    );
+    apply(&manager, vec![config("files", "node")]).await;
+    transport
+        .armed
+        .store(true, std::sync::atomic::Ordering::SeqCst);
+    let settled = tokio::time::timeout(
+        std::time::Duration::from_millis(1000),
+        manager
+            .reconcile(workspace(), vec![config("files", "node")])
+            .settle(&manager),
+    )
+    .await;
+    assert!(settled.is_ok(), "the probe outlived its 80 ms deadline");
+}
+
 #[tokio::test]
 async fn a_retired_cua_server_never_starts() {
     let fake = Arc::new(FakeMcp::default().with("computer-use", live(|| None)));

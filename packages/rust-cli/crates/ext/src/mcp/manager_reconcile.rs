@@ -118,12 +118,13 @@ impl McpManager {
                 server.generation,
             )
         };
-        match client
-            .request("ping", json!({}), timeout, &CancellationToken::new())
-            .await
-        {
-            Ok(_) | Err(RpcError::Server { .. }) => None,
-            Err(_) => Some(generation),
+        // `request` starts its own timeout after `send`, and an HTTP send reads the response; the outer deadline
+        // bounds the whole probe.
+        let cancel = CancellationToken::new();
+        let ping = client.request("ping", json!({}), timeout, &cancel);
+        match tokio::time::timeout(timeout, ping).await {
+            Ok(Ok(_) | Err(RpcError::Server { .. })) => None,
+            Ok(Err(_)) | Err(_) => Some(generation),
         }
     }
 }
