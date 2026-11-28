@@ -97,6 +97,13 @@ fn append_user(ctx: &Commit<'_>, user: &UserMessage) -> Result<(), StoreError> {
     }
     let id = user.id.as_str();
     let created = created_at(id, ctx.now);
+    if user
+        .intent
+        .as_deref()
+        .is_some_and(|intent| intent.bot_group_source().is_some())
+    {
+        crate::project_rules::ensure_group_scope(ctx)?;
+    }
     // Fork: an App input's quote block is its intent's (specs/fork-agent-runtime-selection.md, Conversation quotes in
     // Rust mode): the typed text is the text before that block, never a block parsed out of the text.
     let intent = user.intent.as_deref();

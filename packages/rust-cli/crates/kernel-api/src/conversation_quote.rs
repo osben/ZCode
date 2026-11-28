@@ -6,6 +6,7 @@
 //! ([`crate::input_intent`]); nothing parses them back out of a message's text.
 
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
 
 /// `CONVERSATION_SELECTION_MAX_COUNT`.
 pub const MAX_COUNT: usize = 8;
@@ -97,25 +98,31 @@ pub fn validate(quotes: &[Quote]) -> Result<(), String> {
 /// Node `withConversationQuotes(text, quotes)`: the typed text, the block, then the comment guidance when a quote
 /// has a non-blank comment; an empty part is dropped.
 pub fn compose(text: &str, quotes: &[Quote]) -> String {
-    if quotes.is_empty() {
-        return text.to_owned();
+    compose_with_source(text, quotes, None)
+}
+
+/// Node `withConversationQuotes(text, quotes, botSource)`: [`compose`] plus a bot-group input's guidance parts
+/// ([`crate::bot_source::parts`]), each after the one before and separated by a blank line.
+pub fn compose_with_source(text: &str, quotes: &[Quote], bot_source: Option<&Value>) -> String {
+    let mut parts = vec![text.to_owned()];
+    if !quotes.is_empty() {
+        // Serializing plain strings cannot fail.
+        let json = serde_json::to_string(quotes).unwrap_or_default();
+        parts.push(format!("{OPEN}{json}{CLOSE}"));
+        if quotes.iter().any(|quote| {
+            quote
+                .comment
+                .as_deref()
+                .is_some_and(|c| !rust_cli_base::js::string::trim(c).is_empty())
+        }) {
+            parts.push(COMMENT_GUIDANCE.to_owned());
+        }
     }
-    // Serializing plain strings cannot fail.
-    let json = serde_json::to_string(quotes).unwrap_or_default();
-    let mut block = format!("{OPEN}{json}{CLOSE}");
-    if quotes.iter().any(|quote| {
-        quote
-            .comment
-            .as_deref()
-            .is_some_and(|c| !rust_cli_base::js::string::trim(c).is_empty())
-    }) {
-        block = format!("{block}{SEPARATOR}{COMMENT_GUIDANCE}");
+    if let Some(source) = bot_source {
+        parts.extend(crate::bot_source::parts(source));
     }
-    if text.is_empty() {
-        block
-    } else {
-        format!("{text}{SEPARATOR}{block}")
-    }
+    parts.retain(|part| !part.is_empty());
+    parts.join(SEPARATOR)
 }
 
 /// zod `z.string().datetime({ offset: true })`: `YYYY-MM-DDTHH:MM:SS[.fraction]` then `Z` or `±HH:MM`, with a real

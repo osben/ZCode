@@ -175,18 +175,35 @@ impl PolicyGate {
     }
 
     /// 这个会话判决用的快照：群协作会话把 LocalSettings 换成它自己的规则集，其余会话就是当前快照。
-    fn snapshot_for(&self, session: &SessionId) -> Arc<PermissionRules> {
+    /// Fork: with a rules source the session row is read on every call, as Node's `loadProjectPermissionRuleset`
+    /// does, so a row that became scoped after the session opened applies at once. A failed read is an error and no
+    /// rule set is used (Node denies the ask with a StorageError). Without a source the open-time copy
+    /// ([`Self::scope`]) is the answer.
+    async fn snapshot_for(
+        &self,
+        session: &SessionId,
+    ) -> Result<Arc<PermissionRules>, PermissionDecision> {
         let base = self.snapshot();
-        let scoped = self.scoped.lock_unpoisoned().get(session).cloned();
+        let scoped = match &self.local {
+            Some(source) => match source.session(session).await {
+                Ok(row) => row.map(|rules| rules.sourced()),
+                Err(_) => {
+                    return Err(PermissionDecision::Deny {
+                        message: "Failed to load project permission rules".to_owned(),
+                    });
+                }
+            },
+            None => self.scoped.lock_unpoisoned().get(session).cloned(),
+        };
         let Some(scoped) = scoped else {
-            return base;
+            return Ok(base);
         };
         let mut rules = (*base).clone();
         rules.rules.retain(|rule| {
             rule.source != rust_cli_kernel_api::permission::RuleSource::LocalSettings
         });
         rules.rules.extend(scoped);
-        Arc::new(rules)
+        Ok(Arc::new(rules))
     }
 
     /// 从执行环境取路径事实：cwd 取会话的 shell cwd（会话的当前目录，取不到时用工作区根；与文件工具的
@@ -279,7 +296,10 @@ impl ScopedGate for PolicyGate {
         context: &ToolUseContext,
         allowed: &[PermissionRule],
     ) -> PermissionDecision {
-        let base = self.snapshot_for(&context.session);
+        let base = match self.snapshot_for(&context.session).await {
+            Ok(base) => base,
+            Err(denied) => return denied,
+        };
         let rules = Rules {
             base: &base,
             session: allowed,
@@ -403,7 +423,10 @@ impl PermissionGate for PolicyGate {
         input: &Value,
         context: &ToolUseContext,
     ) -> Option<PermissionDecision> {
-        let base = self.snapshot_for(&context.session);
+        let base = match self.snapshot_for(&context.session).await {
+            Ok(base) => base,
+            Err(denied) => return Some(denied),
+        };
         let rules = Rules {
             base: &base,
             session: &[],

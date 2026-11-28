@@ -1117,6 +1117,9 @@ mod title_tests;
 #[path = "epilogue_start_tests.rs"]
 mod epilogue_start_tests;
 #[cfg(test)]
+#[path = "group_scope_tests.rs"]
+mod group_scope_tests;
+#[cfg(test)]
 #[path = "quote_intent_tests.rs"]
 mod quote_intent_tests;
 

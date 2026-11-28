@@ -58,6 +58,19 @@ impl LocalRulesSource for StoredRules {
             }
         }
     }
+
+    async fn session(
+        &self,
+        session: &rust_cli_kernel_api::ids::SessionId,
+    ) -> Result<Option<ProjectRules>, String> {
+        self.0
+            .session_rules(session)
+            .await
+            .inspect_err(|error| {
+                tracing::warn!(%error, "the session's permission rules could not be read");
+            })
+            .map_err(|error| error.to_string())
+    }
 }
 
 async fn change_local(

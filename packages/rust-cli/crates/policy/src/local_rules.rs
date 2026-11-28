@@ -5,6 +5,7 @@
 
 use async_trait::async_trait;
 use rust_cli_kernel_api::env::WorkspaceRef;
+use rust_cli_kernel_api::ids::SessionId;
 use rust_cli_kernel_api::permission::{PermissionRules, ProjectRules, RuleSource};
 
 use crate::PolicyGate;
@@ -14,6 +15,12 @@ use crate::PolicyGate;
 pub trait LocalRulesSource: Send + Sync {
     /// `workspace` 的本机项目规则集；读不出时为 None（保留旧快照）。
     async fn read(&self, workspace: &WorkspaceRef) -> Option<ProjectRules>;
+
+    /// The session's own rule set when its row is scoped to the session (a Node group task), read now as Node reads it
+    /// on every ask. `Ok(None)` is an unscoped row; `Err` is a read that failed.
+    async fn session(&self, _session: &SessionId) -> Result<Option<ProjectRules>, String> {
+        Ok(None)
+    }
 }
 
 impl PolicyGate {

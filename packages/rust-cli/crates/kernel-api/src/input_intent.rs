@@ -102,9 +102,13 @@ impl InputIntent {
         self.get(QUOTES).is_some() || self.get(BOT_GROUP_SOURCE).is_some()
     }
 
-    /// Node `withConversationQuotes(text, intent.conversationQuotes)`: the text the model reads.
+    /// Node `withConversationQuotes(text, intent.conversationQuotes, intent.botGroupSource)`: the text the model reads.
     pub fn compose(&self, text: &str) -> String {
-        conversation_quote::compose(text, &self.quotes().unwrap_or_default())
+        conversation_quote::compose_with_source(
+            text,
+            &self.quotes().unwrap_or_default(),
+            self.bot_group_source(),
+        )
     }
 
     /// The text before this intent's own quote block in a text [`Self::compose`] wrote; the text itself when it has
