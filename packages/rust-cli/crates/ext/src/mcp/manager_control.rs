@@ -72,8 +72,26 @@ impl McpManager {
         u64,
         CancellationToken,
     )> {
+        self.retire_if(name, status, None)
+    }
+
+    /// [`Self::retire`] that does nothing unless the server is still on generation `expect` (when given), so a caller
+    /// that observed one connection cannot retire a newer one.
+    fn retire_if(
+        &self,
+        name: &str,
+        status: McpStatus,
+        expect: Option<u64>,
+    ) -> Option<(
+        McpServer,
+        Option<std::sync::Arc<super::Client>>,
+        u64,
+        CancellationToken,
+    )> {
         let mut servers = self.0.servers();
-        let server = servers.get_mut(name)?;
+        let server = servers
+            .get_mut(name)
+            .filter(|server| expect.is_none_or(|generation| server.generation == generation))?;
         let (client, listeners) = reset(server, status);
         let out = (
             server.config.clone(),
@@ -90,7 +108,13 @@ impl McpManager {
 
     /// 重新连一个服务器（重连与启用共用）。
     pub(crate) async fn restart(&self, name: &str) {
-        let Some((config, client, generation, cancel)) = self.retire(name, McpStatus::CONNECTING)
+        self.restart_if(name, None).await;
+    }
+
+    /// [`Self::restart`] only while the server is still on generation `expect`.
+    pub(crate) async fn restart_if(&self, name: &str, expect: Option<u64>) {
+        let Some((config, client, generation, cancel)) =
+            self.retire_if(name, McpStatus::CONNECTING, expect)
         else {
             return;
         };

@@ -104,42 +104,45 @@ impl McpManager {
     }
 
     /// Node `pingServer`: a connected server answers `ping`, or answers with a JSON-RPC error (it is alive and does
-    /// not support the method). A timeout or a closed connection is dead. A server that is no longer connected is not
-    /// a probe's business.
-    async fn alive(&self, name: &str) -> bool {
-        let probe = {
+    /// not support the method). A timeout or a closed connection is dead. Returns the generation of the probed
+    /// connection when it is dead; a server that is no longer connected is not a probe's business.
+    async fn dead_generation(&self, name: &str) -> Option<u64> {
+        let (client, timeout, generation) = {
             let servers = self.0.servers();
-            servers.get(name).and_then(|server| {
-                let client = server.client.clone()?;
-                let own = self.0.settings.connect_timeout_for(server.config.options);
-                Some((client, Duration::from_millis(own.min(PING_TIMEOUT_MS))))
-            })
-        };
-        let Some((client, timeout)) = probe else {
-            return true;
+            let server = servers.get(name)?;
+            let client = server.client.clone()?;
+            let own = self.0.settings.connect_timeout_for(server.config.options);
+            (
+                client,
+                Duration::from_millis(own.min(PING_TIMEOUT_MS)),
+                server.generation,
+            )
         };
         match client
             .request("ping", json!({}), timeout, &CancellationToken::new())
             .await
         {
-            Ok(_) | Err(RpcError::Server { .. }) => true,
-            Err(_) => false,
+            Ok(_) | Err(RpcError::Server { .. }) => None,
+            Err(_) => Some(generation),
         }
     }
 }
 
 impl Reconciled {
-    /// Closes the clients of the stopped connections, then probes the kept connected ones and restarts the dead.
+    /// Closes the clients of the stopped connections, then probes the kept connected ones (all at once, so a refresh
+    /// waits for the slowest probe, not their sum) and restarts the dead. A restart applies only to the connection
+    /// that was probed: a newer connect that replaced it meanwhile is left alone.
     pub async fn settle(self, manager: &McpManager) {
         for client in self.closing {
             client.close().await;
         }
-        for name in self.probe {
-            if !manager.alive(&name).await {
+        let probes = self.probe.iter().map(|name| async move {
+            if let Some(generation) = manager.dead_generation(name).await {
                 tracing::info!(server = %name, "reconnecting an MCP server that did not answer ping");
-                manager.restart(&name).await;
+                manager.restart_if(name, Some(generation)).await;
             }
-        }
+        });
+        futures_util::future::join_all(probes).await;
     }
 }
 

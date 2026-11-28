@@ -153,6 +153,49 @@ async fn a_failed_server_is_tried_again() {
 }
 
 #[tokio::test]
+async fn silent_servers_are_probed_at_the_same_time() {
+    let silent = || live(|| None);
+    let fake = Arc::new(
+        FakeMcp::default()
+            .with("a", silent())
+            .with("b", silent())
+            .with("c", silent()),
+    );
+    let (_scope, manager) = manager(&fake);
+    let all = || {
+        vec![
+            config("a", "node"),
+            config("b", "node"),
+            config("c", "node"),
+        ]
+    };
+    apply(&manager, all()).await;
+    let started = std::time::Instant::now();
+    manager.reconcile(workspace(), all()).settle(&manager).await;
+    // Each probe waits 80 ms (the servers' own timeout); one after another they would take 240 ms.
+    assert!(started.elapsed() < std::time::Duration::from_millis(200));
+}
+
+#[tokio::test]
+async fn a_stale_probe_does_not_restart_a_newer_connection() {
+    let fake = Arc::new(FakeMcp::default().with("files", live(|| None)));
+    let (_scope, manager) = manager(&fake);
+    apply(&manager, vec![config("files", "node")]).await;
+    let stale = manager.reconcile(workspace(), vec![config("files", "node")]);
+    let probing = stale.settle(&manager);
+    let newer = async {
+        // The probe is waiting for its ping when a newer connect changes the server's configuration.
+        tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+        let next = manager.reconcile(workspace(), vec![config("files", "bun")]);
+        next.settle(&manager).await;
+    };
+    tokio::join!(probing, newer);
+    manager.wait_ready().await;
+    // The first handshake, then the changed configuration's: the stale probe adds none.
+    assert_eq!(handshakes(&fake, "files"), 2);
+}
+
+#[tokio::test]
 async fn a_retired_cua_server_never_starts() {
     let fake = Arc::new(FakeMcp::default().with("computer-use", live(|| None)));
     let (_scope, manager) = manager(&fake);
