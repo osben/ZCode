@@ -1,6 +1,6 @@
 # Removing the Node agent (fork)
 
-Status: plan, decided 2026-11-28. Nothing removed yet.
+Status: plan, decided 2026-11-28. Nothing removed yet. The S items closed on 2026-11-28 (#652 to #655); the automations item is open and now sized M.
 
 Goal: the desktop app runs only the Rust agent (`zcode-rs`, `packages/rust-cli`), and the Node agent runtime in
 `apps/zcode-cli` is deleted. Node stays the reference until the gate below passes.
@@ -30,22 +30,22 @@ Sizes: S is under a day, M is a few days, L is a week or more. Sources are the p
 
 | Item                                                                                                                    | Size |
 | ----------------------------------------------------------------------------------------------------------------------- | ---- |
-| Execution worktree section in the model context (session actor already knows its worktree)                              | S    |
-| ListModels tool (Rust error texts already tell the model to call it)                                                    | S    |
+| Done (#655): execution worktree section in the model context and the subagent `<env>` block                             | S    |
+| Done (#654): ListModels tool                                                                                            | S    |
 | Hook input fields `traceId`, `turnId`, `riskLevel`, `sideEffectScope`, token counts, from Node's sources and risk table | M    |
-| Model retry env vars (`BASE_DELAY`, `BACKOFF`, `MAX_DELAY`)                                                             | S    |
-| CUA skill rules (`cuaPolicy`) for subagents                                                                             | S    |
-| User fallback `~/.agents/mcp.json`, `MCP_TIMEOUT` on the settings lane, retired CUA MCP filter                          | S    |
+| Done (#654): model retry env vars and Node's Retry-After rules                                                          | S    |
+| Done (#652): CUA skill rules (`cuaPolicy`) for subagents                                                                | S    |
+| Done (#653): user fallback `~/.agents/mcp.json`, `MCP_TIMEOUT` on the settings lane, retired CUA MCP filter             | S    |
 | `SendMessage` resume kept across a second rewind (store query, no schema change)                                        | M    |
 | Memory: recall, extraction and dream                                                                                    | L    |
 | Microcompaction                                                                                                         | M    |
 | Topic resources: `ReplyToChannel`, bot source guidance, group task permission scope                                     | M    |
 | Imported history: `sharedContext`, `removePreviousImportedSessionHistory`                                               | M    |
 | Off-peak layer B: `v4/offPeak/lifecycle`, `offPeakControl`, `startNow` with off-peak, `activeOffPeakTaskId` guard       | M    |
-| Automations: Host `toolSearchMode`, `AutomationCreateLimitError` recovery, remote workspace gate                        | S    |
+| Automations: Host `toolSearchMode`, `AutomationCreateLimitError` recovery (remote workspace gate done in #652)          | M    |
 | LSP runtime in TUI and `-p`                                                                                             | M    |
 | Official-auth plugins (image-search, zcode-site): skipped even with the helper                                          | M    |
-| 3.18 move of the Desktop Context section into the dynamic meta block                                                    | S    |
+| Done (#655): Desktop Context in the environment announcement (3.18 move)                                                | S    |
 
 Accepted, not closed: the cold Activity boundary uses the admission time of a queued input
 ([fork-rust-activity-summary.md](fork-rust-activity-summary.md)), and the differences listed under "Known
