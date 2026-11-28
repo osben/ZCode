@@ -327,7 +327,7 @@ pub(crate) struct Actor {
     /// `Command::SetExecutionRoot` moves the session (workspace.rs).
     pub(crate) deferred_start: Option<rust_cli_kernel_api::session_api::StartSource>,
     /// Fork: `SessionState::execution_worktree`; set by a successful `Command::SetExecutionRoot` (workspace.rs).
-    pub(crate) execution_worktree: bool,
+    pub(crate) execution_worktree: Option<rust_cli_kernel_api::session_ops::ExecutionWorktreeFact>,
     /// The SessionStart result waiting for the first turn to write it (Node `pendingSessionStartContexts`, hooks.rs).
     /// Empty when there is none. Kept in memory only: a reopen runs SessionStart again.
     pub(crate) pending_session_start: Vec<Message>,
@@ -927,7 +927,9 @@ impl Actor {
                 }
             }
             Command::ChangeDirectory { root } => self.change_directory(id, root, None).await,
-            Command::SetExecutionRoot { root } => self.set_execution_root(root).await,
+            Command::SetExecutionRoot { root, branch } => {
+                self.set_execution_root(root, branch).await
+            }
             Command::SetIncognito { profile } => self.set_incognito(profile),
             // Fork: the options a config command stored; the agent applies them before its next prompt (rule 13).
             Command::PublishExternalAgentConfig { agent, options } => {
@@ -1037,6 +1039,7 @@ impl Actor {
             message_models: self.message_models.clone(),
             tool_displays: self.tool_displays.clone(),
             marks: self.marks.clone(),
+            execution_worktree: self.execution_worktree.clone(),
             // Fork: only turns still in the conversation carry a summary (a cut removes its rows).
             turn_files: self
                 .turn_files

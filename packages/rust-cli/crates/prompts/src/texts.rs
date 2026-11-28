@@ -62,6 +62,12 @@ texts! {
     environment_os => "context/environment_os",
     environment_untrusted => "context/environment_untrusted",
     environment_update => "context/environment_update",
+    // Fork: the execution worktree notice (core `context/sections/env-info.ts`).
+    execution_worktree => "context/execution_worktree",
+    execution_worktree_branch => "context/execution_worktree_branch",
+    execution_worktree_missing => "context/execution_worktree_missing",
+    execution_worktree_section => "context/execution_worktree_section",
+    execution_worktree_subagent => "context/execution_worktree_subagent",
     model => "context/model",
     model_unnamed => "context/model_unnamed",
     model_cutoff => "context/model_cutoff",

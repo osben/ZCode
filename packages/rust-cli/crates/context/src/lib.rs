@@ -36,6 +36,8 @@ mod silent;
 mod subagent;
 mod system;
 mod task_reminder;
+#[cfg(test)]
+mod worktree_tests;
 
 use std::sync::Arc;
 
@@ -94,6 +96,18 @@ impl ListingSource for NoListings {
     async fn listings(&self, _request: &ContextRequest) -> Result<Listings, OrchestrationError> {
         Ok(Listings::default())
     }
+}
+
+/// Fork: Node's execution worktree section for this request (`# Environment` and one line), from the session's fact the
+/// query loop carries (specs/fork-rust-execution-worktree-context.md). None for a plain session.
+pub(crate) fn worktree_section(request: &ContextRequest) -> Option<String> {
+    let fact = request.execution_worktree.as_ref()?;
+    rust_cli_prompts::worktree::section(
+        fact.path.as_str(),
+        fact.workspace.as_str(),
+        fact.branch.as_deref(),
+        fact.missing,
+    )
 }
 
 pub struct PromptAssembler {
@@ -587,6 +601,7 @@ impl ContextBuilder for PromptAssembler {
             .listings_for(&request, since_boundary(history))
             .await?;
         let desktop = self.desktop_section(&request).await?;
+        let worktree = crate::worktree_section(&request);
         let facts = PromptFacts {
             surface: self.config.surface,
             system_turns: crate::system::facts_system_turns(&request),
@@ -599,6 +614,7 @@ impl ContextBuilder for PromptAssembler {
             token_budget: self.config.token_budget,
             incognito: self.incognito.get(&request.session),
             desktop: desktop.as_deref(),
+            worktree: worktree.as_deref(),
         };
         let system = system_blocks(&facts);
         // 当步的 attachment 在 `start_attachments` / `turn_attachments`（query.md §1.1；子代理同样，F16）；摘要请求见

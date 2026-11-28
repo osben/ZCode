@@ -253,7 +253,7 @@ impl Tool for AgentTool {
             .session_ops
             .view()
             .await
-            .is_some_and(|view| view.execution_worktree);
+            .and_then(|view| view.execution_worktree);
         let entry = LiveAgent {
             off_peak_execution: parent.off_peak_execution.clone(),
             admission_run: None,

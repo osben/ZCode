@@ -273,7 +273,7 @@ impl HandleOverride for TestHandle {
 
     async fn send(&self, envelope: CommandEnvelope) -> KernelAck {
         let name = match &envelope.command {
-            Command::SetExecutionRoot { root } => {
+            Command::SetExecutionRoot { root, .. } => {
                 let refuse = self
                     .refuse_moves
                     .fetch_update(

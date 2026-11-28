@@ -19,6 +19,9 @@ use crate::config::{OutputStyle, Surface};
 use crate::render::{Bullet, bullets};
 use rust_cli_kernel_api::tool_names;
 
+/// Fork: the worktree section's name in `/context` (Node `buildExecutionWorktreeSection`).
+pub(crate) const WORKTREE_NAME: &str = "Execution Worktree";
+
 /// 提示词里提到的工具名。
 pub(crate) const SKILL_TOOL: &str = tool_names::SKILL;
 pub(crate) const AGENT_TOOL: &str = tool_names::AGENT;
@@ -48,6 +51,9 @@ pub(crate) struct PromptFacts<'a> {
     pub incognito: Option<IncognitoProfile>,
     /// Fork: Node's "ZCode Desktop Context" text ([`crate::ContextConfig::desktop`]), already rendered.
     pub desktop: Option<&'a str>,
+    /// Fork: Node's execution worktree section (`# Environment` and the sentence), already rendered
+    /// (specs/fork-rust-execution-worktree-context.md). Not gated by incognito.
+    pub worktree: Option<&'a str>,
 }
 
 fn cache(scope: Option<&str>) -> Option<CacheControl> {
@@ -157,6 +163,15 @@ fn session_sections(facts: &PromptFacts<'_>) -> Vec<PromptSection> {
             render(texts::memory_lean(), &[("memory_dir", dir)]),
         ));
     }
+    // Fork: Node puts the worktree notice after Memory and before Context management; it is isolation context, so no
+    // incognito toggle drops it. With `--system-prompt` the caller sends it on its own instead ([`custom_sections`]).
+    if facts.custom.is_none() {
+        sections.extend(
+            facts
+                .worktree
+                .map(|text| section(WORKTREE_NAME, text.to_owned())),
+        );
+    }
     // 没有环境段（修复线 F51，context.md §6）。`/context` 的计数用同一个列表。
     sections.push(section(
         "Context management",
@@ -181,7 +196,15 @@ pub(crate) fn total_tokens(left: u64) -> String {
 /// 是最后一段。每段带名字（§3.1）。
 pub(crate) fn sections(facts: &PromptFacts<'_>) -> Vec<PromptSection> {
     let mut sections = match facts.custom {
-        Some(custom) => vec![PromptSection::new("Custom prompt", custom.to_owned())],
+        Some(custom) => {
+            let mut sections = vec![PromptSection::new("Custom prompt", custom.to_owned())];
+            sections.extend(
+                facts
+                    .worktree
+                    .map(|text| PromptSection::new(WORKTREE_NAME, text.to_owned())),
+            );
+            sections
+        }
         None => {
             let mut sections = vec![PromptSection::new("Core instructions", lean_body(facts))];
             sections.extend(
@@ -220,12 +243,18 @@ pub(crate) fn system_blocks(facts: &PromptFacts<'_>) -> Vec<SystemBlock> {
                 text: texts::identity().to_owned(),
                 cache_control: cache(None),
             });
+        // Fork: Node sends the worktree notice as its own dynamic system message after the custom text.
+        let worktree = facts.worktree.map(|text| SystemBlock {
+            text: text.to_owned(),
+            cache_control: cache(None),
+        });
         return identity
             .into_iter()
             .chain([SystemBlock {
                 text,
                 cache_control: cache(None),
             }])
+            .chain(worktree)
             .collect();
     }
     let session: Vec<String> = session_sections(facts)

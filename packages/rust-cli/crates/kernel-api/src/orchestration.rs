@@ -473,6 +473,10 @@ pub struct ContextRequest {
     /// [`QueryRequest::inject_agents_md`]; the subagent context wrapper also sets it.
     #[serde(default = "inject_by_default", skip_serializing_if = "is_injected")]
     pub inject_agents_md: bool,
+    /// Fork: the session runs in an execution worktree (a subagent: its spawning session's); the model is told so
+    /// (specs/fork-rust-execution-worktree-context.md). The query loop copies it from [`RunView::execution_worktree`].
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub execution_worktree: Option<ExecutionWorktreeFact>,
 }
 
 pub(crate) fn inject_by_default() -> bool {
@@ -511,6 +515,7 @@ impl ContextRequest {
             default_machine: crate::ids::MachineName::default(),
             run: None,
             inject_agents_md: true,
+            execution_worktree: None,
         }
     }
 }
@@ -904,7 +909,7 @@ pub use crate::interaction::{
     Answer, DetachedAsk, DetachedEvent, InteractionAnswer, McpElicitationAnswer, PermissionAnswer,
     PlanApprovalAnswer, QuestionAnnotation, QuestionAnswer,
 };
-pub use crate::session_ops::{RunView, SessionOps};
+pub use crate::session_ops::{ExecutionWorktreeFact, RunView, SessionOps};
 
 /// 询问用户（权限、提问、计划审批）。会话的读与命令在 [`SessionOps`]（工作线 F134，审查 C3：以前 10 个方法里混着
 /// 会话命令）；各方法的 `session` 参数生产实现都不用，一起删掉（询问总是交给给出入口的会话）。

@@ -224,8 +224,9 @@ pub struct SessionState {
     /// (specs/fork-rust-agent-parity.md "Execution worktree").
     pub start_held: bool,
     /// Fork: the root is the session's execution worktree (created there, reopened there, or moved there by
-    /// `Command::SetExecutionRoot`): a root that is gone refuses the workspace tools ([`RunView::execution_worktree`]).
-    pub execution_worktree: bool,
+    /// `Command::SetExecutionRoot`): a root that is gone refuses the workspace tools, and the model is told
+    /// ([`RunView::execution_worktree`]).
+    pub execution_worktree: Option<rust_cli_kernel_api::session_ops::ExecutionWorktreeFact>,
     /// 当前轮（冷加载的 `LoadedSession.turn`；新建的会话没有）。
     pub turn: Option<rust_cli_kernel_api::store::TurnAnchor>,
     /// 当前轮以错误结束（冷加载的 `LoadedSession.last_turn_failed`）：续写时不补 assistant（session-lifecycle.md
@@ -281,7 +282,7 @@ impl SessionState {
             checkpoints: Vec::new(),
             start,
             start_held: false,
-            execution_worktree: false,
+            execution_worktree: None,
             turn: None,
             last_turn_failed: false,
             commands: Default::default(),

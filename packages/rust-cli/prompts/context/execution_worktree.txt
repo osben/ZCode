@@ -1,0 +1,1 @@
+Execution worktree: this session runs in a linked git worktree of {{workspace}}{{branch}}; file changes stay in the worktree until they are merged.

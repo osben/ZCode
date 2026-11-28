@@ -206,6 +206,7 @@ impl Kernel for LocalKernel {
             selection: view.selection,
             // 判决用的模式（plan 开时是 plan，修复线 F20）。
             mode: ExecutionState::from_parts(view.mode, view.plan).effective(),
+            execution_worktree: view.execution_worktree,
             ..query
         };
         self.usage.analyze(query, &view.messages).await
@@ -621,7 +622,7 @@ impl LocalKernel {
             .unwrap_or_else(std::sync::PoisonError::into_inner)
             .clone();
         layer.load(&effective).await;
-        let in_worktree = execution.is_some();
+        let mut worktree_fact = None;
         if let Some((worktree, branch)) = execution {
             if let Err(error) = self
                 .ports
@@ -634,7 +635,12 @@ impl LocalKernel {
                 }
                 return Err(error.into());
             }
-            meta.workspace.root = worktree;
+            worktree_fact = Some(rust_cli_kernel_api::session_ops::ExecutionWorktreeFact {
+                path: worktree.clone(),
+                workspace: std::mem::replace(&mut meta.workspace.root, worktree),
+                branch,
+                missing: false,
+            });
         }
         // 执行状态（修复线 F20）：单值的 `plan` 是“plan 开、default”，另记的 `plan` 打开 plan。
         let execution = ExecutionState::from_parts(request.mode, request.plan);
@@ -652,7 +658,7 @@ impl LocalKernel {
         self.ports.store.commit(&id, batch).await?;
         let mut state = SessionState::created(meta, request.selection, execution, start);
         state.start_held = held;
-        state.execution_worktree = in_worktree;
+        state.execution_worktree = worktree_fact;
         // Fork: a created top-level session is open for the agents' notice forwarders, as an opened one is (after
         // the fallible steps, in the same poll as `start`).
         self.agents.session_opened(&state.meta);

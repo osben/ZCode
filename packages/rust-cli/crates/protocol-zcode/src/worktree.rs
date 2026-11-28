@@ -700,7 +700,10 @@ async fn enter(
     target: &Requested,
 ) -> Result<(), String> {
     let path = EnvPath::new(&target.path);
-    let command = Command::SetExecutionRoot { root: path.clone() };
+    let command = Command::SetExecutionRoot {
+        root: path.clone(),
+        branch: target.branch_name.clone(),
+    };
     if let KernelAck::Rejected { reason } = crate::commands::send(
         live.handle.as_ref(),
         &format!("{}:worktree", envelope.command_id),

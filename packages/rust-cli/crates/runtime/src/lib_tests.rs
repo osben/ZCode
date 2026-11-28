@@ -382,6 +382,7 @@ async fn a_prepared_session_frozen_incognito_at_activation_sends_the_incognito_r
     session
         .send(send(Command::SetExecutionRoot {
             root: workspace().root,
+            branch: None,
         }))
         .await;
     first_turn(&prepared, &id).await;

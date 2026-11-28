@@ -18,6 +18,7 @@ fn facts<'a>(tool_names: &'a [String], surface: Surface) -> PromptFacts<'a> {
         token_budget: true,
         incognito: None,
         desktop: None,
+        worktree: None,
     }
 }
 

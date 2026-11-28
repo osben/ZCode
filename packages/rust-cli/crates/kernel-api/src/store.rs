@@ -382,8 +382,8 @@ pub struct LoadedSession {
     pub marks: std::collections::BTreeMap<MessageId, crate::message_mark::Marks>,
     /// Fork: `meta.workspace.root` is the session's stored execution worktree (node-store `run_in_worktree`), so a
     /// root that is gone refuses the workspace tools (Node `getMissingExecutionWorktreeToolError`).
-    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
-    pub execution_worktree: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub execution_worktree: Option<crate::session_ops::ExecutionWorktreeFact>,
 }
 
 /// `/fork` 的新会话（docs/specs/rust-cli/session-lifecycle.md §6.5.2，Node 分叉对话的形状）：存储在一个事务里写完会话行、

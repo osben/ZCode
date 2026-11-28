@@ -53,6 +53,7 @@ impl PromptAssembler {
         let window = since_boundary(history);
         let listings = self.ports.listings.listings_for(request, window).await?;
         let desktop = self.desktop_section(request).await?;
+        let worktree = crate::worktree_section(request);
         let facts = PromptFacts {
             surface: self.config.surface,
             system_turns: crate::system::facts_system_turns(request),
@@ -65,6 +66,7 @@ impl PromptAssembler {
             token_budget: self.config.token_budget,
             incognito: self.incognito.get(&request.session),
             desktop: desktop.as_deref(),
+            worktree: worktree.as_deref(),
         };
         let mut analysis = Analysis {
             sections: sections(&facts),

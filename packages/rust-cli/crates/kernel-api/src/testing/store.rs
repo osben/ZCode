@@ -371,11 +371,16 @@ impl SessionStore for MemoryStore {
             meta.title = title;
         }
         let execution_worktree = match self.execution.lock_unpoisoned().get(session) {
-            Some((path, _)) => {
-                meta.workspace.root = path.clone();
-                true
+            Some((path, branch)) => {
+                let workspace = std::mem::replace(&mut meta.workspace.root, path.clone());
+                Some(crate::session_ops::ExecutionWorktreeFact {
+                    path: path.clone(),
+                    workspace,
+                    branch: branch.clone(),
+                    missing: false,
+                })
             }
-            None => false,
+            None => None,
         };
         let (earlier, messages) = if self.split.load(Ordering::SeqCst) {
             split_cold(messages)
