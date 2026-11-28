@@ -561,6 +561,13 @@ pub struct SharedContextImport {
     pub provenance: serde_json::Map<String, serde_json::Value>,
 }
 
+/// Fork: the text of the hidden message that holds a share's markdown, and its stored id.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SharedContextText {
+    pub message: MessageId,
+    pub text: String,
+}
+
 /// Fork: Node's `SharedContextImportTransition` (`transitionSharedContextImport`).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SharedContextTransition {
@@ -672,6 +679,17 @@ pub trait SessionStore: Send + Sync {
     async fn load(&self, session: &SessionId) -> Result<LoadedSession, StoreError>;
 
     async fn list(&self, filter: SessionFilter) -> Result<Vec<SessionSummary>, StoreError>;
+
+    /// Fork: the hidden message of the shared context `context_id` (Node reads it at the turn that attaches the
+    /// context, `turn.ts`): its stored id and text, `None` when the session has no such context. Stores without
+    /// imported sessions answer `None`.
+    async fn shared_context(
+        &self,
+        _session: &SessionId,
+        _context_id: &str,
+    ) -> Result<Option<SharedContextText>, StoreError> {
+        Ok(None)
+    }
 
     /// 这个会话经 `Fact::Entry` 写的某一种记录（[`entry_kinds`]），按写入顺序：`(id, data)`（跨会话的入站与回执在重开
     /// 会话时恢复，docs/specs/rust-cli/cross-session.md §2.2，F28）。只读。

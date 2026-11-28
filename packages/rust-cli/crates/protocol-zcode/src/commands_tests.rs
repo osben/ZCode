@@ -142,10 +142,26 @@ fn an_incognito_profile_is_parsed_strictly() {
 }
 
 /// Fork: queries over a store whose only session `s1` is soft-deleted (Node `getSession` still returns the row).
-struct DeletedRow(rust_cli_kernel_api::testing::MemoryStore);
+struct DeletedRow(std::sync::Arc<rust_cli_kernel_api::testing::MemoryStore>);
 
 #[async_trait::async_trait]
 impl rust_cli_kernel_api::store::StoreQueries for DeletedRow {
+    async fn import_shared_context(
+        &self,
+        session: &SessionId,
+        import: &rust_cli_kernel_api::store::SharedContextImport,
+    ) -> Result<(), rust_cli_kernel_api::store::StoreError> {
+        self.0.import_shared_context(session, import).await
+    }
+
+    async fn transition_shared_context(
+        &self,
+        session: &SessionId,
+        transition: &rust_cli_kernel_api::store::SharedContextTransition,
+    ) -> Result<bool, rust_cli_kernel_api::store::StoreError> {
+        self.0.transition_shared_context(session, transition).await
+    }
+
     async fn metering(
         &self,
         session: &SessionId,
@@ -211,9 +227,7 @@ struct DeletedKernel {
 #[async_trait::async_trait]
 impl rust_cli_kernel_api::session_api::Kernel for DeletedKernel {
     fn queries(&self) -> std::sync::Arc<dyn rust_cli_kernel_api::store::StoreQueries> {
-        std::sync::Arc::new(DeletedRow(
-            rust_cli_kernel_api::testing::MemoryStore::default(),
-        ))
+        std::sync::Arc::new(DeletedRow(std::sync::Arc::default()))
     }
 
     async fn create_session(
@@ -1336,14 +1350,14 @@ fn a_session_ask_offers_the_session_allow_in_place_of_the_project_option() {
 struct OffPeakKernel {
     handle: std::sync::Arc<GrantHandle>,
     creates: std::sync::Mutex<Vec<String>>,
+    /// The store behind `queries()`, shared by every call (the shared context tests read its entry back).
+    store: std::sync::Arc<rust_cli_kernel_api::testing::MemoryStore>,
 }
 
 #[async_trait::async_trait]
 impl rust_cli_kernel_api::session_api::Kernel for OffPeakKernel {
     fn queries(&self) -> std::sync::Arc<dyn rust_cli_kernel_api::store::StoreQueries> {
-        std::sync::Arc::new(DeletedRow(
-            rust_cli_kernel_api::testing::MemoryStore::default(),
-        ))
+        std::sync::Arc::new(DeletedRow(self.store.clone()))
     }
 
     async fn create_session(
@@ -1425,6 +1439,7 @@ fn off_peak_server(
             pending: Vec::new(),
         }),
         creates: Default::default(),
+        store: Default::default(),
     });
     let server = Server::new(
         context,
@@ -1693,4 +1708,165 @@ fn a_workflow_window_answers_refine_and_carries_the_settings_with_an_approval() 
         },
         "a reply with no known key is no adjustment"
     );
+}
+
+/// A `sendText` input carrying a shared context ref (`context_refs`, the v4 payload's key).
+fn context_text(delivery: &str) -> Value {
+    json!({
+        "text": "go on", "requestedDelivery": delivery,
+        "context_refs": [{"kind": "shared_context_import", "context_id": "ctx-1"}],
+    })
+}
+
+/// A server whose store holds a pending shared context `ctx-1` in session `s1`.
+async fn context_server(
+    ack: rust_cli_kernel_api::session_api::Ack,
+) -> (
+    rust_cli_base::TaskScope,
+    Server,
+    std::sync::Arc<OffPeakKernel>,
+) {
+    use rust_cli_kernel_api::store::StoreQueries as _;
+    let (scope, server, kernel) = off_peak_server(ack);
+    let provenance = json!({
+        "shareId": "share1", "contextId": "ctx-1", "status": "pending",
+    });
+    kernel
+        .store
+        .import_shared_context(
+            &SessionId::new("s1"),
+            &rust_cli_kernel_api::store::SharedContextImport {
+                title: "Shared".to_owned(),
+                created_at: None,
+                markdown: "context".to_owned(),
+                provenance: provenance.as_object().cloned().unwrap(),
+            },
+        )
+        .await
+        .unwrap();
+    (scope, server, kernel)
+}
+
+fn status_of(kernel: &OffPeakKernel) -> Option<String> {
+    kernel.store.shared_status(&SessionId::new("s1"), "ctx-1")
+}
+
+fn accepted() -> rust_cli_kernel_api::session_api::Ack {
+    rust_cli_kernel_api::session_api::Ack::Accepted {
+        result: rust_cli_kernel_api::session_api::CommandResult::Done,
+    }
+}
+
+/// Node `inputIntentMetadata`: `sharedContextRefs` is the key before the source (after the attachment refs and the
+/// Gen UI state), as sent.
+#[test]
+fn a_shared_context_ref_is_stored_on_the_intent() {
+    let envelope: Envelope = serde_json::from_value(json!({
+        "commandId": "c1", "clientId": "client", "sessionId": "s1", "type": "sendText", "payload": {},
+    }))
+    .unwrap();
+    let input: Input = serde_json::from_value(json!({
+        "text": "hi", "genUiContext": [],
+        "context_refs": [{"kind": "shared_context_import", "context_id": "ctx-1"}],
+        "source": {"kind": "extension", "pluginId": "p"},
+    }))
+    .unwrap();
+    let intent = input_intent(
+        &envelope,
+        &input,
+        QueuedKind::Text,
+        None,
+        ("queue", "queue"),
+        (1, 1),
+    );
+    let keys: Vec<&str> = intent.fields().keys().map(String::as_str).collect();
+    let tail = &keys[keys.len() - 3..];
+    assert_eq!(tail, ["admittedDelivery", "sharedContextRefs", "source"]);
+    assert_eq!(
+        intent.fields()["sharedContextRefs"],
+        json!([{"kind": "shared_context_import", "context_id": "ctx-1"}])
+    );
+}
+
+/// Admits `payload` as a `sendText` of the session `s1` while its turn runs, so the input is queued.
+async fn send_while_running(server: &Server, payload: Value) -> Ack {
+    let live = server
+        .live(&SessionId::new("s1"))
+        .await
+        .expect("the kernel opens s1");
+    send_text(
+        server,
+        &live,
+        &command_envelope("c1", "sendText", Some("s1"), payload),
+        QueuedKind::Text,
+        crate::projection::state::Phase::Running,
+        0,
+        None,
+    )
+    .await
+}
+
+/// A queued input reserves the context (`pending` to `reserved`, the queue item as `sourceId`) before it is admitted.
+#[tokio::test]
+async fn a_queued_input_reserves_its_shared_context() {
+    let (_scope, server, kernel) = context_server(accepted()).await;
+    let ack = send_while_running(&server, context_text("queue")).await;
+    assert_eq!(ack.status, Status::Accepted, "{ack:?}");
+    assert_eq!(status_of(&kernel).as_deref(), Some("reserved"));
+}
+
+/// An input that starts at once is not reserved: it attaches when its message is stored.
+#[tokio::test]
+async fn a_start_now_input_leaves_its_shared_context_pending() {
+    let (_scope, server, kernel) = context_server(accepted()).await;
+    let ack = decide(
+        &server,
+        &command_envelope("c1", "sendText", Some("s1"), context_text("startNow")),
+    )
+    .await;
+    assert_eq!(ack.status, Status::Accepted, "{ack:?}");
+    assert_eq!(status_of(&kernel).as_deref(), Some("pending"));
+}
+
+/// A context that is no longer pending refuses the queued input as Node's thrown error does, and nothing is sent.
+#[tokio::test]
+async fn a_queued_input_for_a_taken_context_is_refused() {
+    use rust_cli_kernel_api::store::StoreQueries as _;
+    let (_scope, server, kernel) = context_server(accepted()).await;
+    kernel
+        .store
+        .transition_shared_context(
+            &SessionId::new("s1"),
+            &rust_cli_kernel_api::store::SharedContextTransition {
+                context_id: "ctx-1".to_owned(),
+                expected: vec!["pending".to_owned()],
+                status: "discarded".to_owned(),
+                source_id: None,
+            },
+        )
+        .await
+        .unwrap();
+    let ack = send_while_running(&server, context_text("queue")).await;
+    assert_eq!(ack.status, Status::Failed, "{ack:?}");
+    assert_eq!(
+        ack.reason_code.as_deref(),
+        Some("fault.command.executionFailed")
+    );
+    assert_eq!(
+        ack.message.as_deref(),
+        Some("fault.command.sharedContextNotAttachable")
+    );
+    assert!(kernel.handle.sent.lock().unwrap().is_empty());
+}
+
+/// The kernel refuses the admitted input: the reservation goes back to `pending` (Node `cancelInputCommand`).
+#[tokio::test]
+async fn a_refused_queued_input_gives_its_context_back() {
+    let rejected = rust_cli_kernel_api::session_api::Ack::Rejected {
+        reason: "busy".to_owned(),
+    };
+    let (_scope, server, kernel) = context_server(rejected).await;
+    let ack = send_while_running(&server, context_text("queue")).await;
+    assert_eq!(ack.status, Status::Rejected, "{ack:?}");
+    assert_eq!(status_of(&kernel).as_deref(), Some("pending"));
 }

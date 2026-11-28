@@ -83,7 +83,8 @@ fn provider_text(part: &Value) -> &str {
 fn user(record: &WithParts) -> Option<Message> {
     let info = &record.info;
     let shared = &info["metadata"]["sharedContextStatus"];
-    if info["source"] == "shared_context" && !shared.is_null() && *shared != "attached" {
+    let share = info["source"] == "shared_context";
+    if share && !shared.is_null() && *shared != "attached" {
         // 共享上下文在首次发送前只是候选，不能提前进入模型上下文。
         return None;
     }
@@ -141,6 +142,12 @@ fn user(record: &WithParts) -> Option<Message> {
         content,
         origin: if summary {
             UserOrigin::CompactSummary
+        } else if share {
+            // Fork: Node hides the attached context (`uiVisibility: "hidden"`): the rows draw only typed inputs, so it
+            // is a model-only message here, never a user bubble.
+            UserOrigin::Meta {
+                source: rust_cli_kernel_api::shared_context::SOURCE.to_owned(),
+            }
         } else {
             UserOrigin::Human
         },

@@ -18,6 +18,13 @@ use crate::{notices, tool_parts};
 
 pub fn append(ctx: &Commit<'_>, message: &Message) -> Result<(), StoreError> {
     let id = message.id().as_str();
+    // Fork: the hidden shared context message is stored at the import; a turn that attaches the context commits it again
+    // because it is part of the live history, and Node writes no row for it at turn time.
+    if matches!(message, Message::User(user) if matches!(&user.origin, UserOrigin::Meta { source }
+        if source == rust_cli_kernel_api::shared_context::SOURCE))
+    {
+        return Ok(());
+    }
     // message.id 是全库主键：同一个 id 再次追加说明内核重复提交，不能悄悄覆盖或叠加 part。
     if messages::exists(ctx.conn, id).storage()? {
         return Err(storage(format!("message {id} is already stored")));
@@ -126,6 +133,11 @@ fn append_user(ctx: &Commit<'_>, user: &UserMessage) -> Result<(), StoreError> {
     });
     messages::save_message(ctx.conn, &info, ctx.now as i64).storage()?;
     ctx.opened(id, &turn);
+    // Fork: an input that carries a shared context ref attaches the context in this transaction, like Node's
+    // `promoteSessionInput`; a context that cannot be attached fails the commit and the message is rolled back.
+    if let Some(refs) = intent.and_then(|intent| intent.fields().get("sharedContextRefs")) {
+        crate::shared_context::attach(ctx.conn, ctx.session, id, refs, ctx.now as i64)?;
+    }
     for text in &texts {
         // Node `persistUserPrompt(displayInput, …, {modelInput})`：text 是界面原文，模型文本在
         // `metadata.modelInput`（冷读取优先读它）。修复线 F2：bash 模式与 skill 命令以前把 `<bash-input>`、

@@ -81,6 +81,11 @@ pub(crate) struct Input {
     /// Gen UI widget state (`genUiContext`): checked by the inbound schema and `gen_ui_context::validate`, kept on the
     /// intent as sent (`[]` included, like Node's `!== undefined`) and rendered by the request normalizer.
     gen_ui_context: Option<Value>,
+    /// Fork: the shared context this input attaches (`context_refs`, snake_case in the v4 payload; at most one
+    /// `shared_context_import` ref). It goes on the intent as `sharedContextRefs` (Node `inputIntentMetadata`) and
+    /// attaches the context when the input's message is stored (specs/fork-rust-imported-history.md).
+    #[serde(rename = "context_refs")]
+    context_refs: Option<Vec<Value>>,
     /// Fork: the scheduled automation that dispatched this input (specs/fork-rust-automations.md, slice 1). With
     /// `toolDisallowlist` it limits the turn the input opens ([`TurnLimits`]), never the session.
     automation_id: Option<String>,
@@ -1612,6 +1617,10 @@ fn input_intent(
     if !input.attachments.is_empty() {
         fields.insert("attachmentRefs".into(), json!(input.attachments));
     }
+    // Node `inputIntentMetadata`: the shared context refs follow the Gen UI state, as sent (`[]` stays).
+    if let Some(refs) = input.context_refs.as_ref() {
+        fields.insert("sharedContextRefs".into(), json!(refs));
+    }
     // B4: Node `inputIntentMetadata` puts `source` last and only when the command carries one; zod rebuilds it in
     // the schema's key order, so the stored object does too.
     if let Some(source) = input.source.as_ref().filter(|source| !source.is_null()) {
@@ -2098,6 +2107,23 @@ async fn send_text(
             .discard(handle.id().as_str(), command);
         return *ack;
     }
+    // Fork: a queued input reserves its shared context before it is admitted (Node `admitInputCommand`).
+    let reserved = match reserve_shared_context(server, handle, &input, command, admitted).await {
+        Ok(reserved) => reserved,
+        Err(refused) => {
+            server
+                .context
+                .off_peak
+                .discard(handle.id().as_str(), command);
+            return Ack::refused(
+                command,
+                Status::Failed,
+                "fault.command.executionFailed",
+                refused,
+                revision,
+            );
+        }
+    };
     let requested = requested.unwrap_or(Requested::StartNow).as_str();
     live.remember_input(command, input_meta(envelope, &input, requested, admitted));
     let intent = input_intent(
@@ -2132,6 +2158,10 @@ async fn send_text(
             .context
             .off_peak
             .discard(handle.id().as_str(), command);
+        // So does its reservation of the shared context (Node `cancelInputCommand`).
+        if let Some(context) = &reserved {
+            release_shared_context(server, handle, context, command).await;
+        }
     }
     let predicted = admitted;
     let admitted = acked_delivery(predicted, &kernel);
@@ -2158,6 +2188,76 @@ async fn send_text(
             )
         },
     )
+}
+
+/// The context id of an input's first `shared_context_import` ref.
+fn shared_context_of(input: &Input) -> Option<String> {
+    let reference = input.context_refs.as_ref()?.first()?;
+    (reference["kind"] == rust_cli_kernel_api::shared_context::REF_KIND)
+        .then(|| reference["context_id"].as_str().map(str::to_owned))
+        .flatten()
+}
+
+/// Fork: Node `admitInputCommand` for an input that is not started at once: the shared context goes `pending` to
+/// `reserved` with the queue item as `sourceId`. The context id when it was reserved; `Err` with Node's error text when
+/// it cannot be (the thrown `fault.command.sharedContextNotAttachable`), so nothing is admitted.
+async fn reserve_shared_context(
+    server: &Server,
+    handle: &dyn SessionHandle,
+    input: &Input,
+    command: &str,
+    admitted: &str,
+) -> Result<Option<String>, &'static str> {
+    let Some(context) = shared_context_of(input).filter(|_| admitted != "startNow") else {
+        return Ok(None);
+    };
+    let moved = server
+        .kernel
+        .queries()
+        .transition_shared_context(
+            handle.id(),
+            &rust_cli_kernel_api::store::SharedContextTransition {
+                context_id: context.clone(),
+                expected: vec!["pending".to_owned()],
+                status: "reserved".to_owned(),
+                source_id: Some(format!("queue_{command}")),
+            },
+        )
+        .await;
+    match moved {
+        Ok(true) => Ok(Some(context)),
+        Ok(false) => Err("fault.command.sharedContextNotAttachable"),
+        Err(error) => {
+            // No error text: a storage error can name the storage path.
+            tracing::warn!(event = "protocol.shared_context.reserve_failed", error = %error, "reserving the shared context failed");
+            Err("fault.command.sharedContextNotAttachable")
+        }
+    }
+}
+
+/// Fork: Node `cancelInputCommand`: the reservation of a refused input goes back to `pending`.
+async fn release_shared_context(
+    server: &Server,
+    handle: &dyn SessionHandle,
+    context: &str,
+    command: &str,
+) {
+    let released = server
+        .kernel
+        .queries()
+        .transition_shared_context(
+            handle.id(),
+            &rust_cli_kernel_api::store::SharedContextTransition {
+                context_id: context.to_owned(),
+                expected: vec!["reserved".to_owned()],
+                status: "pending".to_owned(),
+                source_id: Some(format!("queue_{command}")),
+            },
+        )
+        .await;
+    if let Err(error) = released {
+        tracing::warn!(event = "protocol.shared_context.release_failed", error = %error, "releasing the shared context failed");
+    }
 }
 
 async fn resolve(

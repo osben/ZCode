@@ -73,6 +73,10 @@ impl Actor {
             }
         }
         let hook = self.user_prompt_submit(&text);
+        // Fork: the share context this input attaches (Node `turn.ts`): read from the intent before it moves.
+        let shared_context = intent.as_deref().and_then(shared_context_ref);
+        let session_id = self.meta.id.clone();
+        let store = self.deps.store.clone();
         let (opening, request) = self.open_main_turn(turn, &limits);
         let hooks = self.deps.hooks.clone();
         let runner = self.deps.runner.clone();
@@ -95,6 +99,46 @@ impl Actor {
             // command, its arguments, the mentions and the UserPromptSubmit hook read the typed text only.
             if let Some(intent) = intent {
                 attach_intent(&mut inputs.messages, &input_id, intent);
+            }
+            // Fork: the context goes into the history once, before the input (Node adds it unless a `shared_context`
+            // message is already in the history). Its row is stored already, so the store does not write it again.
+            if let Some(context) = shared_context {
+                let present = request.messages.iter().any(|message| {
+                    matches!(message, Message::User(user)
+                        if matches!(&user.origin, UserOrigin::Meta { source }
+                            if source == rust_cli_kernel_api::shared_context::SOURCE))
+                });
+                if !present {
+                    match store.shared_context(&session_id, &context).await {
+                        Ok(Some(found)) if !found.text.trim().is_empty() => {
+                            inputs.messages.insert(
+                                0,
+                                Message::User(UserMessage {
+                                    stall_execution: None,
+                                    workflow_meta: None,
+                                    epilogue_start: None,
+                                    intent: None,
+                                    id: found.message,
+                                    content: vec![ContentBlock::Text {
+                                        text: found.text.trim().to_owned(),
+                                    }],
+                                    origin: UserOrigin::Meta {
+                                        source: rust_cli_kernel_api::shared_context::SOURCE
+                                            .to_owned(),
+                                    },
+                                }),
+                            );
+                        }
+                        // Node fails the turn ("shared context content is unavailable"); the stored text can only
+                        // be missing when its rows were removed, and the input is still worth sending.
+                        other => tracing::warn!(
+                            event = "session.shared_context.unavailable",
+                            session = %session_id,
+                            found = other.as_ref().is_ok_and(Option::is_some),
+                            "the shared context text is not available for the turn"
+                        ),
+                    }
+                }
             }
             // 普通输入的 `@` 提及（在 UPS 之前）：attachment 排在输入之后提交
             // （docs/specs/rust-cli/tui-input.md §1.1）。
@@ -212,6 +256,14 @@ impl Actor {
             .filter(|running| running.prompt.as_ref() == Some(message))
             .and_then(|running| running.command.clone())
     }
+}
+
+/// Fork: the context id of the first `shared_context_import` ref of an input's `sharedContextRefs`.
+fn shared_context_ref(intent: &rust_cli_kernel_api::input_intent::InputIntent) -> Option<String> {
+    let reference = intent.get("sharedContextRefs")?.as_array()?.first()?;
+    (reference["kind"] == rust_cli_kernel_api::shared_context::REF_KIND)
+        .then(|| reference["context_id"].as_str().map(str::to_owned))
+        .flatten()
 }
 
 /// Fork: the typed input (the message that kept the prompt's id) gets the quote block after its first text block

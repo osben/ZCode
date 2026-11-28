@@ -131,9 +131,41 @@ pub struct MemoryStore {
     presence: std::sync::Arc<Mutex<HashMap<SessionId, usize>>>,
     /// Fork: sessions whose purge started elsewhere ([`Self::start_purge`]).
     purging: Mutex<HashSet<SessionId>>,
+    /// Fork: the shared contexts of imported sessions ([`Self::set_shared_context`]).
+    shared_contexts: Mutex<HashMap<(SessionId, String), crate::store::SharedContextText>>,
+    /// Fork: the entry data of each imported share (`import_shared_context` and the transitions), as node-store's
+    /// `v4/shared_context_import` entry holds it.
+    shared_entries: Mutex<HashMap<(SessionId, String), serde_json::Map<String, serde_json::Value>>>,
 }
 
 impl MemoryStore {
+    /// Fork: the status of an imported share's entry (`None` when there is none).
+    pub fn shared_status(&self, session: &SessionId, context: &str) -> Option<String> {
+        self.shared_entries
+            .lock_unpoisoned()
+            .get(&(session.clone(), context.to_owned()))
+            .and_then(|data| data.get("status"))
+            .and_then(serde_json::Value::as_str)
+            .map(str::to_owned)
+    }
+
+    /// Fork: the shared context an imported session holds (the store's `shared_context` answers it).
+    pub fn set_shared_context(
+        &self,
+        session: &SessionId,
+        context: &str,
+        message: &str,
+        text: &str,
+    ) {
+        self.shared_contexts.lock_unpoisoned().insert(
+            (session.clone(), context.to_owned()),
+            crate::store::SharedContextText {
+                message: MessageId::new(message),
+                text: text.to_owned(),
+            },
+        );
+    }
+
     /// Fork: how many runtime presence guards of `session` are alive (node-store's presence rows).
     pub fn presence(&self, session: &SessionId) -> usize {
         self.presence
@@ -476,6 +508,18 @@ impl SessionStore for MemoryStore {
             .collect())
     }
 
+    async fn shared_context(
+        &self,
+        session: &SessionId,
+        context_id: &str,
+    ) -> Result<Option<crate::store::SharedContextText>, StoreError> {
+        Ok(self
+            .shared_contexts
+            .lock_unpoisoned()
+            .get(&(session.clone(), context_id.to_owned()))
+            .cloned())
+    }
+
     /// `Fact::Entry` 按写入顺序（node-store 的同一口径，cross-session.md §2.2）。
     async fn entries(
         &self,
@@ -766,6 +810,55 @@ impl LocalSettings for MemoryStore {
 
 #[async_trait]
 impl StoreQueries for MemoryStore {
+    async fn import_shared_context(
+        &self,
+        session: &SessionId,
+        import: &crate::store::SharedContextImport,
+    ) -> Result<(), StoreError> {
+        let context = import
+            .provenance
+            .get("contextId")
+            .and_then(serde_json::Value::as_str)
+            .map_or_else(|| format!("legacy-shared-context-{session}"), str::to_owned);
+        let mut data = import.provenance.clone();
+        data.insert("contextId".to_owned(), context.clone().into());
+        data.entry("status").or_insert_with(|| "pending".into());
+        self.set_shared_context(
+            session,
+            &context,
+            &format!("msg_{session}_shared_context"),
+            &import.markdown,
+        );
+        self.shared_entries
+            .lock_unpoisoned()
+            .insert((session.clone(), context), data);
+        Ok(())
+    }
+
+    async fn transition_shared_context(
+        &self,
+        session: &SessionId,
+        transition: &crate::store::SharedContextTransition,
+    ) -> Result<bool, StoreError> {
+        let mut entries = self.shared_entries.lock_unpoisoned();
+        let Some(data) = entries.get_mut(&(session.clone(), transition.context_id.clone())) else {
+            return Ok(false);
+        };
+        let current = data.get("status").and_then(serde_json::Value::as_str);
+        if !transition
+            .expected
+            .iter()
+            .any(|status| Some(status.as_str()) == current)
+        {
+            return Ok(false);
+        }
+        data.insert("status".to_owned(), transition.status.clone().into());
+        if let Some(source) = &transition.source_id {
+            data.insert("sourceId".to_owned(), source.clone().into());
+        }
+        Ok(true)
+    }
+
     async fn register_runtime(
         &self,
         session: &SessionId,

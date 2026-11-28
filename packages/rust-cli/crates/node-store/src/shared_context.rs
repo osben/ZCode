@@ -157,6 +157,34 @@ fn set_message_status(
     messages::save_message(conn, &info, now).storage()
 }
 
+/// The hidden message of a context and its text (Node's turn joins the text parts with a newline and trims).
+pub(crate) fn text(
+    conn: &Connection,
+    session: &str,
+    context: &str,
+) -> Result<Option<rust_cli_kernel_api::store::SharedContextText>, StoreError> {
+    let found = messages::messages(conn, session)
+        .storage()?
+        .into_iter()
+        .find(|message| {
+            message.info["role"] == "user"
+                && message.info["source"] == "shared_context"
+                && message.info["metadata"]["contextId"] == context
+        });
+    Ok(found.map(|message| {
+        let text: Vec<&str> = message
+            .parts
+            .iter()
+            .filter(|part| part["type"] == "text")
+            .filter_map(|part| part["text"].as_str())
+            .collect();
+        rust_cli_kernel_api::store::SharedContextText {
+            message: rust_cli_kernel_api::ids::MessageId::new(message.id()),
+            text: rust_cli_base::js::string::trim(&text.join("\n")).to_owned(),
+        }
+    }))
+}
+
 /// Node `transitionSharedContextImport`.
 pub(crate) fn transition(
     conn: &Connection,
@@ -183,6 +211,48 @@ pub(crate) fn transition(
     entries::save(conn, &entry).storage()?;
     set_message_status(conn, id, &transition.context_id, &transition.status, now)?;
     Ok(true)
+}
+
+/// Node `promoteSessionInput`, the shared context part: the user message that carries `sharedContextRefs` in its
+/// `metadata.inputIntent` attaches the context in the same transaction. A missing entry or one that is neither
+/// `pending` nor `reserved` is an error, which rolls the message back (Node throws).
+pub(crate) fn attach(
+    conn: &Connection,
+    session: &str,
+    message: &str,
+    refs: &Value,
+    now: i64,
+) -> Result<(), StoreError> {
+    let Some(refs) = refs.as_array() else {
+        return Ok(());
+    };
+    for reference in refs {
+        if reference["kind"] != "shared_context_import" {
+            continue;
+        }
+        let Some(context) = reference["context_id"].as_str() else {
+            continue;
+        };
+        let Some(mut entry) = entry_of(conn, session, context)? else {
+            return Err(crate::storage("shared context import is missing"));
+        };
+        if !matches!(entry.data["status"].as_str(), Some("pending" | "reserved")) {
+            return Err(crate::storage(
+                "shared context import is no longer attachable",
+            ));
+        }
+        let Some(data) = entry.data.as_object_mut() else {
+            return Err(crate::storage(
+                "shared context import is no longer attachable",
+            ));
+        };
+        data.insert("status".to_owned(), json!("attached"));
+        data.insert("attachedMessageId".to_owned(), json!(message));
+        entry.time_updated = now;
+        entries::save(conn, &entry).storage()?;
+        set_message_status(conn, session, context, "attached", now)?;
+    }
+    Ok(())
 }
 
 #[cfg(test)]

@@ -381,6 +381,16 @@ impl SessionStore for NodeStore {
         self.with_db(move |conn, _| load::list(conn, &filter)).await
     }
 
+    async fn shared_context(
+        &self,
+        session: &SessionId,
+        context_id: &str,
+    ) -> Result<Option<rust_cli_kernel_api::store::SharedContextText>, StoreError> {
+        let (session, context) = (session.as_str().to_owned(), context_id.to_owned());
+        self.with_db(move |conn, _| shared_context::text(conn, &session, &context))
+            .await
+    }
+
     /// 跨会话的入站与回执（cross-session.md §2.2）：只读。
     async fn entries(
         &self,

@@ -286,3 +286,78 @@ async fn submitted_content_keeps_its_images_and_queues_while_running() {
     let request = format!("{:?}", model.requests().last().unwrap().messages);
     assert!(request.contains("iVBORw0KGgo="), "{request}");
 }
+
+/// Fork: an input whose intent carries a shared context ref puts the context text in the model history before the
+/// input (Node `turn.ts`), once: the next input with the ref does not add it again. The message is hidden (`Meta`) and
+/// carries the stored message's id, which the store does not write again.
+#[tokio::test]
+async fn an_input_with_a_shared_context_ref_gets_the_context_before_it() {
+    use rust_cli_kernel_api::ids::{CommandId, SessionId};
+    use rust_cli_kernel_api::message::UserOrigin;
+    use rust_cli_kernel_api::session_api::{CommandEnvelope, QueuedKind};
+    let model = Arc::new(ScriptedModel::new(vec![
+        text_response(&["one"]),
+        text_response(&["two"]),
+    ]));
+    let setup = Setup::new(model.clone());
+    let built = setup.build().await;
+    built.store.set_shared_context(
+        &SessionId::new("sess_1"),
+        "ctx-1",
+        "msg_sess_1_shared_context",
+        "the shared context",
+    );
+    let with_ref = |id: &str, text: &str| CommandEnvelope {
+        id: CommandId::new(id),
+        command: Command::SubmitWith {
+            intent: Some(Box::new(
+                serde_json::from_value(json!({
+                    "text": text,
+                    "sharedContextRefs": [{"kind": "shared_context_import", "context_id": "ctx-1"}],
+                }))
+                .unwrap(),
+            )),
+            kind: QueuedKind::Text,
+            text: text.to_owned(),
+            content: Vec::new(),
+            delivery: Delivery::Queue,
+            execution: None,
+            behind_held: false,
+            lease: None,
+        },
+    };
+    let mut events = built.session.subscribe(Some(0));
+    built.session.send(with_ref("c1", "hello")).await;
+    until(&mut events, finished).await;
+    built.session.send(with_ref("c2", "again")).await;
+    until(&mut events, finished).await;
+    let view = built.session.view().await.unwrap();
+    assert_eq!(
+        kinds(&view.messages),
+        [
+            "user:the shared context",
+            "user:hello",
+            "assistant",
+            "user:again",
+            "assistant"
+        ]
+    );
+    let Message::User(context) = &view.messages[0] else {
+        panic!("user expected");
+    };
+    assert_eq!(context.id.as_str(), "msg_sess_1_shared_context");
+    assert_eq!(
+        context.origin,
+        UserOrigin::Meta {
+            source: "shared_context".to_owned()
+        }
+    );
+    // The model read the context first, and only once.
+    let first = format!("{:?}", model.requests()[0].messages);
+    assert!(
+        first.find("the shared context") < first.find("hello"),
+        "{first}"
+    );
+    let second = format!("{:?}", model.requests()[1].messages);
+    assert_eq!(second.matches("the shared context").count(), 1, "{second}");
+}

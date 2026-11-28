@@ -287,3 +287,204 @@ async fn a_pending_context_is_not_loaded() {
     assert_eq!(loaded.meta.title, "Shared chat");
     assert!(loaded.messages.is_empty(), "{:?}", loaded.messages);
 }
+
+fn input_with_ref(message: &str, context: &str) -> rust_cli_kernel_api::store::Fact {
+    use rust_cli_kernel_api::ids::MessageId;
+    use rust_cli_kernel_api::message::{ContentBlock, Message, UserMessage, UserOrigin};
+    let intent: rust_cli_kernel_api::input_intent::InputIntent =
+        serde_json::from_value(serde_json::json!({
+            "sourceCommandId": "c1",
+            "queueItemId": "queue_c1",
+            "clientId": "client",
+            "kind": "sendText",
+            "text": "hi",
+            "admittedDelivery": "startNow",
+            "sharedContextRefs": [{"kind": "shared_context_import", "context_id": context}],
+        }))
+        .unwrap();
+    rust_cli_kernel_api::store::Fact::MessageAppended {
+        message: Message::User(UserMessage {
+            stall_execution: None,
+            workflow_meta: None,
+            epilogue_start: None,
+            intent: Some(Box::new(intent)),
+            id: MessageId::new(message),
+            content: vec![ContentBlock::Text { text: "hi".into() }],
+            origin: UserOrigin::Human,
+        }),
+    }
+}
+
+async fn imported(t: &TestStore) -> (SessionId, Value) {
+    let golden = golden();
+    started(t, "sess_ctx1").await;
+    let id = SessionId::new("sess_ctx1");
+    t.store
+        .import_shared_context(&id, &import_of(&golden["history"]))
+        .await
+        .unwrap();
+    (id, golden)
+}
+
+/// The user message that carries the ref attaches the context in its own transaction: the entry and the context
+/// message end up as Node's `promoteSessionInput` leaves them.
+#[tokio::test]
+async fn the_input_with_the_ref_attaches_the_context() {
+    let t = TestStore::new();
+    let (id, golden) = imported(&t).await;
+    t.store
+        .transition_shared_context(&id, &transition(&["pending"], "reserved", Some("queue_q1")))
+        .await
+        .unwrap();
+    t.store
+        .transition_shared_context(&id, &transition(&["reserved"], "pending", Some("queue_q1")))
+        .await
+        .unwrap();
+    t.store
+        .commit(
+            &id,
+            crate::tests::batch(Some("c1"), vec![input_with_ref("msg_user1", "ctx-1")]),
+        )
+        .await
+        .unwrap();
+    let steps = &golden["steps"]["attach"];
+    assert_eq!(entry_data(&t), steps["entry"]);
+    assert_eq!(
+        message_data(&t, "msg_sess_ctx1_shared_context"),
+        steps["message"]
+    );
+}
+
+/// A reserved context attaches too (the queued input was promoted).
+#[tokio::test]
+async fn a_reserved_context_attaches() {
+    let t = TestStore::new();
+    let (id, _) = imported(&t).await;
+    t.store
+        .transition_shared_context(&id, &transition(&["pending"], "reserved", Some("queue_c1")))
+        .await
+        .unwrap();
+    t.store
+        .commit(
+            &id,
+            crate::tests::batch(Some("c1"), vec![input_with_ref("msg_user1", "ctx-1")]),
+        )
+        .await
+        .unwrap();
+    let data: Value = serde_json::from_str(entry_data(&t).as_str().unwrap()).unwrap();
+    assert_eq!(data["status"], "attached");
+    assert_eq!(data["attachedMessageId"], "msg_user1");
+}
+
+/// Node throws and rolls the message back: a context that is gone, or no longer pending or reserved, fails the
+/// commit and the user message is not stored.
+#[tokio::test]
+async fn an_unattachable_context_fails_the_commit() {
+    let t = TestStore::new();
+    let (id, _) = imported(&t).await;
+    t.store
+        .transition_shared_context(&id, &transition(&["pending"], "discarded", None))
+        .await
+        .unwrap();
+    for context in ["ctx-1", "nope"] {
+        let result = t
+            .store
+            .commit(
+                &id,
+                crate::tests::batch(Some("c1"), vec![input_with_ref("msg_user1", context)]),
+            )
+            .await;
+        assert!(result.is_err(), "{context}");
+        assert!(
+            t.rows("select id from message where id = 'msg_user1'")
+                .is_empty(),
+            "{context}"
+        );
+    }
+}
+
+/// An attached context loads as a hidden model message (a `Meta` one: the rows draw only typed inputs) in the place it
+/// was stored, before the input it was attached to; the same history a Node-written attached import gives.
+#[tokio::test]
+async fn an_attached_context_loads_before_its_input() {
+    use rust_cli_kernel_api::message::{ContentBlock, Message, UserOrigin};
+    let t = TestStore::new();
+    let (id, _) = imported(&t).await;
+    t.store
+        .commit(
+            &id,
+            crate::tests::batch(Some("c1"), vec![input_with_ref("msg_user1", "ctx-1")]),
+        )
+        .await
+        .unwrap();
+    let loaded = t.store.load(&id).await.unwrap();
+    let kinds: Vec<_> = loaded
+        .messages
+        .iter()
+        .map(|message| match message {
+            Message::User(user) => (
+                user.origin.clone(),
+                match &user.content[..] {
+                    [ContentBlock::Text { text }] => text.clone(),
+                    other => panic!("{other:?}"),
+                },
+            ),
+            other => panic!("{other:?}"),
+        })
+        .collect();
+    assert_eq!(
+        kinds,
+        vec![
+            (
+                UserOrigin::Meta {
+                    source: "shared_context".to_owned()
+                },
+                "# Shared\n\nsome context".to_owned()
+            ),
+            (UserOrigin::Human, "hi".to_owned()),
+        ]
+    );
+}
+
+/// The turn that attaches the context commits the hidden message again (it is in the live history): the store keeps its
+/// one stored row, and the context text is read back for the turn.
+#[tokio::test]
+async fn the_hidden_message_is_not_written_twice() {
+    use rust_cli_kernel_api::ids::MessageId;
+    use rust_cli_kernel_api::message::{ContentBlock, Message, UserMessage, UserOrigin};
+    let t = TestStore::new();
+    let (id, _) = imported(&t).await;
+    let found = t.store.shared_context(&id, "ctx-1").await.unwrap().unwrap();
+    assert_eq!(found.message.as_str(), "msg_sess_ctx1_shared_context");
+    assert_eq!(found.text, "# Shared\n\nsome context");
+    assert!(t.store.shared_context(&id, "nope").await.unwrap().is_none());
+    let hidden = rust_cli_kernel_api::store::Fact::MessageAppended {
+        message: Message::User(UserMessage {
+            stall_execution: None,
+            workflow_meta: None,
+            epilogue_start: None,
+            intent: None,
+            id: MessageId::new(found.message.as_str()),
+            content: vec![ContentBlock::Text { text: found.text }],
+            origin: UserOrigin::Meta {
+                source: "shared_context".to_owned(),
+            },
+        }),
+    };
+    t.store
+        .commit(
+            &id,
+            crate::tests::batch(
+                Some("c1"),
+                vec![hidden, input_with_ref("msg_user1", "ctx-1")],
+            ),
+        )
+        .await
+        .unwrap();
+    assert_eq!(t.rows("select id from message order by id").len(), 2);
+    assert_eq!(
+        t.rows("select id from part where message_id = 'msg_sess_ctx1_shared_context'")
+            .len(),
+        1
+    );
+}
