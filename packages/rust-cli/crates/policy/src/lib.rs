@@ -175,9 +175,22 @@ impl PolicyGate {
     }
 
     /// 这个会话判决用的快照：群协作会话把 LocalSettings 换成它自己的规则集，其余会话就是当前快照。
-    fn snapshot_for(&self, session: &SessionId) -> Arc<PermissionRules> {
+    /// Fork: with a rules source the session row is read on every call, as Node's `loadProjectPermissionRuleset`
+    /// does, so a row that became scoped after the session opened applies at once; the open-time copy ([`Self::scope`])
+    /// is the answer without a source or when the read fails.
+    async fn snapshot_for(&self, session: &SessionId) -> Arc<PermissionRules> {
         let base = self.snapshot();
-        let scoped = self.scoped.lock_unpoisoned().get(session).cloned();
+        let from_row = match &self.local {
+            Some(source) => match source.session(session).await {
+                Ok(row) => Some(row.map(|rules| rules.sourced())),
+                Err(_) => None,
+            },
+            None => None,
+        };
+        let scoped = match from_row {
+            Some(row) => row,
+            None => self.scoped.lock_unpoisoned().get(session).cloned(),
+        };
         let Some(scoped) = scoped else {
             return base;
         };
@@ -279,7 +292,7 @@ impl ScopedGate for PolicyGate {
         context: &ToolUseContext,
         allowed: &[PermissionRule],
     ) -> PermissionDecision {
-        let base = self.snapshot_for(&context.session);
+        let base = self.snapshot_for(&context.session).await;
         let rules = Rules {
             base: &base,
             session: allowed,
@@ -403,7 +416,7 @@ impl PermissionGate for PolicyGate {
         input: &Value,
         context: &ToolUseContext,
     ) -> Option<PermissionDecision> {
-        let base = self.snapshot_for(&context.session);
+        let base = self.snapshot_for(&context.session).await;
         let rules = Rules {
             base: &base,
             session: &[],

@@ -173,10 +173,24 @@ a turn (`turn.ts`), after the session is persisted and before the input is recor
 Owner: `node-store` `append_user`, in the transaction that stores the typed input, so no tool of the turn can run
 before the scope is written. A steered guide is stored as an attachment, not through this path.
 
-Open: the decision chain's copy of a session's scoped rules (`PolicyGate::scope`) is filled when the session is opened,
-not when this write happens. A task whose row becomes scoped on its first input keeps deciding with the workspace rules
-until the session is reopened. Node reads the row on every ask. Closing this needs a way for the session actor (which
-holds no gate) to tell the gate; it is a follow-up, not part of this change.
+### Live decisions
+
+Node reads the session row on every ask (`loadProjectPermissionRuleset`). The decision chain (`PolicyGate`) does the
+same, so a task whose row becomes scoped on its first input decides with its scoped rules from the next ask on, in the
+same open session.
+
+Owner: the session row, in `node-store`. The gate holds no copy it must keep in step. Event order:
+
+1. The input is stored (`append_user`).
+2. In that transaction `ensure_group_scope` writes the row's scope.
+3. The next ask reads the row through `LocalRulesSource::session` (`runtime` `StoredRules`, which calls
+   `LocalSettings::session_rules`) and decides with that rule set instead of the workspace's `LocalSettings` layer.
+
+There is no notification and no timer, and so no second write path. The cost is one primary-key read of the session row
+per decision, as in Node; it is not cached. `PolicyGate::scope` stays as the fallback for a gate without a source and for
+a read that fails (`StoredRules` logs it; the open-time copy decides then). A session row that is not scoped decides with
+the shared snapshot as before. The same read also makes "always allow" in a scoped session effective at once, which the
+open-time copy did not.
 
 ## Acceptance cases
 
@@ -212,6 +226,9 @@ Unit tests:
 11. Group task permission scope (`node-store` `group_scope_tests.rs`): a bot-group input writes `{version: 1, scope:
 "session", mode: "build"}` over a row's earlier permission; a row already scoped keeps its grants; an input without
     `botGroupSource` leaves the row alone.
+12. Live decisions (`policy` tests): with a source whose row turns scoped between two asks of one gate, the first ask
+    decides with the workspace rules and the second with the session rules, without `PolicyGate::scope` being called;
+    a failing read falls back to the open-time copy.
 
 E2E, in the Linux box on both runtimes:
 

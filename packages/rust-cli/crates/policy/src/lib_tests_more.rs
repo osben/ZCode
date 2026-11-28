@@ -259,3 +259,59 @@ fn the_ask_texts_name_zcode() {
         );
     }
 }
+
+/// A group task whose row turns scoped on its first input decides with its own rules from the next ask, in the same
+/// open session and without `PolicyGate::scope` (specs/fork-rust-topic-resource.md, Live decisions).
+struct Row(std::sync::Mutex<Result<Option<ProjectRules>, String>>);
+
+#[async_trait::async_trait]
+impl LocalRulesSource for Row {
+    async fn read(&self, _: &rust_cli_kernel_api::env::WorkspaceRef) -> Option<ProjectRules> {
+        None
+    }
+    async fn session(&self, _: &SessionId) -> Result<Option<ProjectRules>, String> {
+        self.0.lock().unwrap().clone()
+    }
+}
+
+use rust_cli_kernel_api::permission::ProjectRules;
+
+fn workspace_allows_touch() -> PermissionRules {
+    let mut base = PermissionRules::default();
+    base.rules.extend(
+        ProjectRules {
+            allow: vec![rust_cli_kernel_api::permission::syntax::parse_rule(
+                "Bash(touch:*)",
+            )],
+            ..ProjectRules::default()
+        }
+        .sourced(),
+    );
+    base
+}
+
+#[tokio::test]
+async fn a_row_scoped_after_the_open_decides_with_the_session_rules_at_once() {
+    let row = Arc::new(Row(std::sync::Mutex::new(Ok(None))));
+    let gate = PolicyGate::new(workspace_allows_touch()).with_local_rules(row.clone());
+    assert_eq!(
+        bash(&gate, PermissionMode::Default, "touch x").await,
+        allow()
+    );
+    *row.0.lock().unwrap() = Ok(Some(ProjectRules::default()));
+    assert_eq!(
+        ask_message(&bash(&gate, PermissionMode::Default, "touch x").await),
+        TOUCH_INSIDE
+    );
+}
+
+#[tokio::test]
+async fn a_failed_row_read_falls_back_to_the_open_time_copy() {
+    let row = Arc::new(Row(std::sync::Mutex::new(Err("boom".to_owned()))));
+    let gate = PolicyGate::new(workspace_allows_touch()).with_local_rules(row);
+    gate.scope(&SessionId::new("s1"), &ProjectRules::default());
+    assert_eq!(
+        ask_message(&bash(&gate, PermissionMode::Default, "touch x").await),
+        TOUCH_INSIDE
+    );
+}
