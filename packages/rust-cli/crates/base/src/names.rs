@@ -157,8 +157,11 @@ pub mod env {
     pub const ZCODE_ENABLE_STREAM_WATCHDOG: &str = "ZCODE_ENABLE_STREAM_WATCHDOG";
     pub const ZCODE_ENABLE_BYTE_WATCHDOG: &str = "ZCODE_ENABLE_BYTE_WATCHDOG";
 
-    // Fork: Node adapters `retry-policy.ts` (specs/fork-rust-agent-parity.md, "Model request retry count").
+    // Fork: Node adapters `retry-policy.ts` (specs/fork-rust-model-retry-env.md).
     pub const ZCODE_MODEL_RETRY_MAX_RETRIES: &str = "ZCODE_MODEL_RETRY_MAX_RETRIES";
+    pub const ZCODE_MODEL_RETRY_BASE_DELAY_MS: &str = "ZCODE_MODEL_RETRY_BASE_DELAY_MS";
+    pub const ZCODE_MODEL_RETRY_BACKOFF_FACTOR: &str = "ZCODE_MODEL_RETRY_BACKOFF_FACTOR";
+    pub const ZCODE_MODEL_RETRY_MAX_DELAY_MS: &str = "ZCODE_MODEL_RETRY_MAX_DELAY_MS";
 
     // MCP（ext.md）。
     pub const ZCODE_MCP_STARTUP_WAIT_MS: &str = "ZCODE_MCP_STARTUP_WAIT_MS";

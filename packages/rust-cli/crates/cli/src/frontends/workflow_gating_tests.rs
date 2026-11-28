@@ -63,7 +63,8 @@ fn without_an_analyzer_the_run_tools_and_list_saved_are_wired() {
             "GetWorkflowRun",
             "ResumeWorkflowRun",
             "ResolveWorkflowQuestion",
-            "ListSavedWorkflows"
+            "ListSavedWorkflows",
+            "ListModels"
         ]
     );
 }
@@ -90,7 +91,8 @@ fn with_an_analyzer_create_amend_and_save_are_wired_before_the_run_tools_and_lis
             "GetWorkflowRun",
             "ResumeWorkflowRun",
             "ResolveWorkflowQuestion",
-            "ListSavedWorkflows"
+            "ListSavedWorkflows",
+            "ListModels"
         ]
     );
 }
@@ -149,7 +151,8 @@ fn the_gate_source_reads_the_shared_table_the_server_records_into() {
             "GetWorkflowRun",
             "ResumeWorkflowRun",
             "ResolveWorkflowQuestion",
-            "ListSavedWorkflows"
+            "ListSavedWorkflows",
+            "ListModels"
         ]
     );
 }
@@ -199,7 +202,8 @@ fn with_a_snippet_port_eval_is_wired_between_save_and_the_run_tools() {
             "GetWorkflowRun",
             "ResumeWorkflowRun",
             "ResolveWorkflowQuestion",
-            "ListSavedWorkflows"
+            "ListSavedWorkflows",
+            "ListModels"
         ]
     );
 }

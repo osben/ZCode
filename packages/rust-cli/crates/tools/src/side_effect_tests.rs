@@ -61,6 +61,7 @@ fn every_known_tool_name_is_named_in_the_table() {
         names::GREP,
         names::LIST_AGENTS,
         names::LIST_MCP_RESOURCES,
+        names::LIST_MODELS,
         names::LSP,
         names::MONITOR,
         names::MULTI_EDIT,

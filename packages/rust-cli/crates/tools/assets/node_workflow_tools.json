@@ -469,5 +469,21 @@
       "properties": {},
       "additionalProperties": false
     }
+  },
+  {
+    "name": "ListModels",
+    "description": "Lists the models this host has configured, so another tool can be pointed at one.\n\n- Each row's `id` (`providerId/modelId`) pastes verbatim into the `model` field of CreateSession, or the `subagent_model` field of CreateWorkflow or AmendWorkflow. Append `$<level>` to pick a reasoning level from that row's `reasoningLevels`.\n- This tool does NOT change the model you are running on, and no tool changes an existing session's model. It only picks the model for a session or a workflow subagent you are about to create.\n- The model the session is on right now is marked `[current]`. Omitting the field uses the configured default, which is not necessarily that one.\n- A row marked `disabled` cannot be used (no API key, disabled by policy). Resolve that with the user rather than picking around it silently.",
+    "searchHint": null,
+    "readOnly": true,
+    "destructive": false,
+    "concurrentSafe": true,
+    "needsApproval": false,
+    "shouldDefer": true,
+    "inputSchema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {},
+      "additionalProperties": false
+    }
   }
 ]

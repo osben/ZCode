@@ -101,7 +101,7 @@ The Rust port estimate is in section 9. It is an estimate, not a measurement.
 
 Adjacent, not in the ten:
 
-- `ListModels` is registered when `includeDynamicWorkflow` is on or a session-control surface is present (`index.ts:329-337`). It is not in the set, because its answers serve `subagent_model` and `CreateSession`, not the run (comment `index.ts:329-332`).
+- `ListModels` is registered when `includeDynamicWorkflow` is on or a session-control surface is present (`index.ts:329-337`). It is not in the set, because its answers serve `subagent_model` and `CreateSession`, not the run (comment `index.ts:329-332`). zcode-rs registers it (9.69) right after `ListSavedWorkflows`, behind the same gate; it has no session-control surface, so the gate is the whole condition.
 - Actor-only tools `submit_result` (typed ask answer) and `escalate` (`index.ts:120-128`). They are registered in actors only.
 
 Gate resolution. `resolveRuntimeDynamicWorkflowToolsIncluded` (`core/src/runtime/helpers/tool-allowlist.ts:107-120`) is `dynamicWorkflowEnabled !== false && dynamicWorkflowToolsActivated && automationTools included`. `dynamicWorkflowEnabled` and the on-demand mode come from `bootstrap/src/zcode-protocol/dynamic-workflow-policy.ts` (`updateDynamicWorkflowPolicy`, `resolveDynamicWorkflowRuntimeGate`). A record created before a flag change keeps its tools. The Host sends `dynamicWorkflow.mode` through `/client/configs`.
@@ -6239,6 +6239,36 @@ that the item was already done.
 
 **Divergences.** 940: Rust's hand-built tool schemas for `submit_result` (generic) and `escalate` carry no `$schema`, while
 Node's zod-generated ones do. Not changed here, since it touches every tool schema and the prompt-cache bytes.
+
+### 9.69 Debt round 2026-11-27: the ListModels tool (as built)
+
+`model_reference.rs` already told the model to "call ListModels", and zcode-rs had no such tool. Proved first: the contracts asset
+held ten tools and `workflow_tools` registered no tool of that name.
+
+- Contract. `scripts/fork-rust-agent/workflow-tools.mts` now also reads `listModelsToolEntry`, so the name, the provider
+  description, the empty strict input schema and the flags (read only, not destructive, concurrency safe, no approval,
+  deferred) are Node's, in `node_workflow_tools.json` after `ListSavedWorkflows`. The tool is `crates/tools/src/model_list.rs`.
+- Source. The catalog is the one the resolver reads: `session_entries` (the late model directory, the calling session's
+  selection marked `current`), read at each call. No second catalog. Without a directory the call fails with Node's
+  `model_catalog_unavailable: ...` text and `errorCode` 31, never an empty list.
+- Model text. Node's `formatListModelsModelContent`: `<models count="N">`, one line per model, then `</models>`. A line is
+  `provider/model`, then the provider label after a space, U+2014 and a space when the provider has a name, then
+  `; levels: a,b (default x)` when the model has levels, then ` [current]`, then ` [disabled: reason]`. The separator is
+  Node's U+2014 byte for byte: it enters the model's context, so it is not replaced by a plain hyphen. With no model: the
+  `count="0"` block and the "Omit `subagent_model`" sentence.
+- Result card. `kind: "list_models"` as Node's `createListModelsDisplay`: at most 100 rows, `providerLabel` and
+  `disabledReason` bounded to 2048 bytes with the `\n...[truncated]` suffix, `truncated: true` when a row or text was cut,
+  `current` omitted when no row is current. `contextWindow` is the catalog model's window.
+- Budget and permission. The model text is cut at 24000 bytes (`result_budget_truncate_bytes`). No approval, whatever the
+  mode. Side-effect scope `none`. The 10 s timeout and the "cannot be cancelled" note are not ported: the read is one
+  in-memory call.
+- Gate. `wired_workflow_tools` returns it with the other workflow tools, so it follows the session gate: closed gate, an
+  on-demand session before activation, and the incognito `automationTools` toggle all leave it out. Node adds one more
+  condition, a session-control surface (`CreateSession`), which zcode-rs does not have. It is not in
+  `DYNAMIC_WORKFLOW_TOOLS`: that list is the cold-restore activation test, and a call to ListModels does not show the session
+  used workflows (same rule as Node). A workflow child keeps it (`WORKFLOW_CHILD_DISALLOWED_TOOLS` does not name it).
+- Not done. Node's ToolSearch `capability` string for the tool, and `describeUnsettledCall`-style notes, have no Rust
+  counterpart for any workflow tool.
 
 ## 10. Open questions
 

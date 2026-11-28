@@ -40,6 +40,7 @@ const TABLE: &[(&str, Option<Scope>)] = &[
     (names::GREP, Some(Scope::None)),
     (names::LIST_AGENTS, None),
     (names::LIST_MCP_RESOURCES, None),
+    (names::LIST_MODELS, Some(Scope::None)),
     (names::LSP, Some(Scope::None)),
     (names::MONITOR, None),
     (names::MULTI_EDIT, None),

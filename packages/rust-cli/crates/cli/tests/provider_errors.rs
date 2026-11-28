@@ -151,7 +151,7 @@ impl Sandbox {
         let retry = RetryPolicy {
             base_delay: Duration::from_millis(1),
             max_backoff: Duration::from_millis(4),
-            jitter_ratio: 0.0,
+            jitter: false,
             ..RetryPolicy::default()
         };
         let options = RouteOptions {

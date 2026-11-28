@@ -226,6 +226,14 @@ fn history_shows_a_workflow_by_its_command_or_by_a_call_to_one_of_the_ten_tools(
     )])]));
 }
 
+/// Node keeps ListModels out of `DYNAMIC_WORKFLOW_TOOL_NAMES`: choosing a model once is not using workflows.
+#[test]
+fn a_list_models_call_does_not_show_a_workflow() {
+    assert!(!history_shows_workflow(&[assistant(vec![tool_use(
+        "ListModels"
+    )])]));
+}
+
 #[test]
 fn history_without_a_workflow_shows_none() {
     assert!(!history_shows_workflow(&[user_text("hello")]));
