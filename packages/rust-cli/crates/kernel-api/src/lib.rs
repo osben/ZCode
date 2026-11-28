@@ -63,6 +63,7 @@ pub mod agents;
 pub mod app_tool;
 pub mod automation;
 pub mod background_origin;
+pub mod bot_source;
 pub mod browser_turn;
 pub mod catalog;
 pub mod checkpoint;

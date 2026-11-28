@@ -98,6 +98,25 @@ pub(crate) fn session_read(
         .map(|permission| parsed(&Value::Object(permission.clone()))))
 }
 
+/// Node `ensureGroupTaskPermissionScope`: a bot-group input makes the session's permission a session scope
+/// (`{version: 1, scope: "session", mode: "build"}`), replacing what the row held; a row already scoped keeps its
+/// grants. Run in the transaction that stores the input, so no tool of the turn runs before it.
+pub(crate) fn ensure_group_scope(ctx: &Commit<'_>) -> Result<(), StoreError> {
+    let row = crate::repo::sessions::get(ctx.conn, ctx.session)
+        .storage()?
+        .ok_or_else(|| storage("Group task permission scope requires a persisted session"))?;
+    if scoped(row.permission.as_ref()).is_some() {
+        return Ok(());
+    }
+    let update = crate::repo::sessions::Update {
+        id: ctx.session.to_owned(),
+        permission: Some(json!({"version": 1, "scope": "session", "mode": "build"})),
+        ..Default::default()
+    };
+    crate::repo::sessions::update(ctx.conn, &update, ctx.now as i64).storage()?;
+    Ok(())
+}
+
 fn behavior_key(behavior: RuleBehavior) -> &'static str {
     match behavior {
         RuleBehavior::Allow => "allow",
