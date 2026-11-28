@@ -271,20 +271,62 @@ pub(crate) fn assumptions(declarations: TestDeclarations, env: &EnvSnapshot) -> 
     }
 }
 
-/// Fork: the model retry count from `ZCODE_MODEL_RETRY_MAX_RETRIES`, like Node `retry-policy.ts`
-/// `parseNonNegativeInteger`: a finite, non-negative number (a fraction is floored) replaces the default
-/// retry count; an empty or invalid value keeps the default (specs/fork-rust-agent-parity.md).
-pub(crate) fn model_retry(snapshot: &EnvSnapshot) -> RetryPolicy {
-    let default = RetryPolicy::default();
-    let max_retries = snapshot
-        .text(rust_cli_base::names::env::ZCODE_MODEL_RETRY_MAX_RETRIES)
-        .and_then(|value| value.parse::<f64>().ok())
+/// Node `Number(text)` for the forms an environment variable can carry: decimal and exponent text, and the `0x`, `0o`
+/// and `0b` prefixes. Rust's `f64` parser also accepts `inf` and `nan` (rejected later as non-finite) and rejects the
+/// prefixed forms, which is the one difference this covers.
+fn js_number(text: &str) -> Option<f64> {
+    let text = text.trim();
+    for (prefix, radix) in [
+        ("0x", 16),
+        ("0X", 16),
+        ("0o", 8),
+        ("0O", 8),
+        ("0b", 2),
+        ("0B", 2),
+    ] {
+        if let Some(digits) = text.strip_prefix(prefix) {
+            return u64::from_str_radix(digits, radix)
+                .ok()
+                .map(|value| value as f64);
+        }
+    }
+    text.parse::<f64>().ok()
+}
+
+/// Node `parseNonNegativeInteger`: unset or blank is unset; a finite number at or above 0 is floored; anything else is
+/// ignored.
+fn non_negative_integer(snapshot: &EnvSnapshot, name: &str) -> Option<f64> {
+    js_number(snapshot.text(name)?)
         .filter(|value| value.is_finite() && *value >= 0.0)
-        .map_or(default.max_retries, |value| {
-            value.floor().min(f64::from(u32::MAX)) as u32
-        });
+        .map(f64::floor)
+}
+
+/// Node `parsePositiveNumber`: a finite number above 0, fraction kept.
+fn positive_number(snapshot: &EnvSnapshot, name: &str) -> Option<f64> {
+    js_number(snapshot.text(name)?).filter(|value| value.is_finite() && *value > 0.0)
+}
+
+/// Fork: the model retry policy from Node's four `ZCODE_MODEL_RETRY_*` variables (`retry-policy.ts`;
+/// specs/fork-rust-model-retry-env.md). Each variable is read on its own: unset, blank or invalid keeps that default and
+/// leaves the others alone. The wait limit for a server `Retry-After` stays 60 s unless the max delay is larger, so a long
+/// max delay does not end the retries.
+pub(crate) fn model_retry(snapshot: &EnvSnapshot) -> RetryPolicy {
+    use rust_cli_base::names::env;
+    let default = RetryPolicy::default();
+    let millis = |value: f64| std::time::Duration::from_millis(value.min(u64::MAX as f64) as u64);
+    let max_backoff = non_negative_integer(snapshot, env::ZCODE_MODEL_RETRY_MAX_DELAY_MS)
+        .map_or(default.max_backoff, millis);
     RetryPolicy {
-        max_retries,
+        max_retries: non_negative_integer(snapshot, env::ZCODE_MODEL_RETRY_MAX_RETRIES)
+            .map_or(default.max_retries, |value| {
+                value.min(f64::from(u32::MAX)) as u32
+            }),
+        base_delay: non_negative_integer(snapshot, env::ZCODE_MODEL_RETRY_BASE_DELAY_MS)
+            .map_or(default.base_delay, millis),
+        backoff_factor: positive_number(snapshot, env::ZCODE_MODEL_RETRY_BACKOFF_FACTOR)
+            .unwrap_or(default.backoff_factor),
+        max_backoff,
+        max_wait: default.max_wait.max(max_backoff),
         ..default
     }
 }

@@ -1,9 +1,10 @@
 //! 与协议无关的重试工具（docs/specs/rust-cli/model.md §5）：退避时长、Retry-After 与
 //! `x-should-retry` 解析。哪些失败可以重试由协议适配器决定。
 //!
-//! 默认值：最多重试 10 次；第 n 次失败后
-//! 等 `min(32 s, 500 ms × 2^(n-1))`，再加至多 25% 的随机抖动；服务端给了 Retry-After 时取两者中
-//! 较大的；算出的等待超过 60 秒时不再重试，直接报错。
+//! 默认值是 Node 的（`adapters/src/model/retry-policy.ts`，specs/fork-rust-model-retry-env.md）：最多重试 10 次；第 n 次
+//! 失败后等 `min(2 s × 2^(n-1), 60 s)`，再乘 `[0.5, 1.0)` 的随机抖动（Node `calculateRetryDelay`）；服务端给了 Retry-After
+//! 时取两者中较大的；Retry-After 超过 `max_wait`（60 秒）时不再重试，直接报错。基础等待、倍数与上限可由
+//! `ZCODE_MODEL_RETRY_*` 改（`cli/assemble/options.rs`）。
 
 use std::time::{Duration, SystemTime};
 
@@ -14,11 +15,11 @@ use crate::ResponseHeaders;
 /// 默认：首次请求之外最多再试几次。
 const DEFAULT_MAX_RETRIES: u32 = 10;
 /// 默认：第一次重试前的基础等待。
-const DEFAULT_BASE_DELAY: Duration = Duration::from_millis(500);
-/// 默认：指数退避的上限（不含抖动）。
-const DEFAULT_MAX_BACKOFF: Duration = Duration::from_secs(32);
-/// 默认：抖动最多加上等待时长的这个比例。
-const DEFAULT_JITTER_RATIO: f64 = 0.25;
+const DEFAULT_BASE_DELAY: Duration = Duration::from_millis(2_000);
+/// 默认：每次重试等待的倍数。
+const DEFAULT_BACKOFF_FACTOR: f64 = 2.0;
+/// 默认：指数退避的上限（抖动之前）。
+const DEFAULT_MAX_BACKOFF: Duration = Duration::from_millis(60_000);
 /// 默认：单次等待的上限，超过时不再重试。
 const DEFAULT_MAX_WAIT: Duration = Duration::from_secs(units::SECONDS_PER_MINUTE);
 
@@ -29,11 +30,13 @@ pub struct RetryPolicy {
     pub max_retries: u32,
     /// 第一次重试前的基础等待。
     pub base_delay: Duration,
+    /// 每次重试等待相对上一次的倍数（大于 0，可以是小数）。
+    pub backoff_factor: f64,
     /// 指数退避的上限（不含抖动）。
     pub max_backoff: Duration,
-    /// 抖动比例：等待时长加上 `[0, ratio)` 倍的随机量。
-    pub jitter_ratio: f64,
-    /// 单次等待的上限；超过时放弃重试（例如 Retry-After 要求等一小时）。
+    /// 抖动开关：非零的等待乘 `0.5 + 0.5 × random`（Node `retry.jitter`）。
+    pub jitter: bool,
+    /// 服务端要求的等待的上限；超过时放弃重试（例如 Retry-After 要求等一小时）。本地退避不受它限制。
     pub max_wait: Duration,
 }
 
@@ -42,8 +45,9 @@ impl Default for RetryPolicy {
         Self {
             max_retries: DEFAULT_MAX_RETRIES,
             base_delay: DEFAULT_BASE_DELAY,
+            backoff_factor: DEFAULT_BACKOFF_FACTOR,
             max_backoff: DEFAULT_MAX_BACKOFF,
-            jitter_ratio: DEFAULT_JITTER_RATIO,
+            jitter: true,
             max_wait: DEFAULT_MAX_WAIT,
         }
     }
@@ -51,7 +55,7 @@ impl Default for RetryPolicy {
 
 impl RetryPolicy {
     /// 第 `attempt` 次失败（从 1 开始）之后、下一次请求之前的等待；`random` 取 `[0, 1)`。
-    /// 返回 `None` 表示等待超过 [`max_wait`](Self::max_wait)，不应再重试。
+    /// 返回 `None` 表示服务端要求的等待超过 [`max_wait`](Self::max_wait)，不应再重试。
     pub fn delay(
         &self,
         attempt: u32,
@@ -59,13 +63,22 @@ impl RetryPolicy {
         random: f64,
     ) -> Option<Duration> {
         let exponent = i32::try_from(attempt.saturating_sub(1)).unwrap_or(i32::MAX);
-        let backoff = (self.base_delay.as_secs_f64() * 2f64.powi(exponent))
-            .min(self.max_backoff.as_secs_f64());
-        let jittered = backoff * (1.0 + random.clamp(0.0, 1.0) * self.jitter_ratio);
-        // 毫秒取整。
+        let uncapped = self.base_delay.as_secs_f64() * self.backoff_factor.powi(exponent);
+        // A zero base with an overflowing factor is 0 * inf: no wait, not a NaN that `min` would turn into the cap.
+        let uncapped = if uncapped.is_nan() { 0.0 } else { uncapped };
+        let capped = uncapped.min(self.max_backoff.as_secs_f64());
+        // Node: a non-zero wait is scaled by `0.5 + random * 0.5` when jitter is on; the result is whole milliseconds.
+        let jittered = if self.jitter && capped > 0.0 {
+            capped * (0.5 + random.clamp(0.0, 1.0) * 0.5)
+        } else {
+            capped
+        };
         let computed = Duration::from_millis((jittered * units::MS_PER_SECOND_F64).round() as u64);
-        let delay = retry_after.map_or(computed, |after| after.max(computed));
-        (delay <= self.max_wait).then_some(delay)
+        match retry_after {
+            Some(after) if after > self.max_wait => None,
+            Some(after) => Some(after.max(computed)),
+            None => Some(computed),
+        }
     }
 }
 

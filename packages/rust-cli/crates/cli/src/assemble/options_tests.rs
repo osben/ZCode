@@ -314,7 +314,9 @@ fn the_model_retry_count_follows_the_node_variable() {
     assert_eq!(model_retry(&env(&[(name, "0")])).max_retries, 0);
     assert_eq!(model_retry(&env(&[(name, " 3 ")])).max_retries, 3);
     assert_eq!(model_retry(&env(&[(name, "2.7")])).max_retries, 2);
-    for invalid in ["", "-1", "abc", "inf"] {
+    assert_eq!(model_retry(&env(&[(name, "0x10")])).max_retries, 16);
+    assert_eq!(model_retry(&env(&[(name, "1e1")])).max_retries, 10);
+    for invalid in ["", "  ", "-1", "abc", "inf", "NaN", "1_0", "0x"] {
         assert_eq!(
             model_retry(&env(&[(name, invalid)])).max_retries,
             default,
@@ -324,5 +326,62 @@ fn the_model_retry_count_follows_the_node_variable() {
     assert_eq!(
         model_retry(&env(&[(name, "0")])).base_delay,
         RetryPolicy::default().base_delay
+    );
+}
+
+/// Fork: Node `retry-policy.ts` reads the base delay (ms, may be 0), the backoff factor (above 0, fraction kept) and the
+/// max delay (ms, may be 0) with the same rules as the count: unset, blank or invalid keeps the default.
+#[test]
+fn the_backoff_variables_follow_the_node_rules() {
+    use std::time::Duration;
+    let base = rust_cli_base::names::env::ZCODE_MODEL_RETRY_BASE_DELAY_MS;
+    let factor = rust_cli_base::names::env::ZCODE_MODEL_RETRY_BACKOFF_FACTOR;
+    let max = rust_cli_base::names::env::ZCODE_MODEL_RETRY_MAX_DELAY_MS;
+    let default = RetryPolicy::default();
+
+    let set = model_retry(&env(&[(base, "7"), (factor, "1.5"), (max, "9000")]));
+    assert_eq!(set.base_delay, Duration::from_millis(7));
+    assert_eq!(set.backoff_factor, 1.5);
+    assert_eq!(set.max_backoff, Duration::from_millis(9000));
+    assert_eq!(set.max_retries, default.max_retries);
+
+    assert_eq!(model_retry(&env(&[(base, "0")])).base_delay, Duration::ZERO);
+    assert_eq!(model_retry(&env(&[(max, "0")])).max_backoff, Duration::ZERO);
+    assert_eq!(
+        model_retry(&env(&[(base, "12.9")])).base_delay,
+        Duration::from_millis(12)
+    );
+    assert_eq!(model_retry(&env(&[(factor, " 3 ")])).backoff_factor, 3.0);
+
+    for invalid in ["", "-1", "abc", "inf", "NaN"] {
+        let policy = model_retry(&env(&[(base, invalid), (max, invalid)]));
+        assert_eq!(policy.base_delay, default.base_delay, "{invalid}");
+        assert_eq!(policy.max_backoff, default.max_backoff, "{invalid}");
+    }
+    // The factor must be above 0: 0 and a negative number are ignored.
+    for invalid in ["0", "-2", "", "abc", "inf"] {
+        assert_eq!(
+            model_retry(&env(&[(factor, invalid)])).backoff_factor,
+            default.backoff_factor,
+            "{invalid}"
+        );
+    }
+    // One bad variable does not drop the good ones.
+    let mixed = model_retry(&env(&[(base, "oops"), (factor, "4"), (max, "500")]));
+    assert_eq!(mixed.base_delay, default.base_delay);
+    assert_eq!(mixed.backoff_factor, 4.0);
+    assert_eq!(mixed.max_backoff, Duration::from_millis(500));
+}
+
+/// A max delay above the retry-after limit must not end the retries: the limit follows it.
+#[test]
+fn a_large_max_delay_raises_the_wait_limit() {
+    use std::time::Duration;
+    let max = rust_cli_base::names::env::ZCODE_MODEL_RETRY_MAX_DELAY_MS;
+    let policy = model_retry(&env(&[(max, "300000")]));
+    assert!(policy.max_wait >= Duration::from_secs(300));
+    assert_eq!(
+        model_retry(&env(&[(max, "1000")])).max_wait,
+        RetryPolicy::default().max_wait
     );
 }
