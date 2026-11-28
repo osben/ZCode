@@ -15,8 +15,12 @@ mod auxiliary;
 mod changed;
 mod config;
 mod desktop;
+#[cfg(test)]
+mod desktop_flow_tests;
 mod directory;
 mod environment;
+#[cfg(test)]
+mod environment_desktop_tests;
 mod input_reminders;
 mod instructions;
 mod invoked;
@@ -40,6 +44,8 @@ mod task_reminder;
 mod worktree_tests;
 
 use std::sync::Arc;
+
+use crate::desktop::DesktopFacts;
 
 use async_trait::async_trait;
 use rust_cli_base::late::Late;
@@ -186,13 +192,15 @@ impl PromptAssembler {
         }
     }
 
-    /// Fork: Node's desktop section for this request's session ([`ContextConfig::desktop`]), rendered. A Gen UI
-    /// directory is named only after it exists: like Node (`ensureGenUiOutputDirectory`), a failure to create it fails
-    /// the request instead of sending the model elsewhere.
-    async fn desktop_section(
+    /// Fork: what the environment announcement says about the desktop for this request (Node `withDesktopContext`):
+    /// Some when the app-server runs with `--surface desktop` and the request is a main-thread request of a session
+    /// with the default system prompt and an incognito profile that keeps `harness` (Node adds its `desktop_context`
+    /// section under exactly these conditions). A Gen UI directory is named only after it exists: like Node
+    /// (`ensureGenUiOutputDirectory`), a failure to create it fails the request instead of sending the model elsewhere.
+    async fn desktop_facts(
         &self,
         request: &ContextRequest,
-    ) -> Result<Option<String>, OrchestrationError> {
+    ) -> Result<Option<DesktopFacts>, OrchestrationError> {
         // Node children do not inherit the presentation surface or the Gen UI root: no request of a child session
         // (its own steps, and its auto-compaction, which keeps the agent id but runs as `QuerySource::Compact` through
         // this assembler) names or creates a directory. The node_desktop app-server has no fork subagent.
@@ -202,6 +210,11 @@ impl PromptAssembler {
         let Some(desktop) = self.config.desktop.as_ref() else {
             return Ok(None);
         };
+        if self.prompt_overrides(request).0.is_some()
+            || self.excludes(request, IncognitoKey::Harness)
+        {
+            return Ok(None);
+        }
         let directory = self
             .gen_ui_dirs
             .for_session(
@@ -211,7 +224,7 @@ impl PromptAssembler {
                 request.session.as_str(),
             )
             .await?;
-        Ok(Some(desktop::section(directory.as_deref())))
+        Ok(Some(DesktopFacts { directory }))
     }
 
     /// 接上执行环境的注册表：连上、断开远端机器时发机器清单提醒（remote-exec.md §20.5.3）。
@@ -383,8 +396,8 @@ impl PromptAssembler {
         (request, thread): (&ContextRequest, Thread<'_>),
         (session, history): (&[Message], &[Message]),
         boundary: Option<MessageId>,
-        listings: &Listings,
-        mcp_instructions: &[ListingEntry],
+        (listings, mcp_instructions): (&Listings, &[ListingEntry]),
+        desktop: Option<&DesktopFacts>,
     ) -> Vec<AttachmentMessage> {
         // `/goal` 的说明与 Stop hook 的反馈之后不算 `getAttachments` 那一组（goal.md §8）。
         if !announce::inputs_due(history) {
@@ -421,7 +434,7 @@ impl PromptAssembler {
         // Fork: incognito without `environment` announces neither the environment nor the model (Node env block).
         let environment = !self.excludes(request, IncognitoKey::Environment);
         if let Some(found) = shown.as_ref().filter(|_| environment).and_then(|shown| {
-            environment::announce(history, shown, &self.config.additional_directories)
+            environment::announce(history, shown, &self.config.additional_directories, desktop)
         }) {
             out.push(self.attachment(environment::SOURCE, found));
         }
@@ -600,7 +613,6 @@ impl ContextBuilder for PromptAssembler {
             .listings
             .listings_for(&request, since_boundary(history))
             .await?;
-        let desktop = self.desktop_section(&request).await?;
         let worktree = crate::worktree_section(&request);
         let facts = PromptFacts {
             surface: self.config.surface,
@@ -613,7 +625,6 @@ impl ContextBuilder for PromptAssembler {
             append: self.prompt_overrides(&request).1,
             token_budget: self.config.token_budget,
             incognito: self.incognito.get(&request.session),
-            desktop: desktop.as_deref(),
             worktree: worktree.as_deref(),
         };
         let system = system_blocks(&facts);
@@ -650,8 +661,17 @@ impl ContextBuilder for PromptAssembler {
         let mcp = self.ports.listings.mcp_instructions(&request).await?;
         let boundary = last_boundary(history);
         let windows = (history, window);
+        // Fork: the ZCode Desktop Context rides the environment announcement; creating the Gen UI directory can fail
+        // the request, as it did when the text was a system section.
+        let desktop = self.desktop_facts(&request).await?;
         Ok(self
-            .turn_group((&request, thread), windows, boundary, &listings, &mcp)
+            .turn_group(
+                (&request, thread),
+                windows,
+                boundary,
+                (&listings, &mcp),
+                desktop.as_ref(),
+            )
             .await)
     }
 

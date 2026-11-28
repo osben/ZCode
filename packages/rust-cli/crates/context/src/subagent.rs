@@ -47,7 +47,8 @@ impl PromptAssembler {
             .await
             .filter(|_| environment)
             .and_then(|facts| {
-                environment::announce(history, &facts, &self.config.additional_directories)
+                // A subagent never gets the ZCode Desktop Context (Node children do not inherit the surface).
+                environment::announce(history, &facts, &self.config.additional_directories, None)
             })
         {
             out.push(self.attachment(environment::SOURCE, found));

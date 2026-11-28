@@ -57,7 +57,7 @@ pub struct ContextConfig {
     /// sends both on every surface, the desktop included (`context/builder.ts` `buildTotalTokensSection`,
     /// `runtime/methods/turn-loop.ts` `appendTotalTokensReminder`); no surface turns it off.
     pub token_budget: bool,
-    /// Fork: Node's "ZCode Desktop Context" system section. Some only for the app-server started with
+    /// Fork: Node's "ZCode Desktop Context" text, sent with the environment announcement. Some only for the app-server started with
     /// `--surface desktop` (the Host's rollout decision, specs/fork-rust-agent-parity.md); None everywhere else.
     pub desktop: Option<DesktopContext>,
     /// Fork: whether a subagent gets the git status. The app-server turns it off: Node's child context builder
@@ -66,7 +66,7 @@ pub struct ContextConfig {
     pub subagent_git_status: bool,
 }
 
-/// Fork: the facts behind Node's "ZCode Desktop Context" section (core `context/sections/desktop.ts`).
+/// Fork: the facts behind Node's "ZCode Desktop Context" text (core `context/sections/desktop.ts`).
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct DesktopContext {
     /// The Host's Gen UI output root (`ZCODE_GEN_UI_OUTPUT_ROOT`). None: the section says inline Gen UI is unavailable.

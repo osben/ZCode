@@ -47,7 +47,7 @@ texts! {
     // Fork: Node's "ZCode Desktop Context" section (core `context/sections/desktop.ts`), byte for byte.
     desktop_context => "system/desktop_context",
     desktop_gen_ui => "system/desktop_gen_ui",
-    desktop_gen_ui_none => "system/desktop_gen_ui_none",
+    desktop_no_longer => "context/desktop_no_longer",
     total_tokens => "context/total_tokens",
     environment => "context/environment",
     environment_cwd => "context/environment_cwd",
@@ -61,6 +61,8 @@ texts! {
     environment_shell => "context/environment_shell",
     environment_os => "context/environment_os",
     environment_untrusted => "context/environment_untrusted",
+    environment_visualization => "context/environment_visualization",
+    environment_visualization_was => "context/environment_visualization_was",
     environment_update => "context/environment_update",
     // Fork: the execution worktree notice (core `context/sections/env-info.ts`).
     execution_worktree => "context/execution_worktree",

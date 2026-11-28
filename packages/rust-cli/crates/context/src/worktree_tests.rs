@@ -26,7 +26,6 @@ fn facts(tool_names: &[String]) -> PromptFacts<'_> {
         append: None,
         token_budget: true,
         incognito: None,
-        desktop: None,
         worktree: None,
     }
 }
@@ -108,6 +107,6 @@ fn a_custom_prompt_keeps_the_section_as_a_trailing_block() {
         .collect();
     assert_eq!(
         named,
-        ["Custom prompt", "Execution Worktree", "Appended prompt"]
+        ["Custom prompt", "Appended prompt", "Execution Worktree"]
     );
 }
