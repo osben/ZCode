@@ -217,6 +217,13 @@ Rules:
 - The five Cron names are one list (`tool_names::CRON_TOOLS`), read by the main-session-only rule and by the incognito
   `automationTools` switch, which hides all five.
 - Incognito `automationTools: false` removes all five.
+- Remote workspaces: a session whose workspace key is a well-formed remote identity (`remote:ssh|wsl|docker|server:...`,
+  `kernel-api` `remote_identity`) has all five Cron tools hidden, with or without an incognito profile (Node
+  `resolveSessionToolDenylist` adds `REMOTE_AUTOMATION_TOOL_NAMES` to the session denylist: a remote workspace has no
+  reliable trigger boundary for the Host's scheduler). A malformed `remote:` key is not remote there either. The rule is
+  one predicate in the per-session tool gate (`ext` `incognito.rs`, `IncognitoTools::hides`), so the tool snapshot,
+  ToolSearch and the call-time check agree, and it reads the workspace recorded for the session at every call (create,
+  resume and cold open alike). The off-peak tools are not affected.
 - On a restricted turn the turn limits already hide CronCreate/CronUpdate/CronDelete, so the tool pipeline refuses a
   call to them first (`No such tool available`, slice 1); the tools' own refusal is the second line, as in Node.
 - No local schedule runs under the desktop Host: the app-server assembles no `.zcode/scheduled_tasks.json` store (a
@@ -225,9 +232,21 @@ Rules:
   The runtime owns both rules: with `Extensions::automation` set the local cron gets no store whatever `cron_store`
   holds, and `ExtConfig::host_automations` is derived from the port, so no entry point can set one without the other.
 
-Known gaps (no zcode-rs mechanism yet, stated rather than invented): Node's `AutomationCreateLimitError` closes the
-turn's tool recovery after a create limit error, while zcode-rs returns it as an ordinary tool error; remote workspaces
-are not gated (the Host routes requests by workspace ref); the Host's `toolSearchMode` preference is not read.
+Known gaps (no zcode-rs mechanism yet, stated rather than invented):
+
+- Node's `AutomationCreateLimitError` closes the turn's tool recovery after a create limit error, while zcode-rs returns
+  it as an ordinary tool error. Node's rule (turn-tools.ts, turn-tool-visibility.ts, turn-model-step.ts, turn-stop.ts):
+  a failed CronCreate whose error carries `AUTOMATION_CREATE_LIMIT_REACHED` shows the model a fixed message instead of
+  the raw error and cancels the later tools of the batch; the next request of the turn carries no tools and an empty
+  MCP and deferred catalog; tool calls in that reply are dropped and an empty or tool-only reply becomes a localized
+  fallback text (Chinese when the turn input has a Han character, else English); the turn then ends with no Stop hooks,
+  no guide drain and no output-token or context-overflow recovery. It is not the plan-exit `stop_turn`, which would end
+  the turn with no text. zcode-rs needs a new tool-result flag read by the query loop (`ToolCallOutput`, the executor
+  batch, `respond`, `run.rs` step tools), so it is a query-loop change and stays open.
+- The Host's `toolSearchMode` preference (`auto | local | off`, read from `session/requestRuntimePreferences` when a
+  runtime is created or cold-resumed, inherited by forks) is not read. In zcode-rs the setting is process-wide
+  (`limits.request.tool_search`, one `ToolCatalog`, `/context` and usage), so reading it needs one per-session
+  preferences snapshot as the owner and every consumer moved onto it. It stays open.
 
 ### Slice 3: off-peak
 

@@ -203,6 +203,7 @@ async fn the_visualize_plugin_skill_loads_with_its_base_directory() {
     catalog.set_plugin_roots(vec![PluginSkillRoot {
         plugin: "visualize".to_owned(),
         dir: "/plugins/visualize/0.1.1/skills".to_owned(),
+        official_cua: false,
     }]);
     let ids: Arc<dyn Ids> = Arc::new(SequentialIds::default());
     let tool = SkillTool::new(catalog, ids, None);

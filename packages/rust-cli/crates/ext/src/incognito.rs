@@ -6,6 +6,8 @@
 //!   only `mcp` is off).
 //! - The resource tools and WaitForMcpServers are global, so they stay only while both `mcp` and `plugins` are kept.
 //! - The Cron tools follow `automationTools`.
+//! - The five Cron tools are also hidden in a session on a remote workspace identity, with or without a profile (Node
+//!   `resolveSessionToolDenylist`: a remote workspace has no reliable trigger boundary for the Host's scheduler).
 
 use std::sync::Arc;
 
@@ -61,6 +63,16 @@ impl IncognitoTools {
         }
     }
 
+    /// Whether the session's workspace key is a well-formed remote identity (Node `isRemoteWorkspaceIdentity`; a
+    /// malformed `remote:` key is not remote there either).
+    fn on_remote_workspace(&self, session: &SessionId) -> bool {
+        self.sessions.get(session).is_some_and(|workspace| {
+            rust_cli_kernel_api::remote_identity::is_remote_workspace_identity(
+                workspace.root.as_str(),
+            )
+        })
+    }
+
     pub(crate) fn profile(&self, session: &SessionId) -> Option<IncognitoProfile> {
         self.profiles.get(session)
     }
@@ -72,6 +84,9 @@ impl IncognitoTools {
 
 impl IncognitoToolGate for IncognitoTools {
     fn hides(&self, session: &SessionId, tool: &dyn Tool) -> bool {
+        if tool_names::CRON_TOOLS.contains(&tool.name()) && self.on_remote_workspace(session) {
+            return true;
+        }
         let Some(profile) = self.profiles.get(session) else {
             return false;
         };

@@ -121,6 +121,16 @@ impl Messaging {
         if let Some(message) = crate::toolset::mcp_refusal_settled(&definition, mcp).await {
             return Err(ToolError::Failed { message });
         }
+        // Fork (rule 17): the same Computer Use check as the Agent call.
+        if let Some(message) = crate::toolset::skills_refusal(
+            &definition,
+            self.core.ports.skill_grants.as_ref(),
+            &context.workspace,
+        )
+        .await
+        {
+            return Err(ToolError::Failed { message });
+        }
         // The parent run's current model and mode, as Node reads the session's selection when the child starts.
         let (parent_selection, parent_mode) = match self.core.runs.get(&context.run) {
             Some(parent) => (parent.selection.clone(), parent.mode),

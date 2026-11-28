@@ -115,6 +115,9 @@ pub struct PluginSkillRoot {
     pub plugin: String,
     /// `<插件>/skills` 一类的目录。
     pub dir: String,
+    /// Fork: the root belongs to the official Computer Use plugin (id `computer-use@zcode-plugins-official`). Its skills
+    /// never reach a subagent child (Node `OfficialCuaPolicy.isOfficialSkill`).
+    pub official_cua: bool,
 }
 
 #[derive(Default)]
@@ -139,8 +142,9 @@ pub struct SkillCatalog {
     looping: bool,
     /// Fork: the sessions' incognito profiles; a session without plugins discovers no plugin skills.
     incognito: std::sync::OnceLock<rust_cli_kernel_api::incognito::IncognitoProfiles>,
-    /// Fork (rule 17): the grant of each running subagent child (its frozen identities), by child session.
-    grants: Mutex<HashMap<rust_cli_kernel_api::ids::SessionId, HashSet<String>>>,
+    /// Fork (rule 17): each running subagent child, by child session. The value is its grant (frozen identities); `None`
+    /// is a child that declares no `skills` list. Every child hides the official Computer Use skills.
+    grants: Mutex<HashMap<rust_cli_kernel_api::ids::SessionId, Option<HashSet<String>>>>,
     /// Fork (W9b-3, 9.58): the directory of the Node bundle entry the bundled pack is searched from (`bundled.rs`).
     bundled_entry: Mutex<Option<String>>,
     /// Fork (W9b-3, 9.58): the resolved pack directory, memoized once resolved: outer None = not resolved yet, inner None =
@@ -301,7 +305,7 @@ impl SkillCatalog {
         session: Option<&rust_cli_kernel_api::ids::SessionId>,
     ) -> Vec<Arc<Skill>> {
         let skills = self.discovered(workspace, session).await;
-        self.granted(session, skills)
+        self.granted(workspace, session, skills)
     }
 
     /// Fork (rule 17): the skills discovered for `session` before its grant filter. A grant resolves against this set,
@@ -322,20 +326,41 @@ impl SkillCatalog {
             .await
     }
 
-    /// Fork (rule 17): `skills` as the child run of `session` sees them: only the granted identities, when it has a grant.
+    /// Fork (rule 17): `skills` as the child run of `session` sees them. A child never sees the official Computer Use
+    /// skills (Node `FilteredSkillPort`: the CUA filter runs first, the grant filters what is left); with a grant it sees
+    /// only the granted identities.
     fn granted(
         &self,
+        workspace: &WorkspaceRef,
         session: Option<&rust_cli_kernel_api::ids::SessionId>,
         skills: Vec<Arc<Skill>>,
     ) -> Vec<Arc<Skill>> {
         let Some(session) = session else {
             return skills;
         };
-        let grant = self.grants.lock_unpoisoned().get(session).cloned();
+        let Some(grant) = self.grants.lock_unpoisoned().get(session).cloned() else {
+            return skills;
+        };
+        let official = self.official_dirs(workspace);
+        let skills: Vec<Arc<Skill>> = skills
+            .into_iter()
+            .filter(|skill| !is_official(skill, &official))
+            .collect();
         match grant {
             Some(identities) => grants::filter_granted(&skills, &identities),
             None => skills,
         }
+    }
+
+    /// Fork: the official Computer Use plugin's skill roots, as `(plugin name, root directory)` (the roots of the
+    /// workspace's own plugin set when its layer is loaded, like discovery).
+    fn official_dirs(&self, workspace: &WorkspaceRef) -> Vec<(String, String)> {
+        self.workspace_roots(workspace)
+            .unwrap_or_else(|| self.plugin_roots())
+            .into_iter()
+            .filter(|root| root.official_cua)
+            .map(|root| (root.plugin, root.dir))
+            .collect()
     }
 
     async fn skills_with(
@@ -405,6 +430,25 @@ impl SkillCatalog {
         invoked::invoked(self, workspace, history).await
     }
 
+    /// Fork: whether `session`, a subagent child, asks for an official Computer Use skill by `name`. The Skill tool answers
+    /// with the Computer Use refusal instead of "Unknown skill" (Node `FilteredSkillPort.loadSkill`).
+    pub async fn refuses_official(
+        &self,
+        workspace: &WorkspaceRef,
+        session: &rust_cli_kernel_api::ids::SessionId,
+        name: &str,
+    ) -> bool {
+        if !self.grants.lock_unpoisoned().contains_key(session) {
+            return false;
+        }
+        let official = self.official_dirs(workspace);
+        if official.is_empty() {
+            return false;
+        }
+        let skills = self.discovered(workspace, None).await;
+        names_official(&skills, &official, name)
+    }
+
     /// 按名字找（Skill 工具用）。
     pub async fn find(&self, workspace: &WorkspaceRef, name: &str) -> Option<Arc<Skill>> {
         self.find_in(workspace, None, name).await
@@ -438,7 +482,7 @@ impl SkillCatalog {
         let skills = self
             .skills_with(workspace, &facts, self.keeps_plugins(session), session)
             .await;
-        let skills = self.granted(session, skills);
+        let skills = self.granted(workspace, session, skills);
         let touched = paths::touched(history, facts.cwd.as_str());
         let visible: Vec<Arc<Skill>> = skills
             .iter()
@@ -495,6 +539,10 @@ mod tests;
 #[path = "bundled_tests.rs"]
 mod bundled_tests;
 
+#[cfg(test)]
+#[path = "cua_tests.rs"]
+mod cua_tests;
+
 #[async_trait::async_trait]
 impl rust_cli_kernel_api::subagent_config::SubagentSkillGrants for SkillCatalog {
     async fn grant(
@@ -509,11 +557,76 @@ impl rust_cli_kernel_api::subagent_config::SubagentSkillGrants for SkillCatalog 
         let resolved = grants::resolve(entries, &skills);
         self.grants
             .lock_unpoisoned()
-            .insert(child.clone(), resolved.identities);
+            .insert(child.clone(), Some(resolved.identities));
         resolved.unresolved
     }
 
     fn forget(&self, child: &rust_cli_kernel_api::ids::SessionId) {
         self.grants.lock_unpoisoned().remove(child);
+    }
+
+    fn enroll(&self, child: &rust_cli_kernel_api::ids::SessionId) {
+        self.grants
+            .lock_unpoisoned()
+            .entry(child.clone())
+            .or_insert(None);
+    }
+
+    async fn computer_use_refusal(
+        &self,
+        workspace: &WorkspaceRef,
+        entries: &[String],
+    ) -> Option<String> {
+        let official = self.official_dirs(workspace);
+        if official.is_empty() || entries.is_empty() {
+            return None;
+        }
+        let skills = self.discovered(workspace, None).await;
+        entries
+            .iter()
+            .any(|entry| names_official(&skills, &official, entry))
+            .then(|| rust_cli_kernel_api::subagent_config::COMPUTER_USE_UNAVAILABLE.to_owned())
+    }
+}
+
+/// Whether `skill` is a skill of the official Computer Use plugin: a plugin skill of that plugin whose directory is under
+/// one of its flagged roots (Node `OfficialCuaPolicy.isOfficialSkill`: plugin source, plugin name, root containment).
+fn is_official(skill: &Skill, official: &[(String, String)]) -> bool {
+    let SkillSource::Plugin { plugin } = &skill.source else {
+        return false;
+    };
+    official
+        .iter()
+        .any(|(name, root)| name == plugin && within(root, &skill.dir))
+}
+
+/// `path` is `root` or lies under it, by the path style of `root`.
+fn within(root: &str, path: &str) -> bool {
+    let style = rust_cli_kernel_api::env_files::PathStyle::infer(root);
+    let root = root.trim_end_matches(|c| style.is_separator(c));
+    path.strip_prefix(root)
+        .is_some_and(|rest| rest.is_empty() || rest.starts_with(|c| style.is_separator(c)))
+}
+
+/// Whether a skill request names an official Computer Use skill (Node `isOfficialSkillRequest` or
+/// `isUniqueOfficialSkillRequest`): the request is the call name of an official skill, or a name without `:` that
+/// matches exactly one skill, which is official.
+fn names_official(skills: &[Arc<Skill>], official: &[(String, String)], request: &str) -> bool {
+    let request = request.trim();
+    if skills
+        .iter()
+        .any(|skill| skill.name == request && is_official(skill, official))
+    {
+        return true;
+    }
+    if request.contains(':') {
+        return false;
+    }
+    let mut matches = skills
+        .iter()
+        .filter(|skill| skill.name == request || grants::bare(skill) == request);
+    match (matches.next(), matches.next()) {
+        (Some(only), None) => is_official(only, official),
+        _ => false,
     }
 }

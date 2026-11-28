@@ -214,6 +214,16 @@ impl Tool for AgentTool {
         if let Some(message) = crate::toolset::mcp_refusal_settled(&definition, mcp).await {
             return Err(ToolError::Failed { message });
         }
+        // Fork (rule 17): a `skills` list that names an official Computer Use skill fails the call.
+        if let Some(message) = crate::toolset::skills_refusal(
+            &definition,
+            core.ports.skill_grants.as_ref(),
+            &context.workspace,
+        )
+        .await
+        {
+            return Err(ToolError::Failed { message });
+        }
         // 子代理里派生时同样按参数（以前总在前台：子会话没有 actor 接收通知）。嵌套的后台子代理的
         // 通知送给派生它的子代理（owner），由 `routing` 投递（agents.md §5.1）。fork 打开时一律在后台（对照实现
         // 同样，修复线 L-A）。
