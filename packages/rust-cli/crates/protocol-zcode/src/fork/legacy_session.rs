@@ -16,6 +16,9 @@ use crate::inbox::{Ack, Envelope, Status};
 use crate::live::Live;
 use crate::server::{Server, kernel_error};
 
+/// Whether a `sharedContext` import is still refused (see the last slice in specs/fork-rust-imported-history.md).
+const SHARED_CONTEXT_REFUSED: bool = true;
+
 /// `zcodeSessionCreateParamsSchema` (the schema already checked the shape; only the fields used here).
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -43,7 +46,7 @@ struct CreateParams {
 #[serde(tag = "source", rename_all = "camelCase")]
 enum ImportedHistoryParam {
     ClaudeCode(ClaudeCodeHistory),
-    SharedContext {},
+    SharedContext(Box<Value>),
 }
 
 #[derive(Deserialize)]
@@ -60,6 +63,127 @@ struct ImportedMessageParam {
     role: String,
     content: String,
     timestamp: Option<u64>,
+}
+
+/// `zcodeSessionImportHistorySchema`, `sharedContext` branch: the fields the store needs, as sent.
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct SharedContextParam {
+    title: String,
+    created_at: Option<u64>,
+    markdown: String,
+    provenance: ProvenanceParam,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct ProvenanceParam {
+    share_id: String,
+    context_id: Option<String>,
+    share_url: Option<String>,
+    status: Option<String>,
+    projection_sha256: String,
+    artifact_set_sha256: String,
+    formatter_version: u64,
+    markdown_sha256: String,
+    installed_artifacts: Vec<InstalledArtifactParam>,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct InstalledArtifactParam {
+    artifact_id: String,
+    workspace_relative_path: String,
+}
+
+/// What the schema makes of a `sharedContext` import (`zcodeSessionImportHistorySchema`): `.trim()` is a transform, so the
+/// strings Node's schema trims are stored trimmed (`title`, `shareId`, `contextId`, `artifactId`,
+/// `workspaceRelativePath`), a string that trims to nothing is refused (`min(1)`), and the provenance keeps the
+/// schema's key order, without the optional keys the input left out. The store writes it as the entry's `data`.
+pub(crate) fn shared_context_import(
+    raw: &Value,
+) -> Result<rust_cli_kernel_api::store::SharedContextImport, RpcError> {
+    let param: SharedContextParam = serde_json::from_value(raw.clone())
+        .map_err(|error| RpcError::invalid_params(format!("importedHistory: {error}")))?;
+    let trimmed = |field: &str, value: &str| -> Result<String, RpcError> {
+        let value = rust_cli_base::js::string::trim(value);
+        if value.is_empty() {
+            return Err(RpcError::invalid_params(format!(
+                "importedHistory.{field} must not be empty"
+            )));
+        }
+        Ok(value.to_owned())
+    };
+    let provenance = param.provenance;
+    let mut data = serde_json::Map::new();
+    data.insert(
+        "shareId".to_owned(),
+        json!(trimmed("provenance.shareId", &provenance.share_id)?),
+    );
+    if let Some(context) = &provenance.context_id {
+        data.insert(
+            "contextId".to_owned(),
+            json!(trimmed("provenance.contextId", context)?),
+        );
+    }
+    if let Some(url) = provenance.share_url {
+        data.insert("shareUrl".to_owned(), json!(url));
+    }
+    if let Some(status) = provenance.status {
+        data.insert("status".to_owned(), json!(status));
+    }
+    data.insert(
+        "projectionSha256".to_owned(),
+        json!(provenance.projection_sha256),
+    );
+    data.insert(
+        "artifactSetSha256".to_owned(),
+        json!(provenance.artifact_set_sha256),
+    );
+    data.insert(
+        "formatterVersion".to_owned(),
+        json!(provenance.formatter_version),
+    );
+    data.insert(
+        "markdownSha256".to_owned(),
+        json!(provenance.markdown_sha256),
+    );
+    let mut artifacts = Vec::with_capacity(provenance.installed_artifacts.len());
+    for artifact in &provenance.installed_artifacts {
+        artifacts.push(json!({
+            "artifactId": trimmed("provenance.installedArtifacts.artifactId", &artifact.artifact_id)?,
+            "workspaceRelativePath": trimmed(
+                "provenance.installedArtifacts.workspaceRelativePath",
+                &artifact.workspace_relative_path,
+            )?,
+        }));
+    }
+    data.insert("installedArtifacts".to_owned(), Value::Array(artifacts));
+    Ok(rust_cli_kernel_api::store::SharedContextImport {
+        title: trimmed("title", &param.title)?,
+        created_at: param.created_at,
+        markdown: param.markdown,
+        provenance: data,
+    })
+}
+
+/// The history a create stores: Node's `persistImportedSessionHistory` branches on the source.
+enum Imported {
+    ClaudeCode(rust_cli_kernel_api::store::ImportedHistory),
+    SharedContext(rust_cli_kernel_api::store::SharedContextImport),
+}
+
+impl Imported {
+    async fn store(
+        &self,
+        queries: &dyn rust_cli_kernel_api::store::StoreQueries,
+        id: &SessionId,
+    ) -> Result<(), rust_cli_kernel_api::store::StoreError> {
+        match self {
+            Self::ClaudeCode(history) => queries.import_history(id, history).await,
+            Self::SharedContext(import) => queries.import_shared_context(id, import).await,
+        }
+    }
 }
 
 #[derive(Deserialize)]
@@ -194,11 +318,17 @@ pub(crate) async fn create(server: &Server, params: &Value) -> Result<Value, Rpc
     // Fork: a `sharedContext` import is refused like the other fields this agent cannot honour; it names no
     // unrecognized key, so the Host's compatibility retry does not run without it.
     let imported = match params.imported_history.take() {
-        Some(ImportedHistoryParam::SharedContext {}) => {
-            return Err(unsupported("importedHistory (sharedContext)"));
+        Some(ImportedHistoryParam::SharedContext(raw)) => {
+            // Lifted by the last slice of specs/fork-rust-imported-history.md (Shared context): the import is stored
+            // here, but the attach, discard and snapshot parts are not in place yet, and a context that is never
+            // attached would be dropped without a word.
+            if SHARED_CONTEXT_REFUSED {
+                return Err(unsupported("importedHistory (sharedContext)"));
+            }
+            Some(Imported::SharedContext(shared_context_import(&raw)?))
         }
-        Some(ImportedHistoryParam::ClaudeCode(history)) => {
-            Some(rust_cli_kernel_api::store::ImportedHistory {
+        Some(ImportedHistoryParam::ClaudeCode(history)) => Some(Imported::ClaudeCode(
+            rust_cli_kernel_api::store::ImportedHistory {
                 title: history.title,
                 created_at: history.created_at,
                 updated_at: history.updated_at,
@@ -211,8 +341,8 @@ pub(crate) async fn create(server: &Server, params: &Value) -> Result<Value, Rpc
                         timestamp: message.timestamp,
                     })
                     .collect(),
-            })
-        }
+            },
+        )),
         None => None,
     };
     if params.parent_session_id.is_some() {
@@ -329,10 +459,10 @@ async fn import(
     server: &Server,
     id: &SessionId,
     live: std::sync::Arc<Bridged<Live>>,
-    history: &rust_cli_kernel_api::store::ImportedHistory,
+    history: &Imported,
 ) -> Result<std::sync::Arc<Bridged<Live>>, RpcError> {
     let queries = server.kernel.queries();
-    if let Err(error) = queries.import_history(id, history).await {
+    if let Err(error) = history.store(queries.as_ref(), id).await {
         // No error text: a storage error can name the storage path.
         tracing::warn!(event = "legacy.session_import.failed", session = %id, error = %error, "storing the imported history failed");
         let _ = queries.discard_draft(id).await;

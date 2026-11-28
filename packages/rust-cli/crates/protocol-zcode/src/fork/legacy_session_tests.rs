@@ -227,6 +227,27 @@ impl StoreQueries for Queries {
         Ok(())
     }
 
+    async fn import_shared_context(
+        &self,
+        session: &SessionId,
+        import: &rust_cli_kernel_api::store::SharedContextImport,
+    ) -> Result<(), StoreError> {
+        self.log.lock().unwrap().push(format!(
+            "import-shared {} {:?} {:?} {:?} {}",
+            session.as_str(),
+            import.title,
+            import.created_at,
+            import.markdown,
+            serde_json::Value::Object(import.provenance.clone())
+        ));
+        if self.fail_import {
+            return Err(StoreError::Storage {
+                message: "disk full".to_owned(),
+            });
+        }
+        Ok(())
+    }
+
     async fn discard_draft(&self, session: &SessionId) -> Result<bool, StoreError> {
         self.log
             .lock()
@@ -1343,4 +1364,68 @@ async fn a_failed_import_leaves_no_session_behind() {
     assert!(log.contains(&"discard s9".to_owned()), "{log:?}");
     assert!(log.contains(&"close s9".to_owned()), "{log:?}");
     assert!(server.bridge.get(&SessionId::new("s9")).is_none());
+}
+
+/// The golden Node wrote (`parsed` is what `zcodeSessionImportHistorySchema` made of `raw`).
+fn shared_golden() -> Value {
+    serde_json::from_str(include_str!(
+        "../../../node-store/src/fixtures/shared_context_golden.json"
+    ))
+    .unwrap()
+}
+
+/// The params of a `sharedContext` import become the schema's output: trimmed strings, the schema's key order, the
+/// provenance without the keys the input left out.
+#[test]
+fn a_shared_context_import_parses_like_the_node_schema() {
+    let golden = shared_golden();
+    for (raw, parsed) in [
+        (&golden["raw"], &golden["history"]),
+        (&golden["minimal"]["raw"], &golden["minimal"]["parsed"]),
+    ] {
+        let import = super::shared_context_import(raw).unwrap();
+        assert_eq!(import.title, parsed["title"].as_str().unwrap());
+        assert_eq!(import.created_at, parsed["createdAt"].as_u64());
+        assert_eq!(import.markdown, parsed["markdown"].as_str().unwrap());
+        assert_eq!(
+            Value::Object(import.provenance).to_string(),
+            parsed["provenance"].to_string()
+        );
+    }
+}
+
+/// A string the schema trims to nothing is refused like the schema's `min(1)`.
+#[test]
+fn a_blank_shared_context_title_is_refused() {
+    let mut raw = shared_golden()["raw"].clone();
+    raw["title"] = json!("   ");
+    let error = super::shared_context_import(&raw).unwrap_err();
+    assert_eq!(error.code, -32602);
+    let mut raw = shared_golden()["raw"].clone();
+    raw["provenance"]["shareId"] = json!(" ");
+    assert!(super::shared_context_import(&raw).is_err());
+}
+
+/// The `sharedContext` import reaches the store's shared context port, not the history one.
+#[tokio::test]
+async fn a_shared_context_import_is_stored_through_its_own_port() {
+    let golden = shared_golden();
+    let import = super::shared_context_import(&golden["raw"]).unwrap();
+    let log: Log = Arc::new(StdMutex::new(Vec::new()));
+    let queries = Queries {
+        store: Arc::new(MemoryStore::default()),
+        log: log.clone(),
+        fail_persist: false,
+        fail_import: false,
+    };
+    super::Imported::SharedContext(import)
+        .store(&queries, &SessionId::new("s1"))
+        .await
+        .unwrap();
+    let entries = log.lock().unwrap().clone();
+    assert_eq!(entries.len(), 1);
+    assert!(
+        entries[0].starts_with("import-shared s1 \"Shared chat\" Some(1000)"),
+        "{entries:?}"
+    );
 }
