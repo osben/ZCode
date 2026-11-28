@@ -4,7 +4,7 @@ use super::*;
 use rust_cli_kernel_api::tool_names;
 
 #[test]
-fn the_contracts_are_node_s_ten_workflow_tools_in_node_s_order() {
+fn the_contracts_are_node_s_ten_workflow_tools_and_list_models_in_node_s_order() {
     let contracts = contracts();
     let names: Vec<&str> = contracts
         .iter()
@@ -23,6 +23,7 @@ fn the_contracts_are_node_s_ten_workflow_tools_in_node_s_order() {
             tool_names::RESOLVE_WORKFLOW_QUESTION,
             tool_names::FILL_WORKFLOW_HOLE,
             tool_names::LIST_SAVED_WORKFLOWS,
+            tool_names::LIST_MODELS,
         ]
     );
     // The set is the canonical array in tool_names, so a new member is caught here.
@@ -48,7 +49,7 @@ fn every_contract_carries_a_provider_description_and_an_object_schema() {
 }
 
 #[test]
-fn without_an_analyzer_only_list_saved_workflows_is_registered() {
+fn without_an_analyzer_only_the_two_catalog_reads_are_registered() {
     let names: Vec<String> = workflow_tools(
         None,
         std::path::PathBuf::from("/home"),
@@ -60,7 +61,7 @@ fn without_an_analyzer_only_list_saved_workflows_is_registered() {
     .iter()
     .map(|tool| tool.name().to_owned())
     .collect();
-    assert_eq!(names, ["ListSavedWorkflows"]);
+    assert_eq!(names, ["ListSavedWorkflows", "ListModels"]);
 }
 
 #[test]
@@ -83,7 +84,8 @@ fn with_an_analyzer_create_amend_and_save_workflow_are_registered_before_list_sa
             "AmendWorkflow",
             "FillWorkflowHole",
             "SaveWorkflow",
-            "ListSavedWorkflows"
+            "ListSavedWorkflows",
+            "ListModels"
         ]
     );
     for tool in &tools {
@@ -119,7 +121,8 @@ fn with_a_snippet_port_eval_workflow_snippet_is_registered_after_save_and_before
             "FillWorkflowHole",
             "SaveWorkflow",
             "EvalWorkflowSnippet",
-            "ListSavedWorkflows"
+            "ListSavedWorkflows",
+            "ListModels"
         ]
     );
     for tool in &tools {
@@ -137,7 +140,10 @@ fn with_a_snippet_port_eval_workflow_snippet_is_registered_after_save_and_before
         crate::test_more::NodeShapedIds::shared(),
     );
     let names: Vec<&str> = alone.iter().map(|tool| tool.name()).collect();
-    assert_eq!(names, ["EvalWorkflowSnippet", "ListSavedWorkflows"]);
+    assert_eq!(
+        names,
+        ["EvalWorkflowSnippet", "ListSavedWorkflows", "ListModels"]
+    );
 }
 
 struct NoSnippets;

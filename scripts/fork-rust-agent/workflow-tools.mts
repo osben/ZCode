@@ -1,4 +1,4 @@
-// Generates the provider contracts of the dynamic-workflow tools zcode-rs registers under the gate
+// Generates the provider contracts of the dynamic-workflow tools (and ListModels) zcode-rs registers under the gate
 // (packages/rust-cli/crates/tools/assets/node_workflow_tools.json) from Node's tool entries
 // (apps/zcode-cli/packages/core/src/tool/handlers/*-workflow*.ts), so the descriptions, model instructions and input
 // schemas stay Node's (specs/fork-rust-workflow-engine.md, W7-1). The description is Node's `toolDescriptionForProvider`
@@ -14,6 +14,7 @@ import { createWorkflowToolEntry } from "../../apps/zcode-cli/packages/core/src/
 import { evalWorkflowSnippetToolEntry } from "../../apps/zcode-cli/packages/core/src/tool/handlers/eval-workflow-snippet.ts";
 import { fillWorkflowHoleToolEntry } from "../../apps/zcode-cli/packages/core/src/tool/handlers/fill-workflow-hole.ts";
 import { getWorkflowRunToolEntry } from "../../apps/zcode-cli/packages/core/src/tool/handlers/get-workflow-run.ts";
+import { listModelsToolEntry } from "../../apps/zcode-cli/packages/core/src/tool/handlers/list-models.ts";
 import { listSavedWorkflowsToolEntry } from "../../apps/zcode-cli/packages/core/src/tool/handlers/list-saved-workflows.ts";
 import { listWorkflowRunsToolEntry } from "../../apps/zcode-cli/packages/core/src/tool/handlers/list-workflow-runs.ts";
 import { resolveWorkflowQuestionToolEntry } from "../../apps/zcode-cli/packages/core/src/tool/handlers/resolve-workflow-question.ts";
@@ -32,6 +33,8 @@ const ENTRIES = [
   resolveWorkflowQuestionToolEntry,
   fillWorkflowHoleToolEntry,
   listSavedWorkflowsToolEntry,
+  // Not one of the ten gated tools by name, but registered right after them and behind the same gate in Rust.
+  listModelsToolEntry,
 ];
 
 const assetPath = fileURLToPath(

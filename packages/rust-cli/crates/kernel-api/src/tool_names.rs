@@ -29,6 +29,9 @@ pub const GLOB: &str = "Glob";
 pub const GREP: &str = "Grep";
 pub const LIST_AGENTS: &str = "ListAgents";
 pub const LIST_MCP_RESOURCES: &str = "ListMcpResourcesTool";
+/// Fork: the models this host has configured (Node `LIST_MODELS_TOOL_NAME`, specs/fork-rust-workflow-engine.md 9.69). It is
+/// registered with the workflow tools but is not one of the ten: a call to it does not show a session used workflows.
+pub const LIST_MODELS: &str = "ListModels";
 /// Fork: code intelligence from language servers (specs/fork-rust-lsp.md "Tool (D2)"); main thread of the app-server only.
 pub const LSP: &str = "LSP";
 pub const MONITOR: &str = "Monitor";

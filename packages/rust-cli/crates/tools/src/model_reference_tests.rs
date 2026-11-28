@@ -14,6 +14,7 @@ fn entry(provider: &str, model: &str) -> CatalogEntry {
         provider_label: None,
         reasoning_levels: Vec::new(),
         default_level: None,
+        context_window: None,
         current: false,
         disabled_reason: None,
     }
