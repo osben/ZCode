@@ -4,7 +4,7 @@ use rust_cli_kernel_api::ids::SessionId;
 use rust_cli_kernel_api::store::{
     SessionStore, SharedContextImport, SharedContextTransition, StoreError, StoreQueries,
 };
-use serde_json::{Map, Value};
+use serde_json::Value;
 
 use crate::tests::{TestStore, started};
 
