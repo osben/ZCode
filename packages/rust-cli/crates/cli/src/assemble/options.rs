@@ -308,8 +308,7 @@ fn positive_number(snapshot: &EnvSnapshot, name: &str) -> Option<f64> {
 
 /// Fork: the model retry policy from Node's four `ZCODE_MODEL_RETRY_*` variables (`retry-policy.ts`;
 /// specs/fork-rust-model-retry-env.md). Each variable is read on its own: unset, blank or invalid keeps that default and
-/// leaves the others alone. The wait limit for a server `Retry-After` stays 60 s unless the max delay is larger, so a long
-/// max delay does not end the retries.
+/// leaves the others alone.
 pub(crate) fn model_retry(snapshot: &EnvSnapshot) -> RetryPolicy {
     use rust_cli_base::names::env;
     let default = RetryPolicy::default();
@@ -326,7 +325,6 @@ pub(crate) fn model_retry(snapshot: &EnvSnapshot) -> RetryPolicy {
         backoff_factor: positive_number(snapshot, env::ZCODE_MODEL_RETRY_BACKOFF_FACTOR)
             .unwrap_or(default.backoff_factor),
         max_backoff,
-        max_wait: default.max_wait.max(max_backoff),
         ..default
     }
 }

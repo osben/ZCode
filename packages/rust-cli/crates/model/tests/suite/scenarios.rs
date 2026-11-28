@@ -95,11 +95,10 @@ async fn non_retryable_failures_return_at_once() {
         "invalid_request_error",
         "prompt is too long: 210000 tokens > 200000 maximum",
     );
-    let wait_too_long = error_reply(429, "rate_limit_error", "later").header("retry-after", "120");
-    let server = Fixture::start(vec![unauthorized, too_long, wait_too_long]).await;
+    let server = Fixture::start(vec![unauthorized, too_long]).await;
     let model = model_at(server.url(), fast_retry(3)).await;
     let mut results = Vec::new();
-    for _ in 0..3 {
+    for _ in 0..2 {
         results.extend(collect(&model, request("hi", QuerySource::MainThread)).await);
     }
     assert_eq!(
@@ -111,33 +110,40 @@ async fn non_retryable_failures_return_at_once() {
             Err(ModelError::PromptTooLong {
                 message: "prompt is too long: 210000 tokens > 200000 maximum".to_owned()
             }),
-            // 要求等待 120 秒，超过 60 秒的上限：不等，直接报错并带上服务端要求的等待。
-            Err(ModelError::RateLimited {
-                message: "later".to_owned(),
-                retry_after_ms: Some(120_000)
-            }),
         ]
     );
-    assert_eq!(server.requests().len(), 3);
+    assert_eq!(server.requests().len(), 2);
 }
 
-/// F7（审查 R2-11）：Retry-After 的 HTTP 日期按注入的时钟换算。以前读系统时间：这里的日期（时钟之后 120 秒）
-/// 在真实时间里早已过去，会被当成“不用等”去重试。
+/// F7（审查 R2-11）：Retry-After 的 HTTP 日期按注入的时钟换算。以前读系统时间：这里的日期（时钟之后 420 秒）
+/// 在真实时间里早已过去，会被当成“不用等”。不重试（次数 0）时，报错带的等待就是按注入时钟算出的值。
 #[tokio::test]
 async fn an_http_date_retry_after_is_measured_from_the_injected_clock() {
     let later = error_reply(429, "rate_limit_error", "later")
-        .header("retry-after", "Sun, 13 Sep 2020 12:28:40 GMT");
+        .header("retry-after", "Sun, 13 Sep 2020 12:33:40 GMT");
     let server = Fixture::start(vec![later]).await;
-    let model = model_at(server.url(), fast_retry(3)).await;
+    let model = model_at(server.url(), fast_retry(0)).await;
     let results = collect(&model, request("hi", QuerySource::MainThread)).await;
     assert_eq!(
         results,
         vec![Err(ModelError::RateLimited {
             message: "later".to_owned(),
-            retry_after_ms: Some(120_000)
+            retry_after_ms: Some(420_000)
         })]
     );
     assert_eq!(server.requests().len(), 1);
+}
+
+/// Node `isReasonableRetryAfterMs`: a Retry-After beyond 5 minutes that is not shorter than the backoff is ignored, and
+/// the local backoff applies. It does not end the retries (the old 60 s limit did).
+#[tokio::test]
+async fn a_retry_after_beyond_five_minutes_is_ignored_and_the_request_retries() {
+    let long = error_reply(429, "rate_limit_error", "later").header("retry-after", "301");
+    let server = Fixture::start(vec![long, ok_reply()]).await;
+    let model = model_at(server.url(), fast_retry(3)).await;
+    let results = collect(&model, request("hi", QuerySource::MainThread)).await;
+    assert!(results.iter().all(Result::is_ok), "{results:?}");
+    assert_eq!(server.requests().len(), 2);
 }
 
 #[tokio::test]

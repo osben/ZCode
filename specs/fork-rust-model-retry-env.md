@@ -20,11 +20,22 @@ parsing, defaults) and `runner-retry.ts` `calculateRetryDelay` (the delay). Node
 5. The wait before retry n (n from 1) is `min(base * factor^(n-1), max_delay)`. With jitter on (the default) a non-zero wait is
    multiplied by a random factor in `[0.5, 1.0)` and rounded to a millisecond, as in Node. The jitter never makes a wait longer
    than the cap.
-6. A server `Retry-After` is unchanged by this work: the wait is the larger of it and the local backoff, and a `Retry-After`
-   above the limit (60 s, or the max delay when that is larger) ends the retries. Node accepts a `Retry-After` up to 5 minutes
-   and treats a longer one as a local backoff; that difference is left open.
+6. Retry-After is Node's (`failure-inspection.ts` `parseRetryAfterMs`, `runner-retry.ts` `calculateRetryDelay`).
+   - Headers: `retry-after-ms` first (a finite number, rounded to a millisecond, never below 0). Else `retry-after` as
+     seconds (a finite number, times 1000, rounded) or as an HTTP date (the wait is the date minus now, never below 0). A
+     value that is neither is ignored. `x-should-retry: false` or `0` (trimmed, any case) drops the Retry-After altogether:
+     it is diagnostic only. Not matched: Node's `Date.parse` accepts more date spellings than the three HTTP-date forms
+     zcode-rs reads, and its `Number` accepts hex in a header value.
+   - Use: a Retry-After is honoured when it is at most 5 minutes, or when it is shorter than the uncapped backoff
+     (`base * factor^(n-1)`, before the max delay). The wait is then the Retry-After itself, not the larger of it and the
+     backoff, so a short Retry-After can be shorter than the local backoff. With jitter on, a forward-only extra of
+     `random * min(20% of it, 5 s)` is added. A Retry-After that is not honoured is ignored and the local backoff applies.
+   - There is no give-up on a long Retry-After: the retry count is the only limit. The old 60 s `max_wait` is gone from
+     `RetryPolicy`. The workflow governor's own cooldown cap (60 s, divergence in 9.9) is a separate rule and is unchanged.
+   - The 5-minute limit also caps the admission cooldown in Node's `applyAdmissionRetryCooldown`; that path is the
+     governor's and is not part of this change.
 
 ## Tests
 
-- `crates/net/src/retry_tests.rs`: the delay by Node's formula (default, a custom factor, a cap, base 0, jitter range, jitter off).
+- `crates/net/src/retry_tests.rs`: the delay by Node's formula (default, a custom factor, a cap, base 0, jitter range, jitter off), the Retry-After rules of 6 (replaces the backoff, forward jitter, the 5-minute limit, `x-should-retry`).
 - `crates/cli/src/assemble/options_tests.rs`: each variable, the parsing table of rule 2, independence of the four variables.

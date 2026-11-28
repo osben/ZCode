@@ -14,8 +14,8 @@ const INCREASE_AFTER_SUCCESSES: u32 = 4;
 const FLOOR: u32 = 1;
 /// 空闲这么久且没有在飞请求，cap 回到起始值（Node `CONCURRENCY_IDLE_RESET_MS`）。
 pub const IDLE_RESET_MS: u64 = 300_000;
-/// 冷却的上限（毫秒）。Node 对 Retry-After 没有上限（`concurrency.ts` 原样使用）；这里取 Rust 的重试策略的最长等待
-/// （`rust_cli_net::retry` 的 `max_wait`，60 s）。一个超大的 Retry-After 会让桶冻住很久，所以在这里截断。
+/// 冷却的上限（毫秒）。Node 对 Retry-After 没有上限（`concurrency.ts` 原样使用）；这里取 60 s（Rust 重试策略曾经的
+/// `max_wait`，现已去掉：重试等待按 Node 不封顶 Retry-After）。一个超大的 Retry-After 会让桶冻住很久，所以在这里截断。
 /// 这是与 Node 的偏差，记在 spec 9.9。
 pub const MAX_COOLDOWN_MS: u64 = 60_000;
 

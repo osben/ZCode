@@ -372,16 +372,3 @@ fn the_backoff_variables_follow_the_node_rules() {
     assert_eq!(mixed.backoff_factor, 4.0);
     assert_eq!(mixed.max_backoff, Duration::from_millis(500));
 }
-
-/// A max delay above the retry-after limit must not end the retries: the limit follows it.
-#[test]
-fn a_large_max_delay_raises_the_wait_limit() {
-    use std::time::Duration;
-    let max = rust_cli_base::names::env::ZCODE_MODEL_RETRY_MAX_DELAY_MS;
-    let policy = model_retry(&env(&[(max, "300000")]));
-    assert!(policy.max_wait >= Duration::from_secs(300));
-    assert_eq!(
-        model_retry(&env(&[(max, "1000")])).max_wait,
-        RetryPolicy::default().max_wait
-    );
-}
