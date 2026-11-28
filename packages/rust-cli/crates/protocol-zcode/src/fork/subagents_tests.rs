@@ -940,6 +940,59 @@ async fn a_rewritten_history_cuts_the_table_entries_no_part_links() {
     assert_eq!(rewritten.cut, [("c_cut".to_owned(), 0)]);
 }
 
+fn send_message_part(to: &str, status: &str) -> serde_json::Value {
+    json!({"callId": format!("toolu_send_{to}"), "tool": "SendMessage", "status": status, "input": {"to": to, "message": "go"}})
+}
+
+#[tokio::test]
+async fn a_completed_send_message_keeps_the_child_whose_launch_a_rewind_cut() {
+    // The launch was cut by an earlier rewind; the child was resumed on the new branch, and a second rewind kept
+    // that SendMessage. Only the part that completed links the entry.
+    let queries = HistoryQueries {
+        saved: true,
+        parts: json!([
+            send_message_part("agent_c_resumed", "completed"),
+            send_message_part("agent_c_failed", "error"),
+            send_message_part("agent_c_other", "completed"),
+        ]),
+        children: json!([child_row("c_resumed"), child_row("c_failed")]),
+    };
+    let mut resumed = entry(
+        SubagentStatus::Completed,
+        "c_resumed",
+        false,
+        false,
+        10,
+        Some(3),
+    );
+    resumed.agent = AgentId::new("agent_c_resumed");
+    let mut failed = entry(
+        SubagentStatus::Completed,
+        "c_failed",
+        false,
+        false,
+        10,
+        Some(3),
+    );
+    failed.agent = AgentId::new("agent_c_failed");
+    let outcomes = ended_outcomes(
+        &queries,
+        &SessionId::new("ses_p"),
+        &[resumed, failed],
+        10_000,
+        true,
+    )
+    .await
+    .expect("readable");
+    let ids: Vec<&str> = outcomes
+        .ended
+        .iter()
+        .map(|item| item.child.as_str())
+        .collect();
+    assert_eq!(ids, ["c_resumed"]);
+    assert_eq!(outcomes.cut, [("c_failed".to_owned(), 0)]);
+}
+
 #[tokio::test]
 async fn ended_outcomes_of_a_session_not_saved_yet_are_empty() {
     // A new session has no parent row until its first message is written: no history, so the

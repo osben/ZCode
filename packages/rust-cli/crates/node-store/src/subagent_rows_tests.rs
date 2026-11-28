@@ -189,3 +189,54 @@ async fn other_tools_are_skipped_and_the_revert_cursor_cuts_the_branch() {
     let doc = parent_rows(&conn, "sess_1").unwrap();
     assert_eq!(doc["parts"], json!([]));
 }
+
+/// A `SendMessage` part enters the document (its `input.to` links a resumed child whose launch a rewind
+/// cut), and it follows the same revert cursor as the launch parts.
+#[tokio::test]
+async fn send_message_parts_enter_the_document_and_follow_the_revert_cursor() {
+    let t = TestStore::new();
+    started(&t, "sess_1").await;
+    let facts = vec![
+        user("msg_u1", "run"),
+        tool_call("msg_a1", "toolu_1", "Agent", json!({"prompt": "look"})),
+        tool_result("msg_r1", "msg_a1", "toolu_1"),
+        user("msg_u2", "again"),
+        tool_call(
+            "msg_a2",
+            "toolu_2",
+            "SendMessage",
+            json!({"to": "agent_1", "message": "more"}),
+        ),
+        tool_result("msg_r2", "msg_a2", "toolu_2"),
+    ];
+    t.store
+        .commit(&SessionId::new("sess_1"), batch(None, facts))
+        .await
+        .unwrap();
+    let conn = t.connection();
+    let doc = parent_rows(&conn, "sess_1").unwrap();
+    let parts = doc["parts"].as_array().unwrap();
+    assert_eq!(parts.len(), 2);
+    assert_eq!(parts[1]["tool"], json!("SendMessage"));
+    assert_eq!(parts[1]["status"], json!("completed"));
+    assert_eq!(parts[1]["input"]["to"], json!("agent_1"));
+
+    repo_sessions::update(
+        &conn,
+        &repo_sessions::Update {
+            id: "sess_1".to_owned(),
+            revert: Some(json!({"targetMessageID": "msg_u2"})),
+            ..Default::default()
+        },
+        2000,
+    )
+    .unwrap();
+    let doc = parent_rows(&conn, "sess_1").unwrap();
+    let tools: Vec<&str> = doc["parts"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter_map(|part| part["tool"].as_str())
+        .collect();
+    assert_eq!(tools, ["Agent"]);
+}
